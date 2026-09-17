@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Base ──────────────────────────────────────────────────────────────── */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+}
+
+/* Thin scrollbars */
+::-webkit-scrollbar        { width: 6px; height: 6px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  { background: #d1d5db; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+.dark ::-webkit-scrollbar-thumb { background: #525252; }
+.dark ::-webkit-scrollbar-thumb:hover { background: #a3a3a3; }
+
+/* Timeline strip: chunkier, always-visible scrollbar with a visible track —
+   scrolling the history is a primary control there, and the global 6px overlay
+   scrollbar was too hard to grab once the strip fills up. */
+.timeline-strip { scrollbar-width: auto; }               /* Firefox */
+.timeline-strip::-webkit-scrollbar        { height: 10px; }
+.timeline-strip::-webkit-scrollbar-track  { background: rgba(0, 0, 0, 0.07); border-radius: 5px; }
+.timeline-strip::-webkit-scrollbar-thumb  { background: #9ca3af; border-radius: 5px; }
+.timeline-strip::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+.dark .timeline-strip::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.07); }
+.dark .timeline-strip::-webkit-scrollbar-thumb { background: #737373; }
+.dark .timeline-strip::-webkit-scrollbar-thumb:hover { background: #a3a3a3; }
+
+/* Remove number input arrows */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
