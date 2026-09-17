@@ -1,0 +1,53 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+dist-ssr/
+
+# TypeScript cache
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# env files
+.env
+.env.local
+.env.*.local
+
+# editor
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS
+.DS_Store
+Thumbs.db
+
+# logs
+*.log
+npm-debug.log*
+
+# Playwright MCP artifacts
+.playwright-mcp/
+
+todo.txt
+PRD.md
+PLAN.md
+CLAUDE.md
+CLOCKWORK.md
+TECHNICAL.md
+TODOLIST.md
+fonts.txt
+optimizations.md
+# Dev verification/diagnostic harnesses + their transpile output and golden snapshot
+.harness-build/
+scripts/
+
+# local scratch material (moved from repo root) + import-warning test files
+scratch/
+testfiles-b8/
+coverage/
