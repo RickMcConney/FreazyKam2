@@ -32,7 +32,7 @@ const reloadWorkerGraph = {
 }
 
 export default defineConfig({
-  base: '/kam/',
+  base: '/FreazyKam2/',
   plugins: [react(), jspolyPlugin, reloadWorkerGraph],
   test: {
     environment: 'node',
