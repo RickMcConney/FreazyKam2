@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 400" width="980" height="400" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="14">
+  <defs>
+    <pattern id="mw" width="8" height="8" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="0" x2="0" y2="8" stroke="#c08a3e" stroke-width="3" opacity="0.55"/>
+    </pattern>
+    <pattern id="fw" width="8" height="8" patternTransform="rotate(-45)" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="0" x2="0" y2="8" stroke="#7f8c99" stroke-width="3" opacity="0.5"/>
+    </pattern>
+  </defs>
+  <text x="20" y="26" fill="#8b95a1" font-size="15" font-weight="600">Cross-section through a finished V-inlay</text>
+  <path d="M 60 120 L 260 120 L 340 250 L 460 250 L 540 120 L 740 120 L 740 330 L 60 330 Z" fill="url(#fw)" stroke="#7f8c99" stroke-width="2"/>
+  <path d="M 260 120 L 540 120 L 474 227 L 326 227 Z" fill="url(#mw)" stroke="#c08a3e" stroke-width="2"/>
+  <path d="M 150 60 L 650 60 L 650 120 L 150 120 Z" fill="url(#mw)" opacity="0.28" stroke="#c08a3e" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="662" y="94" fill="#c08a3e" font-size="13">planed off</text>
+  <line x1="40" y1="120" x2="750" y2="120" stroke="#5b9bd5" stroke-width="2" stroke-dasharray="7 4"/>
+  <text x="40" y="112" fill="#5b9bd5" font-size="13" font-weight="600">finished face — plane back to here</text>
+  <line x1="326" y1="227" x2="474" y2="227" stroke="#c08a3e" stroke-width="2"/>
+  <path d="M 300 262 L 352 236" stroke="#8b95a1" stroke-width="1.2" fill="none"/>
+  <text x="150" y="278" fill="#8b95a1" font-size="13">glue gap (floor never touches)</text>
+  <path d="M 766 172 L 522 184" stroke="#8b95a1" stroke-width="1.2" fill="none"/>
+  <text x="770" y="166" fill="#8b95a1" font-size="13">the walls are the fit —</text>
+  <text x="770" y="183" fill="#8b95a1" font-size="13">same angle, so they wedge</text>
+  <text x="80" y="300" fill="#7f8c99" font-size="13" font-weight="600">female board (socket)</text>
+  <text x="356" y="166" fill="#a8700f" font-size="13" font-weight="600">male plug</text>
+  <line x1="150" y1="120" x2="150" y2="227" stroke="#8b95a1" stroke-width="1.2"/>
+  <line x1="144" y1="120" x2="156" y2="120" stroke="#8b95a1" stroke-width="1.2"/>
+  <line x1="144" y1="227" x2="156" y2="227" stroke="#8b95a1" stroke-width="1.2"/>
+  <text x="98" y="178" fill="#8b95a1" font-size="13">depth</text>
+  <text x="20" y="368" fill="#8b95a1" font-size="13">The plug is cut deeper than it needs to be, so it always lands on its walls, never on the floor:</text>
+  <text x="20" y="386" fill="#8b95a1" font-size="13">wedged tight at the face, air underneath for glue.</text>
+</svg>

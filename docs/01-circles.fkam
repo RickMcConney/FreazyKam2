@@ -1,0 +1,431 @@
+{
+  "version": 3,
+  "name": "01-circles",
+  "workpiece": {
+    "widthMM": 150,
+    "heightMM": 150,
+    "thicknessMM": 12,
+    "units": "mm",
+    "origin": "bottom-left",
+    "zOrigin": "top",
+    "material": "plywood",
+    "tableLimitWidthMM": 1000,
+    "tableLimitHeightMM": 800,
+    "tableLimitDepthMM": 70,
+    "machineRigidity": 3,
+    "maxFeedMmMin": 5000,
+    "minSpindleRpm": 10000,
+    "maxSpindleRpm": 18000,
+    "autoFeedEnabled": true,
+    "safeHeightMM": 3,
+    "spindleType": "dewalt-compact"
+  },
+  "tools": [
+    {
+      "id": "default-1",
+      "name": "6mm End Mill",
+      "type": "endmill",
+      "diameterMM": 6.05,
+      "fluteCount": 1,
+      "rpm": 18000,
+      "xyFeedMmMin": 2500,
+      "zFeedMmMin": 500,
+      "stepDownMM": 3,
+      "maxDepthMM": 25,
+      "direction": "climb"
+    },
+    {
+      "id": "default-2",
+      "name": "1/8\" End Mill",
+      "type": "endmill",
+      "diameterMM": 3.175,
+      "fluteCount": 1,
+      "rpm": 10000,
+      "xyFeedMmMin": 500,
+      "zFeedMmMin": 300,
+      "stepDownMM": 1.5,
+      "maxDepthMM": 15,
+      "direction": "climb"
+    },
+    {
+      "id": "default-3",
+      "name": "60° V-Bit",
+      "type": "vbit",
+      "diameterMM": 6.35,
+      "fluteCount": 2,
+      "rpm": 18000,
+      "xyFeedMmMin": 2000,
+      "zFeedMmMin": 400,
+      "stepDownMM": 2,
+      "maxDepthMM": 10,
+      "direction": "climb",
+      "vbitAngleDeg": 60
+    },
+    {
+      "id": "default-4",
+      "name": "1/4\" Ball Nose",
+      "type": "ballnose",
+      "diameterMM": 6.35,
+      "fluteCount": 2,
+      "rpm": 18000,
+      "xyFeedMmMin": 2000,
+      "zFeedMmMin": 400,
+      "stepDownMM": 2,
+      "maxDepthMM": 20,
+      "direction": "climb"
+    },
+    {
+      "id": "default-5",
+      "name": "3mm Drill",
+      "type": "drill",
+      "diameterMM": 3,
+      "fluteCount": 2,
+      "rpm": 12000,
+      "xyFeedMmMin": 0,
+      "zFeedMmMin": 200,
+      "stepDownMM": 3,
+      "maxDepthMM": 20,
+      "direction": "climb"
+    },
+    {
+      "id": "tool-102",
+      "name": "30 vbit",
+      "type": "vbit",
+      "diameterMM": 6.35,
+      "fluteCount": 2,
+      "rpm": 18000,
+      "xyFeedMmMin": 2000,
+      "zFeedMmMin": 500,
+      "stepDownMM": 3,
+      "maxDepthMM": 20,
+      "direction": "climb",
+      "vbitAngleDeg": 30
+    },
+    {
+      "id": "tool-103",
+      "name": "90 vbit",
+      "type": "vbit",
+      "diameterMM": 6.35,
+      "fluteCount": 2,
+      "rpm": 18000,
+      "xyFeedMmMin": 2000,
+      "zFeedMmMin": 500,
+      "stepDownMM": 3,
+      "maxDepthMM": 20,
+      "direction": "climb",
+      "vbitAngleDeg": 90
+    },
+    {
+      "id": "tool-101",
+      "name": "1/8 ball nose",
+      "type": "ballnose",
+      "diameterMM": 3.175,
+      "fluteCount": 2,
+      "rpm": 18000,
+      "xyFeedMmMin": 2000,
+      "zFeedMmMin": 500,
+      "stepDownMM": 3,
+      "maxDepthMM": 20,
+      "direction": "climb"
+    },
+    {
+      "id": "tool-mrtbkbyf-7jh77a",
+      "name": "1.5 Drill",
+      "type": "drill",
+      "diameterMM": 1.5,
+      "fluteCount": 2,
+      "rpm": 18000,
+      "xyFeedMmMin": 2000,
+      "zFeedMmMin": 500,
+      "stepDownMM": 3,
+      "maxDepthMM": 20,
+      "direction": "climb"
+    },
+    {
+      "id": "tool-ms97taa7-y2ypaf",
+      "name": "2mm End Mill",
+      "type": "endmill",
+      "diameterMM": 2,
+      "fluteCount": 2,
+      "rpm": 18000,
+      "xyFeedMmMin": 2000,
+      "zFeedMmMin": 500,
+      "stepDownMM": 3,
+      "maxDepthMM": 20,
+      "direction": "climb"
+    },
+    {
+      "id": "tool-mtg6ewar-fb8rxs",
+      "name": "3mm End Mill",
+      "type": "endmill",
+      "diameterMM": 3,
+      "fluteCount": 2,
+      "rpm": 18000,
+      "xyFeedMmMin": 2500,
+      "zFeedMmMin": 500,
+      "stepDownMM": 3,
+      "maxDepthMM": 25,
+      "direction": "climb"
+    },
+    {
+      "id": "tool-mtkij5pm-ltrhws",
+      "name": "taper 5",
+      "type": "taper",
+      "diameterMM": 2,
+      "fluteCount": 2,
+      "rpm": 12000,
+      "xyFeedMmMin": 0,
+      "zFeedMmMin": 200,
+      "stepDownMM": 3,
+      "maxDepthMM": 20,
+      "direction": "climb",
+      "vbitAngleDeg": 5
+    }
+  ],
+  "paths": [
+    {
+      "id": "shape-mtkn31on-cc7dr9",
+      "name": "Circle",
+      "d": "M25,75 A50,50,0,0,0,125,75 A50,50,0,0,0,25,75 Z",
+      "visible": true,
+      "color": "#60a5fa",
+      "shapeParams": {
+        "type": "circle",
+        "cx": 75,
+        "cy": 75,
+        "radius": 50
+      },
+      "fromCenter": true
+    },
+    {
+      "id": "shape-mtkn65l1-i9px3h",
+      "name": "Circle",
+      "d": "M35,75 A40,40,0,0,0,115,75 A40,40,0,0,0,35,75 Z",
+      "visible": true,
+      "color": "#60a5fa",
+      "shapeParams": {
+        "type": "circle",
+        "cx": 75,
+        "cy": 75,
+        "radius": 40
+      },
+      "fromCenter": true
+    }
+  ],
+  "operations": [
+    {
+      "name": "Pocket: Circle (6mm End Mill)",
+      "type": "pocket",
+      "toolId": "default-1",
+      "strategy": "hybrid",
+      "pathId": "shape-mtkn65l1-i9px3h",
+      "islandIds": [],
+      "depthMM": 3,
+      "stepDownMM": 3.025,
+      "stepoverPercent": 60,
+      "passAngleDeg": 0,
+      "autoAngle": true,
+      "direction": "climb",
+      "rampIn": true,
+      "allowanceMM": 1,
+      "invert": false,
+      "startFrom": {
+        "mode": "auto"
+      },
+      "id": "op-mtkn9b8f-fq1b9i",
+      "color": "#06b6d4",
+      "visible": true,
+      "generatedWith": {
+        "safeHeightMM": 3,
+        "startZMM": 0
+      },
+      "segments": [],
+      "status": "needs-update"
+    },
+    {
+      "name": "Profile: Circle (6mm End Mill)",
+      "type": "profile",
+      "toolId": "default-1",
+      "pathId": "shape-mtkn31on-cc7dr9",
+      "side": "outside",
+      "depthMM": 12,
+      "stepDownMM": 3.025,
+      "direction": "climb",
+      "rampIn": true,
+      "allowanceMM": 0,
+      "startFrom": {
+        "mode": "auto"
+      },
+      "id": "op-mtkncuef-1uw3ml",
+      "color": "#f97316",
+      "visible": true,
+      "generatedWith": {
+        "entryHint": {
+          "x": 39.64896797572828,
+          "y": 68.46824038976175
+        },
+        "safeHeightMM": 3
+      },
+      "entryHint": {
+        "x": 39.64896797572828,
+        "y": 68.46824038976175
+      },
+      "segments": [],
+      "status": "needs-update"
+    }
+  ],
+  "postProcessors": {
+    "profiles": [
+      {
+        "id": "grbl-mm",
+        "name": "Grbl (mm)",
+        "unitMode": "mm",
+        "commentStyle": "parenthesis",
+        "startGcode": "G90 (absolute positioning)\nG17 (XY plane)",
+        "toolChangeGcode": "M5\nM0",
+        "endGcode": "M5 (spindle off)\nG0 Z10.000 (retract clear of the work)\nG0 X0 Y0 (return to origin)\nM30 (program end)",
+        "builtin": true,
+        "spindleOnTemplate": "M3 S{s}",
+        "spindleOffGcode": "M5",
+        "rapidTemplate": "G0 X{x} Y{y} Z{z}",
+        "cutTemplate": "G1 X{x} Y{y} Z{z} F{f}",
+        "arcCWTemplate": "G2 X{x} Y{y} Z{z} I{i} J{j} F{f}",
+        "arcCCWTemplate": "G3 X{x} Y{y} Z{z} I{i} J{j} F{f}",
+        "outputArcs": true
+      },
+      {
+        "id": "grbl-in",
+        "name": "Grbl (inches)",
+        "unitMode": "in",
+        "commentStyle": "parenthesis",
+        "startGcode": "G90 (absolute positioning)\nG17 (XY plane)",
+        "toolChangeGcode": "M5\nM0",
+        "endGcode": "M5 (spindle off)\nG0 Z0.400 (retract clear of the work)\nG0 X0 Y0 (return to origin)\nM30 (program end)",
+        "builtin": true,
+        "spindleOnTemplate": "M3 S{s}",
+        "spindleOffGcode": "M5",
+        "rapidTemplate": "G0 X{x} Y{y} Z{z}",
+        "cutTemplate": "G1 X{x} Y{y} Z{z} F{f}",
+        "arcCWTemplate": "G2 X{x} Y{y} Z{z} I{i} J{j} F{f}",
+        "arcCCWTemplate": "G3 X{x} Y{y} Z{z} I{i} J{j} F{f}",
+        "outputArcs": true
+      },
+      {
+        "id": "grblhal-mm",
+        "name": "grblHAL (mm)",
+        "unitMode": "mm",
+        "commentStyle": "parenthesis",
+        "startGcode": "G90 (absolute positioning)\nG94 (feed in units per minute)\nG17 (XY plane)",
+        "toolChangeGcode": "M5\nM0",
+        "endGcode": "M5 (spindle off)\nG0 Z10.000 (retract clear of the work)\nG0 X0 Y0 (return to origin)\nM30 (program end)",
+        "builtin": true,
+        "spindleOnTemplate": "M3 S{s}",
+        "spindleOffGcode": "M5",
+        "rapidTemplate": "G0 X{x} Y{y} Z{z}",
+        "cutTemplate": "G1 X{x} Y{y} Z{z} F{f}",
+        "arcCWTemplate": "G2 X{x} Y{y} Z{z} I{i} J{j} F{f}",
+        "arcCCWTemplate": "G3 X{x} Y{y} Z{z} I{i} J{j} F{f}",
+        "outputArcs": true
+      },
+      {
+        "id": "linuxcnc-mm",
+        "name": "LinuxCNC (mm)",
+        "unitMode": "mm",
+        "commentStyle": "parenthesis",
+        "startGcode": "G90 (absolute positioning)\nG94 (feed in units per minute)\nG17 (XY plane)\nG54 (work offset 1)\nG64 P0.01 (path blending, 0.01 tolerance)",
+        "toolChangeGcode": "M5\nM0",
+        "endGcode": "M5 (spindle off)\nM9 (coolant off)\nG0 Z10.000 (retract clear of the work)\nG0 X0 Y0 (return to origin)\nM30 (program end)",
+        "builtin": true,
+        "spindleOnTemplate": "M3 S{s}",
+        "spindleOffGcode": "M5",
+        "rapidTemplate": "G0 X{x} Y{y} Z{z}",
+        "cutTemplate": "G1 X{x} Y{y} Z{z} F{f}",
+        "arcCWTemplate": "G2 X{x} Y{y} Z{z} I{i} J{j} F{f}",
+        "arcCCWTemplate": "G3 X{x} Y{y} Z{z} I{i} J{j} F{f}",
+        "outputArcs": true
+      },
+      {
+        "id": "mach3-mm",
+        "name": "Mach3 (mm)",
+        "unitMode": "mm",
+        "commentStyle": "parenthesis",
+        "startGcode": "G90 (absolute positioning)\nG17 (XY plane)\nG40 (cancel cutter compensation)\nG49 (cancel tool length offset)\nG80 (cancel canned cycle)",
+        "toolChangeGcode": "M5\nM0",
+        "endGcode": "M5 (spindle off)\nM9 (coolant off)\nG0 Z10.000 (retract clear of the work)\nG0 X0 Y0 (return to origin)\nM30 (program end)",
+        "builtin": true,
+        "spindleOnTemplate": "M3 S{s}",
+        "spindleOffGcode": "M5",
+        "rapidTemplate": "G0 X{x} Y{y} Z{z}",
+        "cutTemplate": "G1 X{x} Y{y} Z{z} F{f}",
+        "arcCWTemplate": "G2 X{x} Y{y} Z{z} I{i} J{j} F{f}",
+        "arcCCWTemplate": "G3 X{x} Y{y} Z{z} I{i} J{j} F{f}",
+        "outputArcs": true
+      },
+      {
+        "id": "uccnc-mm",
+        "name": "UCCNC (mm)",
+        "unitMode": "mm",
+        "commentStyle": "parenthesis",
+        "startGcode": "G90 (absolute positioning)\nG17 (XY plane)\nG40 (cancel cutter compensation)\nG49 (cancel tool length offset)\nG80 (cancel canned cycle)",
+        "toolChangeGcode": "M5\nM0",
+        "endGcode": "M5 (spindle off)\nG0 Z10.000 (retract clear of the work)\nG0 X0 Y0 (return to origin)\nM30 (program end)",
+        "builtin": true,
+        "spindleOnTemplate": "M3 S{s}",
+        "spindleOffGcode": "M5",
+        "rapidTemplate": "G0 X{x} Y{y} Z{z}",
+        "cutTemplate": "G1 X{x} Y{y} Z{z} F{f}",
+        "arcCWTemplate": "G2 X{x} Y{y} Z{z} I{i} J{j} F{f}",
+        "arcCCWTemplate": "G3 X{x} Y{y} Z{z} I{i} J{j} F{f}",
+        "outputArcs": true
+      },
+      {
+        "id": "generic-mm",
+        "name": "Generic (mm)",
+        "unitMode": "mm",
+        "commentStyle": "semicolon",
+        "startGcode": "G90 ; absolute positioning",
+        "toolChangeGcode": "M5\nM0",
+        "endGcode": "M5 ; spindle off\nM30 ; program end",
+        "builtin": true,
+        "spindleOnTemplate": "M3 S{s}",
+        "spindleOffGcode": "M5",
+        "rapidTemplate": "G0 X{x} Y{y} Z{z}",
+        "cutTemplate": "G1 X{x} Y{y} Z{z} F{f}",
+        "arcCWTemplate": "G2 X{x} Y{y} Z{z} I{i} J{j} F{f}",
+        "arcCCWTemplate": "G3 X{x} Y{y} Z{z} I{i} J{j} F{f}",
+        "outputArcs": true
+      }
+    ],
+    "activeId": "grbl-mm"
+  },
+  "tabs": [
+    {
+      "id": "tab-mtknb4wu-rrhvhc",
+      "pathId": "shape-mtkn31on-cc7dr9",
+      "t": 0.11805555555555554,
+      "lengthMM": 8,
+      "heightMM": 2
+    },
+    {
+      "id": "tab-mtknb4wu-7jqi1a",
+      "pathId": "shape-mtkn31on-cc7dr9",
+      "t": 0.3680555555555554,
+      "lengthMM": 8,
+      "heightMM": 2
+    },
+    {
+      "id": "tab-mtknb4wu-wpq1w7",
+      "pathId": "shape-mtkn31on-cc7dr9",
+      "t": 0.6180555555555556,
+      "lengthMM": 8,
+      "heightMM": 2
+    },
+    {
+      "id": "tab-mtknb4wu-cvw0ap",
+      "pathId": "shape-mtkn31on-cc7dr9",
+      "t": 0.8680555555555556,
+      "lengthMM": 8,
+      "heightMM": 2
+    }
+  ]
+}
