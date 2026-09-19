@@ -36,6 +36,7 @@ import { ConstraintPickLayer } from './layers/ConstraintPickLayer'
 import { SnapGuideLayer, type SnapGuides } from './layers/SnapGuideLayer'
 import { collectSnapTargets, snapAxisDelta, nudgeStopDelta, nextStepPoint, type SnapTargets } from './objectSnap'
 import { ShapePreviewLayer } from './layers/ShapePreviewLayer'
+import { createRegionFinder, regionToD, type RegionFinder } from '../cam/regionPick'
 import { EscapementAnimLayer } from './layers/EscapementAnimLayer'
 import { GearAnimLayer } from './layers/GearAnimLayer'
 import { ClockAnimLayer } from './layers/ClockAnimLayer'
@@ -80,6 +81,9 @@ export interface Viewport {
 // `hidden` paths (soft-hidden by boolean ops) render nowhere, so they must not
 // be clickable, editable, weldable, or snappable (bugs.md B1).
 const onCanvas = (p: ImportedPath) => p.visible && !p.hidden
+// Fine enough that a region's curved edges sit well inside any pocket tolerance
+// (POCKET_FLATTEN_TOL_MM is 0.05), since the region is emitted as a polyline.
+const REGION_FLATTEN_TOL_MM = 0.01
 
 function distToPolylines(px: number, py: number, polys: [number, number][][]): number {
   let minSq = Infinity
@@ -448,6 +452,39 @@ export default function CanvasStage() {
     }
     return polys
   }, [])
+
+  // Region tool (cam/regionPick.ts). The planar graph of every visible stroke is
+  // built once per paths state, so hovering — which previews the region under the
+  // cursor — only runs the face lookup. Paths are replaced, never mutated, so the
+  // array's identity is the cache key.
+  const [regionPreviewD, setRegionPreviewD] = useState<string | null>(null)
+  const regionFinderRef = useRef<{ paths: ImportedPath[]; find: RegionFinder } | null>(null)
+  const getRegionFinder = useCallback((): RegionFinder => {
+    const { paths } = usePathsStore.getState()
+    const cached = regionFinderRef.current
+    if (cached && cached.paths === paths) return cached.find
+    const strokes = paths.filter(onCanvas).flatMap((p) => getFlat(p, REGION_FLATTEN_TOL_MM))
+    const find = createRegionFinder(strokes)
+    regionFinderRef.current = { paths, find }
+    return find
+  }, [getFlat])
+  const onMoveRegionHover = useCallback((cnc: { x: number; y: number }) => {
+    const region = getRegionFinder()([cnc.x, cnc.y])
+    const d = region ? regionToD(region) : null
+    setRegionPreviewD((prev) => (prev === d ? prev : d))
+  }, [getRegionFinder])
+  const pickRegionAt = useCallback((cnc: { x: number; y: number }) => {
+    const region = getRegionFinder()([cnc.x, cnc.y])
+    if (!region) {
+      useUIStore.getState().showStatus('No closed area here — click inside an area the drawn lines enclose', 'warn')
+      return
+    }
+    const id = uid('region')
+    const store = usePathsStore.getState()
+    store.addPaths([{ id, name: 'Region', d: regionToD(region), visible: true, color: nextPathColor() }], { source: 'region' })
+    store.selectPath(id)
+    setRegionPreviewD(null)
+  }, [getRegionFinder])
 
   // Individual selectors (not whole-store destructuring) so the Stage doesn't
   // re-render on unrelated store changes — e.g. undo-stack pushes or workpiece
@@ -1037,6 +1074,9 @@ export default function CanvasStage() {
   // the toolbar button and keyboard shortcut fall through to the global path undo.
   const activeTool = useUIStore((s) => s.activeTool)
 
+  // A region preview belongs to one hover session of the Region tool.
+  useEffect(() => { if (activeTool !== 'region') setRegionPreviewD(null) }, [activeTool])
+
   // Clear pen snap feedback whenever the pen tool deactivates (Escape, closing
   // commit, and toolbar switches all reset activeTool to 'select').
   useEffect(() => {
@@ -1433,6 +1473,15 @@ export default function CanvasStage() {
       return
     }
 
+    // Region tool: a click makes a closed path of the area around it. The tool
+    // stays on, so several areas can be picked in a row; Esc leaves it.
+    if (activeTool === 'region') {
+      const stagePointer = stageRef.current?.getPointerPosition()
+      if (stagePointer) pickRegionAt(screenToCNC(stagePointer.x, stagePointer.y, viewportRef.current))
+      setMode2({ type: 'idle' })
+      return
+    }
+
     // Drill tool: capture click for placement in mouseup, don't deselect or start dragbox
     if (activeTool === 'drill') {
       didDragRef.current = false
@@ -1490,7 +1539,7 @@ export default function CanvasStage() {
       setMode2({ type: 'dragbox', startScreen: { x: stagePointer.x, y: stagePointer.y } })
       setDragBox({ sx: stagePointer.x, sy: stagePointer.y, ex: stagePointer.x, ey: stagePointer.y })
     }
-  }, [selectPath, setMode2, startDrawShape, startPenDraw, exitNodeEdit, getFlat,
+  }, [selectPath, setMode2, startDrawShape, startPenDraw, pickRegionAt, exitNodeEdit, getFlat,
       onConstrainClick, bodyOfRef, pickHeldRef, pickHotRef])
 
 
@@ -1850,12 +1899,13 @@ export default function CanvasStage() {
 
     if (m.type === 'idle' && connectSourceRef.current !== null) onMoveConnectPreview(cncMouse, vp)
     if (useUIStore.getState().activeTool === 'constrain') { onMoveConstrainHover(cncMouse, vp); return }
+    if (useUIStore.getState().activeTool === 'region') { onMoveRegionHover(cncMouse); return }
     if (m.type === 'pendraw') onMovePenDraw(m, cncMouse, pointer, vp)
     if (m.type === 'clocklink-drag') { onMoveClockLink(m, cncMouse, e.evt.shiftKey); return }
     if (m.type === 'nodedit-drag' && editDragInitRef.current) onMoveNodeEditDrag(m, cncMouse, e)
   }, [setCursorMM, onMovePan, onMoveTranslate, onMoveResize, onMoveRotate, onMoveDragbox,
       onMoveDrawShape, onMovePenHover, onMoveConnectPreview, onMovePenDraw, onMoveNodeEditDrag,
-      onMoveConstrainHover])
+      onMoveConstrainHover, onMoveRegionHover])
 
   const handleMouseMove = moveBody
 
@@ -2595,6 +2645,7 @@ export default function CanvasStage() {
           <TabLayer viewport={viewport} />
           <SimulationLayer viewport={viewport} />
           <ShapePreviewLayer viewport={viewport} d={liveShapeD} />
+          {activeTool === 'region' && <ShapePreviewLayer viewport={viewport} d={regionPreviewD} />}
           <EscapementAnimLayer viewport={viewport} />
           <GearAnimLayer viewport={viewport} />
           <ClockAnimLayer viewport={viewport} />
@@ -2757,7 +2808,12 @@ export default function CanvasStage() {
             : 'Constrain — click a corner, edge or centre on one part, then a point on another and drag to set the dimensions of the constraint · Esc to exit'}
         </div>
       )}
-      {activeTool !== 'select' && activeTool !== 'drill' && activeTool !== 'pen' && activeTool !== 'constrain' && (
+      {activeTool === 'region' && (
+        <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-blue-600/90 text-white text-body px-3 py-1 rounded-full pointer-events-none">
+          Region — click inside an area the drawn lines enclose to make a closed path of it · Esc to exit
+        </div>
+      )}
+      {activeTool !== 'select' && activeTool !== 'drill' && activeTool !== 'pen' && activeTool !== 'constrain' && activeTool !== 'region' && (
         <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-blue-600/90 text-white text-body px-3 py-1 rounded-full pointer-events-none">
           Drawing {shapeDisplayName(activeTool as ShapeType)} — {SCALE_LOCKED_SHAPES.has(activeTool as ShapeType)
             ? 'click to place at its designed size, Esc to cancel'

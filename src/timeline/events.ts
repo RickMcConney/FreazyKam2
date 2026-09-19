@@ -72,7 +72,7 @@ export function sameOpSettings(a: SerializedOperation, b: SerializedOperation): 
   return true
 }
 
-export type PathsAddSource = 'import' | 'shape' | 'pen' | 'text' | 'duplicate' | 'boolean' | 'offset' | 'pattern' | 'paste'
+export type PathsAddSource = 'import' | 'shape' | 'pen' | 'text' | 'duplicate' | 'boolean' | 'offset' | 'pattern' | 'paste' | 'region'
 
 // What kind of gesture produced a paths.edit event — names the chip and picks
 // its icon. Display metadata only.
@@ -199,6 +199,7 @@ export function labelFor(ev: TimelineEventPayload): string {
         case 'boolean': return 'Boolean'
         case 'offset': return n === 1 ? 'Offset' : `Offset ×${n}`
         case 'pattern': return `Pattern ×${n}`
+        case 'region': return 'Region'
         default: return n === 1 ? 'Path' : `${n} Paths`
       }
     }
