@@ -33,19 +33,18 @@ function polyToD(pts: { x: number; y: number }[], closed: boolean): string {
 }
 
 // DXF arcs go CCW in Y-up space (same as CNC). sweep=1 in CNC d strings = CCW visual.
-function arcToD(cx: number, cy: number, r: number, startDeg: number, endDeg: number): string {
-  const s = (startDeg * Math.PI) / 180
-  const e = (endDeg * Math.PI) / 180
-  const x1 = cx + r * Math.cos(s)
-  const y1 = cy + r * Math.sin(s)
-  const x2 = cx + r * Math.cos(e)
-  const y2 = cy + r * Math.sin(e)
-  let span = endDeg - startDeg
-  if (span <= 0) span += 360
-  const lg = span > 180 ? 1 : 0
-  // If nearly 360°, close the path instead of a degenerate arc
-  if (Math.abs(span - 360) < 0.001) return circleToD(cx, cy, r)
-  return `M${fmt(x1)},${fmt(y1)} A${fmt(r)},${fmt(r)},0,${lg},1,${fmt(x2)},${fmt(y2)}`
+// Angles are RADIANS: the file stores degrees, but dxf-parser converts them.
+// Returns null for a (near-)full circle, which the caller imports as a circle.
+function arcEdge(cx: number, cy: number, r: number, s: number, e: number): Edge | null {
+  let span = e - s
+  if (span <= 0) span += 2 * Math.PI
+  if (Math.abs(span - 2 * Math.PI) < 1e-5) return null
+  return {
+    kind: 'A',
+    x1: cx + r * Math.cos(s), y1: cy + r * Math.sin(s),
+    x2: cx + r * Math.cos(e), y2: cy + r * Math.sin(e),
+    r, large: span > Math.PI ? 1 : 0,
+  }
 }
 
 // Full circle: two semi-arcs. Direction doesn't matter visually; sweep=0 matches SVG importer convention.
@@ -134,99 +133,145 @@ function splineToD(
   return pts.join(' ')
 }
 
-// Chain line segments whose endpoints coincide (within tol mm) into continuous
-// polyline paths. Returns one SVG d string per connected component.
-function stitchLines(
-  segs: { x1: number; y1: number; x2: number; y2: number }[],
-  tol = 0.001,
-): string[] {
-  const n = segs.length
+// One stitchable DXF edge: a LINE, or a partial ARC (CCW from p0 to p1 in CNC
+// Y-up, i.e. sweep=1). Full circles never get here — they are closed already.
+type Edge =
+  | { kind: 'L'; x1: number; y1: number; x2: number; y2: number }
+  | { kind: 'A'; x1: number; y1: number; x2: number; y2: number; r: number; large: 0 | 1 }
+
+// Chain LINE and ARC edges whose endpoints coincide (within tol mm) into
+// continuous paths. Returns one SVG d string per connected component. Arcs must
+// be stitched along with lines: an outline drawn as lines joined by fillet arcs
+// (the usual CAD export) otherwise arrives as a pile of open fragments that
+// can't be pocketed or profiled.
+function stitchEdges(edges: Edge[], tol = 0.001): string[] {
+  const n = edges.length
   if (n === 0) return []
 
-  // Quantised key for endpoint lookup
-  const key = (x: number, y: number) =>
-    `${Math.round(x / tol)},${Math.round(y / tol)}`
-
-  type Adj = { segIdx: number; end: 0 | 1 }
-  const adj = new Map<string, Adj[]>()
-
+  // Endpoint lookup on a tol grid. Lookups scan the 3×3 neighbourhood and then
+  // check the real distance, so two points within tol that round into
+  // adjacent cells still meet.
+  const cell = (v: number) => Math.round(v / tol)
+  type End = { edgeIdx: number; end: 0 | 1; x: number; y: number }
+  const grid = new Map<string, End[]>()
+  const add = (e: End) => {
+    const k = `${cell(e.x)},${cell(e.y)}`
+    let list = grid.get(k)
+    if (!list) grid.set(k, (list = []))
+    list.push(e)
+  }
   for (let i = 0; i < n; i++) {
-    const s = segs[i]
-    const k0 = key(s.x1, s.y1)
-    const k1 = key(s.x2, s.y2)
-    if (!adj.has(k0)) adj.set(k0, [])
-    if (!adj.has(k1)) adj.set(k1, [])
-    adj.get(k0)!.push({ segIdx: i, end: 0 })
-    adj.get(k1)!.push({ segIdx: i, end: 1 })
+    const e = edges[i]
+    add({ edgeIdx: i, end: 0, x: e.x1, y: e.y1 })
+    add({ edgeIdx: i, end: 1, x: e.x2, y: e.y2 })
+  }
+  const used = new Uint8Array(n)
+  // Drop duplicate edges (same kind, radius and endpoints, either direction).
+  // CAD exports sometimes carry an edge drawn twice, and the walk would
+  // otherwise run back along the copy.
+  const seen = new Set<string>()
+  for (let i = 0; i < n; i++) {
+    const e = edges[i]
+    const a = `${cell(e.x1)},${cell(e.y1)}`, b = `${cell(e.x2)},${cell(e.y2)}`
+    // A reversed arc is a different arc, so only lines match in both directions.
+    const k = e.kind === 'L' ? `L|${a < b ? a + '|' + b : b + '|' + a}` : `A|${cell(e.r)}|${e.large}|${a}|${b}`
+    if (seen.has(k)) used[i] = 1
+    else seen.add(k)
+  }
+  const findNext = (x: number, y: number): End | undefined => {
+    const cx = cell(x), cy = cell(y)
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (const e of grid.get(`${cx + dx},${cy + dy}`) ?? []) {
+          if (!used[e.edgeIdx] && Math.abs(e.x - x) <= tol && Math.abs(e.y - y) <= tol) return e
+        }
+      }
+    }
+    return undefined
   }
 
-  const used = new Uint8Array(n)
+  // An edge as walked: `rev` means traversed from its p1 to its p0.
+  type Step = { edgeIdx: number; rev: boolean }
+  const endOf = (s: Step): [number, number] => {
+    const e = edges[s.edgeIdx]
+    return s.rev ? [e.x1, e.y1] : [e.x2, e.y2]
+  }
+  const startOf = (s: Step): [number, number] => {
+    const e = edges[s.edgeIdx]
+    return s.rev ? [e.x2, e.y2] : [e.x1, e.y1]
+  }
+
   const result: string[] = []
 
   for (let si = 0; si < n; si++) {
     if (used[si]) continue
     used[si] = 1
-    const seg = segs[si]
 
-    // Walk forward from p1
-    const fwd: [number, number][] = [[seg.x2, seg.y2]]
-    let cx = seg.x2, cy = seg.y2
+    // Walk forward from p1, stopping once the chain is back at its start —
+    // otherwise a third edge meeting there would be walked onto a closed loop.
+    const fwd: Step[] = [{ edgeIdx: si, rev: false }]
+    const [sx, sy] = startOf(fwd[0])
+    let looped = false
     for (;;) {
-      const nb = (adj.get(key(cx, cy)) ?? []).find(nb => !used[nb.segIdx])
+      const [x, y] = endOf(fwd[fwd.length - 1])
+      if (Math.abs(x - sx) <= tol && Math.abs(y - sy) <= tol) { looped = true; break }
+      const nb = findNext(x, y)
       if (!nb) break
-      used[nb.segIdx] = 1
-      const s = segs[nb.segIdx]
-      if (nb.end === 0) { cx = s.x2; cy = s.y2 }
-      else              { cx = s.x1; cy = s.y1 }
-      fwd.push([cx, cy])
+      used[nb.edgeIdx] = 1
+      fwd.push({ edgeIdx: nb.edgeIdx, rev: nb.end === 1 })
     }
-
-    // Walk backward from p0
-    const bwd: [number, number][] = [[seg.x1, seg.y1]]
-    cx = seg.x1; cy = seg.y1
-    for (;;) {
-      const nb = (adj.get(key(cx, cy)) ?? []).find(nb => !used[nb.segIdx])
+    // Walk backward from p0 (each step found is traversed toward the chain start)
+    const bwd: Step[] = []
+    while (!looped) {
+      const [x, y] = bwd.length ? startOf(bwd[bwd.length - 1]) : startOf(fwd[0])
+      const nb = findNext(x, y)
       if (!nb) break
-      used[nb.segIdx] = 1
-      const s = segs[nb.segIdx]
-      if (nb.end === 0) { cx = s.x2; cy = s.y2 }
-      else              { cx = s.x1; cy = s.y1 }
-      bwd.push([cx, cy])
+      used[nb.edgeIdx] = 1
+      bwd.push({ edgeIdx: nb.edgeIdx, rev: nb.end === 0 })
     }
+    const steps = [...bwd.reverse(), ...fwd]
 
-    // Full chain: reverse(bwd) + fwd
-    let pts: [number, number][] = [...bwd.reverse(), ...fwd]
-    if (pts.length < 2) continue
+    const [fx, fy] = startOf(steps[0])
+    const [lx, ly] = endOf(steps[steps.length - 1])
+    const closed = Math.abs(fx - lx) <= tol && Math.abs(fy - ly) <= tol
 
-    const [fx, fy] = pts[0]
-    const [lx, ly] = pts[pts.length - 1]
-    const closed = Math.abs(fx - lx) < tol && Math.abs(fy - ly) < tol
-
-    const beforeCount = pts.length
-
-    // Simplify dense line-segment approximations (e.g. involute gear profiles
-    // from DXF generators that emit 0.02–0.05 mm segments). Tolerance 0.01 mm
-    // is well within CNC accuracy and preserves all real corners.
-    if (pts.length > 4) {
-      if (closed) {
-        // Open the polygon, simplify, restore the closure
-        const open = [...pts, pts[0]]
-        const sim = douglasPeucker(open, 0.01) as [number, number][]
-        sim.pop()
-        if (sim.length >= 2) pts = sim
-      } else {
+    // Emit. Runs of consecutive lines are simplified — dense line-segment
+    // approximations (e.g. involute gear profiles from DXF generators that emit
+    // 0.02–0.05 mm segments) collapse at 0.01 mm, well within CNC accuracy and
+    // preserving all real corners. Arcs are emitted exactly.
+    let d = `M${fmt(fx)},${fmt(fy)}`
+    let run: [number, number][] = [[fx, fy]]
+    let pointCount = 1
+    const flushRun = (isLast: boolean) => {
+      if (run.length < 2) return
+      let pts = run
+      const allLinesClosed = closed && isLast && steps.every((s) => edges[s.edgeIdx].kind === 'L')
+      if (pts.length > 4) {
         const sim = douglasPeucker(pts, 0.01) as [number, number][]
         if (sim.length >= 2) pts = sim
       }
+      // A closed all-line chain ends with Z, which draws the last segment itself.
+      const stop = allLinesClosed ? pts.length - 1 : pts.length
+      for (let i = 1; i < stop; i++) d += ` L${fmt(pts[i][0])},${fmt(pts[i][1])}`
+      pointCount += stop - 1
     }
-
-    perfLog(`[dxfImporter] chain ${result.length + 1}: ${beforeCount} pts → ${pts.length} pts (closed=${closed})`)
-
-    let d = `M${fmt(pts[0][0])},${fmt(pts[0][1])}`
-    const end = closed ? pts.length - 1 : pts.length
-    for (let i = 1; i < end; i++) d += ` L${fmt(pts[i][0])},${fmt(pts[i][1])}`
+    for (const s of steps) {
+      const e = edges[s.edgeIdx]
+      const [ex, ey] = endOf(s)
+      if (e.kind === 'L') {
+        run.push([ex, ey])
+      } else {
+        flushRun(false)
+        // Reversing an arc flips its direction; the large-arc flag is unchanged.
+        d += ` A${fmt(e.r)},${fmt(e.r)},0,${e.large},${s.rev ? 0 : 1},${fmt(ex)},${fmt(ey)}`
+        pointCount++
+        run = [[ex, ey]]
+      }
+    }
+    flushRun(true)
     if (closed) d += ' Z'
 
+    perfLog(`[dxfImporter] chain ${result.length + 1}: ${steps.length} edges → ${pointCount} pts (closed=${closed})`)
     result.push(d)
   }
 
@@ -278,8 +323,8 @@ export function importDxf(
   const paths: ImportedPath[] = []
   const entities = dxf.entities ?? []
 
-  // LINE segments collected for stitching into connected polylines
-  const lineSegs: { x1: number; y1: number; x2: number; y2: number }[] = []
+  // LINE and partial ARC edges collected for stitching into connected paths
+  const edges: Edge[] = []
 
   for (const entity of entities) {
     let d = ''
@@ -295,8 +340,8 @@ export function importDxf(
           if (!p0 || !p1) continue
           // Skip zero-length segments
           if (Math.abs(p0.x - p1.x) < 1e-9 && Math.abs(p0.y - p1.y) < 1e-9) continue
-          lineSegs.push({ x1: sc(p0.x), y1: sc(p0.y), x2: sc(p1.x), y2: sc(p1.y) })
-          continue  // handled via stitchLines below
+          edges.push({ kind: 'L', x1: sc(p0.x), y1: sc(p0.y), x2: sc(p1.x), y2: sc(p1.y) })
+          continue  // handled via stitchEdges below
         }
         case 'LWPOLYLINE': {
           const e = entity as import('dxf-parser').LwpolylineEntity
@@ -314,8 +359,10 @@ export function importDxf(
         }
         case 'ARC': {
           const e = entity as import('dxf-parser').ArcEntity
-          d = arcToD(sc(e.center.x), sc(e.center.y), sc(e.radius), e.startAngle, e.endAngle)
-          name = 'Arc'
+          const edge = arcEdge(sc(e.center.x), sc(e.center.y), sc(e.radius), e.startAngle, e.endAngle)
+          if (edge) { edges.push(edge); continue }  // handled via stitchEdges below
+          d = circleToD(sc(e.center.x), sc(e.center.y), sc(e.radius))
+          name = 'Circle'
           break
         }
         case 'CIRCLE': {
@@ -364,8 +411,8 @@ export function importDxf(
     })
   }
 
-  // Stitch collected LINE segments into connected polylines
-  for (const d of stitchLines(lineSegs)) {
+  // Stitch collected LINE and ARC edges into connected paths
+  for (const d of stitchEdges(edges)) {
     paths.push({
       id: uid('dxf-path'),
       name: `Path ${++_pathCounter}`,

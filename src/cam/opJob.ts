@@ -28,6 +28,20 @@ import type { PocketNote } from './pocket'
 // construction, what the operation says — which is what an automatic regenerate, an
 // export check and the undo history all assume.
 
+/**
+ * The worker key an inlay job runs under: ONE key for both halves of a linked pair.
+ *
+ * One generation produces both phases and writes BOTH ops (below). The pool serializes jobs
+ * per key so a newer generation always lands after an older one — but keyed by the op id,
+ * that held for the half that was asked for and not for the one written alongside it. A
+ * stale generation of one half could finish after a fresh one of the other and write old
+ * settings over both, marked done. Sharing the key puts every generation of the pair in one
+ * queue. Pinned by `npx vite-node scripts/inlay-pair-race.mts`.
+ */
+export function inlayJobKey(op: { id: string; linkedOpId?: string }): string {
+  return op.linkedOpId ? `inlay-pair:${[op.id, op.linkedOpId].sort()[0]}` : op.id
+}
+
 export interface GenerateOverrides {
   /** Alt-click on PocketForm: run the chosen strategy on a shape it would decline. Not a
    *  setting — an override of a measured verdict for this one Generate. */
@@ -68,6 +82,11 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
   const startZMM = resolveStartZForOp(
     op, operations, paths, { widthMM: stockW, heightMM: stockH }, tools,
   ).zMM
+  // What these segments are built from, captured NOW — before the worker is awaited — and
+  // handed to setSegments as the stamp. Stamping at write time instead recorded whatever
+  // the other operations said by then, so a floor that moved during the generation was
+  // written over segments cut from the old one (see setSegments).
+  const builtWith = { entryHint: op.entryHint, safeHeightMM, startZMM }
 
   const _t0 = performance.now()
 
@@ -79,7 +98,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       startNear: op.entryHint, rampIn: op.rampIn, safeHeightMM,
       allowanceMM: op.allowanceMM,
       startZMM,
-    }, tabsForGeneration(op.pathId)))
+    }, tabsForGeneration(op.pathId)), builtWith)
 
   } else if (op.type === 'pocket') {
     const boundary = paths.find((p) => p.id === op.pathId)
@@ -98,7 +117,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       safeHeightMM,
       ...(overrides.forceStrategy ? { forceStrategy: true } : {}),
     })
-    setSegments(opId, pocket.segments)
+    setSegments(opId, pocket.segments, builtWith)
     notes.push(...pocket.notes)
 
   } else if (op.type === 'drill') {
@@ -130,7 +149,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       setSegments(opId, generateHelicalDrills(holes, tool, {
         depthMM: op.depthMM, stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM),
         startNear: op.entryHint, safeHeightMM, startZMM,
-      }))
+      }), builtWith)
     } else {
       // Derived, but NOT written back: `points` is the recorded payload of a
       // clicked-points peck op, so it stays out of DERIVED_OP_KEYS and writing it
@@ -140,7 +159,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       const points = circles.length > 0 ? circles.map((c) => ({ x: c.cx, y: c.cy })) : op.points
       setSegments(opId, generatePeckDrill(points, tool, {
         depthMM: op.depthMM, stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM), startNear: op.entryHint, safeHeightMM, startZMM,
-      }))
+      }), builtWith)
     }
 
   } else if (op.type === 'surface') {
@@ -149,7 +168,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       depthMM: op.depthMM, stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM),
       stepoverPercent: op.stepoverPercent, passAngleDeg: op.passAngleDeg,
       safeHeightMM,
-    }))
+    }), builtWith)
 
   } else if (op.type === 'vcarve') {
     const path = paths.find((p) => p.id === op.pathId)
@@ -165,7 +184,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
     setSegments(opId, await runInWorkerFor(opId, 'generateVCarve', path.d, tool, {
       angleDeg: op.angleDeg, maxDepthMM: op.maxDepthMM + zStartMM, zStartMM, islandDs,
       startNear: op.entryHint, safeHeightMM,
-    }))
+    }), builtWith)
 
   } else if (op.type === 'photovcarve') {
     const imgPath = paths.find((p) => p.id === op.pathId)
@@ -181,7 +200,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       // Depths are relative to the surface the photo is carved into, so a picture in a
       // pocket floor cuts the same greyscale band there that it would on bare stock.
       minDepthMM: op.minDepthMM, maxDepthMM: op.maxDepthMM, zStartMM: startZMM, safeHeightMM,
-    }))
+    }), builtWith)
 
   } else if (op.type === 'profile3d') {
     const stlPath = paths.find((p) => p.id === op.pathId)
@@ -191,22 +210,27 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
     const { positions, indices } = decodeStlMesh(stlPath.stlSrc)
     const cncBbox = getBBox(stlPath.d)
     if (!cncBbox) throw new Error('Could not read the STL outline — the model may be empty')
-    const roughingTool = op.roughingToolId ? tools.find((t) => t.id === op.roughingToolId) : undefined
+    // Roughing runs only with a ball nose (the generator models the rougher as a sphere).
+    // A rough tool since deleted or retyped in the library is simply no roughing pass —
+    // and then no roughing id either, so nothing downstream announces a tool that never
+    // cuts. The G-code reads the handover from the segments anyway (initialToolId).
+    const roughCandidate = op.roughingToolId ? tools.find((t) => t.id === op.roughingToolId) : undefined
+    const roughingTool = roughCandidate?.type === 'ballnose' ? roughCandidate : undefined
     setSegments(opId, await runInWorkerFor(opId, 'generateProfile3d', positions, indices, stlPath.stlModelBounds, cncBbox, tool, {
       stepoverPercent: op.stepoverPercent,
       rasterAngleDeg: op.rasterAngleDeg,
       maxDepthMM: op.maxDepthMM,
-      roughingBallRadius: roughingTool?.type === 'ballnose' ? roughingTool.diameterMM / 2 : undefined,
+      roughingBallRadius: roughingTool ? roughingTool.diameterMM / 2 : undefined,
       roughingStepoverPercent: op.roughingStepoverPercent,
       roughingStepDownMM: roughingTool != null && op.roughingStepDownMM != null
         ? effectiveStepDownMM(roughingTool, op.roughingStepDownMM, op.maxDepthMM)
         : op.roughingStepDownMM,
       roughingStockAllowanceMM: op.roughingStockAllowanceMM,
       roughingRasterAngleDeg: op.roughingRasterAngleDeg,
-      roughingToolId: op.roughingToolId,
+      roughingToolId: roughingTool?.id,
       finishingToolId: op.toolId,
       safeHeightMM,
-    }))
+    }), builtWith)
 
   } else if (op.type === 'trochoidal') {
     const path = paths.find((p) => p.id === op.pathId)
@@ -216,7 +240,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM, trochoidalEngagementFraction(tool, op.trochStepMM)),
       direction: op.direction, trochStepMM: op.trochStepMM, trochRadiusMM: op.trochRadiusMM,
       finishingPass: op.finishingPass, rampIn: op.rampIn, startNear: op.entryHint, safeHeightMM,
-    }, tabsForGeneration(op.pathId)))
+    }, tabsForGeneration(op.pathId)), builtWith)
 
   } else if (op.type === 'inlay') {
     const path = paths.find((p) => p.id === op.pathId)
@@ -253,14 +277,22 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       }),
       safeHeightMM,
     }
+    // The linked half is built by this same call, so its stamp is taken now as well.
+    const linkedAtStart = op.linkedOpId ? operations.find((o) => o.id === op.linkedOpId) : undefined
+    const linkedBuiltWith = {
+      entryHint: linkedAtStart?.entryHint, safeHeightMM,
+      startZMM: linkedAtStart
+        ? resolveStartZForOp(linkedAtStart, operations, paths, { widthMM: stockW, heightMM: stockH }, tools).zMM
+        : 0,
+    }
     const result = op.role === 'female'
-      ? await runInWorkerFor(opId, 'generateInlayFemale', path.d, pocketTool, vbitTool, inlayParams)
-      : await runInWorkerFor(opId, 'generateInlayMale', path.d, pocketTool, vbitTool, inlayParams)
-    setSegments(opId, op.phase === 'vbit' ? result.vbitSegs : result.endmillSegs)
+      ? await runInWorkerFor(inlayJobKey(op), 'generateInlayFemale', path.d, pocketTool, vbitTool, inlayParams)
+      : await runInWorkerFor(inlayJobKey(op), 'generateInlayMale', path.d, pocketTool, vbitTool, inlayParams)
+    setSegments(opId, op.phase === 'vbit' ? result.vbitSegs : result.endmillSegs, builtWith)
     if (op.linkedOpId) {
       const linkedOp = useToolpathStore.getState().operations.find((o) => o.id === op.linkedOpId)
       if (linkedOp?.type === 'inlay') {
-        setSegments(op.linkedOpId, op.phase === 'vbit' ? result.endmillSegs : result.vbitSegs)
+        setSegments(op.linkedOpId, op.phase === 'vbit' ? result.endmillSegs : result.vbitSegs, linkedBuiltWith)
       }
     }
   }

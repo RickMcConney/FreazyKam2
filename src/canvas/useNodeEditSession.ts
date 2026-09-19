@@ -3,6 +3,7 @@ import { useRefState } from './useRefState'
 import { pushLocalHistory } from './localHistory'
 import { usePathsStore } from '../store/pathsStore'
 import { useTimelineStore } from '../timeline/timelineStore'
+import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import { regenerateAffected } from '../cam/regenerate'
 import { parseDToNodes, nodesToD, type PathNode } from './nodeUtils'
@@ -161,6 +162,8 @@ export function useNodeEditSession() {
   const [editClosed, editClosedRef, setEditClosed] = useRefState(false)
 
   const prevNodeEditPathIdRef = useRef<string | null>(null)
+  // The document the session was opened in (projectStore.documentEpoch).
+  const sessionEpochRef = useRef(0)
   const editDragInitRef = useRef<{ initialNodes: PathNode[]; startCNC: { x: number; y: number } } | null>(null)
   const [hoveredEditNode, hoveredEditNodeRef, setHoveredEditNode] = useRefState<number | null>(null)
   const [dragNodeIdx, setDragNodeIdx] = useState<number | null>(null)
@@ -262,8 +265,14 @@ export function useNodeEditSession() {
     localPast.current = []
     localFuture.current = []
     if (!nodeEditPathId) {
-      // Commit using the captured id — nodeEditPathId is already null in the store at this point
-      if (prevId) commitEditNodes(prevId, editNodesRef.current)
+      // Commit using the captured id — nodeEditPathId is already null in the store at this
+      // point. NOT if the document was swapped while the session was open: this effect runs
+      // after the load has installed the new paths, and reopening the same file (or an
+      // autosave restore) brings back the same ids, so the old session's nodes would be
+      // written over the freshly loaded path. The session is abandoned instead.
+      if (prevId && sessionEpochRef.current === useProjectStore.getState().documentEpoch) {
+        commitEditNodes(prevId, editNodesRef.current)
+      }
       setEditNodes([])
       setEditClosed(false)
       clearConnectState()
@@ -271,6 +280,7 @@ export function useNodeEditSession() {
       useUIStore.getState().setNodeEditHistoryFlags(false, false)
       return
     }
+    sessionEpochRef.current = useProjectStore.getState().documentEpoch
     const path = usePathsStore.getState().paths.find((p) => p.id === nodeEditPathId)
     if (!path) { setEditNodes([]); return }
     const { nodes, closed } = parseDToNodes(path.d)

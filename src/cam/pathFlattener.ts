@@ -94,6 +94,12 @@ function arcFlat(
   pts: Pt2[],
   tol: number
 ) {
+  // A zero radius makes the arc a straight line to its endpoint (SVG implementation notes
+  // F.6.2). The centre arithmetic below divides by the radii, so without this every point
+  // of it came out NaN — and a NaN vertex poisons whatever consumes the ring (offsets,
+  // areas, containment). Pushed even for a zero-length arc, exactly as pathExtents counts
+  // it, so the two still agree on which subpaths hold two points.
+  if (rx === 0 || ry === 0) { pts.push([x1, y1]); return }
   const a = arcCenter(x0, y0, rx, ry, phi, largeArc, sweep, x1, y1)
   if (!a) return
   const { cx, cy, rxA, ryA, cosP, sinP, theta1, dTheta } = a
@@ -231,9 +237,8 @@ const TAU = 2 * Math.PI
  *
  * The bookkeeping MIRRORS flattenPath — same tokeniser, same S/T reflection, same rule
  * that a subpath counts only once it holds two points, same closing point on Z — so the
- * two always describe the same geometry and differ only by the flattening error. The one
- * deliberate difference: an arc with a zero radius is a straight line (SVG spec), where
- * flattenPath's arithmetic emits NaN.
+ * two always describe the same geometry and differ only by the flattening error. Both read an
+ * arc with a zero radius as a straight line to its endpoint (SVG spec).
  */
 export function pathExtents(d: string): [number, number, number, number] | null {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity

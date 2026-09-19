@@ -73,8 +73,9 @@ export const useTabStore = create<TabState>()((set, get) => ({
     }
 
     set({ tabs: [...existing, ...newTabs] })
-    // Tab edits are in-place: a path's Tabs chip holds its CURRENT tabs. The
-    // first apply records the chip; later applies/moves/deletes amend it.
+    // Tab edits are in-place while the path's Tabs chip is the LATEST one: it then holds
+    // the CURRENT tabs. Once anything has been recorded after it, an edit records its own
+    // chip — it needs its own undo step (see tipIndex in timelineStore).
     const tl = useTimelineStore.getState()
     if (!tl.amendTabsForPath(pathId, newTabs)) {
       tl.record({ kind: 'tabs.apply', pathId, tabs: newTabs })

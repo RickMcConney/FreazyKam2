@@ -71,8 +71,36 @@ function opDesc(op: AnyOperation): string {
   return ''
 }
 
+/**
+ * The tool an operation's motion STARTS with.
+ *
+ * Only a 3D profile names two tools, and naming a roughing tool is not the same as having
+ * a roughing pass: the generator only roughs with a ball nose, and the op keeps the id
+ * whatever the library later does to that tool (its type changed, or deleted). So the
+ * SEGMENTS decide — a `toolChange` marker is the handover out of a roughing pass that was
+ * actually generated, and without one every segment belongs to the finishing tool.
+ * Trusting the id instead ran the whole finish raster under the roughing tool's header and
+ * spindle speed, and the split export filed it under a tool that got no file at all.
+ */
+export function initialToolId(op: AnyOperation): string {
+  return op.type === 'profile3d' && op.roughingToolId && op.segments.some((s) => s.toolChange)
+    ? op.roughingToolId
+    : op.toolId
+}
+
 function toOut(mm: number, profile: PostProcessorProfile): number {
   return profile.unitMode === 'in' ? mm / MM_PER_IN : mm
+}
+
+// The F word, in the post's units. Whole mm/min — a 1 mm/min step is far below anything a
+// hobby machine resolves — but TWO decimals of in/min, because a whole in/min is 25.4 mm/min:
+// rounding to it sent a 10 mm/min plunge out as F0 (which Grbl rejects as an undefined
+// feed) and a 20 mm/min one as F1, 27 % fast, exactly on the small tools that are fed that
+// slowly because they break. Floored at one unit of the last digit for the same reason — a
+// feedScale slow-down or a zero stored feed must never reach the controller as F0.
+function fmtFeed(feedMm: number, profile: PostProcessorProfile): string {
+  if (profile.unitMode === 'in') return String(Math.max(0.01, Math.round(feedMm / MM_PER_IN * 100) / 100))
+  return String(Math.max(1, Math.round(feedMm)))
 }
 
 // Tolerance (mm) between the original chords and a fitted arc. Matches the value
@@ -248,8 +276,9 @@ export function generateGcode(
     const finishTool = toolsById[op.toolId]
     if (!finishTool) continue
 
-    // For profile3d ops with a roughing tool, the first tool is the roughing endmill.
-    const roughingToolId = op.type === 'profile3d' ? op.roughingToolId : undefined
+    // For profile3d ops that actually rough, the first tool is the roughing ball nose.
+    const startToolId = initialToolId(op)
+    const roughingToolId = startToolId !== op.toolId ? startToolId : undefined
     const roughTool = roughingToolId ? toolsById[roughingToolId] : null
     const firstTool = roughTool || finishTool
     const firstToolId = roughTool ? roughingToolId! : op.toolId
@@ -322,6 +351,20 @@ export function generateGcode(
 
       // Tool-change marker: emit tool-change gcode, update current tool, no movement
       if (seg.toolChange) {
+        // The marker is a POSITION as well as a change: the safe-Z point the old tool
+        // leaves from. It used to be skipped (only prev* updated), so the program stopped
+        // the spindle and paused for the swap wherever the last cut left the tool — still in
+        // the stock — and the new tool's first rapid then ran diagonally out of the cut.
+        // Lift there FIRST, with the old tool still in, then change.
+        if (seg.x !== prevX || seg.y !== prevY || seg.z !== prevZ) {
+          const xn = rnd(toOut(seg.x - org.x, profile))
+          const yn = rnd(toOut(seg.y - org.y, profile))
+          const zn = rnd(toOut(seg.z + zOff, profile))
+          lines.push(sub(profile.rapidTemplate, {
+            x: xn.toFixed(coordDecimals), y: yn.toFixed(coordDecimals), z: zn.toFixed(coordDecimals),
+          }))
+          emitX = xn; emitY = yn
+        }
         const newTool = toolsById[seg.toolChange]
         if (newTool && seg.toolChange !== lastToolId) {
           if (profile.toolChangeGcode.trim()) lines.push(...profile.toolChangeGcode.split('\n'))
@@ -381,7 +424,7 @@ export function generateGcode(
       } else if (seg.arc && profile.outputArcs && arcOk) {
         const isHelical = seg.z !== prevZ
         const feedMm = (isHelical || currentTool.xyFeedMmMin === 0) ? currentFeeds.plungeMmMin : currentFeeds.xyFeedMmMin
-        const feed = Math.round(toOut(feedMm, profile))
+        const feed = fmtFeed(feedMm, profile)
         const template = seg.arc.cw ? profile.arcCWTemplate : profile.arcCCWTemplate
         lines.push(sub(template, { x, y, z, i: ii, j: jj, f: feed }))
       } else if (seg.arc) {
@@ -409,7 +452,7 @@ export function generateGcode(
         // chords, or it plunges a full step-down per rev at cutting feed.
         const isHelical = seg.z !== prevZ
         const feedMm = (isHelical || currentTool.xyFeedMmMin === 0) ? currentFeeds.plungeMmMin : currentFeeds.xyFeedMmMin
-        const feed = Math.round(toOut(feedMm, profile))
+        const feed = fmtFeed(feedMm, profile)
         for (let k = 1; k <= steps; k++) {
           const t = k / steps
           const a = a0 + (a1 - a0) * t
@@ -435,7 +478,7 @@ export function generateGcode(
         const feedMm = isPlunge ? currentFeeds.plungeMmMin
           : seg.travel ? currentFeeds.xyFeedMmMin * TRAVEL_FEED_FACTOR
           : currentFeeds.xyFeedMmMin
-        const feed = Math.round(toOut(feedMm * (seg.feedScale ?? 1), profile))
+        const feed = fmtFeed(feedMm * (seg.feedScale ?? 1), profile)
         lines.push(sub(profile.cutTemplate, { x, y, z, f: feed }))
       }
 
@@ -480,7 +523,7 @@ export interface SplitGcodeFile {
 // the active tool (it flips at each `toolChange` marker — e.g. a 3D-profile op goes
 // roughing-tool → finishing-tool), so each tool gets exactly its own motion.
 function segmentsForTool(op: AnyOperation, toolId: string): MotionSegment[] {
-  let current = op.type === 'profile3d' && op.roughingToolId ? op.roughingToolId : op.toolId
+  let current = initialToolId(op)
   const out: MotionSegment[] = []
   for (const s of op.segments) {
     if (s.toolChange) {
@@ -521,8 +564,9 @@ export function generateGcodePerTool(
   const orderedToolIds: string[] = []
   for (const op of operations) {
     if (!op.visible || op.status !== 'done' || op.type === 'gcode' || op.segments.length === 0) continue
-    if (op.type === 'profile3d' && op.roughingToolId && toolsById[op.roughingToolId] && !orderedToolIds.includes(op.roughingToolId)) {
-      orderedToolIds.push(op.roughingToolId)
+    const startToolId = initialToolId(op)
+    if (startToolId !== op.toolId && toolsById[startToolId] && !orderedToolIds.includes(startToolId)) {
+      orderedToolIds.push(startToolId)
     }
     if (toolsById[op.toolId] && !orderedToolIds.includes(op.toolId)) orderedToolIds.push(op.toolId)
   }

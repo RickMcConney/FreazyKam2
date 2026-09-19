@@ -23,6 +23,9 @@ export interface MotionSegment {
   feedScale?: number   // multiplier applied to computed feed rate (default 1.0)
 }
 
+/** The inputs a set of segments was generated from — see BaseOperation.generatedWith. */
+export type GeneratedWith = { entryHint?: { x: number; y: number }; safeHeightMM: number; startZMM?: number }
+
 interface DrillPoint {
   x: number
   y: number
@@ -47,15 +50,14 @@ interface BaseOperation {
   startFrom?: StartFrom
   entryHint?: { x: number; y: number }
   // The generation inputs the CURRENT segments were actually built from, stamped by
-  // optimizeStartPoints after it regenerates. It exists so a simulate or export can tell
-  // whether regenerating would change anything at all.
+  // setSegments. It exists so a simulate or export can tell whether regenerating would
+  // change anything at all, and so revalidateStartHeights can tell an op whose floor moved.
   //
   // `entryHint` alone can't answer that: generating from a form ignores the hint, so the
   // stored hint outlives the segments it produced. `safeHeightMM` is here because it is
   // the one setting outside the operation that changes what generation emits, and nothing
-  // marks operations stale for it. Cleared by setSegments, so every other generation path
-  // invalidates it.
-  generatedWith?: { entryHint?: { x: number; y: number }; safeHeightMM: number; startZMM?: number }
+  // marks operations stale for it.
+  generatedWith?: GeneratedWith
 }
 
 export interface ProfileOperation extends BaseOperation {
@@ -249,7 +251,8 @@ interface ToolpathState {
   // Swap one generated set of operations for another in a single timeline entry. A form
   // re-Generating with a different grouping (PocketForm's Invert Pocket) is revising the
   // call it already made, not deleting one thing and creating another — so it amends the
-  // op.add chip that defined `anchorId` rather than appending delete + add chips.
+  // op.add chip that defined `anchorId` when that is the latest chip, and otherwise
+  // records ONE chip (see recordOpReplacement). Either way it is one undo step.
   replaceGeneratedOperations: (args: { anchorId: string; deleteIds: string[]; add: AddPayload[] }) => string[]
   // Add paths to / remove paths from the set one Generate click covers. The unit that
   // HAS a path list is the BATCH, not the operation: a profile and a drill each hold a
@@ -261,7 +264,7 @@ interface ToolpathState {
   // the job. Amends the op.add that defined the batch, for the same reason a depth edit
   // does: it is an argument to the call already made, not a second call.
   reviseBatchPaths: (args: { anchorId: string; deleteIds: string[]; add: AddPayload[] }) => string[]
-  setSegments: (id: string, segments: MotionSegment[]) => void
+  setSegments: (id: string, segments: MotionSegment[], builtWith?: GeneratedWith) => void
   setError: (id: string, error: string) => void
   // Settles operations whose generation was abandoned (see workers/abortGeneration).
   // 'needs-update' rather than 'error': the user stopped it, nothing went wrong, and the
@@ -362,6 +365,27 @@ function startZOf(op: AnyOperation, ops: AnyOperation[]): number {
   ).zMM
 }
 
+// Record a Generate that REPLACED some of an op set: amend the chip that defined the set
+// when it is the tip one (see tipIndex in timelineStore), else record ONE chip. One gesture
+// is one undo step — this used to record an op.delete and then an op.add, and since both
+// snapshots are taken after the whole change, the first undo landed on a state identical to
+// the live one and did nothing. The chip is named for what the gesture produced; with
+// nothing produced it is the delete.
+function recordOpReplacement(anchorId: string, deleteIds: string[], created: AnyOperation[]): void {
+  const tl = useTimelineStore.getState()
+  if (tl.amendOpAddEvent(anchorId, { removeIds: deleteIds, add: created.map(serializeOp) })) return
+  if (created.length > 0) {
+    const [first, ...rest] = created
+    tl.record({
+      kind: 'op.add',
+      op: serializeOp(first),
+      ...(rest.length > 0 ? { linked: rest.map(serializeOp) } : {}),
+    })
+  } else if (deleteIds.length > 0) {
+    tl.record({ kind: 'op.delete', opIds: deleteIds })
+  }
+}
+
 export const useToolpathStore = create<ToolpathState>()((set, get) => ({
   operations: [],
 
@@ -396,9 +420,10 @@ export const useToolpathStore = create<ToolpathState>()((set, get) => ({
     const recordable = { ...updates } as Record<string, unknown>
     for (const k of DERIVED_OP_KEYS) delete recordable[k]
     if (Object.keys(recordable).length > 0) {
-      // Settings edits amend the op's defining chip (usually its op.add) —
-      // changing a pocket's depth is an argument edit to that call, not a new
-      // timeline entry. Fallback records normally if no definer exists.
+      // Settings edits amend the op's defining chip (usually its op.add) while it is the
+      // latest chip — changing a just-made pocket's depth is an argument edit to that
+      // call. An op defined further back gets an op.update chip of its own, so the edit
+      // is its own undo step (see tipIndex in timelineStore).
       const tl = useTimelineStore.getState()
       if (!tl.amendOpSettings(id, recordable as Partial<SerializedOperation>)) {
         tl.record({ kind: 'op.update', opId: id, opType, updates: recordable as Partial<SerializedOperation> })
@@ -443,20 +468,7 @@ export const useToolpathStore = create<ToolpathState>()((set, get) => ({
     set((s) => ({
       operations: [...s.operations.filter((o) => !remove.has(o.id)), ...created],
     }))
-    const tl = useTimelineStore.getState()
-    if (!tl.amendOpAddEvent(anchorId, { removeIds: deleteIds, add: created.map(serializeOp) })) {
-      // No defining chip to amend (loaded or compacted project): record it plainly. Two
-      // entries, but correct — better than a chip that replay can't reproduce.
-      if (deleteIds.length > 0) tl.record({ kind: 'op.delete', opIds: deleteIds })
-      if (created.length > 0) {
-        const [first, ...rest] = created
-        tl.record({
-          kind: 'op.add',
-          op: serializeOp(first),
-          ...(rest.length > 0 ? { linked: rest.map(serializeOp) } : {}),
-        })
-      }
-    }
+    recordOpReplacement(anchorId, deleteIds, created)
     get().revalidateStartHeights()
     return created.map((o) => o.id)
   },
@@ -495,42 +507,45 @@ export const useToolpathStore = create<ToolpathState>()((set, get) => ({
       }
       return { operations: out }
     })
-    const tl = useTimelineStore.getState()
-    if (!tl.amendOpAddEvent(anchorId, { removeIds: deleteIds, add: created.map(serializeOp) })) {
-      // No defining chip to amend (loaded or compacted project) — see above.
-      if (deleteIds.length > 0) tl.record({ kind: 'op.delete', opIds: deleteIds })
-      if (created.length > 0) {
-        const [first, ...rest] = created
-        tl.record({
-          kind: 'op.add',
-          op: serializeOp(first),
-          ...(rest.length > 0 ? { linked: rest.map(serializeOp) } : {}),
-        })
-      }
-    }
+    recordOpReplacement(anchorId, deleteIds, created)
     get().revalidateStartHeights()
     return created.map((o) => o.id)
   },
 
-  // Stamps `generatedWith` with the inputs these segments were built from: the operation's
-  // entry hint, which the caller sets BEFORE generating (see entryHintAt), and the current
-  // safe height. Getting this stamp right is what lets a simulate or export skip work —
-  // without it a freshly generated operation looks "unknown" and is regenerated once for
-  // nothing. A caller that generates without applying op.entryHint must clear it first.
-  setSegments: (id, segments) => {
+  // Stamps `generatedWith` with the inputs these segments were built from. Getting this
+  // stamp right is what lets a simulate or export skip work — without it a freshly
+  // generated operation looks "unknown" and is regenerated once for nothing — and what lets
+  // revalidateStartHeights see that an op's floor has moved.
+  //
+  // A generator passes `builtWith`: the inputs it READ, before it awaited the worker. The
+  // stamp used to be taken here, at write time, and a generation takes seconds. If an
+  // earlier op's depth, the order or a path changed meanwhile, revalidateStartHeights
+  // skipped this op (it was still `generating`) and then this stamped the NEW start height
+  // onto segments cut from the OLD one — marked done, agreeing with every later check,
+  // including the export backstop, so the stale toolpath was exported. With the true stamp,
+  // an op whose floor moved while it ran is flagged here, exactly as revalidateStartHeights
+  // would have flagged it had it been idle. Pinned by `npx vite-node scripts/startz-race.mts`.
+  //
+  // Without `builtWith` (an imported program, which has no inputs to drift from) the stamp
+  // is the current state, as before. A caller that generates without applying op.entryHint
+  // must clear it first.
+  setSegments: (id, segments, builtWith) => {
     const cur = get().operations.find((o) => o.id === id)
-    const generatedWith = {
+    // The surface these segments are cut from NOW. Recorded because it is derived from the
+    // OTHER operations: reorder them, or change the depth of one, and this op's start
+    // height silently becomes something else. Comparing the two is the only way to know.
+    const startZNow = cur ? startZOf(cur, get().operations) : 0
+    const generatedWith: GeneratedWith = builtWith ?? {
       entryHint: cur?.entryHint,
       safeHeightMM: useWorkpieceStore.getState().safeHeightMM,
-      // The surface these segments were cut from. Recorded because it is derived from the
-      // OTHER operations: reorder them, or change the depth of one, and this op's start
-      // height silently becomes something else. Comparing the two is the only way to know.
-      startZMM: cur ? startZOf(cur, get().operations) : 0,
+      startZMM: startZNow,
     }
+    const drifted = generatedWith.startZMM !== undefined
+      && Math.abs(generatedWith.startZMM - startZNow) >= 1e-9
     set((s) => ({
       operations: s.operations.map((o) =>
         o.id === id
-          ? { ...o, segments, status: 'done', errorMessage: undefined, generatedWith } as AnyOperation
+          ? { ...o, segments, status: drifted ? 'needs-update' : 'done', errorMessage: undefined, generatedWith } as AnyOperation
           : o
       ),
     }))

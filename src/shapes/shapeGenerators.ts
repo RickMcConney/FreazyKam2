@@ -149,12 +149,18 @@ export const DEFAULT_SHAPE_CONFIG: ShapeToolConfig = {
   // A 30-tooth Graham deadbeat on a Ø100 wheel: the standard seconds-pendulum
   // escape wheel. 2° of drop out of the 6° beat leaves 4° of impulse at the
   // wheel for 3° of lift at the anchor. The span the pallets stand at is derived
-  // from the tooth count rather than set here — see `escapementSpan`. Lock 2 is
-  // what seats the full 1 mm landing (`LANDING_DEPTH`) on this wheel with the run
-  // margin still above it; 1.5 landed the tooth on 0.81.
+  // from the tooth count rather than set here — see `escapementSpan`.
+  //
+  // Lock 1.5 was CHOSEN BY A SWEEP (Rick, 2026-09-18) over lift, drop, lock, draw
+  // and tooth depth on this wheel, scored on the readout's own measures. It lands
+  // the tooth on 0.46 mm (the 0.5 mm target, within the pallets' slack) and gives
+  // the pendulum 32% of the drive with 0.40 mm between the pallet tip and the
+  // tooth backs. Lock 2 seated a deeper landing and cost both: 30% and 0.08 mm.
+  // Less lock buys little more (33.6% at 1°) for a landing of almost nothing.
+  // Draw costs no energy at all, so it stays at 2 to hold the lock.
   escapement: {
     escType: 'deadbeat', teeth: 30, wheelDia: 100,
-    toothDepth: 6, drop: 2, lift: 3, lock: 2, draw: 2, recoilArc: 1.5,
+    toothDepth: 6, drop: 2, lift: 3, lock: 1.5, draw: 2, recoilArc: 1.5,
     armWidth: 8, bore: 6, hubDia: 20, spokes: 5, anchorBore: 6,
     clockwise: false,
   },

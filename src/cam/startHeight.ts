@@ -23,9 +23,10 @@
 // that bottom rather than from stock top.
 import polygonClipping, { type MultiPolygon, type Ring } from 'polygon-clipping'
 import { inflatePathsD, JoinType, EndType } from 'clipper2-ts'
-import { classifySubpaths, interiorPoint, pointInPolygon } from './geom'
+import { classifySubpaths, interiorPoint, pointInPolygon, maxCutRadiusMM } from './geom'
 import { flattenPath, splitSelfIntersecting, ensureWinding, type Pt2 } from './pathFlattener'
-import type { AnyOperation } from '../store/toolpathStore'
+import type { AnyOperation, CutSide } from '../store/toolpathStore'
+import type { Tool } from '../store/toolStore'
 import type { ImportedPath } from '../store/pathsStore'
 
 export type StartFrom =
@@ -611,10 +612,34 @@ function discsD(points: { x: number; y: number }[], r: number): string {
     `M ${x - r} ${y} A ${r} ${r} 0 1 0 ${x + r} ${y} A ${r} ${r} 0 1 0 ${x - r} ${y} Z`).join(' ')
 }
 
+/**
+ * How far past its outline a profile's TOOL reaches — the margin its footprint is grown by
+ * when working out what surface it starts on. The one definition: ProfileForm previews the
+ * start height with it and `startInputForOp` stamps and re-checks with it, and the two
+ * copies this replaces had already drifted once (over the allowance).
+ *
+ * The width is the tool's WIDEST cutting diameter, `2 · maxCutRadiusMM`, not `diameterMM`:
+ * a taper stores its TIP there. With the tip, a taper profile running close to a pocket's
+ * wall had a footprint that fitted inside the pocket, resolved to the pocket floor, and
+ * started its first pass there while the body of the bit reached over the wall into stock
+ * at full height — reading too LOW, the crash direction. A wider footprint can only read
+ * higher, so the widest diameter is also the safe one.
+ *
+ * Outside: a full diameter past the path, plus the stock left on the wall. Centerline: half
+ * a diameter. Inside: nothing — unless a NEGATIVE allowance carries the tool past the line,
+ * which is the only way an inside cut reaches outside it at all.
+ */
+export function profileCutMarginMM(side: CutSide, tool: Tool | undefined, allowanceMM = 0): number {
+  const dia = tool ? 2 * maxCutRadiusMM(tool) : 0
+  return side === 'outside' ? Math.max(0, dia + allowanceMM)
+    : side === 'centerline' ? dia / 2
+    : Math.max(0, -allowanceMM)
+}
+
 export function startInputForOp(
   op: AnyOperation,
   paths: ImportedPath[],
-  tools: { id: string; diameterMM: number }[],
+  tools: Tool[],
 ): ResolveInput | null {
   if (op.type !== 'pocket' && op.type !== 'vcarve' && op.type !== 'profile'
       && op.type !== 'photovcarve' && op.type !== 'drill') return null
@@ -624,28 +649,17 @@ export function startInputForOp(
   // what decides whether those points land on a pocket floor or on bare stock.
   if (!path) {
     if (op.type !== 'drill' || op.points.length === 0) return null
-    const r = (tools.find((t) => t.id === op.toolId)?.diameterMM ?? 0) / 2
+    const drillTool = tools.find((t) => t.id === op.toolId)
+    const r = drillTool ? maxCutRadiusMM(drillTool) : 0
     if (r <= 0) return null
     return { startFrom: op.startFrom, footprintD: discsD(op.points, r), cutMarginMM: 0, opId: op.id }
   }
   // Pocket, v-carve and photo v-carve stay inside their outline (the photo's own rectangle,
   // which is where its raster lines are clipped); a profile swings the tool outside it.
   // A drill stays inside its own circle: the bore's wall IS the path.
-  let cutMarginMM = 0
-  if (op.type === 'profile') {
-    // THE ALLOWANCE MOVES THE TOOL, so it moves the footprint. An outside cut reaches a
-    // full diameter past the path plus whatever stock is left on the wall; a NEGATIVE
-    // allowance on an inside cut carries the tool past the line, which is the only way an
-    // inside cut reaches outside it at all. ProfileForm always resolved it this way while
-    // this ignored the allowance, so a profile generated from the form was stamped with a
-    // start height that did not match the one it was cut from. A wider footprint can only
-    // read HIGHER, which is the safe direction.
-    const dia = tools.find((t) => t.id === op.toolId)?.diameterMM ?? 0
-    const allowance = op.allowanceMM ?? 0
-    cutMarginMM = op.side === 'outside' ? Math.max(0, dia + allowance)
-      : op.side === 'centerline' ? dia / 2
-      : Math.max(0, -allowance)
-  }
+  const cutMarginMM = op.type === 'profile'
+    ? profileCutMarginMM(op.side, tools.find((t) => t.id === op.toolId), op.allowanceMM ?? 0)
+    : 0
   return { startFrom: op.startFrom, footprintD: path.d, cutMarginMM, opId: op.id }
 }
 
@@ -655,7 +669,7 @@ export function resolveStartZForOp(
   ops: AnyOperation[],
   paths: ImportedPath[],
   stock: Stock,
-  tools: { id: string; diameterMM: number }[],
+  tools: Tool[],
 ): StartZ {
   const input = startInputForOp(op, paths, tools)
   if (!input) return STOCK_TOP

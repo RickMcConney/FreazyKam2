@@ -717,10 +717,12 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
       }
       const live = new Set(parts.map((pt) => pt.part))
       const deleteIds = siblings.filter((p) => !live.has(p.shapePart!)).map((p) => p.id)
-      // A params edit is an argument edit to the call that created the shape, so it
-      // AMENDS that chip rather than appending one — stepping a gear's bore must not
-      // leave a chip per keystroke, the same rule single-path shapes already follow
-      // through amendPathDefinition. The amend needs the group as it will BE, since
+      // A params edit is an argument edit to the call that created the shape, so while
+      // that chip is the LATEST one it AMENDS it rather than appending — stepping a gear's
+      // bore must not leave a chip per keystroke, the same rule single-path shapes follow
+      // through amendPathDefinition. An older chip is left alone and this records its own
+      // entry, so the edit has an undo step of its own (see tipIndex in timelineStore);
+      // the next keystroke then amends THAT. The amend needs the group as it will BE, since
       // it rewrites the chip's path list wholesale; the live paths then move without
       // recording. Falling back to applyPathEdit keeps one atomic entry (and its op
       // cleanup) when there is no chip to amend.
@@ -762,9 +764,10 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
       s0.paths.map((p) => p.id === id ? { ...p, d, shapeParams: params } : p), [], [id])
     set({ paths: solved.paths })
     regenerateConstrained(solved.movedIds)
-    // Parameter edits amend the chip that created/last-defined the shape —
-    // changing text or a star's point count is an argument edit to that call,
-    // not a new timeline entry. Fallback records normally if no definer exists.
+    // Parameter edits amend the chip that created/last-defined the shape when it is the
+    // latest chip — changing text or a star's point count is an argument edit to that
+    // call. Otherwise (an older definer, or none) this records a shape.params chip, which
+    // later keystrokes coalesce into.
     const tl = useTimelineStore.getState()
     if (!tl.amendPathDefinition(id, { d, shapeParams: params })) {
       tl.record({ kind: 'shape.params', pathId: id, params })

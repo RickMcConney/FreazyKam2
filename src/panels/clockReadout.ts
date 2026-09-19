@@ -12,7 +12,10 @@ import {
   type ClockAssembly, type ClockBase, type ClockMotion, type ClockSpec,
 } from '../shapes/clockTrain'
 import { carriedPinion as gearCarried, gearDims, gearHubOf, gearMesh, pinionDims } from '../shapes/gearGenerator'
-import { carriedPinion as escCarried, escapementDims } from '../shapes/escapementGenerator'
+import {
+  carriedPinion as escCarried, escapementDims, escapementToothClearance, TOOTH_CLEAR,
+  LANDING_DEPTH, LANDING_PER_CENTRE_MM, LANDING_WARN,
+} from '../shapes/escapementGenerator'
 import { pendulumDims } from '../shapes/pendulumGenerator'
 import { worstTone, type ReadoutLine, type Tone } from './readout'
 
@@ -164,9 +167,21 @@ export function clockReadout(
     `Drop uses up the whole ${escDims.beatDeg.toFixed(2)}° beat at ${spec.escapeTeeth} teeth — no impulse left.`, 'error')
   if (escDims?.noLock) pend(
     'Nothing left for a tooth to lock on — less clearance, or more lock, in the Escapement defaults.', 'error')
+  const escClear = escPart?.params.type === 'escapement' ? escapementToothClearance(escPart.params) : null
+  if (escClear && escClear.clearance < TOOTH_CLEAR) pend(
+    escClear.clearance < 0.02
+      ? `The ${escClear.side} pallet's tip hits the back of an escape tooth — the pair will jam. More drop in the Escapement defaults.`
+      : `The ${escClear.side} pallet's tip passes only ${len(escClear.clearance)} from the back of an escape tooth — `
+        + 'a centre distance a little short will jam it. More drop in the Escapement defaults.',
+    escClear.clearance < 0.02 ? 'error' : 'warn')
+  // Worded and toned as the escapement's own readout words it — a note while
+  // the landing is still worth a millimetre of centre distance, a warning under
+  // `LANDING_WARN`.
   if (escDims?.landingShort) pend(
-    `Escape tooth lands on only ${len(escDims.dropLockDepth)} of dead face — `
-    + `${escDims.fullLandingLockDeg.toFixed(2)}° of lock in the Escapement defaults seats the full landing.`, 'warn')
+    `Escape tooth lands ${len(escDims.dropLockDepth)} from the corner, under the ${len(LANDING_DEPTH)} target — `
+    + `a centre distance about ${len(escDims.dropLockDepth / LANDING_PER_CENTRE_MM)} long would use it up. `
+    + `${escDims.fullLandingLockDeg.toFixed(2)}° of lock in the Escapement defaults seats the full landing.`,
+    escDims.dropLockDepth < LANDING_WARN ? 'warn' : 'note')
 
   // ── The going train ───────────────────────────────────────────────────────
   const going = section('Going train')

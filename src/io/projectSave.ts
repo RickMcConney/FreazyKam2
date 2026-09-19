@@ -20,7 +20,7 @@ import { sanitizeFileName } from './filename'
 // distances v4 wrote (see store/constraints.ts, and `migrateConstraints` in
 // projectLoad for what an old file becomes). A v3 file has no constraints at
 // all, so the migration for it is a default value rather than a migration.
-const PROJECT_VERSION = 5
+export const PROJECT_VERSION = 5
 
 export function buildProjectData() {
   const { name } = useProjectStore.getState()

@@ -362,11 +362,29 @@ const DIVE_LIMIT = 0.45
  *  This is the margin every build error spends, and all of them spend it the
  *  same way: a centre distance a little long (≈0.7 mm of it per mm), tips cut or
  *  sanded short, pivot slop, a locking corner crushed by the drop. Once it is
- *  gone the tooth lands on the impulse face and the wheel runs through. It was
- *  0.5 mm, shared with the run margin below, and a wooden clock ran through on
- *  it (Rick, 2026-09-13). Raising `lock` did nothing for it then — the landing
- *  was capped here whatever the lock was — which is why the two are separate. */
-export const LANDING_DEPTH = 1.0
+ *  gone the tooth lands on the impulse face and the wheel runs through. A wooden
+ *  clock ran through on 2026-09-13 when the 0.5 mm then asked for was SHARED with
+ *  the run margin below, which left far less than that under the tooth; the two
+ *  are separate since, which is also why raising `lock` now deepens the landing.
+ *
+ *  0.5 mm, down from the 1 mm it was raised to after that failure. The 1 mm was a
+ *  safety margin rather than a measured need — a 0.5 mm landing has not failed
+ *  (Rick, 2026-09-18) — and it was not free: the embrace that seats the landing
+ *  turns both pallets deeper, which is what closes the pallet tip onto the tooth
+ *  backs (`escapementToothClearance`), and the lock it takes adds friction. On
+ *  the default wheel it cost about 2% of the drive and most of the tip clearance,
+ *  and energy and clearance matter more than margin past this. */
+export const LANDING_DEPTH = 0.5
+/** Below this landing, mm, a short landing is a WARNING; between it and
+ *  `LANDING_DEPTH` it is only a note — a working escapement under target, not one
+ *  about to fail (Rick, 2026-09-18). Half the target: under it there is little
+ *  enough dead face that a quarter of a millimetre of centre distance, or a tip
+ *  sanded short, puts the tooth on the corner. */
+export const LANDING_WARN = 0.25
+/** Landing lost per mm the centre distance is built LONG — what the readout
+ *  turns a landing into, since "0.70 mm of landing" says nothing to someone
+ *  laying out a plate and "about 1 mm of centre distance" does. */
+export const LANDING_PER_CENTRE_MM = 0.7
 /** Dead face wanted ABOVE the landing, mm, for the pendulum's supplementary arc
  *  to run the tooth deeper through before it reaches the deep end of the face. */
 const RUN_MARGIN = 0.5
@@ -377,7 +395,7 @@ const RUN_MARGIN = 0.5
  *  mirror images (the wheel turns the same way for both), so at any embrace one
  *  lands 0.07 mm shallower than the other — and `deadFace` reports the WORSE, as
  *  it should. Without the slack the worse side can never reach the target, so
- *  `landingShort` would fire at 0.97 mm of a wanted 1.00 and `fullLandingLockDeg`
+ *  `landingShort` would fire a few hundredths under the target and `fullLandingLockDeg`
  *  would quote a lock that still warned when it was taken — advice that cannot be
  *  satisfied, which is worse than none. */
 const LANDING_SLACK = 0.1
@@ -765,7 +783,8 @@ function deadArc(spec: EscapementSpec, side: Side, B: Pt, a: number): Pt {
  * contact on an acting face?" both read this and would quietly count them.
  */
 function actingFace(spec: EscapementSpec, side: Side): { pts: Pt[]; corner: number } {
-  const off = offsetFace(rawLocus(spec, side), frame(spec).tipR, stockSide(spec, side))
+  const off = offsetFace(rawLocus(spec, side), frame(spec).tipR, stockSide(spec, side),
+    spec.escType === 'deadbeat' ? LOCK_STEPS - 1 : -1)
   return roundLockCorner(off.pts, off.corner, lockRound(spec))
 }
 
@@ -788,7 +807,14 @@ function rawLocus(spec: EscapementSpec, side: Side): Pt[] {
     // Dead lock: the wheel is held, so the locus degenerates to an arc about the
     // arbor — see `deadArc`, which is that arc and its lean.
     const B = locus(spec, side, -0.5, true)
-    const lock = rad(Math.max(0, spec.lock))
+    // NEVER QUITE ZERO. At no lock the arc's samples all fall on one point, and
+    // that point has no direction — yet the run-out takes its direction from the
+    // dead face, so the pallet came out bent whichever way the arithmetic fell
+    // (Rick, 2026-09-18, lock 0). A few microns of arc give it the dead face's
+    // own tangent, and `offsetFace` then trims that to nothing, the same as any
+    // lock too short for the offset's corner. Nothing measured sees it:
+    // `deadFace` reports a lock of zero as zero face before it looks at a point.
+    const lock = Math.max(rad(Math.max(0, spec.lock)), 1e-4)
     // The arc runs from the deep end down to the start of impulse and STOPS
     // there. Running it on past that point is the tempting way to give a
     // late-landing tooth somewhere dead to arrive — and it does nothing: past
@@ -874,6 +900,20 @@ function roundLockCorner(pts: Pt[], corner: number, g: number): { pts: Pt[]; cor
   const half = Math.acos(clamp(r1[0] * r2[0] + r1[1] * r2[1], -1, 1)) / 2
   const tan = Math.tan(half)
   if (!(tan > 0.05)) return { pts, corner }
+  // THE ROUND HAS TO FIT ON THE DEAD FACE THERE IS. Its tangency stands t back
+  // from the corner, and below about half a degree of lock (on the default wheel)
+  // the dead face the offset leaves is shorter than that: the tangency lands PAST
+  // the face's deep end, the profile's first step comes out pointing backwards,
+  // and the run-out that carries the face on into the arm follows it the wrong
+  // way — a spike through the wheel (Rick, 2026-09-18, lock under 0.5°). So the
+  // round shrinks to what the face can hold. This is NOT the cap `LOCK_ROUND`
+  // warns against: it only ever bites where there is no dead face worth the name
+  // — `noLock` already says so — far below the lock `fullLandingLockDeg` quotes,
+  // and `cornerBlunt` is untouched, so that figure stays a fixed point.
+  let run = 0
+  for (let i = 1; i <= corner; i++) run += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])
+  if (g / tan > 0.9 * run) g = 0.9 * run * tan
+  if (!(g > 0.01)) return { pts, corner }
   const t = g / tan
   const T1: Pt = [X[0] + t * r1[0], X[1] + t * r1[1]]
   const T2: Pt = [X[0] + t * r2[0], X[1] + t * r2[1]]
@@ -923,7 +963,7 @@ function roundLockCorner(pts: Pt[], corner: number, g: number): { pts: Pt[]; cor
  * the dead arc, so the landing is measured from further in and the embrace has to
  * buy that back.
  */
-function offsetFace(pts: Pt[], f: number, m: Pt): { pts: Pt[]; corner: number } {
+function offsetFace(pts: Pt[], f: number, m: Pt, knee = -1): { pts: Pt[]; corner: number } {
   if (!(f > 1e-9) || pts.length < 3) return { pts, corner: -1 }
   const nrm: Pt[] = []
   for (let i = 1; i < pts.length; i++) {
@@ -966,6 +1006,32 @@ function offsetFace(pts: Pt[], f: number, m: Pt): { pts: Pt[]; corner: number } 
       out.splice(i + 1, j - i, x)
       corner = i + 1
       break
+    }
+  }
+  // NO CROSSING, BUT THERE SHOULD BE ONE: the dead arc is shorter than the
+  // offset's own trim (f·cot(ψ/2), about 0.19 mm on the default wheel — a fifth
+  // of a degree of lock). The crossing then lies past the deep end, on the dead
+  // face's line carried on — which is the pallet's real edge there, since the
+  // run-out continues it straight into the arm — so the whole dead offset is
+  // buried and the corner is where that line meets the impulse offset. Left in,
+  // the buried stretch stood in the outline as a spur, and was measured as a
+  // locking face longer than the one at twice the lock.
+  //
+  // `knee` is where the dead arc hands over to the impulse in `pts`; only a
+  // deadbeat has one. The profile keeps a stub a micron long on the dead line
+  // before the corner, so the run-out still leaves in the dead face's direction
+  // and there is a corner index for the rest of the code to read — a locking
+  // face of nothing, which is what there is.
+  if (corner < 0 && knee > 1 && knee < out.length - 1) {
+    const u = norm([out[0][0] - out[1][0], out[0][1] - out[1][1]])
+    if (Math.hypot(out[knee - 1][0] - out[0][0], out[knee - 1][1] - out[0][1]) > 1e-4) {
+      const far: Pt = [out[0][0] + 10 * f * u[0], out[0][1] + 10 * f * u[1]]
+      for (let j = knee - 1; j + 1 < out.length; j++) {
+        const x = segCross(out[0], far, out[j], out[j + 1])
+        if (!x) continue
+        const stub: Pt = [x[0] + 1e-3 * u[0], x[1] + 1e-3 * u[1]]
+        return { pts: [stub, x, ...out.slice(j + 1)], corner: 1 }
+      }
     }
   }
   return { pts: out, corner }
@@ -2525,6 +2591,201 @@ export function escapementDims(spec: EscapementSpec): EscapementDims {
     // `scripts/escapement-check.mts`.
     divesTooDeep: dive > DIVE_LIMIT * (Rm - rRoot),
   }
+}
+
+/** The least room, mm, the anchor may leave the teeth anywhere they are NOT meant
+ *  to be touched — see `escapementToothClearance`. Under this it is a warning:
+ *  the pair runs on paper, and the build's errors decide whether it runs in wood.
+ *
+ *  The two margins are spent by OPPOSITE errors, which is why both are needed: a
+ *  centre distance that is LONG lands the tooth shallower (`LANDING_DEPTH`), and
+ *  one that is SHORT drives the pallet's tip at the tooth's back — about one for
+ *  one on the default wheel (0.40 → 0.10 mm for 0.3 mm short, measured by moving
+ *  the arbor on the drawn parts; at 2° of lock the same 0.3 mm puts the tip into
+ *  the back). So this is the build's tolerance on the short side, as the landing
+ *  is on the long side. */
+export const TOOTH_CLEAR = 0.25
+
+export interface ToothClearance {
+  /** The closest the anchor comes to any part of a tooth other than its tip round
+   *  and leading face, over the whole swing, mm. Zero is touching or worse. */
+  clearance: number
+  /** Which pallet comes that close. */
+  side: Side
+  /** How far below the tip circle the tooth is where it does, mm — which says
+   *  WHAT is being hit: a fraction of a millimetre is the back just behind the
+   *  tip, most of the tooth depth is the gullet. */
+  depth: number
+}
+
+/**
+ * THE ROOM BETWEEN THE ANCHOR AND THE BACKS OF THE TEETH — the one clearance the
+ * other checks do not see.
+ *
+ * A pallet sits in a tooth space with the tooth it acts on in front of it and
+ * the BACK of the next tooth behind it, and its tip (the release corner) is the
+ * part that reaches deepest into that space. `divesTooDeep` asks only about the
+ * impulse face against the tooth it just locked, and the pallet-tip test in the
+ * suite only about the relieved back against the tooth TIPS at release. Nothing
+ * asked about the pallet's tip against the back of a tooth — and that is what
+ * the embrace spends: the drop lock turns both pallets deeper into the wheel, so
+ * seating the full landing on the default wheel (Rick, 2026-09-18: at 2.1° of
+ * lock "the tip of the pallet looks like it will hit the back of the tooth")
+ * takes the exit pallet's tip from 0.40 mm off the back at 1.5° to 0.02 mm. DROP
+ * is what pays for it — the drop is the free travel that is meant to carry the
+ * tooth's back clear of the pallet — at about 0.3 mm of room per half degree.
+ *
+ * MEASURED on the real parts through the real motion: the anchor's outline and
+ * the gulleted wheel, stepped through `escapementPose` — the same kinematics the
+ * preview animates — so it cannot disagree with what is drawn. Only the tip round
+ * and the leading face are left out, since a tooth is meant to touch the pallets
+ * there; everything else on the wheel counts. The anchor is taken before
+ * `filletToes`, whose rounds all sit well away from the wheel — checked against
+ * the emitted outline, which gives the same figure to the micron.
+ *
+ * BOTH WAYS ROUND: the wheel's points against the anchor's edges AND the anchor's
+ * points against the wheel's. The pallet's tip is one sharp vertex and a tooth's
+ * back is sampled half a millimetre apart, so measuring from the wheel's points
+ * alone misses the tip coming at the middle of a flank — which is how the first
+ * harness read 0.13 mm where there are 0.08.
+ *
+ * Unmirrored, in the construction's own frame: a clockwise wheel is the
+ * anticlockwise one's reflection, anchor and all, so the clearance is the same.
+ *
+ * Its own function rather than a field of `escapementDims`, which the preview
+ * and the clock layers call every frame: this builds both parts and sweeps a
+ * whole period — some 70 ms on the default wheel — and only the readouts want
+ * it. They call it on every render, so the answer is kept for the last few
+ * specs; position and hand are no part of it, so moving the shape is free.
+ */
+export function escapementToothClearance(spec: EscapementSpec): ToothClearance {
+  const { cx: _cx, cy: _cy, clockwise: _cw, ...shape } = spec
+  const key = JSON.stringify(shape)
+  const hit = clearanceCache.get(key)
+  if (hit) return hit
+  const out = measureToothClearance(spec)
+  clearanceCache.set(key, out)
+  if (clearanceCache.size > 8) clearanceCache.delete(clearanceCache.keys().next().value!)
+  return out
+}
+const clearanceCache = new Map<string, ToothClearance>()
+
+function measureToothClearance(spec: EscapementSpec): ToothClearance {
+  const S: EscapementSpec = { ...spec, clockwise: true }
+  const { R, tipR, L, pitch, beta } = frame(S)
+  const g = toothGeom(S)
+  const { corner } = g
+  const a00 = Math.PI / 2 + beta / 2 - corner.dA           // tooth 0, as `toothedRing` phases it
+  const f = Math.hypot(corner.p1[0] - corner.c[0], corner.p1[1] - corner.c[1])
+
+  // The wheel, split into what a pallet may touch and what it may not.
+  const wheel = roundConcave([toothedRing(S)], gulletFillet(S))
+    .reduce((a, b) => (b.length > a.length ? b : a), [] as Pt[])
+  const TOL = 0.02
+  const acting = (p: Pt) => {
+    const k0 = Math.round((Math.atan2(p[1], p[0]) - a00) / pitch)
+    for (let k = k0 - 1; k <= k0 + 1; k++) {
+      const a0 = a00 + k * pitch
+      const c = rot(corner.c, a0)
+      if (Math.hypot(p[0] - c[0], p[1] - c[1]) <= f + TOL) return true
+      const foot: Pt = [g.rRoot * Math.cos(a0 + g.u), g.rRoot * Math.sin(a0 + g.u)]
+      if (segDist(p, foot, rot(corner.p1, a0)) <= TOL) return true
+    }
+    return false
+  }
+  const free = wheel.map((p) => !acting(p))
+  // Nothing on the wheel reaches past its material circle, so the anchor is only
+  // asked about the stretch of it that comes within reach.
+  const reach = R + tipR + 1
+  const wIdx: number[] = []
+  for (let i = 0; i < wheel.length; i++) if (free[i]) wIdx.push(i)
+
+  // The anchor, in its own frame: arbor at the origin, wheel centre at (0, −L).
+  const near: { pts: Pt[]; side: Side }[] = []
+  for (const ring of anchorRings(S)) {
+    let run: Pt[] = []
+    const flush = () => {
+      if (run.length > 0) near.push({ pts: run, side: run[0][0] < 0 ? 'entry' : 'exit' })
+      run = []
+    }
+    for (let i = 0; i <= ring.length; i++) {
+      const p = ring[i % ring.length]
+      if (Math.hypot(p[0], p[1] + L) < reach + 3) run.push(p)
+      else flush()
+    }
+    flush()
+  }
+
+  let best: ToothClearance = { clearance: Infinity, side: 'entry', depth: 0 }
+  const pose = (phase: number) => {
+    const p = escapementPose(S, phase)
+    return { phi: rad(p.anchorDeg), back: -rad(p.wheelDeg) }
+  }
+  const at = (phi: number, back: number) => {
+    for (const run of near) {
+      // Into the wheel's frame: turn with the anchor, shift to its arbor, undo the wheel.
+      const q = run.pts.map((p) => rot(((r) => [r[0], r[1] + L] as Pt)(rot(p, phi)), back))
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity
+      for (const p of q) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]) }
+      const box = (p: Pt) => p[0] > x0 - 2 && p[0] < x1 + 2 && p[1] > y0 - 2 && p[1] < y1 + 2
+      for (const i of wIdx) {
+        const w = wheel[i]
+        if (!box(w)) continue
+        const note = (d: number) => {
+          if (d < best.clearance) best = { clearance: d, side: run.side, depth: R - Math.hypot(w[0], w[1]) }
+        }
+        // The wheel's point against the anchor's edges…
+        for (let k = 1; k < q.length; k++) note(segDist(w, q[k - 1], q[k]))
+        // …and the anchor's points against the wheel's edge, which is what finds
+        // a sharp pallet tip coming at the middle of a straight flank.
+        const j = (i + 1) % wheel.length
+        if (free[j]) for (const p of q) note(segDist(p, w, wheel[j]))
+      }
+    }
+  }
+  // A whole period covers both pallets, and a coarse sweep finds the worst step
+  // for a fine one to pin down.
+  //
+  // THE DROP IS WALKED, NOT JUMPED. `escapementPose` moves the wheel through its
+  // drop in one step, which is right for a preview and wrong here: the real wheel
+  // passes through every angle in between with the anchor all but still, and a
+  // tooth's back swinging past a pallet's tip mid-drop is exactly the collision
+  // this is for. Neither the animation nor a sampled pose would ever show it.
+  const STEPS = 360
+  const dropRad = rad(Math.max(0, S.drop))
+  let worstPhase = 0
+  let prev = pose(0)
+  for (let i = 0; i <= STEPS; i++) {
+    const ph = i / STEPS
+    const cur = pose(ph)
+    if (i > 0 && dropRad > 0 && Math.abs(cur.back - prev.back) > dropRad / 2) {
+      // Find the release itself, then turn the wheel through the drop there.
+      let lo = (i - 1) / STEPS, hi = ph
+      const b0 = prev.back
+      for (let k = 0; k < 30; k++) {
+        const mid = (lo + hi) / 2
+        if (Math.abs(pose(mid).back - b0) > dropRad / 2) hi = mid
+        else lo = mid
+      }
+      const a = pose(lo), b = pose(hi)
+      for (let k = 0; k <= 40; k++) at(a.phi, a.back + ((b.back - a.back) * k) / 40)
+    }
+    const before = best.clearance
+    at(cur.phi, cur.back)
+    if (best.clearance < before) worstPhase = ph
+    prev = cur
+  }
+  for (let i = -20; i <= 20; i++) {
+    const p = pose(worstPhase + i / (20 * STEPS))
+    at(p.phi, p.back)
+  }
+  return { ...best, clearance: Math.max(0, best.clearance) }
+}
+
+function segDist(p: Pt, a: Pt, b: Pt): number {
+  const dx = b[0] - a[0], dy = b[1] - a[1]
+  const u = clamp(((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy || 1), 0, 1)
+  return Math.hypot(a[0] + u * dx - p[0], a[1] + u * dy - p[1])
 }
 
 /** Spoke and rim widths are proportions of the wheel — an escape wheel has no

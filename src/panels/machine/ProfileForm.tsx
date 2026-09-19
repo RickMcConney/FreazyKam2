@@ -1,7 +1,7 @@
 // ─── Profile form ─────────────────────────────────────────────────────────────
 import { FormShell, PathChip, PathListSection, PathRevisionHint, ToolSelector, ToggleRow, DepthRow, GenerateBtn, useSessionOps, StartRow, useStartZ, toolsOfType, pickToolId, LengthInput, FormError, useGenerateError } from './shared'
 import { reviseBatch } from './reviseBatch'
-import { type StartFrom } from '../../cam/startHeight'
+import { type StartFrom, profileCutMarginMM } from '../../cam/startHeight'
 import { useState } from 'react'
 import { ICON } from '../../theme'
 import { AlertCircle } from 'lucide-react'
@@ -93,14 +93,9 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
   const selectedPaths = editOp ? [...rev.keep.map((e) => e.path), ...rev.add] : selPaths
   const addedIds = new Set(rev.add.map((p) => p.id))
   const selectedTool = tools.find((t) => t.id === form.toolId)
-  // Outside cuts reach a full diameter past the path (radius of offset + radius of tool),
-  // centerline half that, inside not at all. An allowance moves the toolpath further off
-  // the line on its own side, so it adds to an outside cut's reach — and a NEGATIVE one
-  // on an inside cut can carry the tool past the line, which is the only way an inside
-  // cut has any reach at all.
-  const cutMarginMM = form.side === 'outside' ? Math.max(0, (selectedTool?.diameterMM ?? 0) + form.allowanceMM)
-    : form.side === 'centerline' ? (selectedTool?.diameterMM ?? 0) / 2
-    : Math.max(0, -form.allowanceMM)
+  // How far the tool reaches past the path — the same definition the stamp and the
+  // staleness check use, so the start height previewed here is the one generated.
+  const cutMarginMM = profileCutMarginMM(form.side, selectedTool, form.allowanceMM)
   // See PocketForm: ops this session already generated are not cuts preceding themselves.
   const selfOpId = editOp?.id ?? session.firstLiveOpId()
   const startZ = useStartZ(form.startFrom, selectedPaths[0]?.d ?? '', cutMarginMM, selfOpId)

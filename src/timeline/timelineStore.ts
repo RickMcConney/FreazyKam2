@@ -422,10 +422,8 @@ function scheduleRegen() {
   regenTimer = setTimeout(() => {
     regenTimer = null
     // Dynamic import avoids a module cycle (regenerate → stores → timelineStore)
-    void import('../cam/regenerate').then(({ regenerateOperation }) => {
-      for (const op of useToolpathStore.getState().operations) {
-        if (op.status === 'needs-update') void regenerateOperation(op.id)
-      }
+    void import('../cam/regenerate').then(({ regenerateMany }) => {
+      regenerateMany(useToolpathStore.getState().operations.filter((op) => op.status === 'needs-update'))
     })
   }, 300)
 }
@@ -490,6 +488,22 @@ function restoreStateAt(seq: number, events: TimelineEvent[]): boolean {
 
   if (operations.some((o) => o.status === 'needs-update')) scheduleRegen()
   return true
+}
+
+// THE ONLY CHIP AN AMEND MAY REWRITE IS THE ONE THE CURSOR IS ON — events[cursor - 1], or
+// genesis at cursor 0 — and the index of that chip is all this returns (-1 at genesis).
+//
+// An amend records nothing: the edit it stands for lands in the stores, and the mirror
+// (noteWrite / settleBatch) folds it into the CURSOR's snapshot. That is only the defining
+// chip's own snapshot when the defining chip IS the cursor's. Amending anything older —
+// the pocket's op.add with a rectangle drawn since — rewrote a chip whose snapshot still
+// held the old settings, and parked the new ones in the rectangle's step: one undo then
+// took back the rectangle AND the depth edit, a second removed the pocket, and the chip
+// read "depth 10" while going back to it restored depth 5. So an older definer is left
+// alone and the caller records an ordinary event, which gets its own undo step.
+// Pinned by `npx vite-node scripts/undo-amend.mts`.
+function tipIndex(cursor: number): number {
+  return cursor - 1
 }
 
 export const useTimelineStore = create<TimelineState>()((set, get) => ({
@@ -651,7 +665,8 @@ export const useTimelineStore = create<TimelineState>()((set, get) => ({
       set({ events, ...(s.savedSeq >= amended.seq ? { savedSeq: -1 } : {}) })
     }
 
-    for (let i = s.cursor - 1; i >= 0; i--) {
+    const i = tipIndex(s.cursor)
+    if (i >= 0) {
       const ev = s.events[i]
       if (ev.kind === 'paths.add' && ev.paths.some((p) => p.id === pathId)) {
         commit(i, { ...ev, paths: ev.paths.map((p) => p.id === pathId ? amendPath(p) : p) })
@@ -671,10 +686,9 @@ export const useTimelineStore = create<TimelineState>()((set, get) => ({
         return true
       }
     }
-    // The path predates this session's history — amend genesis if we still hold it.
-    // A project loaded from a file has no genesis snapshot, so this returns false and
-    // the caller records a chip normally, which is the documented fallback.
-    const g = stateAt[0]
+    // The path predates this session's history — amend genesis, but only while the
+    // cursor sits ON it (see tipIndex).
+    const g = s.cursor === 0 ? stateAt[0] : undefined
     if (g && g.paths.some((p) => p.id === pathId)) {
       const amended = { ...g, paths: g.paths.map((p) => p.id === pathId ? amendPath(p) : p) }
       stateAt[0] = amended
@@ -719,7 +733,8 @@ export const useTimelineStore = create<TimelineState>()((set, get) => ({
       set({ events, ...(s.savedSeq >= amended.seq ? { savedSeq: -1 } : {}) })
     }
 
-    for (let i = s.cursor - 1; i >= 0; i--) {
+    const i = tipIndex(s.cursor)
+    if (i >= 0) {
       const ev = s.events[i]
 
       if (ev.kind === 'paths.add' && ev.paths.some(mine)) {
@@ -761,17 +776,11 @@ export const useTimelineStore = create<TimelineState>()((set, get) => ({
         })
         return true
       }
-
-
-      // Anything else that writes this group's geometry would override an amend
-      // made beneath it, so stop and let the caller record a normal event.
-      if (ev.kind === 'paths.split' && (mineId(ev.pathId) || ev.subPaths.some(mine))) return false
-      if (ev.kind === 'shape.params' && mineId(ev.pathId)) return false
     }
 
     // The group predates recorded history (loaded or compacted project) — amend
-    // genesis, exactly as amendPathDefinition does.
-    const g = stateAt[0]
+    // genesis, exactly as amendPathDefinition does, and on the same condition.
+    const g = s.cursor === 0 ? stateAt[0] : undefined
     if (g && g.paths.some(mine)) {
       if (gone.size > 0) return false
       stateAt[0] = { ...g, paths: replace(g.paths) }
@@ -789,7 +798,8 @@ export const useTimelineStore = create<TimelineState>()((set, get) => ({
       set({ events, ...(s.savedSeq >= amended.seq ? { savedSeq: -1 } : {}) })
     }
 
-    for (let i = s.cursor - 1; i >= 0; i--) {
+    const i = tipIndex(s.cursor)
+    if (i >= 0) {
       const ev = s.events[i]
       if (ev.kind === 'op.update' && ev.opId === opId) {
         commit(i, { ...ev, updates: { ...ev.updates, ...updates } })
@@ -809,7 +819,7 @@ export const useTimelineStore = create<TimelineState>()((set, get) => ({
         return true
       }
     }
-    const g = stateAt[0]
+    const g = s.cursor === 0 ? stateAt[0] : undefined
     if (g && g.operations.some((o) => o.id === opId)) {
       const amended = {
         ...g,
@@ -824,11 +834,12 @@ export const useTimelineStore = create<TimelineState>()((set, get) => ({
 
   amendOpAddEvent: (anchorOpId, patch) => {
     const s = get()
-    for (let i = s.cursor - 1; i >= 0; i--) {
+    const i = tipIndex(s.cursor)
+    if (i >= 0) {
       const ev = s.events[i]
-      if (ev.kind !== 'op.add') continue
+      if (ev.kind !== 'op.add') return false
       const members = [ev.op, ...(ev.linked ?? [])]
-      if (!members.some((o) => o.id === anchorOpId)) continue
+      if (!members.some((o) => o.id === anchorOpId)) return false
       const remove = new Set(patch.removeIds)
       const next = [...members.filter((o) => !remove.has(o.id)), ...patch.add]
       // An op.add with nothing in it has no meaning; leave the chip alone and let the
@@ -854,11 +865,9 @@ export const useTimelineStore = create<TimelineState>()((set, get) => ({
       events[idx] = amended
       set({ events, ...(s.savedSeq >= amended.seq ? { savedSeq: -1 } : {}) })
     }
-    for (let i = s.cursor - 1; i >= 0; i--) {
+    const i = tipIndex(s.cursor)
+    if (i >= 0) {
       const ev = s.events[i]
-      // Legacy per-gesture tab chips in the way — amending beneath them would
-      // be overridden on replay; bail to normal recording.
-      if (ev.kind === 'tabs.moveT' || ev.kind === 'tabs.delete') return false
       if (ev.kind === 'tabs.apply' && ev.pathId === pathId) {
         commit(i, {
           ...ev,
@@ -868,7 +877,7 @@ export const useTimelineStore = create<TimelineState>()((set, get) => ({
         return true
       }
     }
-    const g = stateAt[0]
+    const g = s.cursor === 0 ? stateAt[0] : undefined
     if (g && g.tabs.some((t) => t.pathId === pathId)) {
       stateAt[0] = { ...g, tabs: [...g.tabs.filter((t) => t.pathId !== pathId), ...tabs] }
       set({ savedSeq: -1 })

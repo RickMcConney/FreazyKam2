@@ -106,7 +106,7 @@ function useKeyboardShortcuts() {
       const mod = e.ctrlKey || e.metaKey
 
       if (mod && (e.key === 's' || e.key === 'S')) { e.preventDefault(); void triggerProjectSave(); return }
-      if (mod && e.key === 'o') { e.preventDefault(); openProjectFile(); return }
+      if (mod && e.key === 'o') { e.preventDefault(); void openProjectFile(); return }
       if (mod && e.key === 'n') { e.preventDefault(); newProject(); return }
 
       if (inInput) return

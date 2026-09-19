@@ -1,3 +1,5 @@
+import { parseD } from '../importers/svgImporter'
+
 export type PathNode = {
   x: number
   y: number
@@ -107,85 +109,76 @@ export function splitCompoundPath(d: string): string[] {
 }
 
 export function parseDToNodes(d: string): { nodes: PathNode[]; closed: boolean } {
-  // Tokenize properly: split command letters from numbers (handles compact "M10,20" format).
-  // Uppercase commands only — see splitCompoundPath.
-  const tokens = d.match(/[MLCSQTAZ]|[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?/g) ?? []
+  // Built on the importer's parser rather than a token walk of its own. The walk read
+  // EXACTLY one coordinate set per command letter, so the ordinary compact form — several
+  // pairs after one letter, `M0 0 10 0 10 10`, `L1 2 3 4` — took the next number for a
+  // command, matched nothing, and skipped along one token at a time: points dropped, the
+  // rest paired up wrong, and committing the edit wrote that back into the path. No
+  // generator here writes that form, but a hand-edited project or a pasted SVG does.
+  // parseD expands repeats (and H/V, and relative commands) into one absolute command each.
   const nodes: PathNode[] = []
   let closed = false
-  let i = 0
-  // Track last control point for S/T smooth continuation
-  let lastCmd = ''
-  let lastC2x = 0, lastC2y = 0  // for S: reflection of previous C's c2
-  let lastQ1x = 0, lastQ1y = 0  // for T: reflection of previous Q's control point
+  // The control point the NEXT smooth segment reflects: the previous C/S's second control
+  // for S, the previous Q/T's control for T. Null when the previous command was anything
+  // else, in which case the reflection collapses onto the current point.
+  let lastC2: { x: number; y: number } | null = null
+  let lastQ: { x: number; y: number } | null = null
 
-  while (i < tokens.length) {
-    const cmd = tokens[i++]
-    if (cmd === 'M') {
-      nodes.push({ x: parseFloat(tokens[i++]), y: parseFloat(tokens[i++]) })
-    } else if (cmd === 'L') {
-      nodes.push({ x: parseFloat(tokens[i++]), y: parseFloat(tokens[i++]) })
-    } else if (cmd === 'C') {
-      const c1x = parseFloat(tokens[i++]), c1y = parseFloat(tokens[i++])
-      const c2x = parseFloat(tokens[i++]), c2y = parseFloat(tokens[i++])
-      const ex = parseFloat(tokens[i++]), ey = parseFloat(tokens[i++])
-      if (nodes.length > 0) nodes[nodes.length - 1].handleOut = { x: c1x, y: c1y }
-      nodes.push({ x: ex, y: ey, handleIn: { x: c2x, y: c2y } })
-      lastC2x = c2x; lastC2y = c2y
-    } else if (cmd === 'S') {
-      // Smooth cubic: c1 is reflection of previous c2 (or current point if prev wasn't C/S)
-      const c2x = parseFloat(tokens[i++]), c2y = parseFloat(tokens[i++])
-      const ex = parseFloat(tokens[i++]), ey = parseFloat(tokens[i++])
-      const prev = nodes.length > 0 ? nodes[nodes.length - 1] : { x: 0, y: 0 }
-      const c1x = (lastCmd === 'C' || lastCmd === 'S') ? 2 * prev.x - lastC2x : prev.x
-      const c1y = (lastCmd === 'C' || lastCmd === 'S') ? 2 * prev.y - lastC2y : prev.y
-      if (nodes.length > 0) nodes[nodes.length - 1].handleOut = { x: c1x, y: c1y }
-      nodes.push({ x: ex, y: ey, handleIn: { x: c2x, y: c2y } })
-      lastC2x = c2x; lastC2y = c2y
-    } else if (cmd === 'Q') {
-      // Quadratic bezier → cubic: c1 = p0 + 2/3*(q-p0), c2 = p + 2/3*(q-p)
-      const qx = parseFloat(tokens[i++]), qy = parseFloat(tokens[i++])
-      const ex = parseFloat(tokens[i++]), ey = parseFloat(tokens[i++])
-      const prev = nodes.length > 0 ? nodes[nodes.length - 1] : { x: 0, y: 0 }
-      const c1x = prev.x + (2 / 3) * (qx - prev.x)
-      const c1y = prev.y + (2 / 3) * (qy - prev.y)
-      const c2x = ex + (2 / 3) * (qx - ex)
-      const c2y = ey + (2 / 3) * (qy - ey)
-      if (nodes.length > 0) nodes[nodes.length - 1].handleOut = { x: c1x, y: c1y }
-      nodes.push({ x: ex, y: ey, handleIn: { x: c2x, y: c2y } })
-      lastQ1x = qx; lastQ1y = qy
-    } else if (cmd === 'T') {
-      // Smooth quadratic: control point is reflection of previous Q's control point
-      const ex = parseFloat(tokens[i++]), ey = parseFloat(tokens[i++])
-      const prev = nodes.length > 0 ? nodes[nodes.length - 1] : { x: 0, y: 0 }
-      const qx = (lastCmd === 'Q' || lastCmd === 'T') ? 2 * prev.x - lastQ1x : prev.x
-      const qy = (lastCmd === 'Q' || lastCmd === 'T') ? 2 * prev.y - lastQ1y : prev.y
-      const c1x = prev.x + (2 / 3) * (qx - prev.x)
-      const c1y = prev.y + (2 / 3) * (qy - prev.y)
-      const c2x = ex + (2 / 3) * (qx - ex)
-      const c2y = ey + (2 / 3) * (qy - ey)
-      if (nodes.length > 0) nodes[nodes.length - 1].handleOut = { x: c1x, y: c1y }
-      nodes.push({ x: ex, y: ey, handleIn: { x: c2x, y: c2y } })
-      lastQ1x = qx; lastQ1y = qy
-    } else if (cmd === 'A') {
-      const rx = parseFloat(tokens[i++]), ry = parseFloat(tokens[i++])
-      const xRot = parseFloat(tokens[i++])
-      const largeArc = tokens[i++] === '1'
-      const sweep = tokens[i++] === '1'
-      const ex = parseFloat(tokens[i++]), ey = parseFloat(tokens[i++])
-      if (nodes.length > 0) {
-        const prev = nodes[nodes.length - 1]
-        const cubics = arcToCubics(prev.x, prev.y, rx, ry, xRot, largeArc, sweep, ex, ey)
-        for (const [c1x, c1y, c2x, c2y, epx, epy] of cubics) {
-          nodes[nodes.length - 1].handleOut = { x: c1x, y: c1y }
-          nodes.push({ x: epx, y: epy, handleIn: { x: c2x, y: c2y } })
-        }
-      } else {
-        nodes.push({ x: ex, y: ey })
+  const cubicTo = (c1x: number, c1y: number, c2x: number, c2y: number, x: number, y: number) => {
+    if (nodes.length > 0) nodes[nodes.length - 1].handleOut = { x: c1x, y: c1y }
+    nodes.push({ x, y, handleIn: { x: c2x, y: c2y } })
+  }
+  // Quadratic bezier → cubic: c1 = p0 + 2/3·(q − p0), c2 = p + 2/3·(q − p)
+  const quadTo = (p0: { x: number; y: number }, qx: number, qy: number, x: number, y: number) =>
+    cubicTo(p0.x + (2 / 3) * (qx - p0.x), p0.y + (2 / 3) * (qy - p0.y),
+      x + (2 / 3) * (qx - x), y + (2 / 3) * (qy - y), x, y)
+
+  for (const c of parseD(d)) {
+    const prev = nodes.length > 0 ? nodes[nodes.length - 1] : { x: 0, y: 0 }
+    let nextC2: { x: number; y: number } | null = null
+    let nextQ: { x: number; y: number } | null = null
+    switch (c.t) {
+      case 'M':
+      case 'L':
+        nodes.push({ x: c.x, y: c.y })
+        break
+      case 'C':
+        cubicTo(c.x1, c.y1, c.x2, c.y2, c.x, c.y)
+        nextC2 = { x: c.x2, y: c.y2 }
+        break
+      case 'S': {
+        // Smooth cubic: c1 is the reflection of the previous c2 (or the current point).
+        const c1 = lastC2 ? { x: 2 * prev.x - lastC2.x, y: 2 * prev.y - lastC2.y } : prev
+        cubicTo(c1.x, c1.y, c.x2, c.y2, c.x, c.y)
+        nextC2 = { x: c.x2, y: c.y2 }
+        break
       }
-    } else if (cmd === 'Z' || cmd === 'z') {
-      closed = true
+      case 'Q':
+        quadTo(prev, c.x1, c.y1, c.x, c.y)
+        nextQ = { x: c.x1, y: c.y1 }
+        break
+      case 'T': {
+        // Smooth quadratic: its control is the reflection of the previous Q/T's control.
+        const q: { x: number; y: number } = lastQ ? { x: 2 * prev.x - lastQ.x, y: 2 * prev.y - lastQ.y } : prev
+        quadTo(prev, q.x, q.y, c.x, c.y)
+        nextQ = q
+        break
+      }
+      case 'A':
+        if (nodes.length > 0) {
+          for (const [c1x, c1y, c2x, c2y, epx, epy] of arcToCubics(prev.x, prev.y, c.rx, c.ry, c.ang, c.lg === 1, c.sw === 1, c.x, c.y)) {
+            cubicTo(c1x, c1y, c2x, c2y, epx, epy)
+          }
+        } else {
+          nodes.push({ x: c.x, y: c.y })
+        }
+        break
+      case 'Z':
+        closed = true
+        break
     }
-    lastCmd = cmd
+    lastC2 = nextC2
+    lastQ = nextQ
   }
 
   // Detect implicit close: last node coincident with first (with or without Z).

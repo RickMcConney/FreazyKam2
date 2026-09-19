@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   carriedPinion, generateEscapementParts, escapementDims, escapementEnergy, escapementPose, anchorOffset, escapementSpan, LANDING_DEPTH,
+  escapementToothClearance, TOOTH_CLEAR,
   __escBackCorner, __escFaces, __escLockCorner, __escLockPoints, __escBackEdge, __escToothRing, __escLocus,
   type EscapementSpec,
 } from './escapementGenerator'
@@ -1193,13 +1194,13 @@ describe('escapement — the drop lock', () => {
   it('deepens the landing with the lock until it reaches LANDING_DEPTH, and says when it falls short', () => {
     // The landing is the margin every build error is spent from. It used to be
     // capped at the run margin whatever the lock, so asking for more lock only
-    // lengthened the run — and a wooden clock ran through on 0.5 mm of it.
-    const full = escapementDims({ ...BASE, lock: 3 })
+    // lengthened the run — and a wooden clock ran through when it was.
+    const full = escapementDims({ ...BASE, lock: 2 })
     expect(Math.abs(full.dropLockDepth - LANDING_DEPTH)).toBeLessThan(0.1)
     expect(full.landingShort).toBe(false)
     // Short of it the run keeps its half millimetre and the landing gets the rest,
     // so it is shallow rather than absent — flagged, not fatal.
-    const short = escapementDims({ ...BASE, lock: 1.5 })
+    const short = escapementDims({ ...BASE, lock: 1.25 })
     expect(short.noLock).toBe(false)
     expect(short.landingShort).toBe(true)
     expect(short.dropLockDepth).toBeLessThan(LANDING_DEPTH)
@@ -1291,6 +1292,98 @@ describe('escapement — the wedge\'s leading edge', () => {
           }
           expect(best).toBeLessThan(0.03)
         }
+      }
+    }
+  })
+})
+
+describe('escapement — the pallet tip against the backs of the teeth', () => {
+  // The clearance the embrace spends: the drop lock turns both pallets deeper,
+  // and the exit pallet's tip is what comes at the back of the next tooth.
+  // Nothing else here measures it — see `escapementToothClearance`.
+  it('keeps the tip well clear at the default 1.5° of lock', () => {
+    const c = escapementToothClearance(BASE)
+    expect(c.clearance).toBeGreaterThan(TOOTH_CLEAR)
+    // And it is the tooth's BACK being measured, not the tip round or the
+    // leading face a tooth rests on — those sit within microns of the pallets.
+    expect(c.depth).toBeGreaterThan(0.3)
+  })
+
+  it('reads 0.10 mm at 1.5° of drop, measured from the pallet\'s sharp tip as well as the wheel\'s points', () => {
+    // From the wheel's points alone this reads 0.131: the tip is one vertex and
+    // the back is sampled half a millimetre apart, so the tip coming at the
+    // middle of a flank goes unseen.
+    const c = escapementToothClearance({ ...BASE, drop: 1.5 })
+    expect(c.clearance).toBeGreaterThan(0.085)
+    expect(c.clearance).toBeLessThan(0.11)
+    expect(c.side).toBe('exit')
+  })
+
+  it('closes as the embrace seats the landing, stops once it is seated, and opens again with more drop', () => {
+    const tip = (o: Partial<EscapementSpec>) => escapementToothClearance({ ...BASE, ...o }).clearance
+    // The embrace turns the pallets deeper to seat the landing: 0.25 mm of it at
+    // 1.25° of lock, 0.46 at 1.5°, and the tip loses a tenth of a millimetre.
+    expect(tip({ lock: 1.5 })).toBeLessThan(tip({ lock: 1.25 }) - 0.05)
+    // Past the target the embrace stops growing, so more lock lengthens the run
+    // and leaves the tip where it was. Under the old 1 mm target it kept closing,
+    // to 0.08 mm at 2° — the reason the target came down.
+    expect(Math.abs(tip({ lock: 2 }) - tip({ lock: 1.75 }))).toBeLessThan(0.02)
+    expect(tip({ lock: 2 })).toBeGreaterThan(TOOTH_CLEAR)
+    // Drop is the free travel that carries the tooth's back clear.
+    expect(tip({ drop: 2.5 })).toBeGreaterThan(tip({}) + 0.05)
+  })
+
+  it('reads zero when the tip runs into a tooth', () => {
+    expect(escapementToothClearance({ ...BASE, drop: 1.25 }).clearance).toBeLessThan(0.02)
+  })
+
+  it('turns the wheel through the drop rather than jumping it, as the preview does', () => {
+    // At 1° of lock the closest pass is MID-DROP — 0.50 mm, where the poses
+    // either side of the jump alone read 0.72.
+    expect(escapementToothClearance({ ...BASE, lock: 1 }).clearance).toBeLessThan(0.6)
+  })
+})
+
+describe('escapement — a lock too small for the corner', () => {
+  // Below about half a degree the dead face is shorter than the round on its
+  // corner, and below a fifth of a degree shorter than the offset's own trim.
+  // The first walked the round off the deep end and sent the run-out back
+  // through the wheel as a spike; the second left the buried stretch standing,
+  // and measured it as a locking face longer than one at twice the lock.
+  const S = { ...BASE, lift: 2, drop: 2.75 }
+  const extent = (spec: EscapementSpec) => {
+    const pts = flattenPath(generateEscapementParts(spec).find((p) => p.key === 'anchor')!.d, 0.05).flat()
+    return { x0: Math.min(...pts.map((p) => p[0])), x1: Math.max(...pts.map((p) => p[0])), y0: Math.min(...pts.map((p) => p[1])) }
+  }
+
+  it('draws the anchor the same size at every lock, with nothing reaching into the wheel', () => {
+    const ref = extent({ ...S, lock: 0.75 })
+    for (const lock of [0.45, 0.4, 0.3, 0.2, 0.1, 0.05]) {
+      const e = extent({ ...S, lock })
+      expect(Math.abs(e.y0 - ref.y0)).toBeLessThan(0.5)
+      expect(Math.abs(e.x0 - ref.x0)).toBeLessThan(1)
+      expect(Math.abs(e.x1 - ref.x1)).toBeLessThan(1)
+    }
+  })
+
+  it('shrinks the locking face steadily to nothing as the lock goes to zero', () => {
+    let last = Infinity
+    for (const lock of [0.75, 0.6, 0.5, 0.45, 0.4, 0.3, 0.2, 0.1, 0.05, 0]) {
+      const face = escapementDims({ ...S, lock }).lockDepth
+      expect(face).toBeLessThanOrEqual(last + 1e-6)
+      last = face
+    }
+    expect(escapementDims({ ...S, lock: 0.2 }).lockDepth).toBeLessThan(0.01)
+  })
+
+  it('starts every profile in the locking face\'s own direction, never doubled back', () => {
+    for (const lock of [0.4, 0.3, 0.2, 0]) {
+      for (const side of ['entry', 'exit'] as const) {
+        const f = __escFaces({ ...S, lock }, side)
+        const ref = __escFaces({ ...S, lock: 0.75 }, side)
+        const dir = (p: [number, number][]) => { const i = p.findIndex((q, j) => j > 0 && Math.hypot(q[0] - p[0][0], q[1] - p[0][1]) > 1e-4); return Math.atan2(p[i][1] - p[0][1], p[i][0] - p[0][0]) }
+        const d = Math.abs(Math.atan2(Math.sin(dir(f) - dir(ref)), Math.cos(dir(f) - dir(ref))))
+        expect(d).toBeLessThan((10 * Math.PI) / 180)
       }
     }
   })

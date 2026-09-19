@@ -214,7 +214,7 @@ export default function Toolbar() {
         <ToolbarButton
           icon={<FolderOpen size={ICON.md} />}
           label="Open Project (Ctrl+O)"
-          onClick={() => openProjectFile().catch(() => { })}
+          onClick={() => void openProjectFile()}
         />
         <ToolbarButton
           icon={<Save size={ICON.md} />}

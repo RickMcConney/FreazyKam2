@@ -10,7 +10,9 @@
 // button: the button takes the colour of the worst line, so the status is visible
 // without the text, and the text lives in a window big enough to read it.
 
-import { escapementDims, escapementEnergy, LANDING_DEPTH, type EscapementSpec } from '../shapes/escapementGenerator'
+import {
+  escapementDims, escapementEnergy, escapementToothClearance, LANDING_DEPTH, LANDING_PER_CENTRE_MM, LANDING_WARN, TOOTH_CLEAR, type EscapementSpec,
+} from '../shapes/escapementGenerator'
 import type { ReadoutLine, Tone } from './readout'
 import { hubGrownWhy } from '../shapes/spokedWheel'
 
@@ -30,6 +32,15 @@ export function escapementReadout(spec: EscapementSpec, len: (mm: number) => str
   const out: ReadoutLine[] = []
   const say = (text: string, tone: Tone = 'plain') => out.push({ text, tone })
 
+  // THE ONE LINE THAT DOES ECHO THE INPUTS, and on purpose: every figure below
+  // is a consequence of these, and a readout quoted without them cannot be
+  // reproduced (Rick, 2026-09-18, wanting them "so I can easily copy them when
+  // I am giving feedback"). Everything that shapes the teeth and pallets, in one
+  // copyable line, first so a selection of the whole window starts with it.
+  const angles = dead
+    ? `lift ${spec.lift}° · drop ${spec.drop}° · lock ${spec.lock}° · draw ${spec.draw}°`
+    : `lift ${spec.lift}° · drop ${spec.drop}° · recoil arc ${spec.recoilArc}°`
+  say(`${dead ? 'Deadbeat' : 'Recoil'} · ${spec.teeth} teeth · ${len(spec.wheelDia)} wheel · ${len(spec.toothDepth)} tooth depth · ${angles} · ${len(spec.armWidth)} arms`)
   // The span is derived from the tooth count, so it is a readout now — and worth
   // one, since it fixes the arbor spacing and the whole shape of the anchor.
   say(`Pallets span ${d.span} teeth`)
@@ -60,6 +71,11 @@ export function escapementReadout(spec: EscapementSpec, len: (mm: number) => str
   // two of them added up.
   say(`Impulse face ${len(d.impulseWidth)} long at ${d.impulseAngleDeg.toFixed(0)}°`)
   say(`Pallets dive ${len(d.palletDive)} past the tips, into ${len(spec.toothDepth)} of tooth`)
+  // The other side of the pallet from the dive: its tip against the BACK of the
+  // next tooth. Stated always, not only once it warns — it closes gradually as
+  // lock goes up, and watching it close is how the lock/drop trade is set.
+  const tc = escapementToothClearance(spec)
+  say(`Pallet tip clears the tooth backs by ${len(tc.clearance)} (${tc.side} pallet, ${len(tc.depth)} below the tip)`)
   // The drop lock first: it is what a tooth actually lands on, and the one that
   // decides whether the escapement is dead at all.
   //
@@ -126,7 +142,26 @@ export function escapementReadout(spec: EscapementSpec, len: (mm: number) => str
       : 'A tooth never reaches the recoil face — the wheel will run straight through. More recoil arc.', 'error')
   }
   if (d.landingShort) {
-    say(`Tooth lands only ${len(d.dropLockDepth)} short of the corner — a centre distance or tips a little off will land it on the impulse face, which does not lock. ${d.fullLandingLockDeg.toFixed(2)}° of lock seats the full ${len(LANDING_DEPTH)}.`, 'warn')
+    // Says what the landing is worth in the one error that is easy to measure:
+    // "lands only 0.70 mm short of the corner" read as the tooth MISSING the
+    // dead face, and "a centre distance a little off" oversold 0.70 mm, which
+    // takes about a millimetre of it. A note above `LANDING_WARN`, a warning
+    // under it — see there.
+    const cd = d.dropLockDepth / LANDING_PER_CENTRE_MM
+    say(`Tooth lands ${len(d.dropLockDepth)} from the corner, under the ${len(LANDING_DEPTH)} target — a centre distance about ${len(cd)} long would use it up. ${d.fullLandingLockDeg.toFixed(2)}° of lock seats the full ${len(LANDING_DEPTH)}.`,
+      d.dropLockDepth < LANDING_WARN ? 'warn' : 'note')
+  }
+  // The pallet's TIP against the BACK of the tooth behind it — the clearance the
+  // embrace spends, which nothing above looks at. Measured over the whole swing
+  // on the drawn parts, and it is the lock that seats the full landing that
+  // squeezes it, so this and `landingShort` are two ends of one trade: drop is
+  // what pays for both. See `escapementToothClearance`.
+  if (tc.clearance < TOOTH_CLEAR) {
+    const where = `${len(tc.depth)} below its tip`
+    say(tc.clearance < 0.02
+      ? `The ${tc.side} pallet's tip hits the back of a tooth, ${where} — the pair will jam. More drop gives it room.`
+      : `The ${tc.side} pallet's tip passes only ${len(tc.clearance)} from the back of a tooth, ${where} — a centre distance a little short will jam it. More drop gives it room, about ${len(0.3)} per ½°.`,
+    tc.clearance < 0.02 ? 'error' : 'warn')
   }
   if (d.divesTooDeep) {
     say(`Pallets dive ${len(d.palletDive)} into ${len(spec.toothDepth)} of tooth — the impulse face reaches the tooth it just locked and the pair will bind. Deeper teeth, or less lock/lift.`, 'error')
@@ -140,12 +175,26 @@ export function escapementReadout(spec: EscapementSpec, len: (mm: number) => str
       ? `${spec.drop}° of drop is thrown away landing the tooth — less drop`
       : e.lockFriction > e.impulseFriction
         ? 'the tooth spends it sliding on the dead face — less lock'
-        : 'the tooth spends it sliding on the impulse face — less lift, or more drop'
+        // MORE lift, not less. At a small lift the face lies close to the wheel's
+        // rim, so the tooth mostly SLIDES along it and barely moves the pallet;
+        // a bigger lift turns it towards the pallet's own swing, and the tooth
+        // pushes instead (57% of the drive lost at 1° of lift, 28% at 3°, on the
+        // default wheel). Drop is no cure here — it trims the friction
+        // only by throwing the same energy away as drop instead.
+        : 'the tooth spends it sliding on the impulse face — more lift'
     say(`Only ${pc(e.delivered)} of the drive reaches the pendulum: ${why}.`, 'warn')
   }
   if (d.hubFouls) say('Pallet hub reaches into the wheel — smaller arbor, or more teeth.', 'warn')
   if (d.faceTooSteep) {
-    say(`Impulse faces at ${d.impulseAngleDeg.toFixed(0)}° are steep — less lift, or more drop.`, 'warn')
+    // The angle is measured from the pallet's own swing, and is about
+    // atan(wheel impulse / lift), so MORE lift shrinks it (76° at 1°, 53° at 3°,
+    // 45° at 4° on the default wheel) and so does more drop, which shrinks the
+    // wheel's share. "Steep" is steep to that swing: the face lies near the
+    // wheel's rim. On the canvas a smaller angle points the face MORE towards
+    // the wheel's centre — it looks steeper, not flatter, so never describe the
+    // fix as flattening the face (Rick, 2026-09-18). It said "less lift" once, which is
+    // the one change that makes it steeper (Rick, 2026-09-18).
+    say(`Impulse faces at ${d.impulseAngleDeg.toFixed(0)}° are steep — more lift, or more drop.`, 'warn')
   }
   if (d.hub.grown) say(`Hub grown to ${len(d.hub.dia)} ${hubGrownWhy(d.hub, spec.spokes)}.`, 'note')
   if (spec.spokes >= 2 && !d.hub.spoked) {

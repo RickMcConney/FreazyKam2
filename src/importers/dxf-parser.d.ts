@@ -21,7 +21,7 @@ declare module 'dxf-parser' {
     type: 'ARC'
     center: DxfPoint
     radius: number
-    startAngle: number
+    startAngle: number  // radians — dxf-parser converts the file's degrees
     endAngle: number
   }
 

@@ -1,5 +1,5 @@
 import { isWorkCancelled } from '../workers/workerClient'
-import { useToolpathStore, refsPathId } from '../store/toolpathStore'
+import { useToolpathStore, refsPathId, type AnyOperation } from '../store/toolpathStore'
 import { useToolStore } from '../store/toolStore'
 import { useSimStore } from '../store/simStore'
 import { useUIStore } from '../store/uiStore'
@@ -17,6 +17,11 @@ export async function regenerateOperation(opId: string): Promise<void> {
   if (!useToolStore.getState().tools.some((t) => t.id === op.toolId)) return
 
   updateOperation(opId, { status: 'generating' })
+  // An inlay's generation writes its linked half too, so that half is generating as well —
+  // and if this fails, it has to be settled with it rather than left `generating` forever.
+  const partnerId = op.type === 'inlay' ? op.linkedOpId : undefined
+  const partner = partnerId ? operations.find((o) => o.id === partnerId && o.type === 'inlay') : undefined
+  if (partner) updateOperation(partner.id, { status: 'generating' })
 
   try {
     const { notes } = await generateOperation(opId)
@@ -29,6 +34,7 @@ export async function regenerateOperation(opId: string): Promise<void> {
     if (isWorkCancelled(err)) return
     const msg = err instanceof Error ? err.message : 'Generation failed'
     setError(opId, msg)
+    if (partner) setError(partner.id, msg)
     // Nobody clicked anything, so there is no form banner to carry this: an edit to a
     // path silently broke an operation that was already generated. The status bar is the
     // only place the user will see it.
@@ -47,7 +53,7 @@ export function regenerateAffectedMany(pathIds: string[]): void {
   const affected = operations.filter((op) => pathIds.some((id) => refsPathId(op, id)))
   if (affected.length > 0) {
     useSimStore.getState().invalidateSim()
-    for (const op of affected) regenerateOperation(op.id)
+    regenerateMany(affected)
   }
   // Moving or reshaping a path moves the FLOOR of any pocket built on it, and the ops
   // sitting in that pocket don't reference the path at all — they'd never appear in
@@ -63,5 +69,22 @@ export function regenerateAffected(pathId: string): void {
 export function regenerateAll(): void {
   const { operations } = useToolpathStore.getState()
   if (operations.length > 0) useSimStore.getState().invalidateSim()
-  for (const op of operations) regenerateOperation(op.id)
+  regenerateMany(operations)
+}
+
+/**
+ * Regenerate each of `ops` — ONE generation per inlay pair.
+ *
+ * Both halves of a linked inlay are produced by a single call that writes both ops, and
+ * both halves reference the same paths, so every sweep used to submit the pair twice: two
+ * of the slowest jobs in the app, on two threads, computing the same thing. The second is
+ * dropped here; the first marks and writes its partner (see regenerateOperation).
+ */
+export function regenerateMany(ops: AnyOperation[]): void {
+  const submitted = new Set<string>()
+  for (const op of ops) {
+    if (op.type === 'inlay' && op.linkedOpId && submitted.has(op.linkedOpId)) continue
+    submitted.add(op.id)
+    void regenerateOperation(op.id)
+  }
 }

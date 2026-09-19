@@ -1,11 +1,21 @@
 import { describe, it, expect } from 'vitest'
-import { resolveStartZ, listFlatFloorOps, startInputForOp, resolveStartZForOp } from './startHeight'
+import { resolveStartZ, listFlatFloorOps, startInputForOp, resolveStartZForOp, profileCutMarginMM } from './startHeight'
+import { maxCutRadiusMM } from './geom'
+import type { Tool } from '../store/toolStore'
 import type { AnyOperation } from '../store/toolpathStore'
 import type { ImportedPath } from '../store/pathsStore'
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
 const STOCK = { widthMM: 200, heightMM: 200 }
+
+// A 6 mm end mill unless told otherwise.
+const tool = (over: Partial<Tool> = {}): Tool => ({
+  id: 't', name: 'Tool', type: 'endmill', diameterMM: 6, fluteCount: 2,
+  rpm: 18000, xyFeedMmMin: 1000, zFeedMmMin: 300, maxDepthMM: 20, ...over,
+})
+// A 5°-per-side taper with a 1 mm tip ball: it STORES 1 mm and cuts about 3.6 mm wide.
+const TAPER = tool({ type: 'taper', diameterMM: 1, vbitAngleDeg: 5, maxDepthMM: 20 })
 
 const rect = (x: number, y: number, w: number, h: number) =>
   `M ${x} ${y} L ${x + w} ${y} L ${x + w} ${y + h} L ${x} ${y + h} Z`
@@ -215,7 +225,7 @@ describe('listFlatFloorOps', () => {
 
 describe('startInputForOp', () => {
   const paths = [path('outer', rect(0, 0, 50, 50)), path('inner', rect(5, 5, 40, 40))]
-  const tools = [{ id: 't', diameterMM: 6 }]
+  const tools = [tool()]
 
   const profileOp = (side: 'outside' | 'inside' | 'centerline'): AnyOperation => ({
     id: 'pr', name: 'Profile', type: 'profile', toolId: 't', status: 'done', segments: [],
@@ -236,6 +246,23 @@ describe('startInputForOp', () => {
     expect(startInputForOp(profileOp('outside'), paths, tools)?.cutMarginMM).toBe(6)
     expect(startInputForOp(profileOp('centerline'), paths, tools)?.cutMarginMM).toBe(3)
     expect(startInputForOp(profileOp('inside'), paths, tools)?.cutMarginMM).toBe(0)
+  })
+
+  it('widens a profile by what the tool CUTS, not by a taper\'s stored tip', () => {
+    // A taper stores its tip ball as diameterMM; its body opens out to maxCutRadiusMM.
+    const wide = 2 * maxCutRadiusMM(TAPER)
+    expect(wide).toBeGreaterThan(3)
+    const taperOp = (side: 'outside' | 'centerline') =>
+      ({ ...profileOp(side), toolId: TAPER.id } as AnyOperation)
+    expect(startInputForOp(taperOp('outside'), paths, [TAPER])?.cutMarginMM).toBeCloseTo(wide, 9)
+    expect(startInputForOp(taperOp('centerline'), paths, [TAPER])?.cutMarginMM).toBeCloseTo(wide / 2, 9)
+  })
+
+  it('profile margin carries the allowance: out on the outside, past the line on the inside', () => {
+    expect(profileCutMarginMM('outside', tool(), 0.5)).toBe(6.5)
+    expect(profileCutMarginMM('inside', tool(), 0.5)).toBe(0)
+    expect(profileCutMarginMM('inside', tool(), -0.4)).toBe(0.4)
+    expect(profileCutMarginMM('outside', undefined)).toBe(0)
   })
 
   it('is null for operation types with no start-height support', () => {
@@ -269,7 +296,7 @@ describe('startInputForOp', () => {
 
   it('is null for a drill with neither a path nor any points', () => {
     expect(startInputForOp(drillOp(), paths, tools)).toBeNull()
-    expect(startInputForOp(drillOp({ points: [{ x: 1, y: 1 }] }), paths, [{ id: 't', diameterMM: 0 }])).toBeNull()
+    expect(startInputForOp(drillOp({ points: [{ x: 1, y: 1 }] }), paths, [tool({ diameterMM: 0 })])).toBeNull()
   })
 
   it('is null when the source path is gone', () => {
@@ -283,7 +310,7 @@ describe('resolveStartZForOp', () => {
     path('middle', rect(5, 5, 40, 40)),
     path('inner', rect(15, 15, 10, 10)),
   ]
-  const tools = [{ id: 't', diameterMM: 6 }]
+  const tools = [tool()]
 
   it('resolves a nested chain the same way generation does', () => {
     const op1 = pocket('op1', 'outer', 2)
@@ -293,6 +320,26 @@ describe('resolveStartZForOp', () => {
     expect(resolveStartZForOp(op1, ops, paths, STOCK, tools).zMM).toBe(0)
     expect(resolveStartZForOp(op2, ops, paths, STOCK, tools).zMM).toBe(-2)
     expect(resolveStartZForOp(op3, ops, paths, STOCK, tools).zMM).toBe(-4)
+  })
+
+  // The crash B6 was about. A taper profile runs 2.5 mm inside a 5 mm pocket's wall. Sized
+  // by its 1 mm tip, its footprint fitted inside the pocket and it started on the pocket
+  // FLOOR — while the body of the bit, 3.6 mm across at depth, reached over the wall into
+  // stock at full height. Sized by what it cuts, the footprint spans both levels, and a
+  // footprint spanning two levels starts at the higher one.
+  it('a taper profile near a pocket wall starts above the stock it reaches over', () => {
+    const pocketPaths = [path('pk', rect(0, 0, 50, 50)), path('pr', rect(2.5, 2.5, 45, 45))]
+    const pk = pocket('pk', 'pk', 5)
+    const pr = {
+      id: 'pr', name: 'Profile', type: 'profile', toolId: TAPER.id, status: 'done', segments: [],
+      color: '#00f', visible: true, pathId: 'pr', side: 'outside', depthMM: 1, stepDownMM: 1,
+      direction: 'climb', rampIn: false, startFrom: auto,
+    } as AnyOperation
+    expect(resolveStartZForOp(pr, [pk, pr], pocketPaths, STOCK, [TAPER]).zMM).toBe(0)
+    // …and the same geometry with a tool that really is 1 mm wide does sit on the floor,
+    // so the answer above is the taper's width at work, not the fixture.
+    const narrow = tool({ diameterMM: 1 })
+    expect(resolveStartZForOp(pr, [pk, pr], pocketPaths, STOCK, [narrow]).zMM).toBe(-5)
   })
 
   // The drift the invalidation pass looks for: op3's own settings never changed, but

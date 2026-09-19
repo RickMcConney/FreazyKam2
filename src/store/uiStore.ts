@@ -167,6 +167,10 @@ interface UIState {
   // but not clock, so the sidebar went on showing the designer and neither the
   // properties panel nor a machine form could appear.
   closeDrawPanels: () => void
+  // Everything on screen that is bound to the OPEN DOCUMENT — panels, forms and every path,
+  // op or constraint id the UI is holding — closed or cleared, for a document swap. See
+  // leaveDocument (io/projectLoad.ts).
+  closeDocumentUi: () => void
   setHelpOpen: (open: boolean) => void
   setEscapementInfoOpen: (open: boolean) => void
   setClockInfoOpen: (open: boolean) => void
@@ -279,6 +283,21 @@ export const useUIStore = create<UIState>()(
     setupPanelOpen: false, shapesPanelOpen: false, machineFormActive: false,
     clockPanelOpen: false, clockEditId: null,
     clockInfoOpen: false, clockDraft: null,
+  }),
+  closeDocumentUi: () => set({
+    // Panels and forms (closeDrawPanels' set, plus the two it leaves alone).
+    setupPanelOpen: false, shapesPanelOpen: false, machineFormActive: false,
+    clockPanelOpen: false, clockEditId: null, clockInfoOpen: false, clockDraft: null,
+    tabsFormActive: false, escapementInfoOpen: false,
+    // Canvas modes working on a path of the outgoing document. Node edit is ABANDONED, not
+    // committed — useNodeEditSession checks projectStore.documentEpoch before writing back.
+    activeTool: 'select', nodeEditPathId: null,
+    meshAnimPathId: null, clockAnimPathId: null, clockLinkPathId: null,
+    cornerPickPathId: null, cornerPickBaseD: null, selectedCorners: [], treatedCorners: [],
+    focusConstraintId: null, constrainSubjectIds: [],
+    pendingDrillPoints: [], penNodes: [],
+    // Requests queued for a form to pick up — they name ops/paths of the old document.
+    requestEditOpId: null, requestEditPathId: null, requestMachineForm: null,
   }),
   setHelpOpen: (open) => set({ helpOpen: open }),
   setEscapementInfoOpen: (open) => set({ escapementInfoOpen: open }),

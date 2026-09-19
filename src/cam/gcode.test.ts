@@ -239,7 +239,28 @@ describe('generateGcode — origin and Z datum', () => {
       { ...POST, unitMode: 'in', startGcode: 'G20\nG90' },
     )
     expect(g).toContain('G0 X1.0000 Y0.0000 Z1.0000')
-    expect(g).toContain('G1 X2.0000 Y0.0000 Z-1.0000 F39') // 1000 mm/min ≈ 39.37 in/min
+    expect(g).toContain('G1 X2.0000 Y0.0000 Z-1.0000 F39.37\n') // 1000 mm/min = 39.37 in/min
+  })
+
+  it('keeps a slow inch feed to the hundredth, and never emits F0', () => {
+    // 10 mm/min is 0.39 in/min. Rounded to a whole in/min it came out F0, which Grbl refuses
+    // as an undefined feed; 20 mm/min came out F1, 27 % fast. Small tools are fed this slowly
+    // BECAUSE they break.
+    const slow: Tool = { ...TOOL, id: 'slow', xyFeedMmMin: 20, zFeedMmMin: 10 }
+    const g = generateGcode(
+      [makeOp([rapid(0, 0, 5), cut(0, 0, -1), cut(25.4, 0, -1), cut(50.8, 0, -1, { feedScale: 0.001 })], { toolId: 'slow' })],
+      { slow }, 'p', { ...POST, unitMode: 'in', startGcode: 'G20\nG90' },
+    )
+    expect(g).toContain('G1 X0.0000 Y0.0000 Z-0.0394 F0.39\n')   // plunge, 10 mm/min
+    expect(g).toContain('G1 X1.0000 Y0.0000 Z-0.0394 F0.79\n')   // cut, 20 mm/min
+    expect(g).toContain('G1 X2.0000 Y0.0000 Z-0.0394 F0.01\n')   // scaled to ~0: floored, not F0
+    expect(g).not.toMatch(/F0(?![.\d])/)
+  })
+
+  it('keeps whole mm/min feeds in an mm post, and floors them at F1', () => {
+    const g = gen([makeOp([rapid(0, 0, 5), cut(0, 0, -1), cut(10, 0, -1, { feedScale: 0.0001 })])])
+    expect(g).toContain('G1 X0.000 Y0.000 Z-1.000 F300\n')
+    expect(g).toContain('G1 X10.000 Y0.000 Z-1.000 F1\n')
   })
 })
 
@@ -263,6 +284,35 @@ describe('generateGcode — tool changes', () => {
     expect(lines.slice(changeIdx)).toContain('M3 S24000')
     // cuts after the change use the second tool's feed
     expect(g).toContain('G1 X30.000 Y0.000 Z-1.000 F600')
+  })
+
+  it('lifts to the marker\'s safe Z BEFORE stopping for the change, not after', () => {
+    // The marker is a position. Skipped, the spindle stopped and the program paused with
+    // the old bit still 1 mm into the stock, and the new tool's first move was a diagonal
+    // G0 from Z-1 out through the cut.
+    const lines = gen([makeOp([
+      rapid(0, 0, 5), cut(0, 0, -1), cut(10, 0, -1),
+      { x: 10, y: 0, z: 5, rapid: true, toolChange: 't2' },
+      rapid(20, 0, 5), cut(20, 0, -1),
+    ])]).split('\n')
+    const pause = lines.indexOf('M0')
+    expect(lines.slice(pause - 2, pause + 1)).toEqual(['G0 X10.000 Y0.000 Z5.000', 'M5', 'M0'])
+    // …so the first move with the new tool starts at safe height, not in the material.
+    const after = lines.slice(pause).find((l) => l.startsWith('G0') || l.startsWith('G1'))
+    expect(after).toBe('G0 X20.000 Y0.000 Z5.000')
+  })
+
+  it('adds no move when the tool is already standing on the marker', () => {
+    // The usual 3D-profile case: roughing ends with its own retract to the marker's spot,
+    // and that program must come out exactly as it did.
+    const lines = gen([makeOp([
+      rapid(0, 0, 5), cut(0, 0, -1), cut(10, 0, -1), rapid(10, 0, 5),
+      { x: 10, y: 0, z: 5, rapid: true, toolChange: 't2' },
+      rapid(20, 0, 5),
+    ])]).split('\n')
+    expect(lines.filter((l) => l === 'G0 X10.000 Y0.000 Z5.000')).toHaveLength(1)
+    const pause = lines.indexOf('M0')
+    expect(lines.slice(pause - 2, pause + 1)).toEqual(['G0 X10.000 Y0.000 Z5.000', 'M5', 'M0'])
   })
 })
 
@@ -371,7 +421,7 @@ const make3d = (over: Partial<AnyOperation> = {}): AnyOperation => ({
   ...over,
 } as AnyOperation)
 
-const split = (ops: AnyOperation[], tools = SPLIT_TOOLS) =>
+const split = (ops: AnyOperation[], tools: Record<string, Tool> = SPLIT_TOOLS) =>
   generateGcodePerTool(ops, tools, 'proj', POST)
 
 /** Cutting lines only — the material removal, which splitting must not change. */
@@ -434,6 +484,21 @@ describe('generateGcodePerTool — which files come out', () => {
     expect(split([noRough]).map((f) => f.toolId)).toEqual(['tf'])
   })
 
+  it('files a 3D profile that never roughed entirely under its finishing tool', () => {
+    // The op still NAMES a roughing tool — it was retyped in the library, or deleted, and
+    // the generator skipped roughing — but no marker hands over, so every segment is the
+    // finishing tool's. Reading the name put them all in the rougher's file, or, with the
+    // rougher gone from the library, in no file at all.
+    const finishOnly = make3d({
+      segments: [rapid(20, 0, 5), cut(20, 0, -1), cut(30, 0, -1)],
+    } as Partial<AnyOperation>)
+    for (const tools of [SPLIT_TOOLS, { tf: TOOL_F }]) {
+      const files = split([finishOnly], tools)
+      expect(files.map((f) => f.toolId)).toEqual(['tf'])
+      expect(cutLines(files[0].gcode)).toEqual(['G1 X20.000 Y0.000 Z-1.000 F200', 'G1 X30.000 Y0.000 Z-1.000 F600'])
+    }
+  })
+
   it('numbers the files and sanitises the tool name into them', () => {
     const odd: Tool = { ...TOOL, id: 'tx', name: '1/2" Bit: rough/finish' }
     const files = generateGcodePerTool(
@@ -490,5 +555,32 @@ describe('generateGcodePerTool — the motion survives the split', () => {
   it('reports the speed the operator should set for the file', () => {
     const files = split([make3d()])
     expect(files.map((f) => f.rpm)).toEqual([18000, 24000])
+  })
+})
+
+describe('generateGcode — a 3D profile whose roughing never ran', () => {
+  // The op names a roughing tool, but the segments carry no handover marker: the rougher
+  // was retyped or deleted and the generator only finished. The program must then be the
+  // finishing tool's from its first line — announcing the rougher had the operator mount
+  // it and run the whole finish raster with it, at its speed, with no pause ever coming.
+  const finishOnly = make3d({
+    segments: [rapid(20, 0, 5), cut(20, 0, -1), cut(30, 0, -1)],
+  } as Partial<AnyOperation>)
+
+  it('announces, spins up and feeds for the finishing tool alone', () => {
+    const g = generateGcode([finishOnly], SPLIT_TOOLS, 'proj', POST)
+    expect(g).not.toContain('Roughing:')
+    expect(g).not.toContain('Rough 6mm')
+    expect(g).toContain('Tool: Ball 3mm')
+    expect(g).toContain('M3 S24000')
+    expect(g).not.toContain('M3 S18000')
+    expect(g).not.toContain('\nM0')
+    expect(cutLines(g)).toEqual(['G1 X20.000 Y0.000 Z-1.000 F200', 'G1 X30.000 Y0.000 Z-1.000 F600'])
+  })
+
+  it('still starts with the rougher when the handover marker is there', () => {
+    const g = generateGcode([make3d()], SPLIT_TOOLS, 'proj', POST)
+    expect(g).toContain('Roughing: Rough 6mm')
+    expect(g.indexOf('M3 S18000')).toBeLessThan(g.indexOf('M3 S24000'))
   })
 })

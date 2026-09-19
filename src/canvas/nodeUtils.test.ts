@@ -380,3 +380,32 @@ describe('deleteSegment', () => {
     expect(r.secondPath![0].handleIn).toBeUndefined()
   })
 })
+
+describe('parseDToNodes — reads the compact forms SVG allows', () => {
+  const xy = (d: string) => parseDToNodes(d).nodes.map((n) => [n.x, n.y])
+
+  it('reads several points after one M or L', () => {
+    // The old token walk took `10` for a command letter and skipped along a token at a time,
+    // dropping points and pairing the rest up wrong.
+    expect(xy('M0 0 10 0 10 10 Z')).toEqual([[0, 0], [10, 0], [10, 10]])
+    expect(xy('M0 0 L10 0 10 10 0 10 Z')).toEqual([[0, 0], [10, 0], [10, 10], [0, 10]])
+    expect(parseDToNodes('M0 0 L10 0 10 10 0 10 Z').closed).toBe(true)
+  })
+
+  it('reads repeated curve segments after one C exactly as written out in full', () => {
+    const compact = parseDToNodes('M0 0 C1 1 2 2 3 3 4 4 5 5 6 6')
+    const full = parseDToNodes('M0 0 C1 1 2 2 3 3 C4 4 5 5 6 6')
+    expect(compact).toEqual(full)
+    expect(compact.nodes).toHaveLength(3)
+  })
+
+  it('expands H and V', () => {
+    expect(xy('M0 0 H10 V10 H0 Z')).toEqual([[0, 0], [10, 0], [10, 10], [0, 10]])
+  })
+
+  it('still reflects the previous control through repeated smooth segments', () => {
+    // S after S reflects the previous S's second control, as it does when each is written out.
+    expect(parseDToNodes('M0 0 C0 10 10 10 10 0 S20 -10 20 0 30 10 40 0'))
+      .toEqual(parseDToNodes('M0 0 C0 10 10 10 10 0 S20 -10 20 0 S30 10 40 0'))
+  })
+})

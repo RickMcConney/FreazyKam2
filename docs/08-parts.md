@@ -67,6 +67,138 @@ anchor from one escapement and a wheel from another do not make an escapement.
 It animates through its beat, which is the only sensible way to check one: watch a tooth
 land on a locking face, the pallet lift, and the next tooth drop.
 
+![An escape wheel with the anchor assembled above it, naming the entry and exit pallets, both arbors, the centre distance and the tip circle](images/08-esc-overview.svg)
+
+### How it works
+
+The train pushes the escape wheel round, and the anchor, rocked by the pendulum, stops it.
+Each beat goes through four steps:
+
+1. **Lock.** A tooth rests on a pallet's **locking face**. That face is an arc about the
+   anchor's arbor, so as the pendulum swings on, the pallet slides under the tooth without
+   turning the wheel. That's what makes a **deadbeat** dead.
+2. **Unlock.** The pendulum swings back far enough for the tooth to reach the corner at the
+   end of the locking face.
+3. **Impulse.** The tooth slides down the sloping **impulse face** and pushes the pallet
+   out of its way. That push is what keeps the pendulum swinging.
+4. **Drop.** The tooth leaves the pallet's tip and the wheel turns freely for a moment,
+   until a tooth lands on the *other* pallet's locking face. Then the whole thing runs in
+   reverse.
+
+One beat moves the wheel half a tooth. Two beats, one out and one back, move it a whole
+tooth.
+
+A **recoil** escapement has no locking face. Its tooth lands straight on a sloping face,
+and the pendulum's extra swing pushes the wheel backwards a little. That's the "tick-tock
+with a shudder" of a long-case clock's second hand.
+
+### The fields
+
+| Field | Meaning |
+|---|---|
+| **Type** | **Deadbeat** (Graham) — the tooth rests dead still while locked; the better timekeeper. **Recoil** — no locking face; simpler, more forgiving, a little less accurate |
+| **Teeth** | Tooth count. **30** beats seconds with a one-second pendulum. Also sets how many teeth the pallets **span**, which fixes the shape of the anchor |
+| **Wheel Ø** | The circle the tooth tips act on (dashed above). The tips are rounded and their material stands one round proud of it, so the wheel measures slightly more across the teeth — the readout gives both |
+| **Tooth H** | Tooth depth, tip to root. Deeper teeth leave more room for the pallets to dive into |
+| **Drop** | Degrees the **wheel** turns freely between one tooth leaving a pallet and the next landing. Taken out of the half tooth each beat moves the wheel; what is left is the impulse. More drop gives the pallet tip more room, and throws more of the drive away |
+| **Lift** | Degrees the **anchor** swings while a tooth slides down the impulse face — the impulse, measured at the pendulum. More lift turns the impulse faces away from the wheel's rim, so the tooth pushes the pallet instead of mostly sliding along it |
+| **Lock** | Deadbeat only. Degrees the anchor swings with a tooth resting on the locking face. It sets how long the locking face is, and so how much margin a tooth has when it lands (see below) |
+| **Draw** | Deadbeat only. Degrees the locking face leans off a true arc, so the wheel's own push pulls the pallet *in* and holds the lock, rather than nudging it out. Keep a degree or two |
+| **Recoil** | Recoil only. Degrees of extra swing the faces can take, driving the wheel back as they do |
+| **Arm W** | Width of the anchor's arms and pallets |
+| **Bore Ø / Hub Ø / Spokes** | The wheel's arbor hole and body, as on a gear |
+| **Arbor Ø** | The anchor's arbor hole |
+| **Clockwise** | Which way the wheel turns. The teeth lean the way it runs, so this is geometry, not a view option — a wheel cut the wrong way round will not lock |
+
+Drop is measured at the **wheel** and lift at the **anchor**. They aren't the same angle
+measured twice.
+
+### The locking face and the landing
+
+![Close-up of one pallet with a tooth just landed on its locking face: the locking face, its rounded corner, the impulse face, the landing distance and the run margin](images/08-esc-pallet.svg)
+
+The acting face of a pallet is **one edge with a corner in it**. The corner is rounded,
+and so is the tooth's tip. What matters is where the tooth lands along the locking face:
+
+- **Landing** — how much locking face is still ahead of the tooth, up to the corner, at the
+  instant it lands. **This is the margin every build error spends.** A centre distance built
+  long costs about 0.7 mm of it per mm. Tips cut short, slop in the pivots and a corner
+  worn by the landing tooth spend it too. When it runs out the tooth lands on the impulse
+  face, which doesn't hold it, and the wheel runs through. The target is **0.5 mm**.
+- **Run margin** — the locking face beyond the landing, kept for the pendulum's extra
+  swing to carry the tooth deeper. The generator always keeps 0.5 mm of it.
+
+**More lock means a longer locking face**, and the extra goes into the landing until it
+reaches 0.5 mm. After that it only lengthens the run margin. The readout tells you the lock
+that seats the full 0.5 mm: as a note while the landing is still 0.25 mm or more, and as a
+warning under that.
+
+**Why 0.5 mm and not more:** the pallets are spaced to seat the landing, and that spacing
+turns both of them deeper into the wheel. A deeper landing costs tip clearance (below) and
+adds friction on the locking face. The target used to be 1 mm, and on the default wheel
+that cost about 2% of the drive and left 0.08 mm at the pallet tip.
+
+**Don't judge the lock by eye.** Past the deep end, the pallet's edge carries straight on
+into the arm, and the tooth's flat side lies along it. Together they look like a millimetre
+or more of locking face. The green stretch above is the only part that holds the tooth.
+
+The animation can't show a tooth tripping either. It plays the escapement's designed
+motion, and that holds the wheel still wherever the lock says it's held. The readout
+measures the real parts. Believe the readout.
+
+### The pallet tip
+
+![The pallet's tip passing close to the back of the next tooth, with the gap magnified](images/08-esc-tip-clearance.svg)
+
+The other end of the pallet has a limit too. The pallet's tip, where the tooth leaves the
+impulse face, reaches deepest into the gap between teeth, with the **back of the next
+tooth** behind it. The readout's **"Pallet tip clears the tooth backs by"** line is the
+closest they come over the whole swing. It warns under 0.25 mm, and turns red when they
+touch.
+
+**Landing, drop and energy pull against each other here.** Seating the landing turns the
+pallets deeper into the wheel, which closes this gap, and a centre distance built *short*
+closes it further. More drop opens it again, at the cost of the drop wasting more of each
+beat. On the default wheel (30 teeth, 100 mm, lift 3°, draw 2°):
+
+| Lock | Drop | Landing | Tip clearance | Pendulum gets | |
+|---|---|---|---|---|---|
+| 1° | 2° | 0.04 mm | 0.50 mm | 33.6% | landing warning |
+| 1.25° | 2° | 0.25 mm | 0.50 mm | 32.8% | landing warning |
+| **1.5°** | **2°** | **0.46 mm** | **0.40 mm** | **32.0%** | **the default** |
+| 2° | 2° | 0.48 mm | 0.38 mm | 28.7% | dive at 98% of its limit |
+| 1.5° | 1.75° | 0.45 mm | 0.25 mm | 33.8% | tip warning |
+| 1.5° | 2.5° | 0.48 mm | 0.49 mm | 27.8% | |
+
+The defaults came out of a sweep of about 3,600 combinations of lift, drop, lock, draw and
+tooth depth on this wheel. Less lock buys little more energy for a landing of almost
+nothing. Less drop gains energy but brings the tip to the warning line. More lock past
+1.5° costs energy and drives the pallets toward the dive limit. **Draw costs no energy at
+all**, so leave it at a degree or two, where it holds the lock.
+
+### Reading the readout
+
+The escapement's readout button takes the colour of its worst line. Open it for the numbers:
+
+- **The first line repeats the settings** (type, teeth, wheel, tooth depth, lift, drop,
+  lock or recoil, draw and arm width) so you can copy the whole readout when you ask about
+  an escapement.
+- **Wheel centre to anchor arbor** is the centre distance to lay out the arbors at. The
+  shape is drawn with the anchor lifted clear, so don't measure it off the canvas.
+- **Pendulum must swing past** is the least swing that unlocks the escapement. A pendulum
+  that swings less stops the clock.
+- **Pallets dive** is how far the pallets reach inside the tip circle. Past about 45% of
+  the tooth depth the impulse face runs into the tooth it just locked. Deeper teeth, or
+  less lock or lift, fix it.
+- **Impulse faces are steep**: the angle is measured from the direction the pallet swings.
+  A large one means the face lies close to the wheel's rim, so the tooth mostly slides
+  along it and barely pushes the pallet. More lift, or more drop, turns it away from the
+  rim. On the canvas that makes the face point more towards the wheel's centre, so it looks
+  steeper, not flatter.
+- **Pendulum gets N% of the drive** is the energy budget. The drop is thrown away every
+  beat, and friction on the faces takes more. Use it to compare settings; the absolute
+  figure depends on the friction assumed.
+
 ---
 
 ## Pendulum
