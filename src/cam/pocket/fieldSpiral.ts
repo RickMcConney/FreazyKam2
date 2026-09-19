@@ -3,9 +3,9 @@ import { morphChainToSpiral } from '../spiralMorph'
 import { solveField, type FieldGrid } from '../spiralField'
 import { traceIsolines } from '../marchingSquares'
 import {  JoinType } from 'clipper2-ts'
-import {   stripClosingDuplicate, pointInPolygon, interiorPoint } from '../geom'
+import {   stripClosingDuplicate, pointInPolygon, interiorPoint, ringPerimeter } from '../geom'
 import type { MotionSegment } from '../../store/toolpathStore'
-import { type PocketPlan, type PocketPlanner, _timed, centroidOfRing, compoundFinishRings, emitRampDescent, emitSpiralHelixEntry, growIslands, growRing, insetRing, isTravelSafe, rampLeadIn, ringPerimeter, setGap } from './shared'
+import { type PocketPlan, type PocketPlanner, _timed, centroidOfRing, compoundFinishRings, emitRampDescent, emitSpiralHelixEntry, growIslands, growRing, insetRing, isTravelSafe, rampLeadIn, setGap } from './shared'
 
 // ─── Spiral geometry: loop forest, chains, region clamping ───────────────────────
 //

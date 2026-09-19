@@ -17,14 +17,14 @@ import polygonClipping from 'polygon-clipping'
 import { inflatePathsD, JoinType, EndType } from 'clipper2-ts'
 import { signedArea } from '../cam/pathFlattener'
 import { stripClosingDuplicate } from '../cam/geom'
+import { clamp, fmt4 as fmt } from '../util/num'
 
 export type Pt = [number, number]
 
 /** Chord tolerance when sampling an arc into a polyline, mm. */
 export const TOL = 0.05
 
-export function fmt(n: number): string { return String(+n.toFixed(4)) }
-export function clamp(v: number, lo: number, hi: number): number { return Math.max(lo, Math.min(hi, v)) }
+export { clamp, fmt }
 
 export function ccw(ring: Pt[]): Pt[] {
   const r = stripClosingDuplicate(ring) as Pt[]

@@ -5,7 +5,7 @@
 import {  signedArea, ensureWinding, douglasPeucker, type Pt2 } from '../pathFlattener'
 import { perfLog } from '../../debug'
 import { inflatePathsD, differenceD, intersectD, JoinType, EndType, FillRule } from 'clipper2-ts'
-import {  arcLengths, interpPt, stripClosingDuplicate, pointInPolygon, pointOnRing, ptSegDistSq } from '../geom'
+import {  arcLengths, interpPt, ringPerimeter, stripClosingDuplicate, pointInPolygon, pointOnRing, ptSegDistSq } from '../geom'
 import type { ClearanceField } from './clearance'
 import type { MotionSegment } from '../../store/toolpathStore'
 import type {  CuttingDirection, Tool } from '../../store/toolStore'
@@ -945,14 +945,6 @@ const unitVec = (from: Pt2, to: Pt2): Pt2 | null => {
   const dx = to[0] - from[0], dy = to[1] - from[1]
   const len = Math.hypot(dx, dy)
   return len < 1e-9 ? null : [dx / len, dy / len]
-}
-
-export function ringPerimeter(ring: Pt2[]): number {
-  let p = 0
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    p += Math.hypot(ring[i][0] - ring[j][0], ring[i][1] - ring[j][1])
-  }
-  return p
 }
 
 /** Lead distance for a link into `ring`, bounded so it can't swallow a small ring. */

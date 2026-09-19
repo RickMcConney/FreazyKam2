@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { Material } from '../store/workpieceStore'
 import { MATERIAL_COLORS } from '../colors'
+import { mulberry32 } from '../util/num'
 
 // ─── Stock textures ────────────────────────────────────────────────────────
 //
@@ -84,16 +85,6 @@ let onTextureLoaded: (() => void) | null = null
 // ThreeView registers a repaint trigger here (render-on-demand loop).
 export function setWoodTextureListener(cb: (() => void) | null) {
   onTextureLoaded = cb
-}
-
-function mulberry32(seed: number): () => number {
-  return () => {
-    seed |= 0
-    seed = (seed + 0x6d2b79f5) | 0
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
 }
 
 function hashStr(s: string): number {

@@ -243,6 +243,29 @@ export function arcLengths(pts: Pt2[]): { lens: number[]; total: number } {
   return { lens, total: lens[lens.length - 1] }
 }
 
+// Axis-aligned bounds of every point in `rings`; null when there are no points.
+export function ringsBBox(rings: Iterable<Iterable<readonly number[]>>): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const ring of rings) {
+    for (const [x, y] of ring) {
+      if (x < minX) minX = x
+      if (y < minY) minY = y
+      if (x > maxX) maxX = x
+      if (y > maxY) maxY = y
+    }
+  }
+  return isFinite(minX) ? { minX, minY, maxX, maxY } : null
+}
+
+// Perimeter of a closed ring (implicit closing edge).
+export function ringPerimeter(ring: Pt2[]): number {
+  let p = 0
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    p += Math.hypot(ring[i][0] - ring[j][0], ring[i][1] - ring[j][1])
+  }
+  return p
+}
+
 // Interpolate a point at arc-length s along a polyline.
 export function interpPt(pts: Pt2[], lens: number[], s: number): Pt2 {
   s = Math.max(0, Math.min(lens[lens.length - 1], s))

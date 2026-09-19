@@ -16,7 +16,7 @@
 // config while the escapement tool is active. That also means it survives placing
 // a shape — the selection takes over from the tool config with nothing to wire up.
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect } from 'react'
 import { X, GripHorizontal } from 'lucide-react'
 import { ICON } from '../theme'
 import { useUIStore } from '../store/uiStore'
@@ -24,6 +24,9 @@ import { usePathsStore } from '../store/pathsStore'
 import { useWorkpieceStore, fmtLen } from '../store/workpieceStore'
 import { escapementReadout, type Tone } from './escapementReadout'
 import type { EscapementSpec } from '../shapes/escapementGenerator'
+import { useDraggablePanel } from './useDraggablePanel'
+
+const INITIAL_POS = { left: 340, bottom: 120 }
 
 const TONE_CLASS: Record<Tone, string> = {
   plain: 'text-gray-600 dark:text-neutral-300',
@@ -43,21 +46,7 @@ export default function EscapementInfoPanel() {
 
   // Dragged by its header, because it hangs over the drawing and the one place
   // it is never wanted is on top of the part being looked at.
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
-  const drag = useRef<{ dx: number; dy: number } | null>(null)
-  useEffect(() => {
-    const move = (e: MouseEvent) => {
-      if (!drag.current) return
-      setPos({ x: e.clientX - drag.current.dx, y: e.clientY - drag.current.dy })
-    }
-    const up = () => { drag.current = null }
-    window.addEventListener('mousemove', move)
-    window.addEventListener('mouseup', up)
-    return () => {
-      window.removeEventListener('mousemove', move)
-      window.removeEventListener('mouseup', up)
-    }
-  }, [])
+  const panel = useDraggablePanel(INITIAL_POS)
 
   // ANY selected path carrying escapement params, not just a lone one.
   //
@@ -100,15 +89,11 @@ export default function EscapementInfoPanel() {
          arbors / pallet-radius row, about 75 characters. The red warnings are
          sentences and are meant to wrap. */
       className="fixed z-40 w-[44rem] max-w-[calc(100vw-2rem)] rounded-lg shadow-2xl border border-gray-300 dark:border-neutral-700 bg-gray-100 dark:bg-neutral-800"
-      style={pos ? { left: pos.x, top: pos.y } : { left: 340, bottom: 120 }}
+      style={panel.style}
     >
       <div
         className="flex items-center gap-2 px-3 py-2 border-b border-gray-300 dark:border-neutral-700 cursor-move select-none"
-        onMouseDown={(e) => {
-          const r = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect()
-          drag.current = { dx: e.clientX - r.left, dy: e.clientY - r.top }
-          setPos({ x: r.left, y: r.top })
-        }}
+        onMouseDown={panel.onHeaderMouseDown}
       >
         <GripHorizontal size={ICON.sm} className="text-gray-600 dark:text-neutral-400" />
         <span className="flex-1 text-sm font-semibold text-gray-700 dark:text-neutral-200">Escapement</span>

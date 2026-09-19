@@ -8,6 +8,7 @@ import { useTabStore } from '../store/tabStore'
 import { useConstraintsStore } from '../store/constraintsStore'
 import { useTimelineStore } from '../timeline/timelineStore'
 import { sanitizeFileName } from './filename'
+import { downloadText } from './download'
 
 // v3: the `timeline` block is GONE. It held an event log so undo history could
 // survive save/load, back when undo replayed that log; undo is a snapshot stack
@@ -70,15 +71,7 @@ export function saveProject(explicitName?: string) {
   const data = buildProjectData()
   const safeName = sanitizeFileName(data.name || 'project')
   const json = JSON.stringify(data, null, 2)
-  const blob = new Blob([json], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${safeName}.fkam`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  downloadText(json, `${safeName}.fkam`, 'application/json')
   useProjectStore.getState().markClean()
   useTimelineStore.getState().markSaved()
 }

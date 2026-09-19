@@ -11,6 +11,7 @@ import {
   generateTrackD, generateTrackParts, BRIO,
   type TrackKind, type TrackEnd, type TrackHand,
 } from './trackGenerator'
+import { fmt4 as f } from '../util/num'
 
 export type ShapeType = 'rectangle' | 'roundrect' | 'inroundrect' | 'circle' | 'ellipse' | 'polygon' | 'star' | 'heart' | 'slot' | 'shield' | 'spirograph' | 'maze' | 'board' | 'gear' | 'cam' | 'escapement' | 'pendulum' | 'track' | 'text'
 
@@ -190,7 +191,6 @@ export const DEFAULT_SHAPE_CONFIG: ShapeToolConfig = {
   text: { text: 'Hello', fontSize: 10, fontFamily: 'Roboto' },
 }
 
-function f(n: number): string { return String(+n.toFixed(4)) }
 
 // ─── Spirograph (hypotrochoid) ────────────────────────────────────────────────
 //

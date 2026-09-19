@@ -1,5 +1,6 @@
 import * as opentype from 'opentype.js'
 import { loadSvgStrokeShim } from './svgStrokeFont'
+import { fmt4 as f } from '../util/num'
 
 export interface TextParams {
   type: 'text'
@@ -92,9 +93,6 @@ export function preloadFonts(): void {
   }
 }
 
-function f(n: number): string {
-  return String(+n.toFixed(4))
-}
 
 /** Generate SVG d string from TextParams in CNC Y-up space. Returns '' if font not loaded yet. */
 export function generateTextD(params: TextParams): string {

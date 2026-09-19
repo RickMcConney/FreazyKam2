@@ -1,6 +1,7 @@
 import type { Tool, ToolType } from '../store/toolStore'
 import { maxCutRadiusMM, feedDiameterMM } from './geom'
 import { useWorkpieceStore, MATERIAL_INFO } from '../store/workpieceStore'
+import { clamp } from '../util/num'
 
 // ─── Centralized feed, spindle & step-down calculation ─────────────────────────
 //
@@ -35,9 +36,6 @@ const CHIP_LOAD_TABLE: Record<ToolType, number> = {
 // limited to half their diameter (they're far more fragile).
 const SMALL_BIT_THRESHOLD_MM = 3.175 // 1/8"
 
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, v))
-}
 
 // How hard we drive the chip relative to the intrinsic ideal, by machine rigidity.
 // Softer machines aim for a lighter chip (gentler), stiffer ones a bit heavier.

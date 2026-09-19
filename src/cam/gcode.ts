@@ -10,6 +10,7 @@ import { includedAngleDeg, isVCutter, maxCutRadiusMM } from './geom'
 import { arcFitPolyline, douglasPeucker, ARC_FIT_MAX_SPAN, type Pt2 } from './pathFlattener'
 import { lineSpacingMM } from './photoVcarve'
 import { sanitizeFileName } from '../io/filename'
+import { downloadText } from '../io/download'
 
 const MM_PER_IN = 25.4
 
@@ -589,13 +590,5 @@ export function generateGcodePerTool(
 }
 
 export function downloadGcode(content: string, filename: string) {
-  const blob = new Blob([content], { type: 'text/plain' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename.endsWith('.gcode') ? filename : `${filename}.gcode`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  downloadText(content, filename.endsWith('.gcode') ? filename : `${filename}.gcode`, 'text/plain')
 }

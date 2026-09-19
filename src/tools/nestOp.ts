@@ -44,7 +44,7 @@
 // it takes rings and gives back transforms.
 
 import { flattenPath, type Pt2 } from '../cam/pathFlattener'
-import { interiorPoint } from '../cam/geom'
+import { interiorPoint, ringsBBox } from '../cam/geom'
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -241,19 +241,6 @@ function usableRings(rings: Pt2[][]): Pt2[][] {
     .filter((r) => r.length >= 2)
 }
 
-function bboxOf(rings: Pt2[][]): { minX: number; minY: number; maxX: number; maxY: number } | null {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-  for (const ring of rings) {
-    for (const [x, y] of ring) {
-      if (x < minX) minX = x
-      if (y < minY) minY = y
-      if (x > maxX) maxX = x
-      if (y > maxY) maxY = y
-    }
-  }
-  return isFinite(minX) ? { minX, minY, maxX, maxY } : null
-}
-
 function translateRings(rings: Pt2[][], dx: number, dy: number): Pt2[][] {
   return rings.map((r) => r.map(([x, y]) => [x + dx, y + dy] as Pt2))
 }
@@ -287,7 +274,7 @@ function rasterizeMask(rings: Pt2[][], res: number, mode: 'evenodd' | 'union'): 
   // nest was free to drop straight on top of.
   const all = usableRings(rings)
   const solid = all.filter((r) => r.length >= 3)
-  const bb = bboxOf(all)
+  const bb = ringsBBox(all)
   if (!bb) return { cols: 0, rows: 0, runs: [], cells: 0 }
   const cols = Math.max(1, Math.ceil(bb.maxX / res - 1e-9))
   const rows = Math.max(1, Math.ceil(bb.maxY / res - 1e-9))
@@ -644,7 +631,7 @@ export function nest(items: NestItem[], params: NestParams): NestResult {
   const freshGrid = (): BitGrid => {
     const g = new BitGrid(cols, rows)
     for (const obstacle of obstacles ?? []) {
-      const bb = bboxOf(usableRings(obstacle))
+      const bb = ringsBBox(usableRings(obstacle))
       if (!bb) continue
       const col0 = Math.floor(bb.minX / res)
       const row0 = Math.floor(bb.minY / res)
@@ -659,7 +646,7 @@ export function nest(items: NestItem[], params: NestParams): NestResult {
   // outline's.
   const prepared: PreparedItem[] = work
     .map((item): PreparedItem | null => {
-      const bb = bboxOf(usableRings(item.rings))
+      const bb = ringsBBox(usableRings(item.rings))
       if (!bb) return null
       const pivotX = (bb.minX + bb.maxX) / 2
       const pivotY = (bb.minY + bb.maxY) / 2
@@ -905,7 +892,7 @@ export function nest(items: NestItem[], params: NestParams): NestResult {
     const angleDeg = flip ? -entry.base.angle || 0 : entry.base.angle
     const pivotX = flip ? entry.pivotY : entry.pivotX
     const pivotY = flip ? entry.pivotX : entry.pivotY
-    const bb = bboxOf(usableRings(rotateRings(rings, pivotX, pivotY, angleDeg)))
+    const bb = ringsBBox(usableRings(rotateRings(rings, pivotX, pivotY, angleDeg)))
     if (!bb) continue
     const w = bb.maxX - bb.minX
     const h = bb.maxY - bb.minY
@@ -930,7 +917,7 @@ function maskAtAngle(
   rings: Pt2[][], pivotX: number, pivotY: number, turn: Turn, res: number, mode: 'evenodd' | 'union',
 ): Candidate {
   const rot = rotateRings(rings, pivotX, pivotY, turn.delta)
-  const bb = bboxOf(usableRings(rot))!
+  const bb = ringsBBox(usableRings(rot))!
   const local = translateRings(rot, -bb.minX, -bb.minY)
   return { mask: rasterizeMask(local, res, mode), angle: turn.delta, absAngle: turn.absolute, minX: bb.minX, minY: bb.minY }
 }
@@ -991,7 +978,7 @@ export interface NestGroup {
   rings: Pt2[][]
 }
 
-type Box = NonNullable<ReturnType<typeof bboxOf>>
+type Box = NonNullable<ReturnType<typeof ringsBBox>>
 interface Member { id: string; rings: Pt2[][]; box: Box | null }
 
 const toGroup = (ms: Member[]): NestGroup => ({
@@ -1097,7 +1084,7 @@ function splitIntoPieces(ms: Member[]): Member[][] {
 export function groupPathsForNesting(paths: NestablePath[], tolerance = 0.1): NestGroup[] {
   const members: Member[] = paths.map((p) => {
     const rings = usableRings(flattenPath(p.d, tolerance))
-    return { id: p.id, rings, box: bboxOf(rings) }
+    return { id: p.id, rings, box: ringsBBox(rings) }
   })
 
   const keyed = new Map<string, { members: Member[]; splittable: boolean }>()
@@ -1119,7 +1106,7 @@ export function groupPathsForNesting(paths: NestablePath[], tolerance = 0.1): Ne
     (e.splittable ? splitIntoPieces(e.members) : [e.members]).map(toGroup))
   const probes = groups.map((g) => interiorPoint(g.rings))
   const areas = groups.map((g) => {
-    const bb = bboxOf(g.rings)
+    const bb = ringsBBox(g.rings)
     return bb ? (bb.maxX - bb.minX) * (bb.maxY - bb.minY) : 0
   })
 

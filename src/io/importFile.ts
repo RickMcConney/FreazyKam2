@@ -12,12 +12,12 @@ import { useToolpathStore, GCODE_IMPORT_TOOL_ID, type GcodeOperation, type Motio
 import { useTimelineStore } from '../timeline/timelineStore'
 import { serializeOp } from '../timeline/events'
 import { uid } from '../uid'
+import { round4 } from '../util/num'
 
 // Shared file-import entry point used by both the toolbar Import button and
 // drag-and-drop onto the canvas. Handles every supported format; anything else
 // gets a status-bar hint instead of silently doing nothing (tofix.md B8).
 
-const fmt = (n: number) => +n.toFixed(4)
 
 // Leave a vector import selected, so a pocket/profile can be generated straight away
 // instead of making the user re-select what they just brought in. Replaces the selection
@@ -234,7 +234,7 @@ export function importFile(file: File): void {
         // Center on the workpiece
         const cx = widthMM / 2, cy = heightMM / 2
         const hw = imgW / 2, hh = imgH / 2
-        const d = `M${fmt(cx - hw)},${fmt(cy - hh)} L${fmt(cx + hw)},${fmt(cy - hh)} L${fmt(cx + hw)},${fmt(cy + hh)} L${fmt(cx - hw)},${fmt(cy + hh)} Z`
+        const d = `M${round4(cx - hw)},${round4(cy - hh)} L${round4(cx + hw)},${round4(cy - hh)} L${round4(cx + hw)},${round4(cy + hh)} L${round4(cx - hw)},${round4(cy + hh)} Z`
         usePathsStore.getState().addPaths([{
           id: uid('img'),
           name: file.name.replace(/\.[^.]+$/, ''),

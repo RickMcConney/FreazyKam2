@@ -26,6 +26,7 @@
 // for, and why no drawing can be the last word on the rate.
 
 import { clamp } from './polyOps'
+import { fmt4 as f } from '../util/num'
 
 /** mm/s². Shared with clockTrain's `G_MM`; stated once there and imported here
  *  would be a cycle, so the two are pinned equal by a test instead. */
@@ -65,7 +66,6 @@ export interface PendulumDims {
   bobTooSmall: boolean
 }
 
-const f = (n: number): string => String(+n.toFixed(4))
 
 /** Seconds per beat for a pendulum of this length — `π√(L/g)`. */
 export function pendulumBeat(lengthMM: number): number {

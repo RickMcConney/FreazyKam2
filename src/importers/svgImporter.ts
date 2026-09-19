@@ -9,6 +9,7 @@ import type { ClockSpec } from '../shapes/clockTrain'
 import { PATH_COLOR } from '../colors'
 import { splitCompoundPath } from '../canvas/nodeUtils'
 import { uid } from '../uid'
+import { round4 } from '../util/num'
 
 export interface StlModelBounds {
   minX: number; maxX: number
@@ -231,18 +232,17 @@ export function parseD(d: string): AbsCmd[] {
   return result
 }
 
-function fmt(n: number) { return +n.toFixed(4) }
 
 export function stringifyD(cmds: AbsCmd[]): string {
   return cmds.map(c => {
     switch (c.t) {
-      case 'M': return `M${fmt(c.x)},${fmt(c.y)}`
-      case 'L': return `L${fmt(c.x)},${fmt(c.y)}`
-      case 'C': return `C${fmt(c.x1)},${fmt(c.y1)},${fmt(c.x2)},${fmt(c.y2)},${fmt(c.x)},${fmt(c.y)}`
-      case 'S': return `S${fmt(c.x2)},${fmt(c.y2)},${fmt(c.x)},${fmt(c.y)}`
-      case 'Q': return `Q${fmt(c.x1)},${fmt(c.y1)},${fmt(c.x)},${fmt(c.y)}`
-      case 'T': return `T${fmt(c.x)},${fmt(c.y)}`
-      case 'A': return `A${fmt(c.rx)},${fmt(c.ry)},${c.ang},${c.lg},${c.sw},${fmt(c.x)},${fmt(c.y)}`
+      case 'M': return `M${round4(c.x)},${round4(c.y)}`
+      case 'L': return `L${round4(c.x)},${round4(c.y)}`
+      case 'C': return `C${round4(c.x1)},${round4(c.y1)},${round4(c.x2)},${round4(c.y2)},${round4(c.x)},${round4(c.y)}`
+      case 'S': return `S${round4(c.x2)},${round4(c.y2)},${round4(c.x)},${round4(c.y)}`
+      case 'Q': return `Q${round4(c.x1)},${round4(c.y1)},${round4(c.x)},${round4(c.y)}`
+      case 'T': return `T${round4(c.x)},${round4(c.y)}`
+      case 'A': return `A${round4(c.rx)},${round4(c.ry)},${c.ang},${c.lg},${c.sw},${round4(c.x)},${round4(c.y)}`
       case 'Z': return 'Z'
     }
   }).join(' ')
@@ -507,7 +507,7 @@ export function importSvg(svgText: string, options?: ImportOptions | number, gro
         for (const cmd of withGlobal) {
           if (cmd.t !== 'M') continue
           const cx = cmd.x, cy = cmd.y
-          const crossD = `M${fmt(cx - ARM)},${fmt(cy)} L${fmt(cx + ARM)},${fmt(cy)} M${fmt(cx)},${fmt(cy - ARM)} L${fmt(cx)},${fmt(cy + ARM)}`
+          const crossD = `M${round4(cx - ARM)},${round4(cy)} L${round4(cx + ARM)},${round4(cy)} M${round4(cx)},${round4(cy - ARM)} L${round4(cx)},${round4(cy + ARM)}`
           const id = uid('path')
           const name = baseName || `Marker ${++pathCounter}`
           paths.push({ id, name, d: crossD, visible: true, color: PATH_COLOR, groupId, groupName })

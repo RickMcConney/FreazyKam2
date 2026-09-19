@@ -11,17 +11,8 @@
 // toolpath stage). Winding of the input loops is preserved, so the caller picks
 // climb/conventional upstream and we never flip it.
 
-import { stripClosingDuplicate, pointInPolygon } from './geom'
-import { type Pt2 } from './pathFlattener'
-
-function ringPerimeter(loop: Pt2[]): number {
-  let p = 0
-  for (let i = 0; i < loop.length; i++) {
-    const a = loop[i], b = loop[(i + 1) % loop.length]
-    p += Math.hypot(b[0] - a[0], b[1] - a[1])
-  }
-  return p
-}
+import { stripClosingDuplicate, pointInPolygon, ringPerimeter } from './geom'
+import { signedArea, type Pt2 } from './pathFlattener'
 
 // Resample a closed loop to exactly `n` points equally spaced by arc length.
 // The first sample is the point whose direction from `center` is nearest
@@ -138,15 +129,6 @@ function inscribedCircle(loop: Pt2[]): { center: Pt2; radius: number } {
   return { center: best, radius: Math.max(0, bestR) }
 }
 
-function shoelace(loop: Pt2[]): number {
-  let a = 0
-  for (let i = 0; i < loop.length; i++) {
-    const p = loop[i], q = loop[(i + 1) % loop.length]
-    a += p[0] * q[1] - q[0] * p[1]
-  }
-  return a / 2
-}
-
 // Rotate `cur`'s index origin to the cyclic shift that best lines it up with
 // `prev` (minimum summed squared distance over a coarse set of samples, then a
 // local refinement). Both arrays are the same length n. Registering each loop to
@@ -221,7 +203,7 @@ export function morphChainToSpiral(
   const center = insc.center
 
   // Centre fill: shrunk copies of the innermost loop, only when it is round.
-  const areaAbs = Math.abs(shoelace(stripClosingDuplicate(base[0])))
+  const areaAbs = Math.abs(signedArea(stripClosingDuplicate(base[0])))
   const round = insc.radius > toolRadiusMM && areaAbs < 1.5 * Math.PI * insc.radius * insc.radius
   const fill: Pt2[][] = []
   if (seedCenter && round) {

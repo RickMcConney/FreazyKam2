@@ -29,6 +29,7 @@
 import { inflatePathsD, JoinType, EndType } from 'clipper2-ts'
 import { signedArea, douglasPeucker, type Pt2 } from './pathFlattener'
 import { ptSegDistSq } from './geom'
+import { clamp } from '../util/num'
 
 interface Adaptive2Move {
   // 'cut' = engagement-controlled material removal; 'link' = stay-down traverse over
@@ -63,7 +64,6 @@ export interface Adaptive2Params {
   onProgress?: Adaptive2Progress
 }
 
-const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v)
 
 // ─── Rasterization ───────────────────────────────────────────────────────────────
 

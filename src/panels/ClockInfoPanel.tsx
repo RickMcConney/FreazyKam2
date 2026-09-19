@@ -15,7 +15,7 @@
 // a SELECTED clock's own spec, so the numbers for a clock already in the document
 // can be consulted without reopening the designer.
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { X, GripHorizontal } from 'lucide-react'
 import { ICON } from '../theme'
 import { useUIStore } from '../store/uiStore'
@@ -24,6 +24,9 @@ import { useWorkpieceStore, fmtLen } from '../store/workpieceStore'
 import { clockAssemblyFromPaths, clockMotionFromPaths, holdCutModules } from '../shapes/clockTrain'
 import { clockReadout, fmtPeriod } from './clockReadout'
 import { TONE_CLASS } from './readout'
+import { useDraggablePanel } from './useDraggablePanel'
+
+const INITIAL_POS = { left: 340, bottom: 120 }
 
 export default function ClockInfoPanel() {
   const open = useUIStore((s) => s.clockInfoOpen)
@@ -38,21 +41,7 @@ export default function ClockInfoPanel() {
 
   // Dragged by its header, because it hangs over the drawing and the one place
   // it is never wanted is on top of the part being looked at.
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
-  const drag = useRef<{ dx: number; dy: number } | null>(null)
-  useEffect(() => {
-    const move = (e: MouseEvent) => {
-      if (!drag.current) return
-      setPos({ x: e.clientX - drag.current.dx, y: e.clientY - drag.current.dy })
-    }
-    const up = () => { drag.current = null }
-    window.addEventListener('mousemove', move)
-    window.addEventListener('mouseup', up)
-    return () => {
-      window.removeEventListener('mousemove', move)
-      window.removeEventListener('mouseup', up)
-    }
-  }, [])
+  const panel = useDraggablePanel(INITIAL_POS)
 
   // The draft wins: while the designer is open, that is the clock being decided.
   // A clock read out of the SELECTION is read as it now stands: a wheel re-cut on
@@ -91,15 +80,11 @@ export default function ClockInfoPanel() {
       /* Wide enough for the parts table's five columns and for the warnings,
          which are sentences and are meant to wrap. */
       className="fixed z-40 w-[46rem] max-w-[calc(100vw-2rem)] rounded-lg shadow-2xl border border-gray-300 dark:border-neutral-700 bg-gray-100 dark:bg-neutral-800"
-      style={pos ? { left: pos.x, top: pos.y } : { left: 340, bottom: 120 }}
+      style={panel.style}
     >
       <div
         className="flex items-center gap-2 px-3 py-2 border-b border-gray-300 dark:border-neutral-700 cursor-move select-none"
-        onMouseDown={(e) => {
-          const box = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect()
-          drag.current = { dx: e.clientX - box.left, dy: e.clientY - box.top }
-          setPos({ x: box.left, y: box.top })
-        }}
+        onMouseDown={panel.onHeaderMouseDown}
       >
         <GripHorizontal size={ICON.sm} className="text-gray-600 dark:text-neutral-400" />
         <span className="flex-1 text-sm font-semibold text-gray-700 dark:text-neutral-200">Clock</span>

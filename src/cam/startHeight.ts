@@ -23,7 +23,7 @@
 // that bottom rather than from stock top.
 import polygonClipping, { type MultiPolygon, type Ring } from 'polygon-clipping'
 import { inflatePathsD, JoinType, EndType } from 'clipper2-ts'
-import { classifySubpaths, interiorPoint, pointInPolygon, maxCutRadiusMM } from './geom'
+import { classifySubpaths, interiorPoint, pointInPolygon, maxCutRadiusMM, ringsBBox } from './geom'
 import { flattenPath, splitSelfIntersecting, ensureWinding, type Pt2 } from './pathFlattener'
 import type { AnyOperation, CutSide } from '../store/toolpathStore'
 import type { Tool } from '../store/toolStore'
@@ -69,15 +69,6 @@ function areaOfD(d: string): MultiPolygon {
   return classifySubpaths(rings)
     .map(({ outer, holes }) => [ringOf(outer), ...holes.map(ringOf)].filter(r => r.length >= 3))
     .filter(poly => poly.length > 0)
-}
-
-function bboxOf(mp: MultiPolygon): { minX: number; minY: number; maxX: number; maxY: number } | null {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-  for (const poly of mp) for (const ring of poly) for (const [x, y] of ring) {
-    if (x < minX) minX = x; if (x > maxX) maxX = x
-    if (y < minY) minY = y; if (y > maxY) maxY = y
-  }
-  return isFinite(minX) ? { minX, minY, maxX, maxY } : null
 }
 
 function areaOf(mp: MultiPolygon): number {
@@ -520,7 +511,7 @@ function queryStartZ(
   // which silently demoted the answer to stock top.
   const footprint = inflateArea(areaOfD(input.footprintD), Math.max(0, input.cutMarginMM))
   if (!footprint) return STOCK_TOP
-  const bb = bboxOf(footprint)
+  const bb = ringsBBox(footprint.flat())
   if (!bb) return STOCK_TOP
 
   // Candidates: preceding floors whose bbox overlaps the footprint. This is the rejection
@@ -529,7 +520,7 @@ function queryStartZ(
   const candidates: Floor[] = []
   for (const floor of preceding) {
     if (floor.z >= 0) continue
-    const fb = bboxOf(floor.area)
+    const fb = ringsBBox(floor.area.flat())
     if (!fb) continue
     if (fb.maxX < bb.minX || fb.minX > bb.maxX || fb.maxY < bb.minY || fb.minY > bb.maxY) continue
     candidates.push(floor)

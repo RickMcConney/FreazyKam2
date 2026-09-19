@@ -95,22 +95,6 @@ export function polylinePassWithTabs(
   }
 
   const total = arcLens[arcLens.length - 1]
-
-  function interpXY(s: number): [number, number] {
-    s = Math.max(0, Math.min(total, s))
-    for (let i = 1; i < pts.length; i++) {
-      if (arcLens[i] >= s - 1e-10) {
-        const segLen = arcLens[i] - arcLens[i - 1]
-        const t = segLen > 1e-10 ? (s - arcLens[i - 1]) / segLen : 0
-        return [
-          pts[i - 1][0] + t * (pts[i][0] - pts[i - 1][0]),
-          pts[i - 1][1] + t * (pts[i][1] - pts[i - 1][1]),
-        ]
-      }
-    }
-    return [pts[pts.length - 1][0], pts[pts.length - 1][1]]
-  }
-
   const sorted = [...tabRanges].sort((a, b) => a.start - b.start)
 
   const segs: MotionSegment[] = []
@@ -127,7 +111,7 @@ export function polylinePassWithTabs(
       ptIdx++
     }
 
-    const [ex, ey] = interpXY(tabStart)
+    const [ex, ey] = interpPt(pts, arcLens, tabStart)
     segs.push({ x: ex, y: ey, z: curZ, rapid: false })
     curZ = tr.tabZ
     segs.push({ x: ex, y: ey, z: curZ, rapid: false })
@@ -137,7 +121,7 @@ export function polylinePassWithTabs(
       ptIdx++
     }
 
-    const [fx, fy] = interpXY(tabEnd)
+    const [fx, fy] = interpPt(pts, arcLens, tabEnd)
     segs.push({ x: fx, y: fy, z: curZ, rapid: false })
     curZ = zDepth
     segs.push({ x: fx, y: fy, z: curZ, rapid: false })

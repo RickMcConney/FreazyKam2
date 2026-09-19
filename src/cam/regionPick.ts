@@ -20,6 +20,7 @@
 
 import { signedArea, type Pt2 } from './pathFlattener'
 import { pointInPolygon } from './geom'
+import { round4 } from '../util/num'
 
 export interface Region {
   /** Outer boundary, CCW. */
@@ -83,9 +84,8 @@ export function createRegionFinder(strokes: Pt2[][], tol = 1e-3): RegionFinder {
 
 /** A region as an absolute, uppercase SVG d string: outer ring, then each hole. */
 export function regionToD(r: Region): string {
-  const fmt = (n: number) => +n.toFixed(4)
   const ring = (pts: Pt2[]) =>
-    pts.map((q, i) => `${i === 0 ? 'M' : 'L'}${fmt(q[0])},${fmt(q[1])}`).join(' ') + ' Z'
+    pts.map((q, i) => `${i === 0 ? 'M' : 'L'}${round4(q[0])},${round4(q[1])}`).join(' ') + ' Z'
   return [r.outer, ...r.holes].map(ring).join(' ')
 }
 

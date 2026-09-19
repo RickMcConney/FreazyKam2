@@ -26,6 +26,8 @@ import { useWorkpieceStore } from '../store/workpieceStore'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import { sanitizeFileName } from './filename'
+import { round4 as mm } from '../util/num'
+import { downloadText } from './download'
 
 const INKSCAPE_NS = 'http://www.inkscape.org/namespaces/inkscape'
 
@@ -37,8 +39,6 @@ const esc = (s: string) => s
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;')
 
-/** Trim a millimetre figure the way the page attributes want it. */
-const mm = (n: number) => +n.toFixed(4)
 
 /**
  * The paths as an SVG document, in millimetres, with the stock as the page.
@@ -89,14 +89,7 @@ export function pathsForSvgExport(): { paths: ImportedPath[]; fromSelection: boo
 }
 
 function download(content: string, filename: string) {
-  const url = URL.createObjectURL(new Blob([content], { type: 'image/svg+xml' }))
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename.endsWith('.svg') ? filename : `${filename}.svg`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  downloadText(content, filename.endsWith('.svg') ? filename : `${filename}.svg`, 'image/svg+xml')
 }
 
 /** Toolbar entry point: write the selection (or the whole drawing) to a file. */

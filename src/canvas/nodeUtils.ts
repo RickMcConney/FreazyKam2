@@ -1,4 +1,5 @@
 import { parseD } from '../importers/svgImporter'
+import { round4 } from '../util/num'
 
 export type PathNode = {
   x: number
@@ -199,19 +200,18 @@ export function parseDToNodes(d: string): { nodes: PathNode[]; closed: boolean }
 // 4-decimal rounding, matching every other d producer (stringifyD, shape
 // generators, importFile) — unrounded drag deltas otherwise write
 // full-precision floats into d strings, history snapshots, and .fkam files.
-const fmt = (n: number) => +n.toFixed(4)
 
 export function nodesToD(nodes: PathNode[], closed: boolean): string {
   if (nodes.length === 0) return ''
-  let d = `M ${fmt(nodes[0].x)} ${fmt(nodes[0].y)}`
+  let d = `M ${round4(nodes[0].x)} ${round4(nodes[0].y)}`
 
   for (let i = 1; i < nodes.length; i++) {
     const prev = nodes[i - 1]
     const curr = nodes[i]
     if (!prev.handleOut && !curr.handleIn) {
-      d += ` L ${fmt(curr.x)} ${fmt(curr.y)}`
+      d += ` L ${round4(curr.x)} ${round4(curr.y)}`
     } else {
-      d += ` C ${fmt(prev.handleOut?.x ?? prev.x)} ${fmt(prev.handleOut?.y ?? prev.y)} ${fmt(curr.handleIn?.x ?? curr.x)} ${fmt(curr.handleIn?.y ?? curr.y)} ${fmt(curr.x)} ${fmt(curr.y)}`
+      d += ` C ${round4(prev.handleOut?.x ?? prev.x)} ${round4(prev.handleOut?.y ?? prev.y)} ${round4(curr.handleIn?.x ?? curr.x)} ${round4(curr.handleIn?.y ?? curr.y)} ${round4(curr.x)} ${round4(curr.y)}`
     }
   }
 
@@ -221,7 +221,7 @@ export function nodesToD(nodes: PathNode[], closed: boolean): string {
     if (!prev.handleOut && !curr.handleIn) {
       d += ' Z'
     } else {
-      d += ` C ${fmt(prev.handleOut?.x ?? prev.x)} ${fmt(prev.handleOut?.y ?? prev.y)} ${fmt(curr.handleIn?.x ?? curr.x)} ${fmt(curr.handleIn?.y ?? curr.y)} ${fmt(curr.x)} ${fmt(curr.y)} Z`
+      d += ` C ${round4(prev.handleOut?.x ?? prev.x)} ${round4(prev.handleOut?.y ?? prev.y)} ${round4(curr.handleIn?.x ?? curr.x)} ${round4(curr.handleIn?.y ?? curr.y)} ${round4(curr.x)} ${round4(curr.y)} Z`
     }
   }
 

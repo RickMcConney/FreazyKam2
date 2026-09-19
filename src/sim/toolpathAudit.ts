@@ -19,7 +19,8 @@
 import { inflatePathsD, JoinType, EndType } from 'clipper2-ts'
 import { generatePocket, type PocketParams } from '../cam/pocket'
 import { generateGcode } from '../cam/gcode'
-import { flattenPath, type Pt2 } from '../cam/pathFlattener'
+import { flattenPath, signedArea, type Pt2 } from '../cam/pathFlattener'
+import { ringsBBox } from '../cam/geom'
 import { parseGcode, type SimSegment, type ToolState } from './gcodeParser'
 import { Heightfield, computeCutBounds, type HeightfieldGrid } from './heightfield'
 import { useWorkpieceStore, zDatumOffsetMM } from '../store/workpieceStore'
@@ -142,14 +143,6 @@ export interface AuditResult {
 const toCP = (pts: Pt2[]) => pts.map(([x, y]) => ({ x, y }))
 const fromCP = (r: { x: number; y: number }[]) => r.map(({ x, y }) => [x, y] as Pt2)
 
-function signedArea(pts: Pt2[]): number {
-  let a = 0
-  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-    a += pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1]
-  }
-  return a / 2
-}
-
 const orient = (pts: Pt2[], ccw: boolean) => (signedArea(pts) >= 0) === ccw ? pts : [...pts].reverse()
 
 /** Offset a compound region (CCW outers + CW holes) by `delta`; negative shrinks. */
@@ -195,17 +188,6 @@ function rasterizeRegion(rings: Pt2[][], g: HeightfieldGrid): Uint8Array {
   return mask
 }
 
-function ringsBBox(rings: Pt2[][]) {
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
-  for (const r of rings) for (const [x, y] of r) {
-    if (x < x0) x0 = x
-    if (y < y0) y0 = y
-    if (x > x1) x1 = x
-    if (y > y1) y1 = y
-  }
-  return { x0, y0, x1, y1, empty: !isFinite(x0) }
-}
-
 // Grid covering both the cuts AND every op's intended region — a region that got no motion
 // at all must still land on the grid, or a completely skipped op would score as a pass.
 function auditGrid(
@@ -219,9 +201,9 @@ function auditGrid(
   for (const it of intents) {
     if (!it.region) continue
     const rb = ringsBBox(it.region)
-    if (rb.empty) continue
-    x0 = Math.min(x0, rb.x0 - 1); y0 = Math.min(y0, rb.y0 - 1)
-    x1 = Math.max(x1, rb.x1 + 1); y1 = Math.max(y1, rb.y1 + 1)
+    if (!rb) continue
+    x0 = Math.min(x0, rb.minX - 1); y0 = Math.min(y0, rb.minY - 1)
+    x1 = Math.max(x1, rb.maxX + 1); y1 = Math.max(y1, rb.maxY + 1)
   }
   if (!isFinite(x0)) { x0 = 0; y0 = 0; x1 = W; y1 = H }
   x0 = Math.max(0, x0); y0 = Math.max(0, y0)

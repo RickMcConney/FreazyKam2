@@ -3,6 +3,7 @@ import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import type { ImportedPath, StlModelBounds } from './svgImporter'
 import { nextPathColor } from './svgImporter'
 import { uid } from '../uid'
+import { round4 } from '../util/num'
 
 export type { StlModelBounds }
 
@@ -103,8 +104,7 @@ export function importStl(
 
   const hw = modelW / 2
   const hh = modelH / 2
-  const fmt = (n: number) => +n.toFixed(4)
-  const d = `M${fmt(workpieceCX - hw)},${fmt(workpieceCY - hh)} L${fmt(workpieceCX + hw)},${fmt(workpieceCY - hh)} L${fmt(workpieceCX + hw)},${fmt(workpieceCY + hh)} L${fmt(workpieceCX - hw)},${fmt(workpieceCY + hh)} Z`
+  const d = `M${round4(workpieceCX - hw)},${round4(workpieceCY - hh)} L${round4(workpieceCX + hw)},${round4(workpieceCY - hh)} L${round4(workpieceCX + hw)},${round4(workpieceCY + hh)} L${round4(workpieceCX - hw)},${round4(workpieceCY + hh)} Z`
 
   return {
     id: uid('stl'),

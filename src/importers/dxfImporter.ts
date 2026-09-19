@@ -5,6 +5,7 @@ import { PATH_COLOR } from '../colors'
 import { uid } from '../uid'
 import { getMultiBBox, translateD } from '../canvas/selectionUtils'
 import { douglasPeucker } from '../cam/pathFlattener'
+import { round4 } from '../util/num'
 
 export type DxfUnitsChoice = 'mm' | 'cm' | 'in' | 'ft' | 'm'
 
@@ -23,11 +24,10 @@ const USER_UNITS_TO_MM: Record<DxfUnitsChoice, number> = {
   mm: 1, cm: 10, in: 25.4, ft: 304.8, m: 1000,
 }
 
-const fmt = (n: number) => +n.toFixed(4)
 
 function polyToD(pts: { x: number; y: number }[], closed: boolean): string {
   if (pts.length < 2) return ''
-  const parts = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${fmt(p.x)},${fmt(p.y)}`)
+  const parts = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${round4(p.x)},${round4(p.y)}`)
   if (closed) parts.push('Z')
   return parts.join(' ')
 }
@@ -50,9 +50,9 @@ function arcEdge(cx: number, cy: number, r: number, s: number, e: number): Edge 
 // Full circle: two semi-arcs. Direction doesn't matter visually; sweep=0 matches SVG importer convention.
 function circleToD(cx: number, cy: number, r: number): string {
   return (
-    `M${fmt(cx - r)},${fmt(cy)} ` +
-    `A${fmt(r)},${fmt(r)},0,0,0,${fmt(cx + r)},${fmt(cy)} ` +
-    `A${fmt(r)},${fmt(r)},0,0,0,${fmt(cx - r)},${fmt(cy)} Z`
+    `M${round4(cx - r)},${round4(cy)} ` +
+    `A${round4(r)},${round4(r)},0,0,0,${round4(cx + r)},${round4(cy)} ` +
+    `A${round4(r)},${round4(r)},0,0,0,${round4(cx - r)},${round4(cy)} Z`
   )
 }
 
@@ -75,7 +75,7 @@ function ellipseToD(
     const t = startAngle + (span * i) / steps
     const ex = cx + rx * Math.cos(t) * Math.cos(rotRad) - ry * Math.sin(t) * Math.sin(rotRad)
     const ey = cy + rx * Math.cos(t) * Math.sin(rotRad) + ry * Math.sin(t) * Math.cos(rotRad)
-    pts.push(`${i === 0 ? 'M' : 'L'}${fmt(ex)},${fmt(ey)}`)
+    pts.push(`${i === 0 ? 'M' : 'L'}${round4(ex)},${round4(ey)}`)
   }
   if (isFull) pts.push('Z')
   return pts.join(' ')
@@ -126,7 +126,7 @@ function splineToD(
     try {
       const p = deBoor(controlPoints, degree, knots, t)
       if (!isFinite(p.x) || !isFinite(p.y)) continue
-      pts.push(`${pts.length === 0 ? 'M' : 'L'}${fmt(p.x)},${fmt(p.y)}`)
+      pts.push(`${pts.length === 0 ? 'M' : 'L'}${round4(p.x)},${round4(p.y)}`)
     } catch { /* skip degenerate spans */ }
   }
   if (closed && pts.length > 0) pts.push('Z')
@@ -239,7 +239,7 @@ function stitchEdges(edges: Edge[], tol = 0.001): string[] {
     // approximations (e.g. involute gear profiles from DXF generators that emit
     // 0.02–0.05 mm segments) collapse at 0.01 mm, well within CNC accuracy and
     // preserving all real corners. Arcs are emitted exactly.
-    let d = `M${fmt(fx)},${fmt(fy)}`
+    let d = `M${round4(fx)},${round4(fy)}`
     let run: [number, number][] = [[fx, fy]]
     let pointCount = 1
     const flushRun = (isLast: boolean) => {
@@ -252,7 +252,7 @@ function stitchEdges(edges: Edge[], tol = 0.001): string[] {
       }
       // A closed all-line chain ends with Z, which draws the last segment itself.
       const stop = allLinesClosed ? pts.length - 1 : pts.length
-      for (let i = 1; i < stop; i++) d += ` L${fmt(pts[i][0])},${fmt(pts[i][1])}`
+      for (let i = 1; i < stop; i++) d += ` L${round4(pts[i][0])},${round4(pts[i][1])}`
       pointCount += stop - 1
     }
     for (const s of steps) {
@@ -263,7 +263,7 @@ function stitchEdges(edges: Edge[], tol = 0.001): string[] {
       } else {
         flushRun(false)
         // Reversing an arc flips its direction; the large-arc flag is unchanged.
-        d += ` A${fmt(e.r)},${fmt(e.r)},0,${e.large},${s.rev ? 0 : 1},${fmt(ex)},${fmt(ey)}`
+        d += ` A${round4(e.r)},${round4(e.r)},0,${e.large},${s.rev ? 0 : 1},${round4(ex)},${round4(ey)}`
         pointCount++
         run = [[ex, ey]]
       }

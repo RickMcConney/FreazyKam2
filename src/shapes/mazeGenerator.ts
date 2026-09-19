@@ -49,10 +49,14 @@
 // the corridor's own polyline wherever it can, so entering is one unbroken cut;
 // delete it with the point-edit tool if the design does not want it.
 
-function f(n: number): string { return String(+n.toFixed(4)) }
 
 // A 200×200 mm board at 3 mm spacing is ~4500 cells; past this the d-string is
 // bigger than the toolpath is useful.
+import { fmt4 as f, mulberry32 } from '../util/num'
+
+// Non-integer, negative and zero seeds fold into a positive integer before seeding.
+const mazeSeed = (seed: number) => (Math.floor(Math.abs(seed)) || 1) >>> 0
+
 const MAZE_MAX_CELLS = 6000
 
 export interface MazeGrid {
@@ -78,16 +82,6 @@ export function mazeGrid(w: number, h: number, spacing: number): MazeGrid {
 
 // Seeded PRNG — the same seed must redraw the same maze, every session and on
 // every reload of a .fkam, since only the seed is stored.
-function mulberry32(seed: number): () => number {
-  let a = (Math.floor(Math.abs(seed)) || 1) >>> 0
-  return () => {
-    a = (a + 0x6d2b79f5) | 0
-    let t = Math.imul(a ^ (a >>> 15), 1 | a)
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
-}
-
 // Edges are held in one flat array: the (cols−1)×rows horizontal links first,
 // then the cols×(rows−1) vertical ones. `dir` is 0=−x, 1=+x, 2=−y, 3=+y.
 function makeEdgeIndex(cols: number, rows: number) {
@@ -111,7 +105,7 @@ function carveMaze(cols: number, rows: number, seed: number, loops: number): Uin
   const idx = makeEdgeIndex(cols, rows)
   const open = new Uint8Array(idx.count)
   const total = cols * rows
-  const rnd = mulberry32(seed)
+  const rnd = mulberry32(mazeSeed(seed))
 
   // Randomised depth-first search, iterative — a 6000-cell grid would blow the
   // JS stack recursing.
@@ -399,7 +393,7 @@ export function generateMazeD(p: {
 
   // A stream of its own, so which cells become the ends is decided from the
   // seed without disturbing the one that carved the maze.
-  const ends = pickEnds(cols, rows, idx, open, mulberry32(p.seed + 0x51ed))
+  const ends = pickEnds(cols, rows, idx, open, mulberry32(mazeSeed(p.seed + 0x51ed)))
   trimBorderEnds(cols, rows, idx, open, new Set([ends.entrance, ends.exit]))
 
   const isEnd = (n: number) => n === ends.entrance || n === ends.exit
