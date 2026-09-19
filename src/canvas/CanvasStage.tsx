@@ -7,7 +7,7 @@ import { usePenTool } from './usePenTool'
 import { ICON } from '../theme'
 import { Stage, Layer, Group, Circle } from 'react-konva'
 import type Konva from 'konva'
-import { Maximize2 } from 'lucide-react'
+import { Maximize2, ZoomIn, ZoomOut } from 'lucide-react'
 import { useWorkpieceStore } from '../store/workpieceStore'
 import { useCanvasStore } from '../store/canvasStore'
 import { usePathsStore, clockSpecOf, setClockSpec, useSelectedPaths, expandUserGroups } from '../store/pathsStore'
@@ -120,6 +120,17 @@ const FIT_MARGIN = 0.85
 // the wheel's floor lands above the zoom the Fit button produces and scrolling out stops
 // while still more zoomed in than Fit.
 const ZOOM_OUT_SLACK = 0.4
+// Highest zoom (px/mm) any gesture may reach.
+const MAX_ZOOM = 500
+// One click of the zoom buttons. Coarser than a wheel notch (1.12) on purpose: a button
+// is pressed a few times, not spun, so a notch-sized step would feel like nothing moved.
+const ZOOM_BUTTON_STEP = 1.4
+
+// bg-panel/bg-raised/border-ridge/text-norm were never defined in the Tailwind config or
+// any stylesheet, so these buttons had no fill and no border colour — just `border`'s
+// default gray-200, which reads on a dark canvas and disappears on a light one. Same
+// treatment as the simulator's floating controls, which sit over the same canvas.
+const ZOOM_BTN_CLASS = 'bg-gray-50/95 dark:bg-neutral-900/95 hover:bg-gray-200 dark:hover:bg-neutral-800 border border-gray-400 dark:border-neutral-700 rounded p-1.5 text-gray-600 dark:text-neutral-300 transition-colors'
 
 function fitViewport(sw: number, sh: number, ww: number, wh: number): Viewport {
   const uw = sw - RULER_W
@@ -1047,24 +1058,53 @@ export default function CanvasStage() {
     return () => el.removeEventListener('wheel', prevent)
   }, [])
 
-  const handleWheel = useCallback((e: Konva.KonvaEventObject<WheelEvent>) => {
-    const pointer = stageRef.current?.getPointerPosition()
-    if (!pointer) return
-    const factor = e.evt.deltaY < 0 ? 1.12 : 1 / 1.12
+  // Scales about a fixed screen point, which is what keeps whatever you are looking at
+  // from sliding away as the zoom changes. The wheel and the zoom buttons go through here
+  // so both are clamped identically — a button that could pass minZoomScale would leave a
+  // view the wheel cannot undo.
+  //
+  // The wheel passes the cursor. The buttons pass nothing and zoom about the SELECTED
+  // part, so a click grows the thing you are working on instead of whatever happens to be
+  // mid-screen; with nothing selected they fall back to the centre of the drawing area.
+  const zoomBy = useCallback((factor: number, anchor?: { x: number; y: number }) => {
     // Cap zoom-out so the table/workpiece can't shrink to a speck; see minZoomScale.
     const wp = useWorkpieceStore.getState()
     const minScale = minZoomScale(size.width, size.height,
       wp.tableLimitWidthMM, wp.tableLimitHeightMM, wp.widthMM, wp.heightMM)
+    const midX = RULER_W + (size.width - RULER_W) / 2
+    const midY = RULER_H + (size.height - RULER_H) / 2
+    const sel = anchor ? null : selectionBBoxRef.current
     setViewport((vp) => {
-      const newScale = Math.min(Math.max(vp.scale * factor, minScale), 500)
+      const newScale = Math.min(Math.max(vp.scale * factor, minScale), MAX_ZOOM)
       const ratio = newScale / vp.scale
+      if (sel) {
+        // Hold the part's centre at the screen position it already occupies, exactly as
+        // the wheel holds the point under the cursor. If it is currently off-screen there
+        // is no such position worth keeping — anchoring out there would zoom about a point
+        // you cannot see and leave the part just as invisible — so bring it to the middle.
+        const sx = vp.x + sel.cx * vp.scale
+        const sy = vp.y - sel.cy * vp.scale
+        const visible = sx >= RULER_W && sx <= size.width && sy >= RULER_H && sy <= size.height
+        const ax = visible ? sx : midX
+        const ay = visible ? sy : midY
+        // Solving vp.x + cx*scale = ax and vp.y - cy*scale = ay for the new viewport.
+        return { scale: newScale, x: ax - sel.cx * newScale, y: ay + sel.cy * newScale }
+      }
+      const ax = anchor ? anchor.x : midX
+      const ay = anchor ? anchor.y : midY
       return {
         scale: newScale,
-        x: pointer.x - (pointer.x - vp.x) * ratio,
-        y: pointer.y + (vp.y - pointer.y) * ratio,
+        x: ax - (ax - vp.x) * ratio,
+        y: ay + (vp.y - ay) * ratio,
       }
     })
   }, [setViewport, size])
+
+  const handleWheel = useCallback((e: Konva.KonvaEventObject<WheelEvent>) => {
+    const pointer = stageRef.current?.getPointerPosition()
+    if (!pointer) return
+    zoomBy(e.evt.deltaY < 0 ? 1.12 : 1 / 1.12, pointer)
+  }, [zoomBy])
 
   // Start drawing a shape from the given CNC point (used by both stage and path mousedown when shape tool active)
   const startDrawShape = useCallback((pointer: { x: number; y: number }) => {
@@ -2862,18 +2902,22 @@ export default function CanvasStage() {
 
       <SimulationPlayer />
 
-      <button
-        onClick={fitToWorkpiece}
-        title="Zoom to fit stock"
-        // bg-panel/bg-raised/border-ridge/text-norm were never defined in the Tailwind
-        // config or any stylesheet, so this button had no fill and no border colour —
-        // just `border`'s default gray-200, which reads on a dark canvas and disappears
-        // on a light one. Same treatment as the simulator's floating controls, which
-        // sit over the same canvas.
-        className="absolute bottom-3 right-3 bg-gray-50/95 dark:bg-neutral-900/95 hover:bg-gray-200 dark:hover:bg-neutral-800 border border-gray-400 dark:border-neutral-700 rounded p-1.5 text-gray-600 dark:text-neutral-300 transition-colors"
-      >
-        <Maximize2 size={ICON.md} />
-      </button>
+      {/* Zoom in / fit / out, in that order top to bottom — fit is the middle of the
+          range, so the stack reads as one zoom axis. The two step buttons exist because
+          pinch-zooming a trackpad over the canvas is awkward; they do the same thing the
+          wheel does, anchored on the selected part (or the centre of the view) rather than
+          on the cursor. */}
+      <div className="absolute bottom-3 right-3 flex flex-col gap-1.5">
+        <button onClick={() => zoomBy(ZOOM_BUTTON_STEP)} title={selectedIds.length > 0 ? 'Zoom in on the selection' : 'Zoom in'} className={ZOOM_BTN_CLASS}>
+          <ZoomIn size={ICON.md} />
+        </button>
+        <button onClick={fitToWorkpiece} title="Zoom to fit stock" className={ZOOM_BTN_CLASS}>
+          <Maximize2 size={ICON.md} />
+        </button>
+        <button onClick={() => zoomBy(1 / ZOOM_BUTTON_STEP)} title={selectedIds.length > 0 ? 'Zoom out from the selection' : 'Zoom out'} className={ZOOM_BTN_CLASS}>
+          <ZoomOut size={ICON.md} />
+        </button>
+      </div>
     </div>
   )
 }
