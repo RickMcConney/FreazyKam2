@@ -12,6 +12,8 @@ import { useToolpathStore } from '../../store/toolpathStore'
 import { effectiveStepDownMM } from '../../cam/feeds'
 import { resolveStartZ, listFlatFloorOps, type StartFrom, type StartZ } from '../../cam/startHeight'
 import { usePathsStore, type ImportedPath } from '../../store/pathsStore'
+import { useFormDefaultsStore } from '../../store/formDefaultsStore'
+import { runBatchGenerate, type BatchGenerateArgs } from './batchGenerate'
 
 // Tracks operations created by this form instance, keyed by target (path/group id), so a
 // repeat Generate on the same target updates the existing operation instead of adding a
@@ -448,21 +450,7 @@ export function FormError({ msg }: { msg: string | null }) {
   )
 }
 
-/**
- * Throw away the operations THIS Generate created that failed.
- *
- * An operation with no toolpath is not a thing in the document — `generateGcode` skips
- * it, and a chip standing for a cut that does not exist is worse than no chip. So a
- * failed Generate leaves nothing behind. Pass only the ids this click CREATED: an
- * operation that already existed keeps its slot and its error message, because deleting
- * a user's operation because a re-Generate failed would be the worse of the two wrongs.
- */
-export function discardFailedOps(createdIds: string[]) {
-  if (createdIds.length === 0) return
-  const { operations, deleteOperations } = useToolpathStore.getState()
-  const failed = createdIds.filter((id) => operations.find((o) => o.id === id)?.status === 'error')
-  if (failed.length > 0) deleteOperations(failed)
-}
+export { discardFailedOps } from './batchGenerate'
 
 /**
  * `[message, report, clear]` for a form's Generate.
@@ -512,5 +500,85 @@ export function GenerateBtn({ disabled, generating, onClick, label = 'Generate T
           : label}
       </span>
     </button>
+  )
+}
+
+// ─── The batch Generate (see batchGenerate.ts) ────────────────────────────────
+
+/**
+ * A form's Generate: `generate(args, form)` runs `runBatchGenerate` with the form's own
+ * error banner, and saves `form` as the defaults for the next one.
+ */
+export function useBatchGenerate(type: BatchGenerateArgs['type'], formKey: string) {
+  const [generating, setGenerating] = useState(false)
+  const [errorMsg, reportError, clearError] = useGenerateError()
+  const save = useFormDefaultsStore((s) => s.save)
+  const generate = async (args: Omit<BatchGenerateArgs, 'type' | 'onError'>, form: object) => {
+    clearError()
+    setGenerating(true)
+    try {
+      await runBatchGenerate({ ...args, type, onError: reportError })
+    } finally {
+      setGenerating(false)
+      save(formKey, form)
+    }
+  }
+  return { generating, errorMsg, generate }
+}
+
+/** The Generate button's words: an edited batch regenerates, a repeat click updates. */
+export function generateLabel(editing: boolean, updating: boolean): string {
+  return editing ? 'Regenerate Toolpath' : updating ? 'Update Toolpath' : 'Generate Toolpath'
+}
+
+/** Shown above the form while there is nothing to cut. */
+export function NoPathBanner({ editing, closed = false }: { editing: boolean; closed?: boolean }) {
+  return (
+    <p className="text-body text-amber-600 dark:text-amber-400 flex items-center gap-1">
+      <AlertCircle size={ICON.sm} /> {editing ? 'Path not found' : closed ? 'Select a closed path first' : 'Select a path first'}
+    </p>
+  )
+}
+
+/** A labelled checkbox — Ramp In, Finishing pass, Invert Pocket. */
+export function CheckRow({ id, checked, onChange, label, hint }: {
+  id: string; checked: boolean; onChange: (v: boolean) => void; label: string; hint?: string
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <input type="checkbox" id={id} checked={checked}
+        onChange={(e) => onChange(e.target.checked)} className="accent-blue-500" />
+      <label htmlFor={id} className="text-body text-gray-700 dark:text-neutral-300 cursor-pointer">
+        {label}{hint && <> <span className="text-gray-600 dark:text-neutral-400 normal-case">({hint})</span></>}
+      </label>
+    </div>
+  )
+}
+
+/**
+ * The paths a batch cuts, below the Generate button — see PathListSection. A single-path
+ * form passes each path as a boundary with no islands. Islands keep their label because
+ * that is a real distinction; nothing else needs one.
+ */
+export function BatchPathList({ groups, addedIds, removed, editing }: {
+  groups: { boundary: ImportedPath; islands: ImportedPath[] }[]
+  addedIds: Set<string>
+  removed: ImportedPath[]
+  editing: boolean
+}) {
+  return (
+    <PathListSection count={groups.reduce((n, g) => n + 1 + g.islands.length, 0)}>
+      {groups.map(({ boundary, islands }, gi) => (
+        <div key={boundary.id} className="space-y-0.5">
+          <PathChip path={boundary} index={groups.length > 1 ? gi + 1 : undefined}
+            state={addedIds.has(boundary.id) ? 'added' : undefined} />
+          {islands.map((p) => (
+            <PathChip key={p.id} path={p} label="island" state={addedIds.has(p.id) ? 'added' : undefined} />
+          ))}
+        </div>
+      ))}
+      {removed.map((p) => <PathChip key={p.id} path={p} state="removed" />)}
+      {editing && <PathRevisionHint added={addedIds.size} removed={removed.length} />}
+    </PathListSection>
   )
 }

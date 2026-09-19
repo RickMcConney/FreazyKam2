@@ -350,7 +350,7 @@ export function parseGcode(text: string, initialZMM = 5): ParsedGcode {
       if (wI === undefined && wJ === undefined && rWord === undefined)
         warnings.add('G2/G3 arc without I/J or R words — treated as no motion')
       const arcSegs = arcToSegments(cx, cy, nx, ny, ii, jj, motionMode === 2, cz, nz, Math.max(feedRate, 1), li, cumT, curStateIdx)
-      segs.push(...arcSegs)
+      for (const sg of arcSegs) segs.push(sg)
       if (arcSegs.length > 0) {
         const last = arcSegs[arcSegs.length - 1]
         cumT = last.startTimeS + last.durationS

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { generateProfile, polylinePassWithTabs, designPathAtT, nearestArcLen } from './profile'
-import { arcLengths } from './geom'
+import { arcLengths, toolRadiusAtHeight } from './geom'
 import { signedArea } from './pathFlattener'
 import type { Pt2 } from './pathFlattener'
 import type { Tool } from '../store/toolStore'
@@ -411,5 +411,45 @@ describe('generateProfile — failure modes', () => {
 
   it('rejects a path with no geometry', () => {
     expect(() => generateProfile('', EM6, params())).toThrow('No geometry found in path')
+  })
+})
+
+describe('a path with more vertices than a call can take as spread arguments', () => {
+  // ~200k points: past the argument limit where `segs.push(...pass)` throws a RangeError.
+  // A traced photo outline gets there; nothing about the geometry is unusual.
+  const N = 200_000
+  const zigzag = 'M 0 0 ' + Array.from({ length: N }, (_, i) =>
+    `L ${((i + 1) * 0.001).toFixed(3)} ${i % 2 ? 0 : 0.5}`).join(' ')
+
+  // A tab is what routes the passes through polylinePassWithTabs; without one they are
+  // arc-fitted and pushed a move at a time, and never reach the spread.
+  it('profiles a tabbed open stroke of 200k vertices, plain and ramped, without overflowing the stack', () => {
+    for (const rampIn of [false, true]) {
+      const segs = generateProfile(zigzag, EM6, params({ side: 'centerline', rampIn }), [tab()])
+      expect(cuts(segs).length).toBeGreaterThan(N)
+    }
+  })
+})
+
+describe('tabs under a taper', () => {
+  // The stored diameter is the 1 mm TIP. On the last pass the taper is ~1.6 mm in radius
+  // at the tab's top, so a lift sized by the tip let its flank cut into both ends of the tab.
+  const TAPER: Tool = {
+    id: 'tp', name: 'Taper', type: 'taper', diameterMM: 1, fluteCount: 2, vbitAngleDeg: 15,
+    rpm: 18000, xyFeedMmMin: 1000, zFeedMmMin: 300, maxDepthMM: 20,
+  }
+
+  it('lifts the tool clear by its radius at the tab\'s height, past each end', () => {
+    const t = tab({ lengthMM: 10, heightMM: 4 })
+    const segs = generateProfile(SQ, TAPER, params({ side: 'outside', depthMM: 6, stepDownMM: 6 }), [t])
+    const tabZ = -6 + 4
+    let lifted = 0
+    for (let i = 1; i < segs.length; i++) {
+      const a = segs[i - 1], b = segs[i]
+      if (!b.rapid && Math.abs(a.z - tabZ) < 1e-9 && Math.abs(b.z - tabZ) < 1e-9) lifted += Math.hypot(b.x - a.x, b.y - a.y)
+    }
+    const r = toolRadiusAtHeight(TAPER, 4)
+    expect(r).toBeGreaterThan(TAPER.diameterMM / 2 + 0.5)
+    expect(lifted).toBeCloseTo(t.lengthMM + 2 * r, 1)
   })
 })

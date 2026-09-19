@@ -267,8 +267,10 @@ const ShapeParamsEditor = memo(function ShapeParamsEditor({ id, params, units, f
       </>)
     case 'ellipse':
       return (<>
-        <EditField label="RX" valueMM={params.rx} units={u} onChange={(rx) => update({ ...params, rx })} />
-        <EditField label="RY" valueMM={params.ry} units={u} onChange={(ry) => update({ ...params, ry })} />
+        {/* Width and height, not radii — the Draw panel creates an ellipse by its W/H, and
+            a 50 mm-wide ellipse must not come back as 25. */}
+        <EditField label="W" valueMM={params.rx * 2} units={u} onChange={(w) => update({ ...params, rx: w / 2 })} />
+        <EditField label="H" valueMM={params.ry * 2} units={u} onChange={(h) => update({ ...params, ry: h / 2 })} />
       </>)
     case 'shield':
       return (<>

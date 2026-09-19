@@ -22,55 +22,11 @@ export function serializeOp(op: AnyOperation): SerializedOperation {
   return op.type === 'gcode' ? { ...rest, segments } : rest
 }
 
-export function hydrateOp(sop: SerializedOperation): AnyOperation {
-  const segments = sop.segments ?? []
-  return {
-    ...sop,
-    segments,
-    status: sop.type === 'gcode' && segments.length > 0 ? 'done' : 'needs-update',
-  } as AnyOperation
-}
-
 // Fields regenerate/setSegments/optimizeStartPoints write back onto ops
 // outside any user action (entryHint is rewritten on EVERY sim run / G-code
 // export). They are stripped from op.update event payloads, so a derived write
 // never shows up as a chip.
 export const DERIVED_OP_KEYS = ['status', 'segments', 'errorMessage', 'helicalHoles', 'helicalCenterX', 'helicalCenterY', 'helicalRadius', 'entryHint', 'generatedWith'] as const
-
-// An op reduced to the fields a recorded payload actually carries. Live ops hold
-// state no event records, so comparing a raw op against a recorded one always
-// reports a difference once the project has been used:
-// - visible: IS recorded (op.setVisible) but stays out of the comparison, so a
-//   visibility toggle does not read as a settings change.
-// - entryHint/generatedWith: written by optimizeStartPoints before a sim run or
-//   G-code export
-// - helicalHoles + helicalCenterX/Y/helicalRadius: written back by regenerate with
-//   { record: false } — they are DERIVED from the source path's circles
-export function comparableOp(op: SerializedOperation): Record<string, unknown> {
-  const { visible: _v, entryHint: _eh, generatedWith: _gw, ...rest } = op as SerializedOperation & { visible?: boolean }
-  if (rest.type === 'drill') {
-    delete rest.helicalCenterX
-    delete rest.helicalCenterY
-    delete rest.helicalRadius
-  }
-  return rest as Record<string, unknown>
-}
-
-// Do two ops carry the same recorded settings? Key-wise rather than
-// JSON.stringify over the whole object: spread-built ops ({ ...o, ...updates })
-// can legitimately differ in key ORDER, which whole-object stringify would
-// report as a difference.
-export function sameOpSettings(a: SerializedOperation, b: SerializedOperation): boolean {
-  const ca = comparableOp(a)
-  const cb = comparableOp(b)
-  const keys = new Set([...Object.keys(ca), ...Object.keys(cb)])
-  for (const k of keys) {
-    const va = ca[k], vb = cb[k]
-    if (va === vb) continue                                  // fast path: primitives + identity
-    if (JSON.stringify(va) !== JSON.stringify(vb)) return false
-  }
-  return true
-}
 
 export type PathsAddSource = 'import' | 'shape' | 'pen' | 'text' | 'duplicate' | 'boolean' | 'offset' | 'pattern' | 'paste' | 'region'
 
@@ -243,17 +199,4 @@ export function labelFor(ev: TimelineEventPayload): string {
       return 'Stock'
     }
   }
-}
-
-// Broad family used for chip coloring in the timeline UI.
-export type EventFamily = 'path' | 'op' | 'tab' | 'project'
-
-export function familyOf(kind: TimelineEvent['kind']): EventFamily {
-  if (kind.startsWith('paths.') || kind === 'shape.params') return 'path'
-  if (kind.startsWith('op.')) return 'op'
-  if (kind.startsWith('tabs.')) return 'tab'
-  // A constraint is drawn attached to the parts it joins, so it reads as
-  // something done TO them rather than as a thing of its own.
-  if (kind.startsWith('constraint.')) return 'path'
-  return 'project'
 }

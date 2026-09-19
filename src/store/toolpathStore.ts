@@ -219,7 +219,7 @@ export const GCODE_IMPORT_TOOL_ID = '__gcode_import__'
 
 export type AnyOperation = ProfileOperation | PocketOperation | DrillOperation | SurfaceOperation | VCarveOperation | PhotoVCarveOperation | InlayOperation | Profile3dOperation | TrochoidalOperation | GcodeOperation
 
-type AddPayload =
+export type AddPayload =
   | Omit<ProfileOperation, 'id' | 'status' | 'segments' | 'color' | 'visible'>
   | Omit<PocketOperation, 'id' | 'status' | 'segments' | 'color' | 'visible'>
   | Omit<DrillOperation, 'id' | 'status' | 'segments' | 'color' | 'visible'>
@@ -365,15 +365,15 @@ function startZOf(op: AnyOperation, ops: AnyOperation[]): number {
   ).zMM
 }
 
-// Record a Generate that REPLACED some of an op set: amend the chip that defined the set
-// when it is the tip one (see tipIndex in timelineStore), else record ONE chip. One gesture
+// Record a Generate that REPLACED some of an op set: join the step that defined the set
+// when it is the tip one (see joinsTip in timelineStore), else record ONE step. One gesture
 // is one undo step — this used to record an op.delete and then an op.add, and since both
 // snapshots are taken after the whole change, the first undo landed on a state identical to
 // the live one and did nothing. The chip is named for what the gesture produced; with
 // nothing produced it is the delete.
 function recordOpReplacement(anchorId: string, deleteIds: string[], created: AnyOperation[]): void {
   const tl = useTimelineStore.getState()
-  if (tl.amendOpAddEvent(anchorId, { removeIds: deleteIds, add: created.map(serializeOp) })) return
+  if (tl.joinsTip([{ op: anchorId }])) return
   if (created.length > 0) {
     const [first, ...rest] = created
     tl.record({
@@ -420,12 +420,12 @@ export const useToolpathStore = create<ToolpathState>()((set, get) => ({
     const recordable = { ...updates } as Record<string, unknown>
     for (const k of DERIVED_OP_KEYS) delete recordable[k]
     if (Object.keys(recordable).length > 0) {
-      // Settings edits amend the op's defining chip (usually its op.add) while it is the
-      // latest chip — changing a just-made pocket's depth is an argument edit to that
-      // call. An op defined further back gets an op.update chip of its own, so the edit
-      // is its own undo step (see tipIndex in timelineStore).
+      // A settings edit joins the op's defining step (usually its op.add) while that is
+      // the latest step — changing a just-made pocket's depth is an argument edit to
+      // that call. An op defined further back gets an op.update of its own, so the edit
+      // is its own undo step (see joinsTip in timelineStore).
       const tl = useTimelineStore.getState()
-      if (!tl.amendOpSettings(id, recordable as Partial<SerializedOperation>)) {
+      if (!tl.joinsTip([{ op: id }])) {
         tl.record({ kind: 'op.update', opId: id, opType, updates: recordable as Partial<SerializedOperation> })
       }
       // A settings edit here can move this op's floor (depth, boundary, islands, its own

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ICON } from '../../theme'
-import { Square, Circle, Ellipse, Hexagon, Star as StarIcon, PenTool, Type, Squircle, Heart, Pill, Signpost, Shield, Orbit, Grid3x3, CookingPot, Cog, Cloud, Anchor, Dices, ChevronDown, Clock, Weight, TrainTrack, PaintBucket } from 'lucide-react'
+import { Square, Circle, Ellipse, Hexagon, Star as StarIcon, PenTool, Type, Squircle, Heart, Pill, Signpost, Shield, Orbit, Grid3x3, CookingPot, Cog, Cloud, Anchor, Dices, ChevronDown, Clock, Weight, TrainTrack } from 'lucide-react'
 import { useUIStore } from '../../store/uiStore'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 import { spirographLoops, spirographRadii, spirographCentrePen, SPIRO_RATIO_RANGE, SCALE_LOCKED_SHAPES, type ShapeType, type ShapeToolConfig } from '../../shapes/shapeGenerators'
@@ -808,14 +808,6 @@ export default function ShapePanel({ fill = false }: { fill?: boolean }) {
             <ChevronDown size={ICON.sm} />
           </button>
         </div>
-        <button
-          onClick={() => setActiveTool(activeTool === 'region' ? 'select' : 'region')}
-          title="Region — click inside an area the drawn lines enclose to make a closed path of it, even when no single path closes around it"
-          className={toolBtnCls(activeTool === 'region')}
-        >
-          <span style={{ color: PATH_COLOR }}><PaintBucket size={ICON.md} /></span>
-          <span className="text-label text-gray-500 dark:text-neutral-400">Region</span>
-        </button>
       </div>
 
       {isShapeTool && (

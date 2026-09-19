@@ -1,5 +1,5 @@
 import {   type Pt2 } from '../pathFlattener'
-import {   pointInPolygon } from '../geom'
+import { pointInPolygon } from '../geom'
 import { JoinType } from 'clipper2-ts'
 import { buildPocketClearance } from './clearance'
 import type { MotionSegment } from '../../store/toolpathStore'
@@ -19,8 +19,9 @@ function generateScanlines(
   const cosA = Math.cos(-angleRad), sinA = Math.sin(-angleRad)
   const cosR = Math.cos(angleRad), sinR = Math.sin(angleRad)
   const rotated = boundary.map(([x, y]) => ({ x: x * cosA - y * sinA, y: x * sinA + y * cosA }))
-  const ys = rotated.map(p => p.y)
-  const minY = Math.min(...ys), maxY = Math.max(...ys)
+  // A loop, not Math.min(...ys): a spread of a traced outline's vertices overflows the stack.
+  let minY = Infinity, maxY = -Infinity
+  for (const p of rotated) { if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y }
   const n = rotated.length
   const segments: Scanline[] = []
   let row = 0

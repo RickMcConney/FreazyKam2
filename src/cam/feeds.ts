@@ -1,5 +1,5 @@
 import type { Tool, ToolType } from '../store/toolStore'
-import { maxCutRadiusMM, tipBallRadiusMM } from './geom'
+import { maxCutRadiusMM, feedDiameterMM } from './geom'
 import { useWorkpieceStore, MATERIAL_INFO } from '../store/workpieceStore'
 
 // ─── Centralized feed, spindle & step-down calculation ─────────────────────────
@@ -64,16 +64,6 @@ export function targetChipLoad(toolType: ToolType, diameterMM: number, hardness:
   const h = hardness > 0 ? hardness : 1
   const diaScale = clamp(diameterMM / REFERENCE_DIAMETER_MM, 0.3, 2)
   return (CHIP_LOAD_TABLE[toolType] ?? 0.05) * diaScale / h
-}
-
-// The diameter to judge a tool's CUTTING duty by. Every type stores the diameter it
-// cuts at — except a taper, whose stored diameter is the ball on its TIP. Feeding a
-// 1 mm tip into targetChipLoad would ask a bit that is 5 mm wide halfway down its
-// taper to take a 1 mm bit's chip, so a taper reports the mean of its tip and its
-// widest cutting diameter instead.
-export function feedDiameterMM(tool: Tool): number {
-  if (tool.type !== 'taper') return tool.diameterMM
-  return tipBallRadiusMM(tool) + maxCutRadiusMM(tool)
 }
 
 interface FeedCalcInput {
@@ -146,10 +136,12 @@ function computeFeeds(input: FeedCalcInput): FeedCalcResult {
   // rpm spins faster than the safe Vc — common on trim routers that idle high —
   // we can't honor it, so flag it so the UI can warn (use a smaller bit / VFD).
   let spindleTooFast = false
-  if (maxSurfaceSpeedMMin && maxSurfaceSpeedMMin > 0 && tool.diameterMM > 0) {
+  // Surface speed peaks at the WIDEST diameter that cuts — a taper's, not its tip's.
+  const vcDiaMM = 2 * maxCutRadiusMM(tool)
+  if (maxSurfaceSpeedMMin && maxSurfaceSpeedMMin > 0 && vcDiaMM > 0) {
     // Floor so the whole-rpm result never rounds *above* the surface-speed ceiling
     // (Math.round on a fractional ceiling rpm would nudge Vc a hair over the limit).
-    const vcRpm = Math.floor((maxSurfaceSpeedMMin * 1000) / (Math.PI * tool.diameterMM))
+    const vcRpm = Math.floor((maxSurfaceSpeedMMin * 1000) / (Math.PI * vcDiaMM))
     if (vcRpm < loRpm) spindleTooFast = true
     hiRpm = clamp(vcRpm, loRpm, hiRpm)
   }
@@ -162,7 +154,8 @@ function computeFeeds(input: FeedCalcInput): FeedCalcResult {
 
   // Step-down comes from machine rigidity + material hardness, capped by the tool
   // diameter — it can be shallower OR deeper than the user's guess.
-  const diaCap = tool.diameterMM >= SMALL_BIT_THRESHOLD_MM ? tool.diameterMM : 0.5 * tool.diameterMM
+  const capDiaMM = feedDiameterMM(tool)
+  const diaCap = capDiaMM >= SMALL_BIT_THRESHOLD_MM ? capDiaMM : 0.5 * capDiaMM
   const rigidDepthFactor = RIGIDITY_DEPTH_FACTOR[clamp(Math.round(R), 1, 5) - 1]
   const matDepthFactor = clamp(1 / Math.sqrt(hardness), 0.4, 1.5)
 

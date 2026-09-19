@@ -6,6 +6,7 @@ import { useToolpathStore } from '../store/toolpathStore'
 import { useTabStore } from '../store/tabStore'
 import { useProjectStore } from '../store/projectStore'
 import { useTimelineStore } from '../timeline/timelineStore'
+import { claimTabId, type TabClaim } from './tabClaim'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Crash / tab-discard recovery.
@@ -72,27 +73,34 @@ const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
 // rewrites its own on the next edit, so pruning one costs nothing, while a dead
 // tab's is landfill.
 
-let tabIdCache: string | null = null
+// A DUPLICATED tab (Chrome copies session storage) boots with its original's id.
+// It reads that snapshot — a copy of the project is what duplicating means — but
+// writes under its own id once io/tabClaim.ts has found the original still open.
+// So there are two keys: `bootKey()` for the one boot-time read, and `writeKey()`
+// for every write and delete.
 
-function tabKey(): string {
-  if (tabIdCache) return tabIdCache
-  let id: string | null = null
-  try {
-    id = sessionStorage.getItem(TAB_ID_KEY)
-    if (!id) {
-      id = `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
-      sessionStorage.setItem(TAB_ID_KEY, id)
-    }
-  } catch {
-    // Storage blocked. A per-load id means this session protects nothing across
-    // a reload — which is the same ground IndexedDB is almost certainly on in
-    // that browser anyway. It degrades to "no recovery", never to "the wrong
-    // project".
-    id = `tab-noresume-${Math.random().toString(36).slice(2, 10)}`
-  }
-  tabIdCache = id
-  return id
+let claim: TabClaim | null = null
+
+function tabClaim(): TabClaim {
+  if (claim) return claim
+  let storage: Storage | null = null
+  // Storage blocked: a per-load id means this session protects nothing across a
+  // reload — which is the same ground IndexedDB is almost certainly on in that
+  // browser anyway. It degrades to "no recovery", never to "the wrong project".
+  try { storage = sessionStorage } catch { storage = null }
+  claim = claimTabId({
+    storage,
+    key: TAB_ID_KEY,
+    channelName: 'kam:autosave-tabs',
+    makeId: () => storage
+      ? `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+      : `tab-noresume-${Math.random().toString(36).slice(2, 10)}`,
+  })
+  return claim
 }
+
+const bootKey = (): string => tabClaim().inheritedId
+const writeKey = (): Promise<string> => tabClaim().id
 
 // Long enough that a drag or a burst of generation writes lands as one snapshot;
 // short enough that little is lost. The flush on hide covers the tab-switch case
@@ -166,7 +174,7 @@ function tx<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequ
 }
 
 export async function readSnapshot(): Promise<SnapshotRecord | null> {
-  const mine = await tx<SnapshotRecord>('readonly', (s) => s.get(tabKey()) as IDBRequest<SnapshotRecord>)
+  const mine = await tx<SnapshotRecord>('readonly', (s) => s.get(bootKey()) as IDBRequest<SnapshotRecord>)
   if (mine) return mine
   // THE PRE-TAB RECORD IS ADOPTED ONCE, by whichever tab boots first after the
   // upgrade, and then deleted so no second tab picks it up. Without this the
@@ -178,8 +186,10 @@ export async function readSnapshot(): Promise<SnapshotRecord | null> {
   return legacy
 }
 
-export function clearSnapshot(): Promise<void> {
-  return tx('readwrite', (s) => s.delete(tabKey()) as IDBRequest<undefined>).then(() => undefined)
+export async function clearSnapshot(): Promise<void> {
+  // This tab's OWN record: for a duplicate, the one it read is its original's.
+  const key = await writeKey()
+  await tx('readwrite', (s) => s.delete(key) as IDBRequest<undefined>)
 }
 
 /**
@@ -291,6 +301,10 @@ function fingerprint(s: string): string {
 
 export function armAutosave() {
   armed = true
+  // A duplicate restored its original's snapshot but has none of its own yet —
+  // write one now, or reloading the copy before its first edit opens it empty.
+  const c = tabClaim()
+  void c.id.then((id) => { if (id !== c.inheritedId) void flush() })
 }
 
 async function flush() {
@@ -334,7 +348,8 @@ async function flush() {
       opCount: useToolpathStore.getState().operations.length,
       json,
     }
-    await tx('readwrite', (s) => s.put(rec, tabKey()) as IDBRequest<IDBValidKey>)
+    const key = await writeKey()
+    await tx('readwrite', (s) => s.put(rec, key) as IDBRequest<IDBValidKey>)
     lastHash = hash
   } catch (err) {
     console.warn('[autosave] snapshot write failed', err)

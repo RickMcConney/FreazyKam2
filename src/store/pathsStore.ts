@@ -718,39 +718,22 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
       const live = new Set(parts.map((pt) => pt.part))
       const deleteIds = siblings.filter((p) => !live.has(p.shapePart!)).map((p) => p.id)
       // A params edit is an argument edit to the call that created the shape, so while
-      // that chip is the LATEST one it AMENDS it rather than appending — stepping a gear's
-      // bore must not leave a chip per keystroke, the same rule single-path shapes follow
-      // through amendPathDefinition. An older chip is left alone and this records its own
-      // entry, so the edit has an undo step of its own (see tipIndex in timelineStore);
-      // the next keystroke then amends THAT. The amend needs the group as it will BE, since
-      // it rewrites the chip's path list wholesale; the live paths then move without
-      // recording. Falling back to applyPathEdit keeps one atomic entry (and its op
-      // cleanup) when there is no chip to amend.
-      const nextGroup = parts.map((pt) => {
-        const existing = byPart.get(pt.part)
-        return existing
-          ? { ...existing, d: applyPlacementD(pt.d, existing.placement), shapeParams: params }
-          : add.find((a) => a.shapePart === pt.part)!
-      })
-      // `amendShapeGroup` takes the dropped ids too: it can fold a vanishing part
-      // into an existing group edit (whose deleteIds replay the op/tab cleanup),
-      // and refuses when the only chip is the placement — which is the one case
-      // that has to record, and which then becomes the chip every later edit
-      // amends.
+      // the step that placed or last re-defined it is the LATEST one, the edit JOINS that
+      // step rather than recording — stepping a gear's bore must not leave an undo step
+      // per keystroke, the same rule single-path shapes follow below. An older step is
+      // left alone and this records its own, so the edit has an undo step of its own (see
+      // joinsTip in timelineStore); the next keystroke then joins THAT.
       const tl = useTimelineStore.getState()
-      if (self.groupId && tl.amendShapeGroup(self.groupId, nextGroup, deleteIds)) {
-        // The chip now holds the whole group, so the live paths move without
-        // recording — and rewriteGeneratedRaw's ops/tabs cleanup for a dropped
-        // part is exactly what that chip's deleteIds replay.
+      if (self.groupId && tl.joinsTip(siblings.map((p) => ({ path: p.id })))) {
+        // Nothing is recorded, so the live paths move raw — rewriteGeneratedRaw still
+        // drops the operations and tabs of a part that has gone.
         get().rewriteGeneratedRaw({
           updates: updates.map((u) => ({ id: u.id, d: u.d!, shapeParams: params })),
           add, deleteIds,
         })
       } else {
-        // One atomic edit: one timeline entry, and operations on a part that has
-        // gone away are cleaned up with it. Named for the THING, like every other
-        // chip — and this entry is what later edits amend, so it is the one the
-        // user will keep seeing.
+        // One atomic edit: one undo step, and operations on a part that has gone away
+        // are cleaned up with it. Later keystrokes join this step.
         get().applyPathEdit({ updates, add, deleteIds, label: shapeDisplayName(params.type) })
       }
       return
@@ -764,12 +747,12 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
       s0.paths.map((p) => p.id === id ? { ...p, d, shapeParams: params } : p), [], [id])
     set({ paths: solved.paths })
     regenerateConstrained(solved.movedIds)
-    // Parameter edits amend the chip that created/last-defined the shape when it is the
-    // latest chip — changing text or a star's point count is an argument edit to that
-    // call. Otherwise (an older definer, or none) this records a shape.params chip, which
-    // later keystrokes coalesce into.
+    // Parameter edits join the step that created/last defined the shape when it is the
+    // latest step — changing text or a star's point count is an argument edit to that
+    // call. Otherwise (an older definer, or none) this records a shape.params step, which
+    // later keystrokes join.
     const tl = useTimelineStore.getState()
-    if (!tl.amendPathDefinition(id, { d, shapeParams: params })) {
+    if (!tl.joinsTip([{ path: id }])) {
       tl.record({ kind: 'shape.params', pathId: id, params })
     }
   },

@@ -1,9 +1,8 @@
 import { create } from 'zustand'
 import { uid } from '../uid'
-import { labelFor, TRANSFORM_GESTURES, type SerializedOperation, type TimelineEvent, type TimelineEventPayload } from './events'
+import { labelFor, TRANSFORM_GESTURES, type TimelineEvent, type TimelineEventPayload } from './events'
 import type { ImportedPath, PathUpdate } from '../store/pathsStore'
 import { usePathsStore } from '../store/pathsStore'
-import type { ShapeParams } from '../shapes/shapeGenerators'
 import { useToolpathStore, type AnyOperation } from '../store/toolpathStore'
 import { abortGeneration } from '../workers/abortGeneration'
 import { useTabStore, type Tab } from '../store/tabStore'
@@ -15,10 +14,10 @@ import type { WorkpieceEventChanges } from './events'
 import { consolidateSteps, getBBox } from '../canvas/selectionUtils'
 import { evictHistorySegments } from './historyBudget'
 
-// The operation timeline: an append-only event log ("the program") with a
-// cursor. Every project mutation records one TimelineEvent; undo/redo and the
-// TimelinePanel scrub the cursor. Replay correctness can be checked any time
-// with window.__fkamReplayCheck().
+// The undo history: an event log with a cursor, one event per undo step, and a
+// snapshot of the whole project behind each one (see below). Every project mutation
+// records a TimelineEvent — or joins the step it is editing (see joinsTip) — and
+// undo/redo move the cursor.
 
 const COALESCE_MS = 800
 // Past this many entries the oldest are dropped, so history stays bounded.
@@ -115,7 +114,7 @@ function enforceSegmentBudget(): void {
 // THE SNAPSHOT AT THE CURSOR IS WHATEVER IS LIVE — and it has to stay that way however the
 // cursor is LEFT, not only when it is left by undo. A snapshot used to be taken only when
 // an event was appended, so everything that lands WITHOUT one never reached it: a toolpath
-// finishing its generation, a `generating` status, an amended chip, a second drag merged
+// finishing its generation, a `generating` status, an edit joining its step, a second drag merged
 // into the first. goTo refreshed the cursor's snapshot on the way out, but recording the
 // NEXT edit left it as it was. So: pocket a circle, drag it, draw another circle, undo —
 // the circle came back where it was dragged to carrying the toolpath from BEFORE the drag,
@@ -149,7 +148,7 @@ function noteWrite<K extends keyof Snapshot>(key: K, before: Snapshot[K]): void 
   }
 }
 
-// Nothing recorded this batch: it was a derived write or an amend, so it IS the state at the
+// Nothing recorded this batch: it was a derived write or an edit joining the tip step, so it IS the state at the
 // cursor.
 function settleBatch(): void {
   if (!batchOpen) return
@@ -193,9 +192,6 @@ function trimHistory(events: TimelineEvent[]): number {
   return drop
 }
 
-export function stateSnapshotAt(seq: number): Snapshot | undefined { return stateAt[seq] }
-
-
 export interface RecordMeta {
   label?: string
   gestureId?: string
@@ -212,95 +208,25 @@ interface TimelineState {
 
   record: (payload: TimelineEventPayload, meta?: RecordMeta) => void
   // Rebuild the log as an empty program whose genesis is the CURRENT store
-  // state. Used by new project, and by project load when the file carries no
-  // usable timeline (v1 files, corrupt/newer-version logs).
+  // state. Used by new project and by project load.
   resetToCurrentState: () => void
   markSaved: () => void
-  // Force "unsaved". -1 is the store's own idiom for "no event matches the last
-  // save" (see amend/undo below). Needed after an autosave restore: loadProject
-  // ends by marking the document clean, which is right for a file on disk and
-  // wrong for a recovered snapshot — that document matches nothing on disk, and
-  // reporting it as saved would stop the next snapshot from being offered back.
+  // Force "unsaved" — -1 is the store's idiom for "no event matches the last save".
+  // Needed after an autosave restore: loadProject ends by marking the document clean,
+  // which is right for a file on disk and wrong for a recovered snapshot — that
+  // document matches nothing on disk, and reporting it as saved would stop the next
+  // snapshot from being offered back.
   markUnsaved: () => void
-  // Install a timeline from a saved project (v2 .fkam). The stores must
-  // already hold the state at `cursor` (the file's snapshot block) — nothing is
-  // replayed here. Returns false when the timeline is invalid or from a newer
-  // version, in which case the caller should resetToCurrentState() instead.
-
-  // Time travel: restore project state as of event `seq` (0 = genesis).
-  // Replays from the nearest checkpoint, preserves toolpath segments for ops
-  // whose settings + source geometry are unchanged, and schedules debounced
-  // regeneration for the rest.
-  //
-  // `intent` decides what a NEW edit does while the cursor sits in the past:
-  //   'undo'   — classic undo semantics: the edit truncates the future
-  //   'browse' — timeline browsing: the edit is INSERTED at the cursor and the
-  //              later events are kept, renumbered, and replayable on top
-  //              (self-contained payloads make this safe: events about other
-  //              paths/ops apply unchanged; events whose target was removed
-  //              no-op).
-  // Undo/redo only — there is no scrubbing. Installs the snapshot at `seq`.
+  // Undo/redo: install the snapshot at `seq` (0 = genesis).
   goTo: (seq: number) => void
-  // Delete one event from the timeline: later events are renumbered and state
-  // is re-derived by replaying without it. NOT undoable — it edits the history
-  // itself, not the project.
-
-  // Edit-in-place: parameter changes (shape/text params, op settings) are
-  // argument edits to the call that created the thing — they AMEND the payload
-  // of the last event ≤ cursor that wrote the target instead of appending a
-  // new chip. Replay stays consistent because nothing between that event and
-  // the cursor touches those fields (it wouldn't be the last writer otherwise).
-  // Returns false when no defining event exists (caller falls back to
-  // recording a normal event). NOT undoable — the chip IS the record.
-  amendPathDefinition: (pathId: string, upd: { d: string; shapeParams?: ShapeParams | null; name?: string }) => boolean
-  // Same idea for a MULTI-PART shape (a gear): its parts are one shape sharing one
-  // set of params, so a params edit rewrites the chip that last DEFINED the group
-  // — wholesale, because parts appear and vanish with the parameters (spokes → 0,
-  // a marking that no longer fits) and a per-path merge cannot express that.
-  //
-  // That chip is either the `paths.add` that placed the shape or a later group
-  // `paths.edit`; `removedIds` names the parts this edit drops, and it is the
-  // reason both kinds are handled. Their operations and tabs die with them, and
-  // that cleanup only replays from a paths.edit's `deleteIds` — so a drop is
-  // FOLDED INTO an existing group paths.edit, and refused against a bare
-  // paths.add (the caller then records one, which becomes the definer from then
-  // on, so the chip count stops growing after that one). Also refused when an
-  // update in the way carries a transform/corner recipe, since replay recomposes
-  // from the recipe and would discard a stamped `d`.
-  amendShapeGroup: (groupId: string, paths: ImportedPath[], removedIds?: string[]) => boolean
-  // Re-running the clock designer on an existing clock: its chip carries the
-  // SPEC, so a new spec replaces it in place. Same rule as every other form —
-  // re-running over the same thing amends the chip that created it — and it is
-  // what keeps a session of trying beats from leaving a chip per attempt. The
-  // parts are rewritten by the caller through updateShapeParams, which amends
-  // their own chips. Returns false when no clock.design chip exists (loaded or
-  // compacted project), and the caller records one.
-  amendOpSettings: (opId: string, updates: Partial<SerializedOperation>) => boolean
-  // Re-Generate that changes WHICH operations a form produced, not just their settings:
-  // PocketForm's Invert Pocket toggle re-reads the same selection into a different set of
-  // boundaries. Same reasoning as amendOpSettings — it is an argument edit to the call
-  // that created them — but the op set itself changes, so the op.add chip's payload is
-  // rewritten wholesale instead of merged field-by-field. Returns false when no defining
-  // op.add exists (loaded/compacted project), and the caller records delete+add normally.
-  amendOpAddEvent: (anchorOpId: string, patch: { removeIds: string[]; add: SerializedOperation[] }) => boolean
-  // BooleanForm edit mode: rewrite a boolean chip's op type + result geometry.
-  // Keyed by event id (seqs shift on insert/remove/compact while the form is
-  // open). The live result path is rewritten by the caller (rewritePathRaw).
-  // Offset/Pattern edit modes: replace a paths.add chip's generated paths and
-  // generator metadata wholesale. The live paths are rewritten by the caller
-  // (rewriteGeneratedRaw).
-  // Tab edits are in-place: the last tabs.apply chip (or snapshot/genesis
-  // entry) that defined this path's tabs gets its payload replaced with the
-  // path's CURRENT tabs. Returns false when a legacy tabs.moveT/tabs.delete
-  // chip sits in between (amending beneath it would be overridden on replay) —
-  // the caller then records a normal event.
-  amendTabsForPath: (pathId: string, tabs: Tab[]) => boolean
-  // PropertiesPanel's transform-chip editor: replace a move/scale/rotate/
-  // skew/mirror (or merged 'transform') event's TransformStep recipe,
-  // recomposing every affected path from its state just BEFORE this event —
-  // not its current state — so this stays a true in-place edit of that one
-  // historical step rather than stacking a new transform on top. Returns
-  // false when the event isn't a transform-recipe paths.edit event.
+  // Does this edit belong to the step the cursor is on? True when that step made or
+  // re-defined one of `refs` — changing a just-made pocket's depth, stepping a gear's
+  // bore, dragging a tab of the Tabs just applied — and then the caller records
+  // NOTHING: the edit lands in the stores and the mirror folds it into that step's
+  // snapshot, so one undo takes back the thing and its edits together. False for any
+  // older step, which must not absorb a later edit (see joinsTip below), and the
+  // caller then records an ordinary event of its own.
+  joinsTip: (refs: TipRef[]) => boolean
   undo: () => void
   redo: () => void
   canUndo: () => boolean
@@ -490,20 +416,30 @@ function restoreStateAt(seq: number, events: TimelineEvent[]): boolean {
   return true
 }
 
-// THE ONLY CHIP AN AMEND MAY REWRITE IS THE ONE THE CURSOR IS ON — events[cursor - 1], or
-// genesis at cursor 0 — and the index of that chip is all this returns (-1 at genesis).
-//
-// An amend records nothing: the edit it stands for lands in the stores, and the mirror
-// (noteWrite / settleBatch) folds it into the CURSOR's snapshot. That is only the defining
-// chip's own snapshot when the defining chip IS the cursor's. Amending anything older —
-// the pocket's op.add with a rectangle drawn since — rewrote a chip whose snapshot still
-// held the old settings, and parked the new ones in the rectangle's step: one undo then
-// took back the rectangle AND the depth edit, a second removed the pocket, and the chip
-// read "depth 10" while going back to it restored depth 5. So an older definer is left
-// alone and the caller records an ordinary event, which gets its own undo step.
-// Pinned by `npx vite-node scripts/undo-amend.mts`.
-function tipIndex(cursor: number): number {
-  return cursor - 1
+/** A thing an edit touches: an operation, a path, or the tabs on a path. */
+export type TipRef = { op: string } | { path: string } | { tabsOf: string }
+
+// Did event `ev` make or re-define `ref`? Moves, rotates and the other geometry gestures
+// are edits OF a path, not its definition, so a parameter change after one is a step of
+// its own.
+function defines(ev: TimelineEvent, ref: TipRef): boolean {
+  if ('op' in ref) {
+    if (ev.kind === 'op.add') return ev.op.id === ref.op || !!ev.linked?.some((o) => o.id === ref.op)
+    return ev.kind === 'op.update' && ev.opId === ref.op
+  }
+  if ('tabsOf' in ref) return ev.kind === 'tabs.apply' && ev.pathId === ref.tabsOf
+  const id = ref.path
+  switch (ev.kind) {
+    case 'paths.add': return ev.paths.some((p) => p.id === id)
+    case 'shape.params': return ev.pathId === id
+    case 'paths.split': return ev.subPaths.some((p) => p.id === id)
+    case 'paths.edit':
+      return !ev.gesture && (
+        ev.updates.some((u) => u.id === id && !u.transforms?.length && !u.corner?.length)
+        || !!ev.add?.some((p) => p.id === id)
+        || !!ev.deleteIds?.includes(id))
+    default: return false
+  }
 }
 
 export const useTimelineStore = create<TimelineState>()((set, get) => ({
@@ -617,7 +553,7 @@ export const useTimelineStore = create<TimelineState>()((set, get) => ({
     const s = get()
     const target = Math.max(0, Math.min(s.events.length, Math.round(seq)))
     if (target === s.cursor) return
-    // The state at the cursor is whatever is live RIGHT NOW — amended chips,
+    // The state at the cursor is whatever is live RIGHT NOW — edits that joined it,
     // freshly generated segments and every other derived write land there
     // without recording anything. Refreshing it on the way out is what lets all
     // of those be redone, and is why nothing else in the app has to remember to
@@ -643,247 +579,21 @@ export const useTimelineStore = create<TimelineState>()((set, get) => ({
     enforceSegmentBudget()
   },
 
-  amendPathDefinition: (pathId, upd) => {
+  // ONLY THE STEP THE CURSOR IS ON. An edit that joins a step records nothing; the mirror
+  // (noteWrite / settleBatch) folds it into the CURSOR's snapshot, which is that step's
+  // own snapshot only when that step is the cursor's. Joining an OLDER step — the
+  // pocket's op.add with a rectangle drawn since — left the pocket's snapshot holding the
+  // old depth and parked the new one in the rectangle's step: one undo took back the
+  // rectangle AND the depth edit (scratch/review.md B2). Not genesis either (cursor 0,
+  // just after a load): folding an edit into it made the edit impossible to undo. And
+  // not the step the last save captured, which must stay what was saved.
+  // Pinned by `npx vite-node scripts/undo-amend.mts`.
+  joinsTip: (refs) => {
     const s = get()
-    const amendPath = (p: ImportedPath): ImportedPath => ({
-      ...p,
-      d: upd.d,
-      ...(upd.shapeParams !== undefined ? { shapeParams: upd.shapeParams ?? undefined } : {}),
-      ...(upd.name !== undefined ? { name: upd.name } : {}),
-    })
-    const amendUpdate = (u: PathUpdate): PathUpdate => ({
-      ...u,
-      d: upd.d,
-      ...(upd.shapeParams !== undefined ? { shapeParams: upd.shapeParams } : {}),
-      ...(upd.name !== undefined ? { name: upd.name } : {}),
-    })
-
-    const commit = (idx: number, amended: TimelineEvent) => {
-      const events = [...s.events]
-      events[idx] = amended
-      // Checkpoints at/after the amended event captured the old payload's state
-      set({ events, ...(s.savedSeq >= amended.seq ? { savedSeq: -1 } : {}) })
-    }
-
-    const i = tipIndex(s.cursor)
-    if (i >= 0) {
-      const ev = s.events[i]
-      if (ev.kind === 'paths.add' && ev.paths.some((p) => p.id === pathId)) {
-        commit(i, { ...ev, paths: ev.paths.map((p) => p.id === pathId ? amendPath(p) : p) })
-        return true
-      }
-      if (ev.kind === 'shape.params' && ev.pathId === pathId) {
-        if (!upd.shapeParams) return false // a bare-d change can't live in a params event
-        commit(i, { ...ev, params: upd.shapeParams })
-        return true
-      }
-      if (ev.kind === 'paths.edit' && ev.updates.some((u) => u.id === pathId)) {
-        commit(i, { ...ev, updates: ev.updates.map((u) => u.id === pathId ? amendUpdate(u) : u) })
-        return true
-      }
-      if (ev.kind === 'paths.split' && ev.subPaths.some((p) => p.id === pathId)) {
-        commit(i, { ...ev, subPaths: ev.subPaths.map((p) => p.id === pathId ? amendPath(p) : p) })
-        return true
-      }
-    }
-    // The path predates this session's history — amend genesis, but only while the
-    // cursor sits ON it (see tipIndex).
-    const g = s.cursor === 0 ? stateAt[0] : undefined
-    if (g && g.paths.some((p) => p.id === pathId)) {
-      const amended = { ...g, paths: g.paths.map((p) => p.id === pathId ? amendPath(p) : p) }
-      stateAt[0] = amended
-      set({ savedSeq: -1 }) // genesis is part of the saved file
-      return true
-    }
-    return false
-  },
-
-  amendShapeGroup: (groupId, groupPaths, removedIds = []) => {
-    const s = get()
-    const live = new Map(groupPaths.map((p) => [p.id, p]))
-    const gone = new Set(removedIds)
-    // A group path by id (its parts all carry the groupId) or by having just been
-    // dropped — `gone` ids are no longer anywhere in the store to be looked up.
-    const mineId = (id: string) => live.has(id) || gone.has(id)
-    const mine = (p: ImportedPath) => p.groupId === groupId || mineId(p.id)
-
-    // The group's entries go back where the first of them sat, so an edit that
-    // adds a part does not shuffle the paths list.
-    const replace = (list: ImportedPath[]): ImportedPath[] => {
-      const out: ImportedPath[] = []
-      let placed = false
-      for (const p of list) {
-        if (!mine(p)) { out.push(p); continue }
-        if (!placed) { out.push(...groupPaths); placed = true }
-      }
-      if (!placed) out.push(...groupPaths)
-      return out
-    }
-    // Scrubbing to an add-event selects what it created, so a part that has just
-    // appeared or gone has to be reflected there too.
-    const reselect = (ev: TimelineEvent, before: ImportedPath[]): string[] => {
-      const was = new Set(before.filter(mine).map((p) => p.id))
-      if (!ev.selectionAfter.some((id) => was.has(id))) return ev.selectionAfter
-      return [...ev.selectionAfter.filter((id) => !was.has(id)), ...groupPaths.map((p) => p.id)]
-    }
-
-    const commit = (idx: number, amended: TimelineEvent) => {
-      const events = [...s.events]
-      events[idx] = amended
-      set({ events, ...(s.savedSeq >= amended.seq ? { savedSeq: -1 } : {}) })
-    }
-
-    const i = tipIndex(s.cursor)
-    if (i >= 0) {
-      const ev = s.events[i]
-
-      if (ev.kind === 'paths.add' && ev.paths.some(mine)) {
-        // Nothing here can carry a deletion's op/tab cleanup — see the interface.
-        if (gone.size > 0) return false
-        commit(i, { ...ev, paths: replace(ev.paths), selectionAfter: reselect(ev, ev.paths) })
-        return true
-      }
-
-      if (ev.kind === 'paths.edit' && (
-        ev.updates.some((u) => mineId(u.id))
-        || ev.add?.some(mine)
-        || ev.deleteIds?.some(mineId)
-      )) {
-        // Recipes recompose on replay and would ignore a stamped d.
-        if (ev.updates.some((u) => mineId(u.id) && (u.transforms?.length || u.corner?.length))) return false
-        // Every part this event already knew keeps its slot, updated to its
-        // current geometry — or leaves, taking its operations with it.
-        const knew = new Set([...ev.updates.map((u) => u.id), ...(ev.add ?? []).map((p) => p.id)])
-        const updates = ev.updates.flatMap((u) => {
-          if (!mineId(u.id)) return [u]
-          const p = live.get(u.id)
-          return p ? [{ ...u, d: p.d, shapeParams: p.shapeParams ?? null }] : []
-        })
-        const add = (ev.add ?? []).flatMap((p) => {
-          if (!mine(p)) return [p]
-          const cur = live.get(p.id)
-          return cur ? [cur] : []
-        })
-        // Parts that appeared since this event join its add list.
-        for (const p of groupPaths) if (!knew.has(p.id)) add.push(p)
-        const deleteIds = [...new Set([...(ev.deleteIds ?? []), ...removedIds])]
-        commit(i, {
-          ...ev,
-          updates,
-          ...(add.length > 0 ? { add } : {}),
-          ...(deleteIds.length > 0 ? { deleteIds } : {}),
-          selectionAfter: [...ev.selectionAfter.filter((id) => !gone.has(id))],
-        })
-        return true
-      }
-    }
-
-    // The group predates recorded history (loaded or compacted project) — amend
-    // genesis, exactly as amendPathDefinition does, and on the same condition.
-    const g = s.cursor === 0 ? stateAt[0] : undefined
-    if (g && g.paths.some(mine)) {
-      if (gone.size > 0) return false
-      stateAt[0] = { ...g, paths: replace(g.paths) }
-      set({ savedSeq: -1 })
-      return true
-    }
-    return false
-  },
-
-  amendOpSettings: (opId, updates) => {
-    const s = get()
-    const commit = (idx: number, amended: TimelineEvent) => {
-      const events = [...s.events]
-      events[idx] = amended
-      set({ events, ...(s.savedSeq >= amended.seq ? { savedSeq: -1 } : {}) })
-    }
-
-    const i = tipIndex(s.cursor)
-    if (i >= 0) {
-      const ev = s.events[i]
-      if (ev.kind === 'op.update' && ev.opId === opId) {
-        commit(i, { ...ev, updates: { ...ev.updates, ...updates } })
-        return true
-      }
-      if (ev.kind === 'op.add' && ev.op.id === opId) {
-        commit(i, { ...ev, op: { ...ev.op, ...updates } as SerializedOperation })
-        return true
-      }
-      // A sibling op created by the same action (inlay's second phase) is defined
-      // by this chip too — amend it in place rather than recording a new chip.
-      if (ev.kind === 'op.add' && ev.linked?.some((o) => o.id === opId)) {
-        commit(i, {
-          ...ev,
-          linked: ev.linked.map((o) => o.id === opId ? { ...o, ...updates } as SerializedOperation : o),
-        })
-        return true
-      }
-    }
-    const g = s.cursor === 0 ? stateAt[0] : undefined
-    if (g && g.operations.some((o) => o.id === opId)) {
-      const amended = {
-        ...g,
-        operations: g.operations.map((o) => o.id === opId ? { ...o, ...updates } as AnyOperation : o),
-      }
-      stateAt[0] = amended
-      set({ savedSeq: -1 })
-      return true
-    }
-    return false
-  },
-
-  amendOpAddEvent: (anchorOpId, patch) => {
-    const s = get()
-    const i = tipIndex(s.cursor)
-    if (i >= 0) {
-      const ev = s.events[i]
-      if (ev.kind !== 'op.add') return false
-      const members = [ev.op, ...(ev.linked ?? [])]
-      if (!members.some((o) => o.id === anchorOpId)) return false
-      const remove = new Set(patch.removeIds)
-      const next = [...members.filter((o) => !remove.has(o.id)), ...patch.add]
-      // An op.add with nothing in it has no meaning; leave the chip alone and let the
-      // caller record the delete and the add as ordinary events.
-      if (next.length === 0) return false
-      const amended: TimelineEvent = {
-        ...ev,
-        op: next[0],
-        ...(next.length > 1 ? { linked: next.slice(1) } : { linked: undefined }),
-      }
-      const events = [...s.events]
-      events[i] = amended
-      set({ events, ...(s.savedSeq >= amended.seq ? { savedSeq: -1 } : {}) })
-      return true
-    }
-    return false
-  },
-
-  amendTabsForPath: (pathId, tabs) => {
-    const s = get()
-    const commit = (idx: number, amended: TimelineEvent) => {
-      const events = [...s.events]
-      events[idx] = amended
-      set({ events, ...(s.savedSeq >= amended.seq ? { savedSeq: -1 } : {}) })
-    }
-    const i = tipIndex(s.cursor)
-    if (i >= 0) {
-      const ev = s.events[i]
-      if (ev.kind === 'tabs.apply' && ev.pathId === pathId) {
-        commit(i, {
-          ...ev,
-          tabs,
-          label: labelFor({ kind: 'tabs.apply', pathId, tabs }),
-        })
-        return true
-      }
-    }
-    const g = s.cursor === 0 ? stateAt[0] : undefined
-    if (g && g.tabs.some((t) => t.pathId === pathId)) {
-      stateAt[0] = { ...g, tabs: [...g.tabs.filter((t) => t.pathId !== pathId), ...tabs] }
-      set({ savedSeq: -1 })
-      return true
-    }
-    return false
+    if (s.cursor === 0) return false
+    const tip = s.events[s.cursor - 1]
+    if (tip.seq === s.savedSeq) return false
+    return refs.some((r) => defines(tip, r))
   },
 
   undo: () => get().goTo(get().cursor - 1),

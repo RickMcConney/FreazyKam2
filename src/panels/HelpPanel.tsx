@@ -81,8 +81,8 @@ const FEATURES = [
     desc: 'Click to place points. In Bezier mode, drag to pull out curve handles. In all other modes curves are computed automatically from point positions. Hold Alt while clicking to make the incoming segment a straight line. Click near the first point to close the path, or press Escape to finish an open path (2+ points required). Ctrl+Z to undo the last placed point.',
   },
   {
-    title: 'Region tool',
-    desc: 'Pocketing needs a closed path, but a drawing often encloses an area that no single path closes around — slots cut into the edge of a part, bounded by the outline on three sides and a separate line across the mouth. Pick Region in the Draw panel and move over the canvas: the area under the cursor is highlighted, built from every visible line that bounds it, split wherever lines meet or cross. Click to make it a new closed path (shapes inside it come along as holes), then pocket that path. The original lines are left alone. The tool stays on for more clicks; Escape leaves it. An area that is not fully enclosed highlights nothing, since closing a gap would mean guessing at a line nobody drew.',
+    title: 'Pocket regions',
+    desc: 'Pocketing needs a closed path, but a drawing often encloses an area that no single path closes around — slots cut into the edge of a part, bounded by the outline on three sides and a separate line across the mouth. While the Pocket form is open, move over the canvas: the area under the cursor is highlighted, built from every visible line that bounds it, split wherever lines meet or cross. Click inside it to make it a new closed path and select it for the pocket (shapes inside it come along as holes); Shift-click to add more areas. Clicking on a line still selects that path as usual, and an area one closed path already bounds just selects that path. The original lines are left alone. An area that is not fully enclosed highlights nothing, since closing a gap would mean guessing at a line nobody drew.',
   },
   {
     title: 'Point edit',

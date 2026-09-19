@@ -282,10 +282,9 @@ export default function ClockPanel() {
       groupId, groupName: part.name,
       clockId, clockPart: part.key, clockSpec: spec,
     }))
-    // One addPaths per part, so each wheel gets its OWN chip — that chip is then
-    // what every later parameter edit on that wheel amends (updateShapeParams →
-    // amendShapeGroup), exactly as a hand-drawn gear's does. One call for all of
-    // them would give one chip that owns the lot.
+    // One addPaths per part, so each wheel gets its OWN undo step — the one a
+    // parameter edit made straight after it joins (updateShapeParams → joinsTip),
+    // exactly as a hand-drawn gear's does.
     usePathsStore.getState().addPaths(made, { source: 'shape', label: part.name })
     return made.map((p) => p.id)
   }

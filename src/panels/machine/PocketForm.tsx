@@ -1,17 +1,14 @@
 // ─── Pocket form ──────────────────────────────────────────────────────────────
-import { FormShell, PathChip, PathListSection, PathRevisionHint, ToolSelector, ToggleRow, DepthRow, GenerateBtn, useSessionOps, StartRow, useStartZ, toolsOfType, pickToolId, LengthInput, FormError, FormNotice, useGenerateError, discardFailedOps } from './shared'
+import { FormShell, ToolSelector, ToggleRow, DepthRow, GenerateBtn, useSessionOps, StartRow, useStartZ, toolsOfType, pickToolId, LengthInput, FormError, FormNotice, useBatchGenerate, generateLabel, NoPathBanner, CheckRow, BatchPathList } from './shared'
 import { type StartFrom } from '../../cam/startHeight'
-import { useState } from 'react'
-import { ICON } from '../../theme'
-import { AlertCircle } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { useToolStore, type CuttingDirection } from '../../store/toolStore'
-import { useToolpathStore, batchOf, type AnyOperation, type PocketOperation } from '../../store/toolpathStore'
+import { useToolpathStore, batchOf, type PocketOperation } from '../../store/toolpathStore'
 import { useFormDefaultsStore, mergeWithDefaults } from '../../store/formDefaultsStore'
 import { useUIStore } from '../../store/uiStore'
 import { usePathsStore } from '../../store/pathsStore'
 import { useSelectedPathsInOrder } from '../../store/pathsStore'
 import { useWorkpieceStore } from '../../store/workpieceStore'
-import { isWorkCancelled } from '../../workers/workerClient'
 import { generateOperation } from '../../cam/opJob'
 import type { PocketNote, PocketStrategy } from '../../cam/pocket'
 
@@ -21,7 +18,6 @@ const STRATEGY_LABELS: Partial<Record<PocketStrategy, string>> = { hybrid: 'auto
 import { seedStepDownMM } from '../../cam/feeds'
 import { groupPathsByContainment } from './containment'
 import { reviseGroupBatch } from './reviseBatch'
-import { entryHintAt } from '../../cam/startOptimizer'
 
 interface PocketFormState {
   toolId: string
@@ -50,13 +46,19 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
   // (see cam/startOptimizer), so the order the paths were clicked in IS the order the
   // machine will run them. Selecting three circles 1, 2, 3 cuts them 1, 2, 3.
   const selPaths = useSelectedPathsInOrder()
-  const addOperations = useToolpathStore((s) => s.addOperations)
-  const updateOperation = useToolpathStore((s) => s.updateOperation)
-  const replaceGeneratedOperations = useToolpathStore((s) => s.replaceGeneratedOperations)
-  const reviseBatchPaths = useToolpathStore((s) => s.reviseBatchPaths)
+  // Region picking is on for as long as the form is open: a click inside an area the
+  // drawn lines enclose makes a closed path of it and selects it, while a click on a line
+  // still selects that path (cam/regionPick.ts, CanvasStage). Only an idle canvas is taken
+  // over — picking a draw tool still works, and region picking resumes when it finishes.
+  const activeTool = useUIStore((s) => s.activeTool)
+  useEffect(() => {
+    if (activeTool === 'select') useUIStore.getState().setActiveTool('region')
+  }, [activeTool])
+  useEffect(() => () => {
+    if (useUIStore.getState().activeTool === 'region') useUIStore.getState().setActiveTool('select')
+  }, [])
   const operations = useToolpathStore((s) => s.operations)
   const load = useFormDefaultsStore((s) => s.load)
-  const save = useFormDefaultsStore((s) => s.save)
   const thicknessMM = useWorkpieceStore((s) => s.thicknessMM)
 
   // Clearing a pocket needs a side-cutting edge, so the same filter as the dropdown
@@ -103,8 +105,7 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
   }, tools), startFrom: { mode: 'auto' } as StartFrom, invert: false }
     return { ...base, toolId: pickToolId(base.toolId, cutters) }
   })
-  const [generating, setGenerating] = useState(false)
-  const [errorMsg, reportError, clearError] = useGenerateError()
+  const { generating, errorMsg, generate } = useBatchGenerate('pocket', 'pocket')
   // A Generate that SUCCEEDED but not as asked — today, a strategy that declined the shape.
   // Separate from errorMsg: nothing failed, so nothing is discarded and the operation keeps
   // its toolpath; the user just needs to know a different strategy cut it.
@@ -206,11 +207,7 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
   // the verdict called not worth cutting. The status warning names the gesture, so it is
   // discoverable exactly when it is relevant.
   async function handleGenerate(e?: React.MouseEvent) {
-    clearError()
     setNoticeMsg(null)
-    // Ids this click CREATES. A Generate that fails leaves nothing behind, so these are
-    // thrown away again in the finally; an op that already existed is never touched.
-    const createdIds: string[] = []
     const forceStrategy = e?.altKey === true
     // The strategies are named for the user here, not in cam/pocket.ts: the toggle shows
     // hybrid as "auto", and a message naming a word that is not on the button is no help.
@@ -231,162 +228,33 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
     }
     if (groups.length === 0 || !selectedTool) return
     const tool = selectedTool
-    setGenerating(true)
-    // Run the (potentially slow, e.g. adaptive) pocket generation off the main thread so the
-    // browser stays responsive — same worker pattern as regenerate.ts. Awaiting the worker also
-    // lets React paint the 'generating' state, so the old setTimeout(…,0) yield is unnecessary.
-    try {
-      if (editOp) {
-        // Paths the selection added to this batch, or took out of it, land HERE — on the
-        // Regenerate click, in one store action. A boundary that KEPT its operation but
-        // gained or lost an island needs no new operation, only the `islandIds` the loop
-        // below writes anyway.
-        let cuts = rev.keep.map((k) => ({ op: k.member.op, boundary: k.group.boundary, islands: k.group.islands }))
-        if (rev.drop.length > 0 || rev.add.length > 0) {
-          const newIds = reviseBatchPaths({
-            anchorId: editOp.id,
-            deleteIds: rev.drop.map((m) => m.op.id),
-            add: rev.add.map(({ boundary, islands }) => ({
-              name: `Pocket: ${boundary.name} (${tool.name})`,
-              type: 'pocket' as const,
-              toolId: form.toolId,
-              strategy: form.strategy,
-              pathId: boundary.id,
-              islandIds: islands.map((p) => p.id),
-              depthMM: form.depthMM,
-              stepDownMM: form.stepDownMM,
-              stepoverPercent: form.stepoverPercent,
-              passAngleDeg: form.passAngleDeg,
-              autoAngle: form.autoAngle,
-              direction: form.direction,
-              rampIn: form.rampIn,
-              allowanceMM: form.allowanceMM,
-              invert: form.invert,
-              startFrom: form.startFrom,
-            })),
-          })
-          const live = useToolpathStore.getState().operations
-          cuts = [...cuts, ...rev.add.flatMap((g, i) => {
-            const op = live.find((o) => o.id === newIds[i]) as PocketOperation | undefined
-            return op ? [{ op, boundary: g.boundary, islands: g.islands }] : []
-          })]
-        }
-        for (const { op, islands } of cuts) {
-          // Chain each op to where the previous one finishes, at generation time — so no
-          // regeneration is needed before simulating or exporting.
-          const hint = entryHintAt(op.id)
-          updateOperation(op.id, {
-            entryHint: hint,
-            toolId: form.toolId, strategy: form.strategy,
-            // Written every time, not only when revising: a kept boundary whose island set
-            // changed keeps its operation, and this is the only thing about it that moves.
-            islandIds: islands.map((p) => p.id),
-            depthMM: form.depthMM, stepDownMM: form.stepDownMM,
-            // Written here too: this branch used to generate with the form's autoAngle
-            // without storing it, so the next automatic regenerate reverted it.
-            stepoverPercent: form.stepoverPercent, passAngleDeg: form.passAngleDeg, autoAngle: form.autoAngle,
-            direction: form.direction, rampIn: form.rampIn, allowanceMM: form.allowanceMM,
-            invert: form.invert,
-            startFrom: form.startFrom, status: 'generating',
-          } as Partial<AnyOperation>)
-          try {
-            // Generated from the settings just written — the same call an automatic
-            // regenerate makes (cam/opJob). Alt-click is the one input that is not a setting.
-            const { notes } = await generateOperation(op.id, { forceStrategy })
-            // A strategy that declined the shape and fell back — say so, the user chose it.
-            for (const note of notes) noteFallback(note)
-          } catch (err) {
-            // A cancel abandons the whole Generate, not just this group — carrying on
-            // would immediately queue the next one against the state the user just left.
-            if (isWorkCancelled(err)) break
-            reportError(op.id, err)
-          }
-        }
-        // See ProfileForm: the chip that opened this form may be the one just deselected.
-        if (rev.drop.some((m) => m.op.id === editOp.id) && cuts.length > 0) {
-          useUIStore.getState().setRequestEditOpId(cuts[0].op.id)
-        }
-      } else {
-        // Every new op goes in ONE addOperations call: a Generate over several selected
-        // paths is a single decision, so it is a single timeline chip carrying a shared
-        // batchId — which is what lets the edit above cover all of them at once.
-        const newPayloads: Parameters<typeof addOperations>[0] = []
-        const slots = groups.map(({ boundary, islands }) => {
-          // Re-Generate on a boundary this form already generated updates that op in place.
-          const existingId = session.liveOpId(boundary.id)
-          if (existingId) return existingId
-          return newPayloads.push({
-            name: `Pocket: ${boundary.name} (${tool.name})`,
-            type: 'pocket',
-            toolId: form.toolId,
-            strategy: form.strategy,
-            pathId: boundary.id,
-            islandIds: islands.map((p) => p.id),
-            depthMM: form.depthMM,
-            stepDownMM: form.stepDownMM,
-            stepoverPercent: form.stepoverPercent,
-            passAngleDeg: form.passAngleDeg,
-            autoAngle: form.autoAngle,
-            direction: form.direction,
-            rampIn: form.rampIn,
-            allowanceMM: form.allowanceMM,
-            invert: form.invert,
-            startFrom: form.startFrom,
-          }) - 1
-        })
-        // Boundaries this session made that the current grouping no longer has — switching
-        // Invert Pocket turns every boundary into an island and vice versa, so the whole
-        // set is replaced. That is a revision of the Generate that made them, not a
-        // deletion and a fresh call, so it amends that one chip instead of adding two more
-        // (which is what changing a depth or a strategy already does).
-        const newIds = staleOps.length > 0
-          ? replaceGeneratedOperations({
-              anchorId: staleOps[0].opId,
-              deleteIds: staleOps.map((e) => e.opId),
-              add: newPayloads,
-            })
-          : addOperations(newPayloads)
-        if (staleOps.length > 0) session.forget(staleOps.map((e) => e.key))
-        for (let gi = 0; gi < groups.length; gi++) {
-          const { boundary, islands } = groups[gi]
-          const slot = slots[gi]
-          const existingId = typeof slot === 'string' ? slot : undefined
-          const opId = existingId ?? newIds[slot as number]
-          const name = `Pocket: ${boundary.name} (${tool.name})`
-          if (!existingId) { session.remember(boundary.id, opId); createdIds.push(opId) }
-          const hint = entryHintAt(opId)
-          updateOperation(opId, existingId ? {
-            entryHint: hint,
-            name, toolId: form.toolId, strategy: form.strategy,
-            islandIds: islands.map((p) => p.id),
-            depthMM: form.depthMM, stepDownMM: form.stepDownMM,
-            stepoverPercent: form.stepoverPercent, passAngleDeg: form.passAngleDeg, autoAngle: form.autoAngle,
-            direction: form.direction, rampIn: form.rampIn, allowanceMM: form.allowanceMM,
-            invert: form.invert,
-            startFrom: form.startFrom, status: 'generating',
-          } as Partial<AnyOperation> : { entryHint: hint, status: 'generating' })
-          try {
-            const { notes } = await generateOperation(opId, { forceStrategy })
-            // A strategy that declined the shape and fell back — say so, the user chose it.
-            for (const note of notes) noteFallback(note)
-          } catch (err) {
-            if (isWorkCancelled(err)) break
-            reportError(opId, err)
-          }
-        }
-      }
-    } finally {
-      discardFailedOps(createdIds)
-      setGenerating(false)
-      save('pocket', form)
-    }
+    const { toolId, strategy, depthMM, stepDownMM, stepoverPercent, passAngleDeg, autoAngle, direction, rampIn, allowanceMM, invert, startFrom } = form
+    await generate({
+      settings: { toolId, strategy, depthMM, stepDownMM, stepoverPercent, passAngleDeg, autoAngle, direction, rampIn, allowanceMM, invert, startFrom },
+      // islandIds rides on every write, not only a revision: a kept boundary whose island
+      // set changed keeps its operation, and this is the only thing about it that moves.
+      items: groups.map(({ boundary, islands, op }) => ({
+        key: boundary.id, op, name: `Pocket: ${boundary.name} (${tool.name})`,
+        fields: { pathId: boundary.id, islandIds: islands.map((p) => p.id) },
+      })),
+      session, editOp, dropIds: rev.drop.map((m) => m.op.id),
+      // Boundaries this session made that the current grouping no longer has — switching
+      // Invert Pocket turns every boundary into an island and vice versa, so the whole set
+      // is replaced, as a revision of the Generate that made them.
+      replace: staleOps.map((e) => ({ opId: e.opId, key: e.key })),
+      // Generated from the settings just written, like every other op — Alt-click is the
+      // one input that is not a setting. A strategy that declined the shape and fell back
+      // is reported: the user chose it.
+      run: async (opId) => {
+        const { notes } = await generateOperation(opId, { forceStrategy })
+        for (const note of notes) noteFallback(note)
+      },
+    }, form)
   }
 
   return (
     <FormShell title={editOp ? `Edit Pocket${groups.length > 1 ? ` — ${groups.length} paths` : ''}` : 'New Pocket'} onClose={onClose}>
-      {groups.length === 0 && (
-        <p className="text-body text-amber-600 dark:text-amber-400 flex items-center gap-1"><AlertCircle size={ICON.sm} /> {editOp ? 'Path not found' : 'Select a closed path first'}</p>
-      )}
+      {groups.length === 0 && <NoPathBanner editing={!!editOp} closed />}
       <ToolSelector tools={cutters} value={form.toolId} onChange={handleToolChange} />
       {/* Nested outlines alternate solid/hole, so there are two valid readings of the same
           selection and only the user knows which one is the part. Shown when EDITING too:
@@ -394,13 +262,7 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
           what this pocket did, and flipping it re-reads the same paths the other way up.
           It was hidden here while it was inert. */}
       {nested && (
-        <div className="flex items-center gap-2">
-          <input type="checkbox" id="pocket-invert" checked={form.invert}
-            onChange={(e) => up('invert', e.target.checked)} className="accent-blue-500" />
-          <label htmlFor="pocket-invert" className="text-body text-gray-700 dark:text-neutral-300 cursor-pointer">
-            Invert Pocket
-          </label>
-        </div>
+        <CheckRow id="pocket-invert" checked={form.invert} onChange={(v) => up('invert', v)} label="Invert Pocket" />
       )}
       {/* 'hybrid' is shown as "Auto" — it picks per area: raster the open ground, contour
           around islands, adaptive on the junctions between them. Listed first as the one to
@@ -458,37 +320,18 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
           onChangeMM={(v) => up('allowanceMM', v)} />
         <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">Stock left on walls; negative grows the pocket.</p>
       </div>
-      <div className="flex items-center gap-2">
-        <input type="checkbox" id="pocket-ramp-in" checked={form.rampIn}
-          onChange={(e) => up('rampIn', e.target.checked)} className="accent-blue-500" />
-        <label htmlFor="pocket-ramp-in" className="text-body text-gray-700 dark:text-neutral-300 cursor-pointer">
-          Ramp In <span className="text-gray-600 dark:text-neutral-400 normal-case">(2× dia, 50% feed)</span>
-        </label>
-      </div>
+      <CheckRow id="pocket-ramp-in" checked={form.rampIn} onChange={(v) => up('rampIn', v)}
+        label="Ramp In" hint="2× dia, 50% feed" />
       <FormNotice msg={noticeMsg} />
       <FormError msg={errorMsg} />
       <GenerateBtn
         disabled={groups.length === 0 || !selectedTool || generating || form.depthMM <= 0}
         generating={generating}
         onClick={handleGenerate}
-        label={editOp ? 'Regenerate Toolpath' : updating ? 'Update Toolpath' : 'Generate Toolpath'}
+        label={generateLabel(!!editOp, updating)}
         title="Alt-click to force the selected strategy on shapes it would otherwise decline"
       />
-      {/* Below the button — see PathListSection. Islands keep their label because that
-          is a real distinction; nothing else needs one. */}
-      <PathListSection count={groups.reduce((n, g) => n + 1 + g.islands.length, 0)}>
-        {groups.map(({ boundary, islands }, gi) => (
-          <div key={boundary.id} className="space-y-0.5">
-            <PathChip path={boundary} index={groups.length > 1 ? gi + 1 : undefined}
-              state={rev.addedIds.has(boundary.id) ? 'added' : undefined} />
-            {islands.map((p) => (
-              <PathChip key={p.id} path={p} label="island" state={rev.addedIds.has(p.id) ? 'added' : undefined} />
-            ))}
-          </div>
-        ))}
-        {rev.removed.map((p) => <PathChip key={p.id} path={p} state="removed" />)}
-        {editOp && <PathRevisionHint added={rev.addedIds.size} removed={rev.removed.length} />}
-      </PathListSection>
+      <BatchPathList groups={groups} addedIds={rev.addedIds} removed={rev.removed} editing={!!editOp} />
     </FormShell>
   )
 }

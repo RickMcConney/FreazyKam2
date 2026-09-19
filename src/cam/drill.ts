@@ -1,4 +1,4 @@
-import { zPasses } from './geom'
+import { zPasses, pushAll } from './geom'
 import type { MotionSegment } from '../store/toolpathStore'
 import type { Tool } from '../store/toolStore'
 
@@ -187,7 +187,7 @@ export function generateHelicalDrills(
 
   const segs: MotionSegment[] = []
   for (const h of ordered) {
-    segs.push(...generateHelicalDrill(h.cx, h.cy, h.radiusMM - tool.diameterMM / 2, tool, params))
+    pushAll(segs, generateHelicalDrill(h.cx, h.cy, h.radiusMM - tool.diameterMM / 2, tool, params))
   }
   return segs
 }

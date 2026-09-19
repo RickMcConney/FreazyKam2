@@ -131,7 +131,7 @@ export default function SimulationPlayer() {
   const toolType: ToolType = ts?.toolBallNose ? 'ballnose'
     : ts?.toolTipRadiusMM ? 'taper'
     : ts?.toolVbitHalfAngleTan !== undefined ? 'vbit' : 'endmill'
-  // Judge a taper by its MEAN cutting diameter, the same figure feeds.feedDiameterMM
+  // Judge a taper by its MEAN cutting diameter, the same figure geom.feedDiameterMM
   // fed the feed calculation — its parsed `dia` is the widest it opens out to, and its
   // tip is far narrower, so either end alone would move the gauge off the aim.
   const feedDiaMM = ts ? (ts.toolTipRadiusMM ? ts.toolTipRadiusMM + ts.toolDiameterMM / 2 : ts.toolDiameterMM) : 0

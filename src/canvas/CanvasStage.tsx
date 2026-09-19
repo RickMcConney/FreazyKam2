@@ -1,4 +1,4 @@
-import { ptSegDistSq } from '../cam/geom'
+import { ptSegDistSq, pointInPolygon } from '../cam/geom'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRefState } from './useRefState'
 import { pushLocalHistory } from './localHistory'
@@ -12,7 +12,7 @@ import { useWorkpieceStore } from '../store/workpieceStore'
 import { useCanvasStore } from '../store/canvasStore'
 import { usePathsStore, clockSpecOf, setClockSpec, useSelectedPaths, expandUserGroups } from '../store/pathsStore'
 import { regenerateAffected, regenerateAffectedMany } from '../cam/regenerate'
-import { flattenPath } from '../cam/pathFlattener'
+import { flattenPath, signedArea } from '../cam/pathFlattener'
 import type { ImportedPath, PathUpdate } from '../store/pathsStore'
 import type { PathEditGesture } from '../timeline/events'
 import { useUIStore } from '../store/uiStore'
@@ -453,7 +453,7 @@ export default function CanvasStage() {
     return polys
   }, [])
 
-  // Region tool (cam/regionPick.ts). The planar graph of every visible stroke is
+  // Region picking (cam/regionPick.ts), on while the Pocket form is open. The planar graph of every visible stroke is
   // built once per paths state, so hovering — which previews the region under the
   // cursor — only runs the face lookup. Paths are replaced, never mutated, so the
   // array's identity is the cache key.
@@ -468,23 +468,50 @@ export default function CanvasStage() {
     regionFinderRef.current = { paths, find }
     return find
   }, [getFlat])
-  const onMoveRegionHover = useCallback((cnc: { x: number; y: number }) => {
-    const region = getRegionFinder()([cnc.x, cnc.y])
+  // Region picking shares the canvas with ordinary selection, so the area under the
+  // cursor is previewed only where a click would pick it: off every line (a click
+  // there selects that path) and outside point edit.
+  const onMoveRegionHover = useCallback((cnc: { x: number; y: number }, vp: Viewport) => {
+    const { paths } = usePathsStore.getState()
+    const onLine = !!useUIStore.getState().nodeEditPathId ||
+      !!closestVisiblePath(cnc.x, cnc.y, paths.filter(onCanvas), 8 / vp.scale, (p) => getFlat(p, 0.05))
+    const region = onLine ? null : getRegionFinder()([cnc.x, cnc.y])
     const d = region ? regionToD(region) : null
     setRegionPreviewD((prev) => (prev === d ? prev : d))
-  }, [getRegionFinder])
-  const pickRegionAt = useCallback((cnc: { x: number; y: number }) => {
+  }, [getRegionFinder, getFlat])
+  // Pick the enclosed area around `cnc` and select it (added to the selection with
+  // shift). An area that one existing closed path already bounds, with nothing inside
+  // it, selects that path rather than stacking a copy on it. False when `cnc` is not
+  // enclosed.
+  const pickRegionAt = useCallback((cnc: { x: number; y: number }, additive: boolean): boolean => {
     const region = getRegionFinder()([cnc.x, cnc.y])
-    if (!region) {
-      useUIStore.getState().showStatus('No closed area here — click inside an area the drawn lines enclose', 'warn')
-      return
-    }
-    const id = uid('region')
+    if (!region) return false
     const store = usePathsStore.getState()
-    store.addPaths([{ id, name: 'Region', d: regionToD(region), visible: true, color: nextPathColor() }], { source: 'region' })
-    store.selectPath(id)
+    let id: string | undefined
+    if (region.holes.length === 0) {
+      const area = Math.abs(signedArea(region.outer))
+      id = store.paths.find((p) => {
+        if (!onCanvas(p)) return false
+        const rings = getFlat(p, REGION_FLATTEN_TOL_MM)
+        if (rings.length !== 1) return false
+        const ring = rings[0]
+        const [a, b] = [ring[0], ring[ring.length - 1]]
+        if (Math.hypot(a[0] - b[0], a[1] - b[1]) > 1e-3) return false
+        return Math.abs(Math.abs(signedArea(ring)) - area) <= area * 1e-3 &&
+          pointInPolygon(cnc.x, cnc.y, ring)
+      })?.id
+    }
+    if (!id) {
+      id = uid('region')
+      store.addPaths([{ id, name: 'Region', d: regionToD(region), visible: true, color: nextPathColor() }], { source: 'region' })
+    }
+    const { selectedIds } = usePathsStore.getState()
+    usePathsStore.getState().setSelectedIds(additive
+      ? (selectedIds.includes(id) ? selectedIds : [...selectedIds, id])
+      : [id])
     setRegionPreviewD(null)
-  }, [getRegionFinder])
+    return true
+  }, [getRegionFinder, getFlat])
 
   // Individual selectors (not whole-store destructuring) so the Stage doesn't
   // re-render on unrelated store changes — e.g. undo-stack pushes or workpiece
@@ -980,7 +1007,7 @@ export default function CanvasStage() {
           }
           setPickDrag(null)
           setPickHeld(null)
-        } else if (activeTool !== 'select') {
+        } else if (activeTool !== 'select' && activeTool !== 'region') {
           if (activeTool === 'drill') clearDrillPoints()
           setActiveTool('select')
           setLiveShapeD(null)
@@ -1074,7 +1101,7 @@ export default function CanvasStage() {
   // the toolbar button and keyboard shortcut fall through to the global path undo.
   const activeTool = useUIStore((s) => s.activeTool)
 
-  // A region preview belongs to one hover session of the Region tool.
+  // A region preview belongs to one hover session of region picking.
   useEffect(() => { if (activeTool !== 'region') setRegionPreviewD(null) }, [activeTool])
 
   // Clear pen snap feedback whenever the pen tool deactivates (Escape, closing
@@ -1173,7 +1200,7 @@ export default function CanvasStage() {
   const handleStageDblClick = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
     if (e.evt.button !== 0) return
     const { activeTool, nodeEditPathId: neid } = useUIStore.getState()
-    if (activeTool !== 'select') return
+    if (activeTool !== 'select' && activeTool !== 'region') return
     const pointer = stageRef.current?.getPointerPosition()
     if (!pointer) return
     const vp = viewportRef.current
@@ -1473,15 +1500,6 @@ export default function CanvasStage() {
       return
     }
 
-    // Region tool: a click makes a closed path of the area around it. The tool
-    // stays on, so several areas can be picked in a row; Esc leaves it.
-    if (activeTool === 'region') {
-      const stagePointer = stageRef.current?.getPointerPosition()
-      if (stagePointer) pickRegionAt(screenToCNC(stagePointer.x, stagePointer.y, viewportRef.current))
-      setMode2({ type: 'idle' })
-      return
-    }
-
     // Drill tool: capture click for placement in mouseup, don't deselect or start dragbox
     if (activeTool === 'drill') {
       didDragRef.current = false
@@ -1490,7 +1508,7 @@ export default function CanvasStage() {
     }
 
     // Shape draw tool active
-    if (activeTool !== 'select') {
+    if (activeTool !== 'select' && activeTool !== 'region') {
       const stagePointer = stageRef.current?.getPointerPosition()
       if (stagePointer) startDrawShape(stagePointer)
       return
@@ -1534,12 +1552,15 @@ export default function CanvasStage() {
       setMode2({ type: 'move', pathIds: moveIds, startCNC: cnc, initBbox: moveBbox ?? { minX: 0, minY: 0, maxX: 0, maxY: 0, width: 0, height: 0, cx: 0, cy: 0 }, snapTargets })
     } else {
       if (neid) { exitNodeEdit(); return }
-      selectPath(null)
+      // Region picking (on while the Pocket form is open) decides on mouseup: a
+      // press that never moves picks the enclosed area under it, so the selection
+      // has to survive until then — a drag is still a drag box.
+      if (activeTool !== 'region') selectPath(null)
       didDragRef.current = false
       setMode2({ type: 'dragbox', startScreen: { x: stagePointer.x, y: stagePointer.y } })
       setDragBox({ sx: stagePointer.x, sy: stagePointer.y, ex: stagePointer.x, ey: stagePointer.y })
     }
-  }, [selectPath, setMode2, startDrawShape, startPenDraw, pickRegionAt, exitNodeEdit, getFlat,
+  }, [selectPath, setMode2, startDrawShape, startPenDraw, exitNodeEdit, getFlat,
       onConstrainClick, bodyOfRef, pickHeldRef, pickHotRef])
 
 
@@ -1899,7 +1920,10 @@ export default function CanvasStage() {
 
     if (m.type === 'idle' && connectSourceRef.current !== null) onMoveConnectPreview(cncMouse, vp)
     if (useUIStore.getState().activeTool === 'constrain') { onMoveConstrainHover(cncMouse, vp); return }
-    if (useUIStore.getState().activeTool === 'region') { onMoveRegionHover(cncMouse); return }
+    if (useUIStore.getState().activeTool === 'region') {
+      if (m.type === 'idle') onMoveRegionHover(cncMouse, vp)
+      else setRegionPreviewD(null)
+    }
     if (m.type === 'pendraw') onMovePenDraw(m, cncMouse, pointer, vp)
     if (m.type === 'clocklink-drag') { onMoveClockLink(m, cncMouse, e.evt.shiftKey); return }
     if (m.type === 'nodedit-drag' && editDragInitRef.current) onMoveNodeEditDrag(m, cncMouse, e)
@@ -1986,7 +2010,7 @@ export default function CanvasStage() {
       if (e.ctrlKey || e.metaKey) return
       if (modeRef.current.type !== 'idle') return
       const ui = useUIStore.getState()
-      if (ui.activeTool !== 'select' || ui.nodeEditPathId) return
+      if ((ui.activeTool !== 'select' && ui.activeTool !== 'region') || ui.nodeEditPathId) return
       const { selectedIds, paths: allPaths } = usePathsStore.getState()
       if (selectedIds.length === 0) return
       e.preventDefault()
@@ -2232,6 +2256,11 @@ export default function CanvasStage() {
           // drop any group with a part left outside. Hidden members are not in the
           // running either way, so they cannot hold a group out of the selection.
           setSelectedIds(enclose ? wholeGroupsOnly(ids, caught, allPaths) : ids)
+        } else if (useUIStore.getState().activeTool === 'region') {
+          // A click off every line: pick the enclosed area there, or deselect
+          // when nothing encloses it, as a click on empty canvas always does.
+          const cnc = screenToCNC(sx, sy, vp)
+          if (!pickRegionAt(cnc, _e.evt.shiftKey)) usePathsStore.getState().selectPath(null)
         }
       }
       setDragBox(null)
@@ -2561,13 +2590,13 @@ export default function CanvasStage() {
     }
 
     setMode2({ type: 'idle' })
-  }, [livePen, dragBox, setMode2, setSelectedIds, setLiveRotationAngle, setLiveBBox, commitEditNodes, pushLocalUndo, getFlat, bakeTransform, commitConstraint, onConstrainClick, setPickHot])
+  }, [livePen, dragBox, setMode2, setSelectedIds, setLiveRotationAngle, setLiveBBox, commitEditNodes, pushLocalUndo, getFlat, bakeTransform, commitConstraint, onConstrainClick, setPickHot, pickRegionAt])
 
   const getCursor = () => {
     if (nodeEditPathId) return 'default'
     if (activeTool === 'drill') return 'crosshair'
     if (activeTool === 'pen') return 'crosshair'
-    if (activeTool !== 'select') return 'crosshair'
+    if (activeTool !== 'select' && activeTool !== 'region') return 'crosshair'
     switch (modeRef.current.type) {
       case 'pan': return 'grabbing'
       case 'move': return 'move'
@@ -2810,7 +2839,7 @@ export default function CanvasStage() {
       )}
       {activeTool === 'region' && (
         <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-blue-600/90 text-white text-body px-3 py-1 rounded-full pointer-events-none">
-          Region — click inside an area the drawn lines enclose to make a closed path of it · Esc to exit
+          Pocket — click a path to select it, or click inside any area the lines enclose to pocket that area · Shift to add
         </div>
       )}
       {activeTool !== 'select' && activeTool !== 'drill' && activeTool !== 'pen' && activeTool !== 'constrain' && activeTool !== 'region' && (

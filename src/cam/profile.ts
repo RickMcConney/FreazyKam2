@@ -1,6 +1,6 @@
 import { flattenPath, ensureWinding, signedArea, rotatePolylineNear, arcFitPolyline, ARC_FIT_MAX_SPAN, splitSelfIntersecting, isOpenSubpath, type Pt2 } from './pathFlattener'
 import { inflatePathsD, JoinType, EndType } from 'clipper2-ts'
-import { zPasses, arcLengths, interpPt, stripClosingDuplicate, toolRadiusAtHeight, pushAll } from './geom'
+import { zPasses, arcLengths, interpPt, stripClosingDuplicate, toolRadiusAtHeight, feedDiameterMM, pushAll } from './geom'
 import type { MotionSegment } from '../store/toolpathStore'
 import type { Tool, CuttingDirection } from '../store/toolStore'
 import type { CutSide } from '../store/toolpathStore'
@@ -151,6 +151,15 @@ export function polylinePassWithTabs(
   return segs
 }
 
+// How far past each end of a tab the cutter's CENTRE must stay lifted: the tool's radius
+// at the tab's height above its tip, which is as far as any part of it below the tab top
+// reaches on the deepest pass. A taper's stored diameter is its tip, so that one is wider;
+// every other tool is kept at its full radius (a V-bit or ball nose narrows below it,
+// but the tabs they leave have always been sized by the full radius).
+function tabClearRadiusMM(tool: Tool, tab: Tab): number {
+  return Math.max(tool.diameterMM / 2, toolRadiusAtHeight(tool, tab.heightMM))
+}
+
 export function generateProfile(
   d: string,
   tool: Tool,
@@ -273,7 +282,7 @@ export function generateProfile(
           const pos = designPathAtT(designSubs, tab.t)
           if (!pos) continue
           const center = nearestArcLen(rawPts, pathLens, pos[0], pos[1])
-          const half = tab.lengthMM / 2 + tool.diameterMM / 2
+          const half = tab.lengthMM / 2 + tabClearRadiusMM(tool, tab)
           tabRanges.push({ start: center - half, end: center + half, tabZ: Math.min(startZ, startZ - params.depthMM + tab.heightMM) })
         }
       }
@@ -283,7 +292,7 @@ export function generateProfile(
         // Intermediate passes: ramp then cut rampEnd → far end; the next opposite-direction
         // pass returns to the start and naturally clears the ramp zone.
         // Last pass only: ramp, cleanup (rampEnd → start), then full cut start → far end.
-        const rampDist = Math.min(2 * tool.diameterMM, pathTotal * 0.45)
+        const rampDist = Math.min(2 * feedDiameterMM(tool), pathTotal * 0.45)
         const RAMP_STEPS = 12
         const reversedPts = [...rawPts].reverse()
         const { lens: reversedLens } = arcLengths(reversedPts)
@@ -340,7 +349,7 @@ export function generateProfile(
               cleanLens.push(cleanLens[cleanLens.length - 1] + Math.hypot(lastClean[0] - pts[0][0], lastClean[1] - pts[0][1]))
               cleanPts.push(pts[0])
             }
-            segs.push(...polylinePassWithTabs(cleanPts, zDepth, [], cleanLens))
+            pushAll(segs, polylinePassWithTabs(cleanPts, zDepth, [], cleanLens))
             // Full cut from pts[0] to far end
             if (activeRanges.length === 0) {
               const arcSegs = arcFitPolyline(pts, 0.1, ARC_FIT_MAX_SPAN)
@@ -351,7 +360,7 @@ export function generateProfile(
               const effectiveRanges = forward
                 ? activeRanges
                 : activeRanges.map(tr => ({ start: pathTotal - tr.end, end: pathTotal - tr.start, tabZ: tr.tabZ }))
-              segs.push(...polylinePassWithTabs(pts, zDepth, effectiveRanges, lens))
+              pushAll(segs, polylinePassWithTabs(pts, zDepth, effectiveRanges, lens))
             }
           } else {
             // Intermediate: cut rampEnd → far end; ramp zone cleared by next opposite pass
@@ -366,7 +375,7 @@ export function generateProfile(
               const mainTabRanges = forward
                 ? activeRanges.map(tr => ({ start: tr.start - rampDist, end: tr.end - rampDist, tabZ: tr.tabZ })).filter(tr => tr.end > 0 && tr.start < mainTotal)
                 : activeRanges.map(tr => ({ start: pathTotal - tr.end - rampDist, end: pathTotal - tr.start - rampDist, tabZ: tr.tabZ })).filter(tr => tr.end > 0 && tr.start < mainTotal)
-              segs.push(...polylinePassWithTabs(mainPts, zDepth, mainTabRanges, mainLens))
+              pushAll(segs, polylinePassWithTabs(mainPts, zDepth, mainTabRanges, mainLens))
             }
           }
         }
@@ -397,7 +406,7 @@ export function generateProfile(
             const effectiveRanges = forward
               ? activeRanges
               : activeRanges.map(tr => ({ start: pathTotal - tr.end, end: pathTotal - tr.start, tabZ: tr.tabZ }))
-            segs.push(...polylinePassWithTabs(pts, zDepth, effectiveRanges, lens))
+            pushAll(segs, polylinePassWithTabs(pts, zDepth, effectiveRanges, lens))
           }
         }
         // Retract from wherever the final pass ended
@@ -435,7 +444,7 @@ export function generateProfile(
         // of the circle at depth, then (final pass only) clear the wedge with a flat
         // finishing arc. Mirrors the closed-polygon ramp structure below.
         const circ = 2 * Math.PI * r
-        const rampDist = Math.min(2 * tool.diameterMM, circ * 0.45)
+        const rampDist = Math.min(2 * feedDiameterMM(tool), circ * 0.45)
         const rampAngle = rampDist / r          // radians swept by the ramp
         const dir = cw ? -1 : 1
         const startAngle = Math.atan2(sy - cy, sx - cx)
@@ -486,7 +495,7 @@ export function generateProfile(
           const pos = designPathAtT(designSubs, tab.t)
           if (!pos) continue
           const center = nearestArcLen(closed, lens, pos[0], pos[1])
-          const half = tab.lengthMM / 2 + tool.diameterMM / 2
+          const half = tab.lengthMM / 2 + tabClearRadiusMM(tool, tab)
           tabRanges.push({
             start: center - half,
             end: center + half,
@@ -496,7 +505,7 @@ export function generateProfile(
       }
 
       if (params.rampIn) {
-        const rampLen = 2 * tool.diameterMM
+        const rampLen = 2 * feedDiameterMM(tool)
         const { lens: rampLens, total } = arcLengths(closed)
         const rampDist = Math.min(rampLen, total * 0.45)
         const [rampEndX, rampEndY] = interpPt(closed, rampLens, rampDist)
@@ -548,13 +557,13 @@ export function generateProfile(
           const mainTabRanges = activeRanges
             .map(tr => ({ start: tr.start - rampDist, end: tr.end - rampDist, tabZ: tr.tabZ }))
             .filter(tr => tr.end > 0 && tr.start < mainTotal)
-          segs.push(...polylinePassWithTabs(mainPts, zDepth, mainTabRanges, mainLens))
+          pushAll(segs, polylinePassWithTabs(mainPts, zDepth, mainTabRanges, mainLens))
 
           // Cleanup pass: only on the final depth pass to clear the ramp entry zone.
           // Intermediate passes skip it — the next ramp descends through the same groove anyway.
           if (pi === passes.length - 1) {
             const cleanTabRanges = activeRanges.filter(tr => tr.end > 0 && tr.start < rampDist)
-            segs.push(...polylinePassWithTabs(cleanPts, zDepth, cleanTabRanges, cleanLens))
+            pushAll(segs, polylinePassWithTabs(cleanPts, zDepth, cleanTabRanges, cleanLens))
           }
         }
         segs.push({ x: rampEndX, y: rampEndY, z: safeZ, rapid: true })

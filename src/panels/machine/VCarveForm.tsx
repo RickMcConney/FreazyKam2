@@ -1,19 +1,15 @@
 // ─── V-Carve form ────────────────────────────────────────────────────────────
-import { FormShell, PathChip, PathListSection, PathRevisionHint, ToolSelector, GenerateBtn, useSessionOps, StartRow, useStartZ, toolsOfType, pickToolId, LengthInput, FormError, useGenerateError, discardFailedOps } from './shared'
+import { FormShell, ToolSelector, GenerateBtn, useSessionOps, StartRow, useStartZ, toolsOfType, pickToolId, LengthInput, FormError, useBatchGenerate, generateLabel, NoPathBanner, BatchPathList } from './shared'
 import { type StartFrom } from '../../cam/startHeight'
 import { useState } from 'react'
 import { ICON } from '../../theme'
 import { AlertCircle } from 'lucide-react'
 import { useToolStore } from '../../store/toolStore'
-import { useToolpathStore, batchOf, type AnyOperation, type VCarveOperation } from '../../store/toolpathStore'
+import { useToolpathStore, batchOf, type VCarveOperation } from '../../store/toolpathStore'
 import { useFormDefaultsStore, mergeWithDefaults } from '../../store/formDefaultsStore'
 import { usePathsStore } from '../../store/pathsStore'
-import { useUIStore } from '../../store/uiStore'
 import { useSelectedPathsInOrder } from '../../store/pathsStore'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
-import { isWorkCancelled } from '../../workers/workerClient'
-import { generateOperation } from '../../cam/opJob'
-import { entryHintAt } from '../../cam/startOptimizer'
 import { includedAngleDeg, isVCutter, tipBallRadiusMM, toolRadiusAtHeight } from '../../cam/geom'
 import { groupPathsByContainment } from './containment'
 import { reviseGroupBatch } from './reviseBatch'
@@ -32,12 +28,8 @@ export function VCarveForm({ onClose, editOp }: { onClose: () => void; editOp?: 
   // (see cam/startOptimizer), so the order the paths were clicked in IS the order the
   // machine will run them. Selecting three circles 1, 2, 3 cuts them 1, 2, 3.
   const selPaths = useSelectedPathsInOrder()
-  const addOperations = useToolpathStore((s) => s.addOperations)
-  const updateOperation = useToolpathStore((s) => s.updateOperation)
-  const reviseBatchPaths = useToolpathStore((s) => s.reviseBatchPaths)
   const operations = useToolpathStore((s) => s.operations)
   const load = useFormDefaultsStore((s) => s.load)
-  const save = useFormDefaultsStore((s) => s.save)
   const thicknessMM = useWorkpieceStore((s) => s.thicknessMM)
   const units = useWorkpieceStore((s) => s.units)
 
@@ -60,8 +52,7 @@ export function VCarveForm({ onClose, editOp }: { onClose: () => void; editOp?: 
         }, tools), startFrom: { mode: 'auto' as const } }
     return { ...base, toolId: pickToolId(base.toolId, vbits) }
   })
-  const [generating, setGenerating] = useState(false)
-  const [errorMsg, reportError, clearError] = useGenerateError()
+  const { generating, errorMsg, generate } = useBatchGenerate('vcarve', 'vcarve')
   const session = useSessionOps()
 
   // Editing covers every operation created by the same Generate click — see PocketForm.
@@ -106,115 +97,23 @@ export function VCarveForm({ onClose, editOp }: { onClose: () => void; editOp?: 
   }
 
   async function handleGenerate() {
-    clearError()
-    // Ids this click CREATES. A Generate that fails leaves nothing behind, so these are
-    // thrown away again at the end; an operation that already existed is never touched.
-    const createdIds: string[] = []
     if (groups.length === 0 || !selectedTool) return
     const tool = selectedTool
-    setGenerating(true)
-    try {
-      if (editOp) {
-        // Paths the selection added to this batch, or took out of it, land HERE — on the
-        // Regenerate click, in one store action. See PocketForm.
-        let cuts = rev.keep.map((k) => ({ op: k.member.op, boundary: k.group.boundary, islands: k.group.islands }))
-        if (rev.drop.length > 0 || rev.add.length > 0) {
-          const newIds = reviseBatchPaths({
-            anchorId: editOp.id,
-            deleteIds: rev.drop.map((m) => m.op.id),
-            add: rev.add.map(({ boundary, islands }) => ({
-              name: `V-Carve: ${boundary.name} (${tool.name})`,
-              type: 'vcarve' as const,
-              toolId: form.toolId,
-              pathId: boundary.id,
-              islandIds: islands.map((p) => p.id),
-              maxDepthMM: form.maxDepthMM,
-              angleDeg,
-              startFrom: form.startFrom,
-            })),
-          })
-          const live = useToolpathStore.getState().operations
-          cuts = [...cuts, ...rev.add.flatMap((g, i) => {
-            const op = live.find((o) => o.id === newIds[i]) as VCarveOperation | undefined
-            return op ? [{ op, boundary: g.boundary, islands: g.islands }] : []
-          })]
-        }
-        for (const { op, islands } of cuts) {
-          // Chain to where the previous operation finishes, at generation time.
-          const hint = entryHintAt(op.id)
-          updateOperation(op.id, {
-            entryHint: hint,
-            toolId: form.toolId, angleDeg, maxDepthMM: form.maxDepthMM,
-            // Written every time — see PocketForm: a kept boundary whose island set changed
-            // keeps its operation, and this is the only thing about it that moves.
-            islandIds: islands.map((p) => p.id),
-            startFrom: form.startFrom, status: 'generating',
-          } as Partial<AnyOperation>)
-          try {
-            // Generated from the settings just written — the same call an automatic
-            // regenerate makes (cam/opJob), start height and depth convention included.
-            await generateOperation(op.id)
-          } catch (err) {
-            if (isWorkCancelled(err)) break
-            reportError(op.id, err)
-          }
-        }
-        // See ProfileForm: the chip that opened this form may be the one just deselected.
-        if (rev.drop.some((m) => m.op.id === editOp.id) && cuts.length > 0) {
-          useUIStore.getState().setRequestEditOpId(cuts[0].op.id)
-        }
-      } else {
-        // One addOperations call for the whole selection — see PocketForm.
-        const newPayloads: Parameters<typeof addOperations>[0] = []
-        const slots = groups.map(({ boundary, islands }) => {
-          const existingId = session.liveOpId(boundary.id)
-          if (existingId) return existingId
-          return newPayloads.push({
-            name: `V-Carve: ${boundary.name} (${tool.name})`,
-            type: 'vcarve',
-            toolId: form.toolId,
-            pathId: boundary.id,
-            islandIds: islands.map((p) => p.id),
-            maxDepthMM: form.maxDepthMM,
-            angleDeg,
-            startFrom: form.startFrom,
-          }) - 1
-        })
-        const newIds = addOperations(newPayloads)
-        for (let gi = 0; gi < groups.length; gi++) {
-          const { boundary, islands } = groups[gi]
-          const slot = slots[gi]
-          const existingId = typeof slot === 'string' ? slot : undefined
-          const opId = existingId ?? newIds[slot as number]
-          const name = `V-Carve: ${boundary.name} (${tool.name})`
-          if (!existingId) { session.remember(boundary.id, opId); createdIds.push(opId) }
-          const hint = entryHintAt(opId)
-          updateOperation(opId, existingId ? {
-            entryHint: hint,
-            name, toolId: form.toolId, islandIds: islands.map((p) => p.id),
-            maxDepthMM: form.maxDepthMM, angleDeg,
-            startFrom: form.startFrom, status: 'generating',
-          } as Partial<AnyOperation> : { entryHint: hint, status: 'generating' })
-          try {
-            await generateOperation(opId)
-          } catch (err) {
-            if (isWorkCancelled(err)) break
-            reportError(opId, err)
-          }
-        }
-      }
-    } finally {
-      discardFailedOps(createdIds)
-      setGenerating(false)
-      save('vcarve', form)
-    }
+    await generate({
+      settings: { toolId: form.toolId, angleDeg, maxDepthMM: form.maxDepthMM, startFrom: form.startFrom },
+      // islandIds rides on every write, not only a revision: a kept boundary whose island
+      // set changed keeps its operation, and this is the only thing about it that moves.
+      items: groups.map(({ boundary, islands, op }) => ({
+        key: boundary.id, op, name: `V-Carve: ${boundary.name} (${tool.name})`,
+        fields: { pathId: boundary.id, islandIds: islands.map((p) => p.id) },
+      })),
+      session, editOp, dropIds: rev.drop.map((m) => m.op.id),
+    }, form)
   }
 
   return (
     <FormShell title={editOp ? `Edit V-Carve${groups.length > 1 ? ` — ${groups.length} paths` : ''}` : 'New V-Carve'} onClose={onClose}>
-      {groups.length === 0 && (
-        <p className="text-body text-amber-600 dark:text-amber-400 flex items-center gap-1"><AlertCircle size={ICON.sm} /> {editOp ? 'Path not found' : 'Select a closed path first'}</p>
-      )}
+      {groups.length === 0 && <NoPathBanner editing={!!editOp} closed />}
       <ToolSelector tools={vbits} value={form.toolId} onChange={handleToolChange} />
       {(!selectedTool || !isVCutter(selectedTool)) && (
         <p className="text-label text-amber-600 dark:text-amber-400 flex items-center gap-1">
@@ -249,23 +148,9 @@ export function VCarveForm({ onClose, editOp }: { onClose: () => void; editOp?: 
         disabled={groups.length === 0 || !selectedTool || generating || form.maxDepthMM <= 0 || !isVCutter(selectedTool)}
         generating={generating}
         onClick={handleGenerate}
-        label={editOp ? 'Regenerate Toolpath' : updating ? 'Update Toolpath' : 'Generate Toolpath'}
+        label={generateLabel(!!editOp, updating)}
       />
-      {/* Below the button — see PathListSection. Islands keep their label because that
-          is a real distinction; nothing else needs one. */}
-      <PathListSection count={groups.reduce((n, g) => n + 1 + g.islands.length, 0)}>
-        {groups.map(({ boundary, islands }, gi) => (
-          <div key={boundary.id} className="space-y-0.5">
-            <PathChip path={boundary} index={groups.length > 1 ? gi + 1 : undefined}
-              state={rev.addedIds.has(boundary.id) ? 'added' : undefined} />
-            {islands.map((p) => (
-              <PathChip key={p.id} path={p} label="island" state={rev.addedIds.has(p.id) ? 'added' : undefined} />
-            ))}
-          </div>
-        ))}
-        {rev.removed.map((p) => <PathChip key={p.id} path={p} state="removed" />)}
-        {editOp && <PathRevisionHint added={rev.addedIds.size} removed={rev.removed.length} />}
-      </PathListSection>
+      <BatchPathList groups={groups} addedIds={rev.addedIds} removed={rev.removed} editing={!!editOp} />
     </FormShell>
   )
 }

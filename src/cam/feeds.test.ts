@@ -4,11 +4,18 @@ import {
   seedStepDownMM, trochoidalEngagementFraction,
 } from './feeds'
 import { useWorkpieceStore, MATERIAL_INFO } from '../store/workpieceStore'
+import { maxCutRadiusMM, feedDiameterMM } from './geom'
 import type { Tool } from '../store/toolStore'
 
 const EM6: Tool = {
   id: 'em6', name: '6mm End Mill', type: 'endmill', diameterMM: 6, fluteCount: 2,
   rpm: 18000, xyFeedMmMin: 2500, zFeedMmMin: 500, maxDepthMM: 25,
+}
+
+// A taper's stored diameter is its 1 mm TIP; it cuts about 6 mm wide at its Max Z.
+const TAPER: Tool = {
+  id: 'tp', name: 'Taper', type: 'taper', diameterMM: 1, fluteCount: 2, vbitAngleDeg: 7.5,
+  rpm: 18000, xyFeedMmMin: 2500, zFeedMmMin: 500, maxDepthMM: 20,
 }
 
 /** The machine/material state every number here is derived from. */
@@ -143,6 +150,15 @@ describe('feedsForTool — the surface-speed ceiling on metals', () => {
     expect(f.rpm).toBe(8000)   // the machine's floor still wins; it cannot go slower
   })
 
+  it('judges a taper by its widest cutting diameter, not its tip', () => {
+    // Surface speed peaks where the tool is widest. Taken from the 1 mm tip, the
+    // ceiling (~47,000 rpm) sat above the spindle's top speed and capped nothing.
+    machine({ material: 'aluminum', minSpindleRpm: 3000 })
+    const vcRpm = Math.floor((150 * 1000) / (Math.PI * 2 * maxCutRadiusMM(TAPER)))
+    expect(vcRpm).toBeLessThan(24000)
+    expect(feedsForTool(TAPER).rpm).toBe(vcRpm)
+  })
+
   it('leaves wood alone — it has no Vc ceiling', () => {
     machine({ material: 'oak', minSpindleRpm: 8000, maxFeedMmMin: 100000 })
     expect(feedsForTool(EM6)).toMatchObject({ rpm: 24000, spindleTooFast: false })
@@ -150,6 +166,13 @@ describe('feedsForTool — the surface-speed ceiling on metals', () => {
 })
 
 describe('effectiveStepDownMM', () => {
+  it('sizes a taper\'s step-down by its mean cutting diameter, not its tip', () => {
+    // The same cap an end mill of that diameter gets; the 1 mm tip gave a quarter of it.
+    const asMill: Tool = { ...EM6, diameterMM: feedDiameterMM(TAPER), maxDepthMM: TAPER.maxDepthMM }
+    expect(feedDiameterMM(TAPER)).toBeGreaterThan(3)
+    expect(effectiveStepDownMM(TAPER, 0, 12)).toBeCloseTo(effectiveStepDownMM(asMill, 0, 12), 9)
+  })
+
   it('hands back the user\'s own value when auto feeds are off', () => {
     machine({ autoFeedEnabled: false })
     expect(effectiveStepDownMM(EM6, 7.3, 20)).toBe(7.3)

@@ -113,6 +113,16 @@ export function maxCutRadiusMM(tool: Tool): number {
   return vRadiusAtHeightMM(L, tan, R)
 }
 
+// The diameter to judge a tool's CUTTING duty by. Every type stores the diameter it
+// cuts at — except a taper, whose stored diameter is the ball on its TIP. Feeding a
+// 1 mm tip into targetChipLoad would ask a bit that is 5 mm wide halfway down its
+// taper to take a 1 mm bit's chip, so a taper reports the mean of its tip and its
+// widest cutting diameter instead.
+export function feedDiameterMM(tool: Tool): number {
+  if (tool.type !== 'taper') return tool.diameterMM
+  return tipBallRadiusMM(tool) + maxCutRadiusMM(tool)
+}
+
 // Height above the tip of a ball of radius R at radial distance d.
 function ballProfile(d: number, R: number): number {
   return R - Math.sqrt(Math.max(0, R * R - d * d))

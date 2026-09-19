@@ -20,8 +20,9 @@ export type WorkspaceTab = '2d' | '3d' | 'tools' | 'postprocessor'
 // 'constrain' is the Constrain tool: click a point on one part, then a point on
 // another, and the constraint holding them where they stand is created — see
 // canvas/layers/ConstraintPickLayer.tsx.
-// 'region' is the Region tool: click inside an area the drawn lines enclose and a
-// closed path of that area is created — see cam/regionPick.ts.
+// 'region' is region picking, on while the Pocket form is open (PocketForm sets it):
+// selection works as in 'select', and a click inside an area the drawn lines enclose
+// also makes a closed path of that area — see cam/regionPick.ts.
 type ActiveTool = 'select' | 'drill' | 'pen' | 'constrain' | 'region' | ShapeType
 
 export type PenNode = {

@@ -3,6 +3,7 @@ import { Group, Shape, Circle } from 'react-konva'
 import type { Viewport } from '../CanvasStage'
 import { useToolpathStore, type MotionSegment } from '../../store/toolpathStore'
 import { useToolStore } from '../../store/toolStore'
+import { maxCutRadiusMM } from '../../cam/geom'
 
 interface Props {
   viewport: Viewport
@@ -179,7 +180,7 @@ export const ToolpathLayer = memo(function ToolpathLayer({ viewport }: Props) {
             {op.type === 'drill'
               ? (() => {
                   const tool = tools.find((t) => t.id === op.toolId)
-                  const r = tool ? tool.diameterMM / 2 : 3.5 / scale
+                  const r = tool ? maxCutRadiusMM(tool) : 3.5 / scale
                   return op.points.map((pt, i) => (
                     <Circle
                       key={`${op.id}-dp-${i}`}

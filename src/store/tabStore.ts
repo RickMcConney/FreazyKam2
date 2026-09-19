@@ -73,11 +73,11 @@ export const useTabStore = create<TabState>()((set, get) => ({
     }
 
     set({ tabs: [...existing, ...newTabs] })
-    // Tab edits are in-place while the path's Tabs chip is the LATEST one: it then holds
-    // the CURRENT tabs. Once anything has been recorded after it, an edit records its own
-    // chip — it needs its own undo step (see tipIndex in timelineStore).
+    // Tab edits join the path's Tabs step while it is the LATEST one. Once anything has
+    // been recorded after it, an edit records its own — it needs its own undo step (see
+    // joinsTip in timelineStore).
     const tl = useTimelineStore.getState()
-    if (!tl.amendTabsForPath(pathId, newTabs)) {
+    if (!tl.joinsTip([{ tabsOf: pathId }])) {
       tl.record({ kind: 'tabs.apply', pathId, tabs: newTabs })
     }
   },
@@ -86,8 +86,7 @@ export const useTabStore = create<TabState>()((set, get) => ({
     const pathId = get().tabs.find((t) => t.id === id)?.pathId
     set((s) => ({ tabs: s.tabs.filter((t) => t.id !== id) }))
     const tl = useTimelineStore.getState()
-    const remaining = pathId ? get().tabs.filter((t) => t.pathId === pathId) : []
-    if (!pathId || !tl.amendTabsForPath(pathId, remaining)) {
+    if (!pathId || !tl.joinsTip([{ tabsOf: pathId }])) {
       tl.record({ kind: 'tabs.delete', tabIds: [id] })
     }
   },
@@ -97,7 +96,7 @@ export const useTabStore = create<TabState>()((set, get) => ({
     if (ids.length === 0) return
     set((s) => ({ tabs: s.tabs.filter((t) => t.pathId !== pathId) }))
     const tl = useTimelineStore.getState()
-    if (!tl.amendTabsForPath(pathId, [])) {
+    if (!tl.joinsTip([{ tabsOf: pathId }])) {
       tl.record({ kind: 'tabs.delete', tabIds: ids })
     }
   },
@@ -107,7 +106,7 @@ export const useTabStore = create<TabState>()((set, get) => ({
     set((s) => ({ tabs: s.tabs.map((tab) => tab.id === id ? { ...tab, t: clamped } : tab) }))
     const tab = get().tabs.find((x) => x.id === id)
     const tl = useTimelineStore.getState()
-    if (!tab || !tl.amendTabsForPath(tab.pathId, get().tabs.filter((x) => x.pathId === tab.pathId))) {
+    if (!tab || !tl.joinsTip([{ tabsOf: tab.pathId }])) {
       tl.record({ kind: 'tabs.moveT', tabId: id, t01: clamped })
     }
   },

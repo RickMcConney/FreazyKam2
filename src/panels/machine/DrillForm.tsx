@@ -1,19 +1,18 @@
 // ─── Drill form ───────────────────────────────────────────────────────────────
-import { FormShell, PathChip, PathListSection, PathRevisionHint, ToolSelector, DepthRow, GenerateBtn, useSessionOps, StartRow, useStartZ, toolsOfType, pickToolId, FormError, useGenerateError, discardFailedOps } from './shared'
+import { FormShell, PathChip, PathListSection, PathRevisionHint, ToolSelector, DepthRow, GenerateBtn, useSessionOps, StartRow, useStartZ, toolsOfType, pickToolId, FormError, useBatchGenerate, generateLabel } from './shared'
+import type { BatchItem } from './batchGenerate'
 import { reviseBatch } from './reviseBatch'
 import { useState, useEffect, useRef } from 'react'
 import { ICON } from '../../theme'
 import { AlertCircle, X } from 'lucide-react'
 import { useToolStore } from '../../store/toolStore'
-import { useToolpathStore, batchOf, type AnyOperation, type DrillOperation } from '../../store/toolpathStore'
+import { useToolpathStore, batchOf, type DrillOperation } from '../../store/toolpathStore'
 import { useFormDefaultsStore, mergeWithDefaults } from '../../store/formDefaultsStore'
-import { usePathsStore } from '../../store/pathsStore'
+import { usePathsStore, type ImportedPath } from '../../store/pathsStore'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
-import { entryHintAt } from '../../cam/startOptimizer'
 import { useUIStore } from '../../store/uiStore'
-import { generateOperation } from '../../cam/opJob'
 import { seedStepDownMM } from '../../cam/feeds'
-import { extractCircles } from '../../canvas/selectionUtils'
+import { extractCircles, type CircleInfo } from '../../canvas/selectionUtils'
 import { type StartFrom } from '../../cam/startHeight'
 
 interface DrillFormState {
@@ -30,17 +29,12 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
   const tools = useToolStore((s) => s.tools)
   const paths = usePathsStore((s) => s.paths)
   const selectedIds = usePathsStore((s) => s.selectedIds)
-  const addOperation = useToolpathStore((s) => s.addOperation)
-  const addOperations = useToolpathStore((s) => s.addOperations)
-  const updateOperation = useToolpathStore((s) => s.updateOperation)
-  const reviseBatchPaths = useToolpathStore((s) => s.reviseBatchPaths)
   const operations = useToolpathStore((s) => s.operations)
   const activeTool = useUIStore((s) => s.activeTool)
   const setActiveTool = useUIStore((s) => s.setActiveTool)
   const pendingDrillPoints = useUIStore((s) => s.pendingDrillPoints)
   const clearDrillPoints = useUIStore((s) => s.clearDrillPoints)
   const load = useFormDefaultsStore((s) => s.load)
-  const save = useFormDefaultsStore((s) => s.save)
   const thicknessMM = useWorkpieceStore((s) => s.thicknessMM)
   const units = useWorkpieceStore((s) => s.units)
 
@@ -57,8 +51,7 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
     depthMM: thicknessMM > 0 ? thicknessMM : (defaultTool?.maxDepthMM ?? 10),
     stepDownMM: seedStepDownMM(defaultTool),
   }, tools))
-  const [generating, setGenerating] = useState(false)
-  const [errorMsg, reportError, clearError] = useGenerateError()
+  const { generating, errorMsg, generate } = useBatchGenerate('drill', 'drill')
   const session = useSessionOps()
 
   // Auto-enter/exit drill-placing mode based on selected mode
@@ -182,234 +175,58 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
     ? (operations.find((o) => o.id === session.liveOpId('peck')) as DrillOperation | undefined)
     : undefined
 
-  function handleGenerate() {
-    clearError()
-    // Ids this click CREATES. A Generate that fails leaves nothing behind, so these are
-    // thrown away again at the end; an operation that already existed is never touched.
-    const createdIds: string[] = []
+  async function handleGenerate() {
     if (!selectedTool) return
-    setGenerating(true)
-
-    if (editOp) {
-      // Paths the selection added to this batch, or took out of it, land HERE — on the
-      // Regenerate click, in one store action — and never while the selection is made.
-      let members: DrillOperation[] = editBatch
-      if (rev.drop.length > 0 || rev.add.length > 0) {
-        const newIds = reviseBatchPaths({
-          anchorId: editOp.id,
-          deleteIds: rev.drop.map((e) => e.op.id),
-          add: rev.add.map((path) => {
-            const holes = holesFor(path.id)
-            const suffix = holes.length > 1 ? ` ×${holes.length}` : ''
-            return form.drillMode === 'helical' ? {
-              name: `Helical Drill: ${path.name} (${selectedTool.name})${suffix}`,
-              type: 'drill' as const,
-              toolId: form.toolId,
-              drillMode: 'helical' as const,
-              points: [],
-              pathId: path.id,
-              helicalHoles: holes,
-              helicalCenterX: holes[0].cx,
-              helicalCenterY: holes[0].cy,
-              helicalRadius: Math.max(0, holes[0].radiusMM - selectedTool.diameterMM / 2),
-              depthMM: form.depthMM,
-              stepDownMM: form.stepDownMM,
-              startFrom: form.startFrom,
-            } : {
-              name: `Peck Drill: ${path.name} (${selectedTool.name}) ×${holes.length}`,
-              type: 'drill' as const,
-              toolId: form.toolId,
-              drillMode: 'peck' as const,
-              points: holes.map((h) => ({ x: h.cx, y: h.cy })),
-              pathId: path.id,
-              depthMM: form.depthMM,
-              stepDownMM: form.stepDownMM,
-              startFrom: form.startFrom,
-            }
-          }),
-        })
-        const live = useToolpathStore.getState().operations
-        members = [
-          ...rev.keep.map((e) => e.op),
-          ...newIds.flatMap((id) => {
-            const op = live.find((o) => o.id === id)
-            return op && op.type === 'drill' ? [op] : []
-          }),
-        ]
-      }
-      // Every op of the batch takes the edit — one form, one depth, one tool, however
-      // many paths the Generate click covered. Each keeps its OWN holes or points: they
-      // are what that op was built from, and the form never edits them.
-      for (const op of members) {
-        // Chain to where the previous operation finishes, at generation time. Peck
-        // ordering uses it; the helical mode ignores it, but recording it still keeps the
-        // operation from being regenerated for a hint before the next simulate.
-        const hint = entryHintAt(op.id)
-        updateOperation(op.id, {
-          entryHint: hint,
-          toolId: form.toolId, depthMM: form.depthMM, stepDownMM: form.stepDownMM,
-          startFrom: form.startFrom, status: 'generating',
-        } as Partial<AnyOperation>)
-      }
-      setTimeout(async () => {
-        for (const op of members) {
-          try {
-            // Generated from the settings just written — the same call an automatic
-            // regenerate makes (cam/opJob). The holes are re-read from the op's source path
-            // there, as a regenerate always did, rather than taken from what it stored.
-            await generateOperation(op.id)
-          } catch (err) {
-            reportError(op.id, err)
-          }
-        }
-        // The chip that opened this form may be the one just deselected. Re-anchor on a
-        // member that still exists, or the form falls back to "New Drill" holding a
-        // selection it has already bored.
-        if (rev.drop.some((e) => e.op.id === editOp.id) && members.length > 0) {
-          useUIStore.getState().setRequestEditOpId(members[0].id)
-        }
-        setGenerating(false)
-        save('drill', form)
-      }, 0)
-      return
+    const tool = selectedTool
+    const { toolId, depthMM, stepDownMM, startFrom } = form
+    // The holes of one path, read the way the form's mode reads them — one op per path.
+    // The holes ride as FIELDS, not settings: editing a batch rewrites its depth and tool,
+    // but every op keeps the holes it was built from.
+    const pathItem = (path: ImportedPath, holes: CircleInfo[]): BatchItem => form.drillMode === 'helical' ? {
+      key: path.id,
+      name: `Helical Drill: ${path.name} (${tool.name})${holes.length > 1 ? ` ×${holes.length}` : ''}`,
+      fields: {
+        drillMode: 'helical', points: [], pathId: path.id, helicalHoles: holes,
+        helicalCenterX: holes[0].cx, helicalCenterY: holes[0].cy,
+        helicalRadius: Math.max(0, holes[0].radiusMM - tool.diameterMM / 2),
+      },
+    } : {
+      key: path.id,
+      name: `Peck Drill: ${path.name} (${tool.name}) ×${holes.length}`,
+      fields: { drillMode: 'peck', points: holes.map((h) => ({ x: h.cx, y: h.cy })), pathId: path.id },
     }
+    const kept = (op: DrillOperation): BatchItem => ({ key: op.pathId ?? op.id, op, name: op.name, fields: {} })
 
-    if (form.drillMode === 'peck' && pendingDrillPoints.length === 0 && !sessionPeckOp
-      && selectedHoles.length === 0) { setGenerating(false); return }
-    if (form.drillMode === 'helical' && selectedHoles.length === 0) { setGenerating(false); return }
-
-    setTimeout(async () => {
-      if (form.drillMode === 'helical') {
-        // One addOperations call for the whole selection: one shared batchId, so one
-        // chip in the strip and one thing to edit later. See ProfileForm.
-        const newPayloads: Parameters<typeof addOperations>[0] = []
-        const slots = selectedHoles.map(({ path, holes }) => {
-          // Re-Generate on a path this form already generated updates that op in place.
-          const existingId = session.liveOpId(path.id)
-          if (existingId) return existingId
-          const suffix = holes.length > 1 ? ` ×${holes.length}` : ''
-          return newPayloads.push({
-            name: `Helical Drill: ${path.name} (${selectedTool.name})${suffix}`,
-            type: 'drill',
-            toolId: form.toolId,
-            drillMode: 'helical',
-            points: [],
-            pathId: path.id,
-            helicalHoles: holes,
-            helicalCenterX: holes[0].cx,
-            helicalCenterY: holes[0].cy,
-            helicalRadius: Math.max(0, holes[0].radiusMM - selectedTool.diameterMM / 2),
-            depthMM: form.depthMM,
-            stepDownMM: form.stepDownMM,
-            startFrom: form.startFrom,
-          }) - 1
-        })
-        const newIds = addOperations(newPayloads)
-        for (let hi = 0; hi < selectedHoles.length; hi++) {
-          const { path, holes } = selectedHoles[hi]
-          const suffix = holes.length > 1 ? ` ×${holes.length}` : ''
-          const slot = slots[hi]
-          const existingId = typeof slot === 'string' ? slot : undefined
-          const opId = existingId ?? newIds[slot as number]
-          const name = `Helical Drill: ${path.name} (${selectedTool.name})${suffix}`
-          if (!existingId) { session.remember(path.id, opId); createdIds.push(opId) }
-          const hint = entryHintAt(opId)
-          updateOperation(opId, existingId ? {
-            entryHint: hint,
-            name, toolId: form.toolId,
-            helicalHoles: holes,
-            helicalCenterX: holes[0].cx, helicalCenterY: holes[0].cy,
-            helicalRadius: Math.max(0, holes[0].radiusMM - selectedTool.diameterMM / 2),
-            depthMM: form.depthMM, stepDownMM: form.stepDownMM,
-            startFrom: form.startFrom, status: 'generating',
-          } as Partial<AnyOperation> : { entryHint: hint, status: 'generating' })
-          try {
-            await generateOperation(opId)
-          } catch (err) {
-            reportError(opId, err)
-          }
-        }
-      } else if (pendingDrillPoints.length === 0 && !sessionPeckOp && selectedHoles.length > 0) {
-        // Peck at the centre of every circle in the selection — the same reading of a
-        // path as helical: one operation per path, tied to it by `pathId`, so holes
-        // that move take their drilling with them.
-        // One addOperations call for the whole selection — see the helical branch above.
-        const newPayloads: Parameters<typeof addOperations>[0] = []
-        const slots = selectedHoles.map(({ path, holes }) => {
-          const existingId = session.liveOpId(path.id)
-          if (existingId) return existingId
-          return newPayloads.push({
-            name: `Peck Drill: ${path.name} (${selectedTool.name}) ×${holes.length}`,
-            type: 'drill',
-            toolId: form.toolId,
-            drillMode: 'peck',
-            points: holes.map((h) => ({ x: h.cx, y: h.cy })),
-            pathId: path.id,
-            depthMM: form.depthMM,
-            stepDownMM: form.stepDownMM,
-            startFrom: form.startFrom,
-          }) - 1
-        })
-        const newIds = addOperations(newPayloads)
-        for (let hi = 0; hi < selectedHoles.length; hi++) {
-          const { path, holes } = selectedHoles[hi]
-          const points = holes.map((h) => ({ x: h.cx, y: h.cy }))
-          const slot = slots[hi]
-          const existingId = typeof slot === 'string' ? slot : undefined
-          const opId = existingId ?? newIds[slot as number]
-          const name = `Peck Drill: ${path.name} (${selectedTool.name}) ×${points.length}`
-          if (!existingId) { session.remember(path.id, opId); createdIds.push(opId) }
-          const hint = entryHintAt(opId)
-          updateOperation(opId, existingId ? {
-            entryHint: hint, name, toolId: form.toolId, points,
-            depthMM: form.depthMM, stepDownMM: form.stepDownMM,
-            startFrom: form.startFrom, status: 'generating',
-          } as Partial<AnyOperation> : { entryHint: hint, status: 'generating' })
-          try {
-            await generateOperation(opId)
-          } catch (err) {
-            reportError(opId, err)
-          }
-        }
-      } else if (sessionPeckOp) {
-        const hint = entryHintAt(sessionPeckOp.id)
-        updateOperation(sessionPeckOp.id, {
-          entryHint: hint,
-          name: `Peck Drill (${selectedTool.name}) ×${sessionPeckOp.points.length}`,
-          toolId: form.toolId, depthMM: form.depthMM, stepDownMM: form.stepDownMM,
-          startFrom: form.startFrom, status: 'generating',
-        } as Partial<AnyOperation>)
-        try {
-          await generateOperation(sessionPeckOp.id)
-        } catch (err) {
-          reportError(sessionPeckOp.id, err)
-        }
-      } else {
-        const opId = addOperation({
-          name: `Peck Drill (${selectedTool.name}) ×${pendingDrillPoints.length}`,
-          type: 'drill',
-          toolId: form.toolId,
-          drillMode: 'peck',
-          points: [...pendingDrillPoints],
-          depthMM: form.depthMM,
-          stepDownMM: form.stepDownMM,
-          startFrom: form.startFrom,
-        })
-        session.remember('peck', opId)
-        createdIds.push(opId)
-        const hint = entryHintAt(opId)
-        updateOperation(opId, { entryHint: hint, status: 'generating' })
-        try {
-          await generateOperation(opId)
-        } catch (err) {
-          reportError(opId, err)
-        }
-      }
-      discardFailedOps(createdIds)
-      setGenerating(false)
-      save('drill', form)
-      clearDrillPoints()
-    }, 0)
+    let items: BatchItem[]
+    let batchSession = session
+    if (editOp) {
+      // A batch the selection does not revise keeps every member — including hand-placed
+      // peck points, which have no path to revise it by.
+      items = rev.drop.length > 0 || rev.add.length > 0
+        ? [...rev.keep.map((e) => kept(e.op)), ...rev.add.map((p) => pathItem(p, holesFor(p.id)))]
+        : editBatch.map(kept)
+    } else if (form.drillMode === 'helical' || (pendingDrillPoints.length === 0 && !sessionPeckOp)) {
+      // Helical, or peck at the centre of every circle in the selection: one operation per
+      // path, tied to it by `pathId`, so holes that move take their drilling with them.
+      if (selectedHoles.length === 0) return
+      items = selectedHoles.map(({ path, holes }) => pathItem(path, holes))
+    } else if (sessionPeckOp) {
+      // No new points: Update regenerates the peck op this form made, on its own points.
+      items = [{ key: 'peck', name: `Peck Drill (${tool.name}) ×${sessionPeckOp.points.length}`, fields: {} }]
+    } else {
+      // Points placed by hand are always a NEW operation — placing points after a Generate
+      // starts a fresh set rather than rewriting the last one.
+      items = [{
+        key: 'peck', name: `Peck Drill (${tool.name}) ×${pendingDrillPoints.length}`,
+        fields: { drillMode: 'peck', points: [...pendingDrillPoints] },
+      }]
+      batchSession = { ...session, liveOpId: () => undefined }
+    }
+    await generate({
+      settings: { toolId, depthMM, stepDownMM, startFrom },
+      items, session: batchSession, editOp, dropIds: rev.drop.map((e) => e.op.id),
+    }, form)
+    if (!editOp) clearDrillPoints()
   }
 
   // Peck accepts anything that can plunge, but only a drill bit leaves a proper hole — so
@@ -557,7 +374,7 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
         disabled={!canGenerate}
         generating={generating}
         onClick={handleGenerate}
-        label={editOp ? 'Regenerate Toolpath' : updating ? 'Update Toolpath' : 'Generate Toolpath'}
+        label={generateLabel(!!editOp, updating)}
       />
       {/* Which paths this batch bores, and what the selection would change about that.
           Below the button, where every other form puts its path list. */}
