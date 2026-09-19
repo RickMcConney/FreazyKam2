@@ -19,8 +19,9 @@
 import { inflatePathsD, JoinType, EndType } from 'clipper2-ts'
 import { generatePocket, type PocketParams } from '../cam/pocket'
 import { generateGcode } from '../cam/gcode'
-import { flattenPath, signedArea, type Pt2 } from '../cam/pathFlattener'
+import { flattenPath, ensureWinding, type Pt2 } from '../cam/pathFlattener'
 import { ringsBBox } from '../cam/geom'
+import { toCP, fromCP } from '../cam/clipperAdapters'
 import { parseGcode, type SimSegment, type ToolState } from './gcodeParser'
 import { Heightfield, computeCutBounds, type HeightfieldGrid } from './heightfield'
 import { useWorkpieceStore, zDatumOffsetMM } from '../store/workpieceStore'
@@ -56,7 +57,10 @@ export interface AuditCluster {
 
 // Flood-fill offending cells into connected patches so a report names physical features
 // ("a 0.4 mm spine 60 mm long") instead of listing hundreds of loose sample points.
-function clusterMask(mask: Uint8Array, g: HeightfieldGrid, limit = 12): AuditCluster[] {
+// Shared with `inlayFit`, which reports the same kind of patch about a different failure:
+// a cluster is a physical feature, and both audits have to describe one the same way or
+// their numbers cannot be read side by side.
+export function clusterMask(mask: Uint8Array, g: HeightfieldGrid, limit = 12): AuditCluster[] {
   const seen = new Uint8Array(mask.length)
   const out: AuditCluster[] = []
   const stack: number[] = []
@@ -140,10 +144,6 @@ export interface AuditResult {
 
 // ─── region helpers ────────────────────────────────────────────────────────────
 
-const toCP = (pts: Pt2[]) => pts.map(([x, y]) => ({ x, y }))
-const fromCP = (r: { x: number; y: number }[]) => r.map(({ x, y }) => [x, y] as Pt2)
-
-const orient = (pts: Pt2[], ccw: boolean) => (signedArea(pts) >= 0) === ccw ? pts : [...pts].reverse()
 
 /** Offset a compound region (CCW outers + CW holes) by `delta`; negative shrinks. */
 export function offsetRegion(rings: Pt2[][], delta: number): Pt2[][] {
@@ -156,14 +156,16 @@ export function offsetRegion(rings: Pt2[][], delta: number): Pt2[][] {
 /** Boundary path minus island paths, as a clipper compound. */
 export function regionFromPaths(boundaryD: string, islandDs: string[]): Pt2[][] {
   return [
-    ...flattenPath(boundaryD, 0.05).filter(r => r.length >= 3).map(r => orient(r, true)),
-    ...islandDs.flatMap(d => flattenPath(d, 0.05).filter(r => r.length >= 3).map(r => orient(r, false))),
+    ...flattenPath(boundaryD, 0.05).filter(r => r.length >= 3).map(r => ensureWinding(r, true)),
+    ...islandDs.flatMap(d => flattenPath(d, 0.05).filter(r => r.length >= 3).map(r => ensureWinding(r, false))),
   ]
 }
 
 // Even-odd scanline fill of a compound region into a cell mask. Scanline rather than
 // per-cell point-in-polygon: the audit grid runs to hundreds of thousands of cells.
-function rasterizeRegion(rings: Pt2[][], g: HeightfieldGrid): Uint8Array {
+// Shared with `inlayFit` — both carve rings onto a `HeightfieldGrid`, and a fill that
+// disagreed by a cell between them would move the boundary the two audits compare across.
+export function rasterizeRegion(rings: Pt2[][], g: HeightfieldGrid): Uint8Array {
   const mask = new Uint8Array(g.NX * g.NY)
   const xs: number[] = []
   for (let j = 0; j < g.NY; j++) {

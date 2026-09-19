@@ -51,12 +51,8 @@ export const OP_TYPE_COLORS: Record<string, string> = {
 // band background and its border from the same value.
 export const TOOL_BAND_HUES = [205, 145, 35, 280, 0, 175, 55, 310, 95, 240]
 
-// Imported G-code has no tool — a neutral band, never one of the hues above.
-export const TOOL_BAND_NEUTRAL_HUE = null
-
 // Simulation cut trail — matches the 3D carved-surface color.
 export const SIM_CUT_COLOR       = '#ffcc00'
-export const SIM_CUT_COLOR_THREE = 0xffcc00  // Three.js integer format
 
 // 2D simulation tool indicator states.
 export const SIM_TOOL_CUTTING_COLOR = '#ef4444'  // red   — actively cutting

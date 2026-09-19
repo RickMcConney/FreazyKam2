@@ -1,5 +1,6 @@
 import { signedArea, ensureWinding, type Pt2 } from '../pathFlattener'
-import { pointInPolygon, stripClosingDuplicate } from '../geom'
+import { pointInPolygon } from '../geom'
+import { toCP, fromCP } from '../clipperAdapters'
 import { differenceD, inflatePathsD, intersectD, unionD, EndType, JoinType, FillRule } from 'clipper2-ts'
 import type { MotionSegment } from '../../store/toolpathStore'
 import { type PocketPlan, type PocketPlanner, _timed, emitLinkedContourRings, growIslands, offsetRing } from './shared'
@@ -48,9 +49,6 @@ const ISLAND_CONTOUR_RINGS = 3
 const MIN_CONTOUR_RINGS = 2
 // Below this an area is not worth rastering — too few passes to be better than marching it.
 const MIN_RASTER_AREA = (so: number, r: number) => 6 * so * 8 * r
-
-const toCP = (pts: Pt2[]) => pts.map(([x, y]) => ({ x, y }))
-const fromCP = (r: { x: number; y: number }[]) => stripClosingDuplicate(r.map(({ x, y }) => [x, y] as Pt2))
 
 /** Split a Clipper result into outer rings each with the holes that fall inside it. */
 function groupOutersAndHoles(paths: Pt2[][]): { outer: Pt2[]; holes: Pt2[][] }[] {

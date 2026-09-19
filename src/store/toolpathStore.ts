@@ -371,16 +371,43 @@ function startZOf(op: AnyOperation, ops: AnyOperation[]): number {
 // snapshots are taken after the whole change, the first undo landed on a state identical to
 // the live one and did nothing. The chip is named for what the gesture produced; with
 // nothing produced it is the delete.
+/**
+ * The operations a Generate creates, built the ONE way.
+ *
+ * Every door into the store — `addOperations`, `replaceGeneratedOperations`,
+ * `reviseBatchPaths` — made these by hand, each with a comment saying it matched
+ * the others. An op has to be the same whichever door it came through: a missing
+ * `status` leaves it out of the generate queue, a missing `color` makes it
+ * invisible on the canvas, and a missing `batchId` puts it beyond the later edit
+ * that should reach the whole batch.
+ *
+ * `batchId` stays the CALLER'S to decide, because the three disagree on purpose:
+ * a fresh call batches when it makes more than one, while a revision inherits the
+ * batch it is revising and may have to mint one for an op that was created alone.
+ */
+function buildOps(add: AddPayload[], batchId: string | undefined): AnyOperation[] {
+  return add.map((op) => ({
+    ...op, id: uid('op'), status: 'pending', segments: [],
+    color: OP_TYPE_COLORS[op.type] ?? '#94a3b8', visible: true,
+    ...(batchId ? { batchId } : {}),
+  } as AnyOperation))
+}
+
+/** Record a creation as ONE step: the first op carries the rest as `linked`. */
+function recordOpAdd(created: AnyOperation[]): void {
+  const [first, ...rest] = created
+  useTimelineStore.getState().record({
+    kind: 'op.add',
+    op: serializeOp(first),
+    ...(rest.length > 0 ? { linked: rest.map(serializeOp) } : {}),
+  })
+}
+
 function recordOpReplacement(anchorId: string, deleteIds: string[], created: AnyOperation[]): void {
   const tl = useTimelineStore.getState()
   if (tl.joinsTip([{ op: anchorId }])) return
   if (created.length > 0) {
-    const [first, ...rest] = created
-    tl.record({
-      kind: 'op.add',
-      op: serializeOp(first),
-      ...(rest.length > 0 ? { linked: rest.map(serializeOp) } : {}),
-    })
+    recordOpAdd(created)
   } else if (deleteIds.length > 0) {
     tl.record({ kind: 'op.delete', opIds: deleteIds })
   }
@@ -396,20 +423,9 @@ export const useToolpathStore = create<ToolpathState>()((set, get) => ({
     // One call = one user action, so anything created together is a batch. Single-op
     // calls stay unbatched — a lone operation has nothing to be edited alongside.
     const batchId = ops.length > 1 ? uid('batch') : undefined
-    const created = ops.map((op) => ({
-      ...op, id: uid('op'), status: 'pending', segments: [],
-      color: OP_TYPE_COLORS[op.type] ?? '#94a3b8', visible: true,
-      ...(batchId ? { batchId } : {}),
-    } as AnyOperation))
+    const created = buildOps(ops, batchId)
     set((s) => ({ operations: [...s.operations, ...created] }))
-    if (opts?.record !== false) {
-      const [first, ...rest] = created
-      useTimelineStore.getState().record({
-        kind: 'op.add',
-        op: serializeOp(first),
-        ...(rest.length > 0 ? { linked: rest.map(serializeOp) } : {}),
-      })
-    }
+    if (opts?.record !== false) recordOpAdd(created)
     return created.map((o) => o.id)
   },
 
@@ -456,14 +472,8 @@ export const useToolpathStore = create<ToolpathState>()((set, get) => ({
   },
 
   replaceGeneratedOperations: ({ anchorId, deleteIds, add }) => {
-    // Built exactly as addOperations builds them, so an op is the same whichever door it
-    // came through — including the batchId that lets one later edit reach all of them.
     const batchId = add.length > 1 ? uid('batch') : undefined
-    const created = add.map((op) => ({
-      ...op, id: uid('op'), status: 'pending', segments: [],
-      color: OP_TYPE_COLORS[op.type] ?? '#94a3b8', visible: true,
-      ...(batchId ? { batchId } : {}),
-    } as AnyOperation))
+    const created = buildOps(add, batchId)
     const remove = new Set(deleteIds)
     set((s) => ({
       operations: [...s.operations.filter((o) => !remove.has(o.id)), ...created],
@@ -482,12 +492,7 @@ export const useToolpathStore = create<ToolpathState>()((set, get) => ({
     // A batchId only exists once there is something to be batched WITH: an operation
     // created alone has none, and a second path joining it is the moment one is needed.
     const batchId = anchor.batchId ?? (kept.length + add.length > 1 ? uid('batch') : undefined)
-    // Built exactly as addOperations builds them — see replaceGeneratedOperations.
-    const created = add.map((op) => ({
-      ...op, id: uid('op'), status: 'pending', segments: [],
-      color: OP_TYPE_COLORS[op.type] ?? '#94a3b8', visible: true,
-      ...(batchId ? { batchId } : {}),
-    } as AnyOperation))
+    const created = buildOps(add, batchId)
     set((s) => {
       const src = s.operations
       // Where the new members go: after the LAST surviving member of the batch, or, when

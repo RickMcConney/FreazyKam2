@@ -54,7 +54,7 @@ export function includedAngleDeg(tool: Tool): number {
 // tan of the half (per-side) angle, or null when the angle is degenerate — 0° and
 // 180° both make the cone meaningless, and a hand-edited project can hold either.
 // Callers fall back to a straight-walled tool (a taper falls back to a ball nose).
-export function halfAngleTan(tool: Tool): number | null {
+function halfAngleTan(tool: Tool): number | null {
   const halfDeg = includedAngleDeg(tool) / 2
   if (!(halfDeg > 0 && halfDeg < 90)) return null
   return Math.tan((halfDeg * Math.PI) / 180)
@@ -294,7 +294,7 @@ export function stripClosingDuplicate(pts: Pt2[]): Pt2[] {
 export interface Region { outer: Pt2[]; holes: Pt2[][] }
 
 export function centroidX(pts: Pt2[]): number { return pts.reduce((s, p) => s + p[0], 0) / pts.length }
-export function centroidY(pts: Pt2[]): number { return pts.reduce((s, p) => s + p[1], 0) / pts.length }
+function centroidY(pts: Pt2[]): number { return pts.reduce((s, p) => s + p[1], 0) / pts.length }
 
 // A point that genuinely lies in the material enclosed by `rings`, for use as a shape's
 // stand-in in a containment test.

@@ -1,5 +1,6 @@
 import { pointInPolygon, interiorPoint, pushAll, isVCutter, tipBallRadiusMM, vProfileHeightMM, vRadiusAtHeightMM } from './geom'
 import { flattenPath, signedArea, splitSelfIntersecting, requireClosedSubpaths, sharesVertex, type Pt2 } from './pathFlattener'
+import { edtSq } from './lib/edt'
 import { generatePocket } from './pocket'
 import { generateVCarve } from './vcarve'
 import { inflatePathsD, differenceD, intersectD, FillRule, JoinType, EndType } from 'clipper2-ts'
@@ -158,38 +159,6 @@ function offsetEachRing(d: string, deltaMM: number): string | null {
   return cmds.length ? cmds.join(' ') : null
 }
 
-// Exact squared Euclidean distance transform (Felzenszwalb & Huttenlocher), in cells.
-// One 1-D pass per row then per column; `seed[k] !== 0` marks the sites distance is measured
-// FROM. Cells with no site anywhere come back at INF.
-const EDT_INF = 1e12
-function edtSq(seed: Uint8Array, nx: number, ny: number): Float64Array {
-  const f = new Float64Array(nx * ny)
-  for (let k = 0; k < f.length; k++) f[k] = seed[k] ? 0 : EDT_INF
-  const pass = (n: number, stride: number, base: number) => {
-    const v = new Int32Array(n), z = new Float64Array(n + 1), out = new Float64Array(n)
-    let k = 0
-    v[0] = 0; z[0] = -EDT_INF; z[1] = EDT_INF
-    for (let q = 1; q < n; q++) {
-      let s = 0
-      for (;;) {
-        s = ((f[base + q * stride] + q * q) - (f[base + v[k] * stride] + v[k] * v[k])) / (2 * q - 2 * v[k])
-        if (s <= z[k]) k--
-        else break
-      }
-      k++; v[k] = q; z[k] = s; z[k + 1] = EDT_INF
-    }
-    k = 0
-    for (let q = 0; q < n; q++) {
-      while (z[k + 1] < q) k++
-      out[q] = (q - v[k]) * (q - v[k]) + f[base + v[k] * stride]
-    }
-    for (let q = 0; q < n; q++) f[base + q * stride] = out[q]
-  }
-  for (let j = 0; j < ny; j++) pass(nx, 1, j * nx)
-  for (let i = 0; i < nx; i++) pass(ny, nx, i)
-  return f
-}
-
 // Even-odd scanline fill of a set of rings into a cell mask. Counters nest once inside their
 // letter, so even-odd gives letter-minus-counter with no containment test.
 function fillRings(
@@ -321,7 +290,7 @@ function letterReliefPlunges(
   }
   // Distance from every cell to the nearest letter cell. Inside a letter it is 0, which is
   // what keeps a plunge that lands on one at plug depth exactly.
-  const distToLetter = edtSq(letters, nx, ny)
+  const distToLetter = edtSq(nx, ny, k => letters[k] !== 0)
   const rCells = roughRadiusMM / CELL
 
   // Where the cutter's CENTRE may sit: a radius clear of every letter. Not restricted to
@@ -331,7 +300,7 @@ function letterReliefPlunges(
   for (let k = 0; k < centres.length; k++) {
     if (!letters[k] && distToLetter[k] >= rCells * rCells) centres[k] = 1
   }
-  const distToCentre = edtSq(centres, nx, ny)
+  const distToCentre = edtSq(nx, ny, k => centres[k] !== 0)
 
   // Leftover: background the cutter never swept, and proud enough to be worth a plunge.
   const SAFETY_MM = CELL * Math.SQRT2

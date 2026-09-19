@@ -120,91 +120,229 @@ export function parseNums(s: string): number[] {
   return (s.match(/[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/g) ?? []).map(Number)
 }
 
-export function flattenPath(d: string, tolerance = 0.1): Pt2[][] {
-  const subpaths: Pt2[][] = []
-  let current: Pt2[] = []
+
+// ─── The one d-string parser ─────────────────────────────────────────────────────
+//
+// There used to be four tokenisers of this format: this one, and a hand-written switch
+// inside each of `flattenPath`, `pathExtents` and `canvas/nodeUtils`. Three of them were
+// wrong in the same two ways, and invisibly so, because `ImportedPath.d` only ever holds
+// absolute uppercase commands (`stringifyD` writes them) — so the bugs sat in code that
+// real project data never reached:
+//
+//   LOWERCASE was matched as a command and then fell through a switch with no lowercase
+//   case, so a relative command was silently DROPPED and the pen stayed where it was.
+//
+//   H and V were not in the tokeniser's character class at all, so the letter did not end
+//   the previous command: `M 0 0 H 10` tokenised as one `M` carrying THREE numbers, and
+//   the moveto drew a line to (10, undefined).
+//
+// It lives here, rather than in `importers/svgImporter` where it used to, because this
+// module is the leaf — svgImporter already imports `parseNums` FROM here, and it reaches
+// for `DOMParser`, which must not follow a CAM import into a worker bundle. svgImporter
+// re-exports it, so the documented import site still works.
+
+export type AbsCmd =
+  | { t: 'M'; x: number; y: number }
+  | { t: 'L'; x: number; y: number }
+  | { t: 'C'; x1: number; y1: number; x2: number; y2: number; x: number; y: number }
+  | { t: 'S'; x2: number; y2: number; x: number; y: number }
+  | { t: 'Q'; x1: number; y1: number; x: number; y: number }
+  | { t: 'T'; x: number; y: number }
+  | { t: 'A'; rx: number; ry: number; ang: number; lg: number; sw: number; x: number; y: number }
+  | { t: 'Z' }
+
+// Parse SVG d string → absolute commands (H/V expanded to L)
+export function parseD(d: string): AbsCmd[] {
+  const result: AbsCmd[] = []
+  const tokens = d.match(/[a-zA-Z][^a-zA-Z]*/g) ?? []
   let cx = 0, cy = 0, mx = 0, my = 0
+
+  for (const tok of tokens) {
+    const letter = tok[0]
+    const upper = letter.toUpperCase()
+    const rel = letter !== upper
+    const n = parseNums(tok.slice(1))
+
+    switch (upper) {
+      case 'M':
+        for (let i = 0; i < n.length; i += 2) {
+          const x = rel ? cx + n[i] : n[i]
+          const y = rel ? cy + n[i + 1] : n[i + 1]
+          result.push({ t: i === 0 ? 'M' : 'L', x, y })
+          if (i === 0) { mx = x; my = y }
+          cx = x; cy = y
+        }
+        break
+      case 'L':
+        for (let i = 0; i < n.length; i += 2) {
+          const x = rel ? cx + n[i] : n[i]
+          const y = rel ? cy + n[i + 1] : n[i + 1]
+          result.push({ t: 'L', x, y })
+          cx = x; cy = y
+        }
+        break
+      case 'H':
+        for (const v of n) {
+          const x = rel ? cx + v : v
+          result.push({ t: 'L', x, y: cy })  // expand H → L
+          cx = x
+        }
+        break
+      case 'V':
+        for (const v of n) {
+          const y = rel ? cy + v : v
+          result.push({ t: 'L', x: cx, y })  // expand V → L
+          cy = y
+        }
+        break
+      case 'C':
+        for (let i = 0; i < n.length; i += 6) {
+          const x1 = rel ? cx + n[i] : n[i], y1 = rel ? cy + n[i+1] : n[i+1]
+          const x2 = rel ? cx + n[i+2] : n[i+2], y2 = rel ? cy + n[i+3] : n[i+3]
+          const x  = rel ? cx + n[i+4] : n[i+4], y  = rel ? cy + n[i+5] : n[i+5]
+          result.push({ t: 'C', x1, y1, x2, y2, x, y })
+          cx = x; cy = y
+        }
+        break
+      case 'S':
+        for (let i = 0; i < n.length; i += 4) {
+          const x2 = rel ? cx + n[i] : n[i], y2 = rel ? cy + n[i+1] : n[i+1]
+          const x  = rel ? cx + n[i+2] : n[i+2], y  = rel ? cy + n[i+3] : n[i+3]
+          result.push({ t: 'S', x2, y2, x, y })
+          cx = x; cy = y
+        }
+        break
+      case 'Q':
+        for (let i = 0; i < n.length; i += 4) {
+          const x1 = rel ? cx + n[i] : n[i], y1 = rel ? cy + n[i+1] : n[i+1]
+          const x  = rel ? cx + n[i+2] : n[i+2], y  = rel ? cy + n[i+3] : n[i+3]
+          result.push({ t: 'Q', x1, y1, x, y })
+          cx = x; cy = y
+        }
+        break
+      case 'T':
+        for (let i = 0; i < n.length; i += 2) {
+          const x = rel ? cx + n[i] : n[i], y = rel ? cy + n[i+1] : n[i+1]
+          result.push({ t: 'T', x, y })
+          cx = x; cy = y
+        }
+        break
+      case 'A':
+        for (let i = 0; i < n.length; i += 7) {
+          const x = rel ? cx + n[i+5] : n[i+5], y = rel ? cy + n[i+6] : n[i+6]
+          result.push({ t: 'A', rx: n[i], ry: n[i+1], ang: n[i+2], lg: n[i+3], sw: n[i+4], x, y })
+          cx = x; cy = y
+        }
+        break
+      case 'Z':
+        result.push({ t: 'Z' })
+        cx = mx; cy = my
+        break
+    }
+  }
+  return result
+}
+
+/**
+ * What a walk over a path reports. Curves arrive ABSOLUTE and fully resolved: an `S` or
+ * `T` has had its reflected control point worked out, so a visitor never carries the
+ * "was the last command a curve of the same family" state that every hand-written copy of
+ * this switch carried separately — and got to spell slightly differently.
+ *
+ * The current point is passed in rather than tracked by the visitor, for the same reason.
+ */
+export interface PathVisitor {
+  move(x: number, y: number): void
+  line(x: number, y: number): void
+  cubic(cx: number, cy: number, x1: number, y1: number, x2: number, y2: number, x: number, y: number): void
+  quad(cx: number, cy: number, x1: number, y1: number, x: number, y: number): void
+  arc(cx: number, cy: number, rx: number, ry: number, ang: number, lg: number, sw: number, x: number, y: number): void
+  close(mx: number, my: number): void
+}
+
+/** Walk a d-string, resolving S/T reflection and the current point once for every reader. */
+export function walkPath(d: string, v: PathVisitor): void {
+  let cx = 0, cy = 0, mx = 0, my = 0
+  // The reflected control point of an S/T is the PREVIOUS one mirrored through the current
+  // point — but only when the previous command was a curve of the same family. Otherwise
+  // the SVG spec says the control point coincides with the current point.
   let prevCx2 = 0, prevCy2 = 0, prevIsC = false
   let prevQx1 = 0, prevQy1 = 0, prevIsQ = false
 
-  const tokens = d.match(/[MLCSQTAZmlcsqtaz][^MLCSQTAZmlcsqtaz]*/g) ?? []
+  for (const c of parseD(d)) {
+    switch (c.t) {
+      case 'M':
+        v.move(c.x, c.y)
+        cx = mx = c.x; cy = my = c.y
+        prevIsC = false; prevIsQ = false
+        break
+      case 'L':
+        v.line(c.x, c.y)
+        cx = c.x; cy = c.y
+        prevIsC = false; prevIsQ = false
+        break
+      case 'C':
+        v.cubic(cx, cy, c.x1, c.y1, c.x2, c.y2, c.x, c.y)
+        prevCx2 = c.x2; prevCy2 = c.y2; prevIsC = true; prevIsQ = false
+        cx = c.x; cy = c.y
+        break
+      case 'S': {
+        const x1 = prevIsC ? 2 * cx - prevCx2 : cx
+        const y1 = prevIsC ? 2 * cy - prevCy2 : cy
+        v.cubic(cx, cy, x1, y1, c.x2, c.y2, c.x, c.y)
+        prevCx2 = c.x2; prevCy2 = c.y2; prevIsC = true; prevIsQ = false
+        cx = c.x; cy = c.y
+        break
+      }
+      case 'Q':
+        v.quad(cx, cy, c.x1, c.y1, c.x, c.y)
+        prevQx1 = c.x1; prevQy1 = c.y1; prevIsQ = true; prevIsC = false
+        cx = c.x; cy = c.y
+        break
+      case 'T': {
+        const x1 = prevIsQ ? 2 * cx - prevQx1 : cx
+        const y1 = prevIsQ ? 2 * cy - prevQy1 : cy
+        v.quad(cx, cy, x1, y1, c.x, c.y)
+        prevQx1 = x1; prevQy1 = y1; prevIsQ = true; prevIsC = false
+        cx = c.x; cy = c.y
+        break
+      }
+      case 'A':
+        v.arc(cx, cy, c.rx, c.ry, c.ang, c.lg, c.sw, c.x, c.y)
+        cx = c.x; cy = c.y
+        prevIsC = false; prevIsQ = false
+        break
+      case 'Z':
+        v.close(mx, my)
+        cx = mx; cy = my
+        prevIsC = false; prevIsQ = false
+        break
+    }
+  }
+}
 
-  function pushSub() {
+export function flattenPath(d: string, tolerance = 0.1): Pt2[][] {
+  const subpaths: Pt2[][] = []
+  let current: Pt2[] = []
+
+  // A subpath counts only once it holds two points — a lone moveto draws nothing, and a
+  // stray one in an imported file must not fail a job.
+  const pushSub = () => {
     if (current.length >= 2) subpaths.push(current)
     current = []
   }
 
-  for (const token of tokens) {
-    const cmd = token[0]
-    const n = parseNums(token.slice(1))
-
-    switch (cmd) {
-      case 'M': {
-        pushSub()
-        current.push([n[0], n[1]])
-        cx = mx = n[0]; cy = my = n[1]
-        for (let i = 2; i < n.length; i += 2) { cx = n[i]; cy = n[i+1]; current.push([cx, cy]) }
-        prevIsC = false; prevIsQ = false; break
-      }
-      case 'L': {
-        for (let i = 0; i < n.length; i += 2) { cx = n[i]; cy = n[i+1]; current.push([cx, cy]) }
-        prevIsC = false; prevIsQ = false; break
-      }
-      case 'C': {
-        for (let i = 0; i < n.length; i += 6) {
-          const x1=n[i], y1=n[i+1], x2=n[i+2], y2=n[i+3], x=n[i+4], y=n[i+5]
-          cubicFlat(cx, cy, x1, y1, x2, y2, x, y, tolerance, current)
-          prevCx2 = x2; prevCy2 = y2; prevIsC = true; prevIsQ = false
-          cx = x; cy = y
-        }
-        break
-      }
-      case 'S': {
-        for (let i = 0; i < n.length; i += 4) {
-          const x1 = prevIsC ? 2*cx - prevCx2 : cx
-          const y1 = prevIsC ? 2*cy - prevCy2 : cy
-          const x2=n[i], y2=n[i+1], x=n[i+2], y=n[i+3]
-          cubicFlat(cx, cy, x1, y1, x2, y2, x, y, tolerance, current)
-          prevCx2 = x2; prevCy2 = y2; prevIsC = true; prevIsQ = false
-          cx = x; cy = y
-        }
-        break
-      }
-      case 'Q': {
-        for (let i = 0; i < n.length; i += 4) {
-          const x1=n[i], y1=n[i+1], x=n[i+2], y=n[i+3]
-          quadFlat(cx, cy, x1, y1, x, y, tolerance, current)
-          prevQx1 = x1; prevQy1 = y1; prevIsQ = true; prevIsC = false
-          cx = x; cy = y
-        }
-        break
-      }
-      case 'T': {
-        for (let i = 0; i < n.length; i += 2) {
-          const x1 = prevIsQ ? 2*cx - prevQx1 : cx
-          const y1 = prevIsQ ? 2*cy - prevQy1 : cy
-          const x=n[i], y=n[i+1]
-          quadFlat(cx, cy, x1, y1, x, y, tolerance, current)
-          prevQx1 = x1; prevQy1 = y1; prevIsQ = true; prevIsC = false
-          cx = x; cy = y
-        }
-        break
-      }
-      case 'A': {
-        for (let i = 0; i < n.length; i += 7) {
-          arcFlat(cx, cy, n[i], n[i+1], n[i+2], n[i+3], n[i+4], n[i+5], n[i+6], current, tolerance)
-          cx = n[i+5]; cy = n[i+6]
-        }
-        prevIsC = false; prevIsQ = false; break
-      }
-      case 'Z': {
-        if (current.length >= 2) current.push([mx, my])  // close the loop so the closing segment is present
-        pushSub()
-        cx = mx; cy = my
-        prevIsC = false; prevIsQ = false; break
-      }
-    }
-  }
+  walkPath(d, {
+    move: (x, y) => { pushSub(); current.push([x, y]) },
+    line: (x, y) => { current.push([x, y]) },
+    cubic: (cx, cy, x1, y1, x2, y2, x, y) => cubicFlat(cx, cy, x1, y1, x2, y2, x, y, tolerance, current),
+    quad: (cx, cy, x1, y1, x, y) => quadFlat(cx, cy, x1, y1, x, y, tolerance, current),
+    arc: (cx, cy, rx, ry, ang, lg, sw, x, y) => arcFlat(cx, cy, rx, ry, ang, lg, sw, x, y, current, tolerance),
+    close: (mx, my) => {
+      if (current.length >= 2) current.push([mx, my])  // the closing segment must be present
+      pushSub()
+    },
+  })
   pushSub()
   return subpaths
 }
@@ -245,9 +383,6 @@ export function pathExtents(d: string): [number, number, number, number] | null 
   // The current subpath's box and how many points flattenPath would hold for it.
   let sMinX = Infinity, sMinY = Infinity, sMaxX = -Infinity, sMaxY = -Infinity
   let count = 0
-  let cx = 0, cy = 0, mx = 0, my = 0
-  let prevCx2 = 0, prevCy2 = 0, prevIsC = false
-  let prevQx1 = 0, prevQy1 = 0, prevIsQ = false
   const ts: number[] = []
 
   const extend = (x: number, y: number) => {
@@ -268,114 +403,56 @@ export function pathExtents(d: string): [number, number, number, number] | null 
     sMaxX = sMaxY = -Infinity
     count = 0
   }
-  const cubic = (x1: number, y1: number, x2: number, y2: number, x: number, y: number) => {
-    ts.length = 0
-    cubicAxisExtrema(cx, x1, x2, x, ts)
-    cubicAxisExtrema(cy, y1, y2, y, ts)
-    for (const t of ts) {
-      const mt = 1 - t
-      const k0 = mt * mt * mt, k1 = 3 * mt * mt * t, k2 = 3 * mt * t * t, k3 = t * t * t
-      extend(k0 * cx + k1 * x1 + k2 * x2 + k3 * x, k0 * cy + k1 * y1 + k2 * y2 + k3 * y)
-    }
-    point(x, y)
-  }
-  const quad = (x1: number, y1: number, x: number, y: number) => {
-    const denX = cx - 2 * x1 + x, denY = cy - 2 * y1 + y
-    for (const t of [denX !== 0 ? (cx - x1) / denX : -1, denY !== 0 ? (cy - y1) / denY : -1]) {
-      if (!(t > 0 && t < 1)) continue
-      const mt = 1 - t
-      extend(mt * mt * cx + 2 * mt * t * x1 + t * t * x, mt * mt * cy + 2 * mt * t * y1 + t * t * y)
-    }
-    point(x, y)
-  }
-  const arc = (rx: number, ry: number, phi: number, lg: number, sw: number, x: number, y: number) => {
-    if (rx === 0 || ry === 0) { point(x, y); return }
-    const a = arcCenter(cx, cy, rx, ry, phi, lg, sw, x, y)
-    if (!a) return   // zero-length: flattenPath emits nothing either
-    const { rxA, ryA, cosP, sinP, theta1, dTheta } = a
-    // dx/dθ = 0 and dy/dθ = 0 on the rotated ellipse, each with its opposite point.
-    const thX = Math.atan2(-sinP * ryA, cosP * rxA)
-    const thY = Math.atan2(cosP * ryA, sinP * rxA)
-    for (const th of [thX, thX + Math.PI, thY, thY + Math.PI]) {
-      const along = dTheta >= 0
-        ? ((th - theta1) % TAU + TAU) % TAU
-        : ((theta1 - th) % TAU + TAU) % TAU
-      if (along > Math.abs(dTheta)) continue
-      const cosT = Math.cos(th), sinT = Math.sin(th)
-      extend(cosP * rxA * cosT - sinP * ryA * sinT + a.cx, sinP * rxA * cosT + cosP * ryA * sinT + a.cy)
-    }
-    point(x, y)
-  }
 
-  const tokens = d.match(/[MLCSQTAZmlcsqtaz][^MLCSQTAZmlcsqtaz]*/g) ?? []
-  for (const token of tokens) {
-    const cmd = token[0]
-    const n = parseNums(token.slice(1))
-    switch (cmd) {
-      case 'M': {
-        pushSub()
-        point(n[0], n[1])
-        cx = mx = n[0]; cy = my = n[1]
-        for (let i = 2; i < n.length; i += 2) { cx = n[i]; cy = n[i + 1]; point(cx, cy) }
-        prevIsC = false; prevIsQ = false; break
+  walkPath(d, {
+    move: (x, y) => { pushSub(); point(x, y) },
+    line: (x, y) => point(x, y),
+    cubic: (cx, cy, x1, y1, x2, y2, x, y) => {
+      ts.length = 0
+      cubicAxisExtrema(cx, x1, x2, x, ts)
+      cubicAxisExtrema(cy, y1, y2, y, ts)
+      for (const t of ts) {
+        const mt = 1 - t
+        const k0 = mt * mt * mt, k1 = 3 * mt * mt * t, k2 = 3 * mt * t * t, k3 = t * t * t
+        extend(k0 * cx + k1 * x1 + k2 * x2 + k3 * x, k0 * cy + k1 * y1 + k2 * y2 + k3 * y)
       }
-      case 'L': {
-        for (let i = 0; i < n.length; i += 2) { cx = n[i]; cy = n[i + 1]; point(cx, cy) }
-        prevIsC = false; prevIsQ = false; break
+      point(x, y)
+    },
+    quad: (cx, cy, x1, y1, x, y) => {
+      const denX = cx - 2 * x1 + x, denY = cy - 2 * y1 + y
+      for (const t of [denX !== 0 ? (cx - x1) / denX : -1, denY !== 0 ? (cy - y1) / denY : -1]) {
+        if (!(t > 0 && t < 1)) continue
+        const mt = 1 - t
+        extend(mt * mt * cx + 2 * mt * t * x1 + t * t * x, mt * mt * cy + 2 * mt * t * y1 + t * t * y)
       }
-      case 'C': {
-        for (let i = 0; i < n.length; i += 6) {
-          cubic(n[i], n[i + 1], n[i + 2], n[i + 3], n[i + 4], n[i + 5])
-          prevCx2 = n[i + 2]; prevCy2 = n[i + 3]; prevIsC = true; prevIsQ = false
-          cx = n[i + 4]; cy = n[i + 5]
-        }
-        break
+      point(x, y)
+    },
+    arc: (cx, cy, rx, ry, phi, lg, sw, x, y) => {
+      if (rx === 0 || ry === 0) { point(x, y); return }
+      const a = arcCenter(cx, cy, rx, ry, phi, lg, sw, x, y)
+      if (!a) return   // zero-length: flattenPath emits nothing either
+      const { rxA, ryA, cosP, sinP, theta1, dTheta } = a
+      // dx/dθ = 0 and dy/dθ = 0 on the rotated ellipse, each with its opposite point.
+      const thX = Math.atan2(-sinP * ryA, cosP * rxA)
+      const thY = Math.atan2(cosP * ryA, sinP * rxA)
+      for (const th of [thX, thX + Math.PI, thY, thY + Math.PI]) {
+        const along = dTheta >= 0
+          ? ((th - theta1) % TAU + TAU) % TAU
+          : ((theta1 - th) % TAU + TAU) % TAU
+        if (along > Math.abs(dTheta)) continue
+        const cosT = Math.cos(th), sinT = Math.sin(th)
+        extend(cosP * rxA * cosT - sinP * ryA * sinT + a.cx, sinP * rxA * cosT + cosP * ryA * sinT + a.cy)
       }
-      case 'S': {
-        for (let i = 0; i < n.length; i += 4) {
-          const x1 = prevIsC ? 2 * cx - prevCx2 : cx
-          const y1 = prevIsC ? 2 * cy - prevCy2 : cy
-          cubic(x1, y1, n[i], n[i + 1], n[i + 2], n[i + 3])
-          prevCx2 = n[i]; prevCy2 = n[i + 1]; prevIsC = true; prevIsQ = false
-          cx = n[i + 2]; cy = n[i + 3]
-        }
-        break
-      }
-      case 'Q': {
-        for (let i = 0; i < n.length; i += 4) {
-          quad(n[i], n[i + 1], n[i + 2], n[i + 3])
-          prevQx1 = n[i]; prevQy1 = n[i + 1]; prevIsQ = true; prevIsC = false
-          cx = n[i + 2]; cy = n[i + 3]
-        }
-        break
-      }
-      case 'T': {
-        for (let i = 0; i < n.length; i += 2) {
-          const x1 = prevIsQ ? 2 * cx - prevQx1 : cx
-          const y1 = prevIsQ ? 2 * cy - prevQy1 : cy
-          quad(x1, y1, n[i], n[i + 1])
-          prevQx1 = x1; prevQy1 = y1; prevIsQ = true; prevIsC = false
-          cx = n[i]; cy = n[i + 1]
-        }
-        break
-      }
-      case 'A': {
-        for (let i = 0; i < n.length; i += 7) {
-          arc(n[i], n[i + 1], n[i + 2], n[i + 3], n[i + 4], n[i + 5], n[i + 6])
-          cx = n[i + 5]; cy = n[i + 6]
-        }
-        prevIsC = false; prevIsQ = false; break
-      }
-      case 'Z': {
-        if (count >= 2) point(mx, my)
-        pushSub()
-        cx = mx; cy = my
-        prevIsC = false; prevIsQ = false; break
-      }
-    }
-  }
+      point(x, y)
+    },
+    close: (mx, my) => {
+      if (count >= 2) point(mx, my)
+      pushSub()
+    },
+  })
+
   pushSub()
-  return isFinite(minX) ? [minX, minY, maxX, maxY] : null
+  return minX === Infinity ? null : [minX, minY, maxX, maxY]
 }
 
 

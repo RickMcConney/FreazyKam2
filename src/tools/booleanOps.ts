@@ -3,6 +3,7 @@
 
 import polygonClipping from 'polygon-clipping'
 import { flattenPath, signedArea } from '../cam/pathFlattener'
+import { pointInPolygon } from '../cam/geom'
 import type { Pt2 } from '../cam/pathFlattener'
 
 type Pair = [number, number]
@@ -53,7 +54,7 @@ function dToMultiPoly(d: string): GeoMultiPoly {
       let bestArea = Infinity
       const [hx, hy] = ring[0]
       for (const { ring: outer, area: oa, polyIdx } of outerRings) {
-        if (oa < bestArea && ptInRing(hx, hy, outer)) {
+        if (oa < bestArea && pointInPolygon(hx, hy, outer)) {
           bestArea = oa
           bestIdx = polyIdx
         }
@@ -68,15 +69,6 @@ function dToMultiPoly(d: string): GeoMultiPoly {
   }
 
   return polygons
-}
-
-function ptInRing(px: number, py: number, ring: Ring): boolean {
-  let inside = false
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const [xi, yi] = ring[i], [xj, yj] = ring[j]
-    if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside
-  }
-  return inside
 }
 
 function multiPolyToD(mp: GeoMultiPoly): string {

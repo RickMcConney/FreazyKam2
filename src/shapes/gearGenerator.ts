@@ -1117,9 +1117,6 @@ export function __gearTrochoid(m: number, z: number, alpha: number, backlash: nu
   return rackTrochoid(m, z, alpha, backlash)
 }
 
-/** Test hook — the memo is module-scope, so a perf test has to be able to clear it. */
-export function __resetGearCache(): void { TOOTH_CACHE.clear() }
-
 /** Test hook — the toothed ring BEFORE the root-fillet closing, so a harness can
  *  tell a geometry error from the resampling that closing does to the whole
  *  outline (it offsets a polyline by its own vertex normals, twice). */

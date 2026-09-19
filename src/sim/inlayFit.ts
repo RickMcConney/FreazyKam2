@@ -58,10 +58,12 @@
 // 2cx − x — the physical assembly, which additionally tests the form's own mirroring.
 import { generateInlayFemale, generateInlayMale, type InlayParams } from '../cam/inlay'
 import { generateGcode } from '../cam/gcode'
-import { flattenPath, type Pt2 } from '../cam/pathFlattener'
+import { flattenPath } from '../cam/pathFlattener'
 import { parseGcode } from './gcodeParser'
 import { Heightfield, type HeightfieldGrid } from './heightfield'
-import { AUDIT_POST, regionFromPaths, offsetRegion, type AuditCluster } from './toolpathAudit'
+import {
+  AUDIT_POST, regionFromPaths, offsetRegion, rasterizeRegion, clusterMask, type AuditCluster,
+} from './toolpathAudit'
 import { useWorkpieceStore, zDatumOffsetMM } from '../store/workpieceStore'
 import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
 import type { AnyOperation, MotionSegment } from '../store/toolpathStore'
@@ -142,67 +144,6 @@ function opsFor(
     } as unknown as AnyOperation))
 }
 
-// Even-odd scanline fill of a compound region into a cell mask (same method as
-// toolpathAudit's rasterizeRegion, kept local so the grid type stays private there).
-function rasterize(rings: Pt2[][], g: HeightfieldGrid): Uint8Array {
-  const mask = new Uint8Array(g.NX * g.NY)
-  const xs: number[] = []
-  for (let j = 0; j < g.NY; j++) {
-    const py = g.gy0 + j * g.sy
-    xs.length = 0
-    for (const ring of rings) {
-      for (let i = 0, k = ring.length - 1; i < ring.length; k = i++) {
-        const [x0, y0] = ring[k], [x1, y1] = ring[i]
-        if ((y0 > py) === (y1 > py)) continue
-        xs.push(x0 + ((py - y0) / (y1 - y0)) * (x1 - x0))
-      }
-    }
-    if (xs.length < 2) continue
-    xs.sort((a, b) => a - b)
-    const rowBase = j * g.NX
-    for (let s = 0; s + 1 < xs.length; s += 2) {
-      const i0 = Math.max(0, Math.ceil((xs[s] - g.gx0) / g.sx))
-      const i1 = Math.min(g.NX - 1, Math.floor((xs[s + 1] - g.gx0) / g.sx))
-      for (let i = i0; i <= i1; i++) mask[rowBase + i] = 1
-    }
-  }
-  return mask
-}
-
-function clusterMask(mask: Uint8Array, g: HeightfieldGrid, limit = 12): AuditCluster[] {
-  const seen = new Uint8Array(mask.length)
-  const out: AuditCluster[] = []
-  const stack: number[] = []
-  for (let start = 0; start < mask.length; start++) {
-    if (!mask[start] || seen[start]) continue
-    let cells = 0
-    let i0 = Infinity, j0 = Infinity, i1 = -Infinity, j1 = -Infinity
-    stack.length = 0
-    stack.push(start)
-    seen[start] = 1
-    while (stack.length) {
-      const k = stack.pop()!
-      const i = k % g.NX, j = (k - i) / g.NX
-      cells++
-      if (i < i0) i0 = i
-      if (j < j0) j0 = j
-      if (i > i1) i1 = i
-      if (j > j1) j1 = j
-      if (i > 0 && mask[k - 1] && !seen[k - 1]) { seen[k - 1] = 1; stack.push(k - 1) }
-      if (i < g.NX - 1 && mask[k + 1] && !seen[k + 1]) { seen[k + 1] = 1; stack.push(k + 1) }
-      if (j > 0 && mask[k - g.NX] && !seen[k - g.NX]) { seen[k - g.NX] = 1; stack.push(k - g.NX) }
-      if (j < g.NY - 1 && mask[k + g.NX] && !seen[k + g.NX]) { seen[k + g.NX] = 1; stack.push(k + g.NX) }
-    }
-    const x0 = g.gx0 + i0 * g.sx, x1 = g.gx0 + i1 * g.sx
-    const y0 = g.gy0 + j0 * g.sy, y1 = g.gy0 + j1 * g.sy
-    const spanX = x1 - x0 + g.sx, spanY = y1 - y0 + g.sy
-    out.push({
-      cells, areaMM2: cells * g.sx * g.sy, x0, y0, x1, y1,
-      widthMM: cells * g.sx * g.sy / Math.max(spanX, spanY),
-    })
-  }
-  return out.sort((a, b) => b.cells - a.cells).slice(0, limit)
-}
 
 function statsFrom(
   mask: Uint8Array, depth: Float32Array, g: HeightfieldGrid,
@@ -316,7 +257,7 @@ export async function auditInlayFit(opts: InlayFitOptions): Promise<InlayFitResu
   // Footprint = everything inside the outermost boundaries, grown by the clearance the
   // socket adds. Outside it the male is waste to be cut away, so it is not compared.
   const footprintRings = groups.flatMap(g => regionFromPaths(g.boundaryD, []))
-  const footprint = rasterize(offsetRegion(footprintRings, Math.max(0, params.clearanceMM)), grid)
+  const footprint = rasterizeRegion(offsetRegion(footprintRings, Math.max(0, params.clearanceMM)), grid)
 
   const interfereMask = new Uint8Array(NX * NY)
   const interfereDepth = new Float32Array(NX * NY)

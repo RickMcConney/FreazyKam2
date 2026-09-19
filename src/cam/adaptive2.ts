@@ -27,8 +27,10 @@
 // tool-centre allowed region); islands are handled there and need no special cases afterward.
 
 import { inflatePathsD, JoinType, EndType } from 'clipper2-ts'
-import { signedArea, douglasPeucker, type Pt2 } from './pathFlattener'
+import { douglasPeucker, ensureWinding, type Pt2 } from './pathFlattener'
 import { ptSegDistSq } from './geom'
+import { edtSq } from './lib/edt'
+import { toCP, fromCP } from './clipperAdapters'
 import { clamp } from '../util/num'
 
 interface Adaptive2Move {
@@ -92,55 +94,6 @@ function fillEvenOdd(polys: Pt2[][], w: number, h: number, x0: number, y0: numbe
       if (i1 > w - 1) i1 = w - 1
       for (let ix = i0; ix <= i1; ix++) out[row + ix] = 1
     }
-  }
-  return out
-}
-
-// ─── Exact Euclidean distance transform (Felzenszwalb & Huttenlocher) ────────────
-
-const EDT_INF = 1e10
-
-function dt1d(f: Float64Array, n: number, d: Float64Array, v: Int32Array, z: Float64Array): void {
-  let k = 0
-  v[0] = 0
-  z[0] = -EDT_INF
-  z[1] = EDT_INF
-  for (let q = 1; q < n; q++) {
-    let s = (f[q] + q * q - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k])
-    while (s <= z[k]) {
-      k--
-      s = (f[q] + q * q - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k])
-    }
-    k++
-    v[k] = q
-    z[k] = s
-    z[k + 1] = EDT_INF
-  }
-  k = 0
-  for (let q = 0; q < n; q++) {
-    while (z[k + 1] < q) k++
-    d[q] = (q - v[k]) * (q - v[k]) + f[v[k]]
-  }
-}
-
-/** Squared distance (in cells) from every cell to the nearest cell where isFeature(i) is true. */
-function edtSq(w: number, h: number, isFeature: (i: number) => boolean): Float64Array {
-  const m = Math.max(w, h)
-  const f = new Float64Array(m)
-  const d = new Float64Array(m)
-  const v = new Int32Array(m)
-  const z = new Float64Array(m + 1)
-  const out = new Float64Array(w * h)
-  for (let x = 0; x < w; x++) {
-    for (let y = 0; y < h; y++) f[y] = isFeature(y * w + x) ? 0 : EDT_INF
-    dt1d(f, h, d, v, z)
-    for (let y = 0; y < h; y++) out[y * w + x] = d[y]
-  }
-  for (let y = 0; y < h; y++) {
-    const row = y * w
-    for (let x = 0; x < w; x++) f[x] = out[row + x]
-    dt1d(f, w, d, v, z)
-    for (let x = 0; x < w; x++) out[row + x] = d[x]
   }
   return out
 }
@@ -249,14 +202,11 @@ export function computeAdaptive2Plan(boundary: Pt2[], islands: Pt2[][], prm: Ada
   // extra half cell covers raster quantization (a cell centre can sit up to ~0.7 cell
   // inside the polygon while its true position is outside), so no committed step can
   // stray past the real inset wall; the finishing pass owns that margin anyway.
-  const toCP = (pts: Pt2[], ccw: boolean) => {
-    const wound = (signedArea(pts) >= 0) === ccw ? pts : [...pts].reverse()
-    return wound.map(([x, y]) => ({ x, y }))
-  }
+  const wound = (pts: Pt2[], ccw: boolean) => toCP(ensureWinding(pts, ccw))
   const machPolys = inflatePathsD(
-    [toCP(boundary, true), ...islands.map(i => toCP(i, false))],
+    [wound(boundary, true), ...islands.map(i => wound(i, false))],
     -(R + 0.5 * cell), JoinType.Round, EndType.Polygon, 4, 6,
-  ).map(r => r.map(({ x, y }) => [x, y] as Pt2)).filter(r => r.length >= 3)
+  ).map(fromCP).filter(r => r.length >= 3)
   if (machPolys.length === 0) return []
 
   const mach = fillEvenOdd(machPolys, w, h, x0, y0, cell)

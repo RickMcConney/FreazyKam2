@@ -11,6 +11,7 @@ import { serializeOp, type PathsAddSource, type PathEditGesture } from '../timel
 import type { CornerTreatmentType } from '../tools/cornerTreatment'
 import { inGroup, outerGroupOf } from './pathGroups'
 import { useConstraintsStore, constraintsTouching } from './constraintsStore'
+import type { Constraint } from './constraints'
 import { copyPaths, withHiddenSources } from './copyPaths'
 import { solveConstraints, solveInnerConstraints, type ConstraintSolution } from './constraints'
 import { useWorkpieceStore } from './workpieceStore'
@@ -165,6 +166,43 @@ function annotationSwitchOff(
 }
 
 /**
+ * Drop everything hanging off paths that are going away, in the SAME edit that
+ * removes them.
+ *
+ * An operation or a tab naming a path that no longer exists is not merely
+ * stale — it is a cut against geometry nobody can see, and it survives into the
+ * G-code. So it goes visibly, and the one snapshot the caller records puts it
+ * back in one undo. Each store is only written when something actually changed,
+ * because a fresh array re-renders every subscriber.
+ */
+function dropDependentsOf(deleteIds: string[]): void {
+  if (deleteIds.length === 0) return
+  const opsBefore = useToolpathStore.getState().operations
+  const newOps = opsBefore.filter((op) => !deleteIds.some((id) => refsPathId(op, id)))
+  if (newOps.length !== opsBefore.length) useToolpathStore.getState().replaceOperations(newOps)
+  const tabsBefore = useTabStore.getState().tabs
+  const newTabs = tabsBefore.filter((t) => !deleteIds.includes(t.pathId))
+  if (newTabs.length !== tabsBefore.length) useTabStore.getState().replaceTabs(newTabs)
+}
+
+/**
+ * Drop the constraints with an end on any of `ids`, and hand back what is left.
+ *
+ * Same doctrine as the operations above: a constraint with a deleted end has
+ * nothing left to say, it goes visibly, and one undo restores it. Returns the
+ * surviving list so a caller mid-solve can carry on with it rather than reading
+ * the store back.
+ */
+function dropConstraintsTouching(ids: string[]): Constraint[] {
+  const cs = useConstraintsStore.getState()
+  const doomed = new Set(constraintsTouching(cs.constraints, ids).map((c) => c.id))
+  if (doomed.size === 0) return cs.constraints
+  const kept = cs.constraints.filter((c) => !doomed.has(c.id))
+  cs.replaceConstraints(kept)
+  return kept
+}
+
+/**
  * One path, with one update applied.
  *
  * Lifted out of `applyPathEdit`'s map so the CONSTRAINT SOLVE can go through it
@@ -307,15 +345,7 @@ function enforceConstraints(
   const cs = useConstraintsStore.getState()
   let constraints = cs.constraints
   if (constraints.length === 0) return { paths, movedIds: [] }
-  if (deleteIds.length > 0) {
-    // A constraint with a deleted end has nothing left to say. Same doctrine as
-    // the operations above: it goes visibly, and one undo restores it.
-    const doomed = new Set(constraintsTouching(constraints, deleteIds).map((c) => c.id))
-    if (doomed.size > 0) {
-      constraints = constraints.filter((c) => !doomed.has(c.id))
-      cs.replaceConstraints(constraints)
-    }
-  }
+  if (deleteIds.length > 0) constraints = dropConstraintsTouching(deleteIds)
   if (constraints.length === 0) return { paths, movedIds: [] }
   const { widthMM, heightMM } = useWorkpieceStore.getState()
   // THE PARTS THIS EDIT TOUCHED ARE THE ANCHORS. There is no root in the
@@ -537,14 +567,7 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
 
   rewriteGeneratedRaw: ({ updates = [], add = [], deleteIds = [] }) => {
     const s = get()
-    if (deleteIds.length > 0) {
-      const opsBefore = useToolpathStore.getState().operations
-      const tabsBefore = useTabStore.getState().tabs
-      const newOps = opsBefore.filter((op) => !deleteIds.some((id) => refsPathId(op, id)))
-      if (newOps.length !== opsBefore.length) useToolpathStore.getState().replaceOperations(newOps)
-      const newTabs = tabsBefore.filter((t) => !deleteIds.includes(t.pathId))
-      if (newTabs.length !== tabsBefore.length) useTabStore.getState().replaceTabs(newTabs)
-    }
+    dropDependentsOf(deleteIds)
     const map = new Map(updates.map((u) => [u.id, u]))
     const paths = s.paths
       .filter((p) => !deleteIds.includes(p.id))
@@ -585,14 +608,7 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
       const off = annotationSwitchOff(s.paths, deleteIds, updates)
       if (off) { deleteIds = off.deleteIds; updates = off.updates }
     }
-    if (deleteIds.length > 0) {
-      const opsBefore = useToolpathStore.getState().operations
-      const tabsBefore = useTabStore.getState().tabs
-      const newOps = opsBefore.filter((op) => !deleteIds.some((id) => refsPathId(op, id)))
-      if (newOps.length !== opsBefore.length) useToolpathStore.getState().replaceOperations(newOps)
-      const newTabs = tabsBefore.filter((t) => !deleteIds.includes(t.pathId))
-      if (newTabs.length !== tabsBefore.length) useTabStore.getState().replaceTabs(newTabs)
-    }
+    dropDependentsOf(deleteIds)
     const map = new Map(updates.map((u) => [u.id, u]))
     let paths = s.paths
       .filter((p) => !deleteIds.includes(p.id))
@@ -685,14 +701,39 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
         const c = nominal.get(part)
         if (!c) return undefined
         let best: ImportedPath | undefined
-        let bestD2 = Infinity
+        let bestD = Infinity
         for (const sib of siblings) {
           const sc = nominal.get(sib.shapePart!)
           if (!sc) continue
-          const d2 = (sc.x - c.x) ** 2 + (sc.y - c.y) ** 2
-          if (d2 < bestD2) { bestD2 = d2; best = sib }
+          const d = Math.hypot(sc.x - c.x, sc.y - c.y)
+          if (d < bestD) { bestD = d; best = sib }
         }
-        return best?.placement
+        if (!best) return undefined
+        // NEAREST IS ONLY AN ANSWER WHEN IT IS AN UNAMBIGUOUS ONE. Bodies laid out
+        // side by side are a body's width apart, but the parts WITHIN one body sit
+        // on top of each other — a gear's teeth, bore and spokes share a centre to
+        // within a fraction of a millimetre, and which of them comes out "nearest"
+        // is decided by the asymmetry of a tooth. So a gear whose BORE had been
+        // dragged off on its own handed the returning spokes the bore's
+        // displacement, by a margin of 0.1 mm on a 200 mm gear: the spokes came
+        // back 25 mm out of the rim they belong in, and nothing said so.
+        //
+        // A sibling this close to the winner is just as good a candidate as the
+        // winner, so if it disagrees there is NO answer and the part goes back at
+        // its nominal spot — visible, and where a regeneration would put it. The
+        // floor covers exact concentricity, where the ratio alone collapses to
+        // "only a sibling at the identical centre counts".
+        const SAME_BODY_RATIO = 3
+        const SAME_BODY_FLOOR_MM = 1
+        const asClose = bestD * SAME_BODY_RATIO + SAME_BODY_FLOOR_MM
+        const winner = JSON.stringify(best.placement ?? null)
+        for (const sib of siblings) {
+          const sc = nominal.get(sib.shapePart!)
+          if (!sc) continue
+          if (Math.hypot(sc.x - c.x, sc.y - c.y) > asClose) continue
+          if (JSON.stringify(sib.placement ?? null) !== winner) return undefined
+        }
+        return best.placement
       }
       for (const pt of parts) {
         const existing = byPart.get(pt.part)
@@ -801,9 +842,7 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
     // of the WHOLE outline, and no one sub-path inherits that. Cloning it onto
     // each piece would silently start moving parts to a distance the user never
     // asked for; losing it is visible, and one undo brings it back.
-    const cs = useConstraintsStore.getState()
-    const doomed = new Set(constraintsTouching(cs.constraints, [id]).map((c) => c.id))
-    if (doomed.size > 0) cs.replaceConstraints(cs.constraints.filter((c) => !doomed.has(c.id)))
+    dropConstraintsTouching([id])
     set({
       paths: [...s.paths.slice(0, idx), ...newPaths, ...s.paths.slice(idx + 1)],
       selectedIds: newPaths.map((p) => p.id),

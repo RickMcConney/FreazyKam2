@@ -6,6 +6,7 @@ import {  signedArea, ensureWinding, douglasPeucker, type Pt2 } from '../pathFla
 import { perfLog } from '../../debug'
 import { inflatePathsD, differenceD, intersectD, JoinType, EndType, FillRule } from 'clipper2-ts'
 import {  arcLengths, interpPt, ringPerimeter, stripClosingDuplicate, pointInPolygon, pointOnRing, ptSegDistSq } from '../geom'
+import { toCP, fromCP } from '../clipperAdapters'
 import type { ClearanceField } from './clearance'
 import type { MotionSegment } from '../../store/toolpathStore'
 import type {  CuttingDirection, Tool } from '../../store/toolStore'
@@ -442,10 +443,9 @@ export function compoundFinishRings(
   wantCCW: boolean,
   joinType: JoinType = JoinType.Miter,
 ): Pt2[][] {
-  const toCP = (pts: Pt2[], ccw: boolean) =>
-    ensureWinding(stripClosingDuplicate(pts), ccw).map(([x, y]) => ({ x, y }))
+  const wound = (pts: Pt2[], ccw: boolean) => toCP(ensureWinding(stripClosingDuplicate(pts), ccw))
   return inflatePathsD(
-    [toCP(boundary, true), ...islands.map(isl => toCP(isl, false))],
+    [wound(boundary, true), ...islands.map(isl => wound(isl, false))],
     -toolRadius, joinType, EndType.Polygon, 4, 6,
   )
     .map(r => stripClosingDuplicate(r.map(({ x, y }) => [x, y] as Pt2)))
@@ -1115,9 +1115,6 @@ export function buildOffsetLevels(
   wantCCW: boolean,
   joinType: JoinType = JoinType.Miter,
 ): Pt2[][][] {
-  const toCP = (pts: Pt2[]) => pts.map(([x, y]) => ({ x, y }))
-  const fromCP = (r: { x: number; y: number }[]) =>
-    stripClosingDuplicate(r.map(({ x, y }) => [x, y] as Pt2))
 
   // Compound polygon: CCW outer boundary + CW island holes.
   // inflatePathsD with a negative delta shrinks the outer boundary inward and
@@ -1244,9 +1241,6 @@ export function restCleanupRings(
 ): Pt2[][] {
   if (cutPaths.length === 0) return []
 
-  const toCP = (pts: Pt2[]) => pts.map(([x, y]) => ({ x, y }))
-  const fromCP = (r: { x: number; y: number }[]) =>
-    stripClosingDuplicate(r.map(({ x, y }) => [x, y] as Pt2))
   // µm precision and a 0.05 mm arc tolerance: a spiral pocket's cut path runs to thousands of
   // points, and offsetting it at nanometre precision with default arc refinement dominated
   // generation time (≈1 s per depth level). Both approximations shrink the swath slightly, so

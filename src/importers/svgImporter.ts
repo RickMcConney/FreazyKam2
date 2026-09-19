@@ -1,4 +1,8 @@
-import { parseNums } from '../cam/pathFlattener'
+import { parseNums, parseD, type AbsCmd } from '../cam/pathFlattener'
+// The parser moved to `cam/pathFlattener` — the leaf this file already imports from, and
+// one that no worker bundle has to drag `DOMParser` along with. Re-exported so the
+// documented import site (root CLAUDE.md names this file) still works.
+export { parseD, type AbsCmd }
 import type { ShapeParams } from '../shapes/shapeGenerators'
 import type { TransformStep } from '../canvas/selectionUtils'
 import type { OffsetCornerStyle } from '../tools/offsetOp'
@@ -130,107 +134,7 @@ export function nextPathColor(): string {
 }
 
 // ── Path command types (absolute only) ───────────────────────────────────────
-export type AbsCmd =
-  | { t: 'M'; x: number; y: number }
-  | { t: 'L'; x: number; y: number }
-  | { t: 'C'; x1: number; y1: number; x2: number; y2: number; x: number; y: number }
-  | { t: 'S'; x2: number; y2: number; x: number; y: number }
-  | { t: 'Q'; x1: number; y1: number; x: number; y: number }
-  | { t: 'T'; x: number; y: number }
-  | { t: 'A'; rx: number; ry: number; ang: number; lg: number; sw: number; x: number; y: number }
-  | { t: 'Z' }
 
-// Parse SVG d string → absolute commands (H/V expanded to L)
-export function parseD(d: string): AbsCmd[] {
-  const result: AbsCmd[] = []
-  const tokens = d.match(/[a-zA-Z][^a-zA-Z]*/g) ?? []
-  let cx = 0, cy = 0, mx = 0, my = 0
-
-  for (const tok of tokens) {
-    const letter = tok[0]
-    const upper = letter.toUpperCase()
-    const rel = letter !== upper
-    const n = parseNums(tok.slice(1))
-
-    switch (upper) {
-      case 'M':
-        for (let i = 0; i < n.length; i += 2) {
-          const x = rel ? cx + n[i] : n[i]
-          const y = rel ? cy + n[i + 1] : n[i + 1]
-          result.push({ t: i === 0 ? 'M' : 'L', x, y })
-          if (i === 0) { mx = x; my = y }
-          cx = x; cy = y
-        }
-        break
-      case 'L':
-        for (let i = 0; i < n.length; i += 2) {
-          const x = rel ? cx + n[i] : n[i]
-          const y = rel ? cy + n[i + 1] : n[i + 1]
-          result.push({ t: 'L', x, y })
-          cx = x; cy = y
-        }
-        break
-      case 'H':
-        for (const v of n) {
-          const x = rel ? cx + v : v
-          result.push({ t: 'L', x, y: cy })  // expand H → L
-          cx = x
-        }
-        break
-      case 'V':
-        for (const v of n) {
-          const y = rel ? cy + v : v
-          result.push({ t: 'L', x: cx, y })  // expand V → L
-          cy = y
-        }
-        break
-      case 'C':
-        for (let i = 0; i < n.length; i += 6) {
-          const x1 = rel ? cx + n[i] : n[i], y1 = rel ? cy + n[i+1] : n[i+1]
-          const x2 = rel ? cx + n[i+2] : n[i+2], y2 = rel ? cy + n[i+3] : n[i+3]
-          const x  = rel ? cx + n[i+4] : n[i+4], y  = rel ? cy + n[i+5] : n[i+5]
-          result.push({ t: 'C', x1, y1, x2, y2, x, y })
-          cx = x; cy = y
-        }
-        break
-      case 'S':
-        for (let i = 0; i < n.length; i += 4) {
-          const x2 = rel ? cx + n[i] : n[i], y2 = rel ? cy + n[i+1] : n[i+1]
-          const x  = rel ? cx + n[i+2] : n[i+2], y  = rel ? cy + n[i+3] : n[i+3]
-          result.push({ t: 'S', x2, y2, x, y })
-          cx = x; cy = y
-        }
-        break
-      case 'Q':
-        for (let i = 0; i < n.length; i += 4) {
-          const x1 = rel ? cx + n[i] : n[i], y1 = rel ? cy + n[i+1] : n[i+1]
-          const x  = rel ? cx + n[i+2] : n[i+2], y  = rel ? cy + n[i+3] : n[i+3]
-          result.push({ t: 'Q', x1, y1, x, y })
-          cx = x; cy = y
-        }
-        break
-      case 'T':
-        for (let i = 0; i < n.length; i += 2) {
-          const x = rel ? cx + n[i] : n[i], y = rel ? cy + n[i+1] : n[i+1]
-          result.push({ t: 'T', x, y })
-          cx = x; cy = y
-        }
-        break
-      case 'A':
-        for (let i = 0; i < n.length; i += 7) {
-          const x = rel ? cx + n[i+5] : n[i+5], y = rel ? cy + n[i+6] : n[i+6]
-          result.push({ t: 'A', rx: n[i], ry: n[i+1], ang: n[i+2], lg: n[i+3], sw: n[i+4], x, y })
-          cx = x; cy = y
-        }
-        break
-      case 'Z':
-        result.push({ t: 'Z' })
-        cx = mx; cy = my
-        break
-    }
-  }
-  return result
-}
 
 
 export function stringifyD(cmds: AbsCmd[]): string {
