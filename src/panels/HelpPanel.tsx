@@ -1,4 +1,4 @@
-import { X } from 'lucide-react'
+import { X, BookOpen } from 'lucide-react'
 import { useUIStore } from '../store/uiStore'
 
 type Section = {
@@ -134,12 +134,25 @@ export default function HelpPanel() {
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-neutral-700 flex-shrink-0">
           <h2 className="text-base font-semibold text-gray-900 dark:text-neutral-100">FreazyKam Help</h2>
-          <button
-            onClick={() => setHelpOpen(false)}
-            className="text-gray-600 hover:text-gray-800 dark:hover:text-neutral-200 transition-colors"
-          >
-            <X size={18} />
-          </button>
+          <div className="flex items-center gap-4">
+            {/* This panel is the quick reference; the full task-by-task guide is the
+                site's documentation, which is the same markdown that lives in docs/. */}
+            <a
+              href="/docs/"
+              target="_blank"
+              rel="noopener"
+              className="flex items-center gap-1.5 text-sm text-blue-600 dark:text-blue-400 hover:underline"
+            >
+              <BookOpen size={15} />
+              User guide
+            </a>
+            <button
+              onClick={() => setHelpOpen(false)}
+              className="text-gray-600 hover:text-gray-800 dark:hover:text-neutral-200 transition-colors"
+            >
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
         {/* Scrollable body */}

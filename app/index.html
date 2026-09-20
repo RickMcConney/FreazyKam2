@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <meta
+      name="description"
+      content="Browser-based CNC CAM for makers and woodworkers. Import or draw 2D vectors, set up stock and tools, generate and simulate toolpaths, and export G-code — all locally, no account or install."
+    />
+    <meta name="theme-color" content="#171717" />
+    <link rel="canonical" href="https://freazykam.com/app/" />
+    <title>FreazyKam — CNC CAM in the browser</title>
+
+    <!-- This is the APP entry, served at /app/. The landing page is the root index.html.
+         Link previews: og:image must be an ABSOLUTE url — crawlers do not resolve it
+         against the page, and Vite's base is not applied inside a plain <meta>, so the
+         site root is spelled out here rather than written "./". -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="FreazyKam" />
+    <meta property="og:url" content="https://freazykam.com/app/" />
+    <meta property="og:title" content="FreazyKam — CNC CAM in the browser" />
+    <meta
+      property="og:description"
+      content="Import or draw 2D vectors, set up stock and tools, generate and simulate toolpaths, and export G-code — all in the browser."
+    />
+    <meta property="og:image" content="https://freazykam.com/og-card.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="FreazyKam — CNC CAM in the browser" />
+    <meta name="twitter:card" content="summary_large_image" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

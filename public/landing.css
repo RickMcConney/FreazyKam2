@@ -1,0 +1,143 @@
+/* Landing page only (/). Shared chrome — header, footer, buttons, tokens — is in
+   site.css, which the documentation pages load too. */
+
+/* ── Hero ────────────────────────────────────────────────────────────────── */
+
+.hero { padding: 76px 0 8px; text-align: center; }
+.hero h1 {
+  margin: 0 0 18px;
+  font-size: clamp(2.1rem, 6vw, 3.6rem);
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+  font-weight: 700;
+}
+.hero h1 .accent { color: var(--accent); }
+.hero .lede {
+  margin: 0 auto 30px; max-width: 640px;
+  font-size: clamp(1.02rem, 2.4vw, 1.2rem);
+  color: var(--fg-muted);
+}
+.hero-cta { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+.hero-note {
+  margin-top: 20px; font-size: 0.87rem; color: var(--fg-faint);
+  display: flex; flex-wrap: wrap; gap: 6px 18px; justify-content: center;
+}
+.hero-note span { display: inline-flex; align-items: center; gap: 6px; }
+.hero-note svg { color: var(--accent); flex: none; }
+
+/* ── Screenshots ─────────────────────────────────────────────────────────── */
+
+.shot { margin: 44px 0 0; }
+.shot figure { margin: 0; }
+.shot img {
+  display: block; width: 100%;
+  border: 1px solid var(--line-firm);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  background: var(--bg-soft);
+}
+.shot figcaption {
+  margin-top: 12px; font-size: 0.89rem; color: var(--fg-faint);
+  text-align: center; max-width: 720px; margin-left: auto; margin-right: auto;
+}
+
+/* ── Section scaffolding ─────────────────────────────────────────────────── */
+
+section { padding: 64px 0 0; }
+.section-head { max-width: 680px; margin: 0 0 32px; }
+.section-head.center { margin-left: auto; margin-right: auto; text-align: center; }
+.eyebrow {
+  font-size: 0.76rem; font-weight: 700; letter-spacing: 0.09em;
+  text-transform: uppercase; color: var(--accent); margin: 0 0 10px;
+}
+.section-head h2 {
+  margin: 0 0 12px; font-size: clamp(1.5rem, 3.4vw, 2.05rem);
+  letter-spacing: -0.02em; line-height: 1.2; font-weight: 680;
+}
+.section-head p { margin: 0; color: var(--fg-muted); font-size: 1.02rem; }
+
+/* ── Steps ───────────────────────────────────────────────────────────────── */
+
+.steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+.step {
+  padding: 22px 20px; border: 1px solid var(--line);
+  border-radius: var(--radius); background: var(--bg-soft);
+}
+.step .num {
+  display: flex; align-items: center; justify-content: center;
+  width: 27px; height: 27px; border-radius: 50%;
+  background: var(--accent); color: #fff;
+  font-size: 0.8rem; font-weight: 700; margin-bottom: 13px;
+}
+.step h3 { margin: 0 0 7px; font-size: 1rem; font-weight: 640; letter-spacing: -0.01em; }
+.step p { margin: 0; font-size: 0.9rem; color: var(--fg-muted); line-height: 1.55; }
+
+/* ── Feature grid ────────────────────────────────────────────────────────── */
+
+.features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+.feature {
+  padding: 24px 22px; border: 1px solid var(--line);
+  border-radius: var(--radius); background: var(--bg);
+  transition: border-color .15s, transform .15s;
+}
+.feature:hover { border-color: var(--line-firm); }
+.feature .ico {
+  display: flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; border-radius: 8px;
+  background: var(--accent-wash); color: var(--accent); margin-bottom: 14px;
+}
+.feature h3 { margin: 0 0 8px; font-size: 1.02rem; font-weight: 640; letter-spacing: -0.01em; }
+.feature p { margin: 0; font-size: 0.92rem; color: var(--fg-muted); line-height: 1.6; }
+.feature p + p { margin-top: 8px; }
+
+/* ── Split (text beside a picture) ───────────────────────────────────────── */
+
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 44px; align-items: center; }
+.split .shot { margin: 0; }
+.split ul { margin: 18px 0 0; padding: 0; list-style: none; }
+.split li {
+  position: relative; padding-left: 26px; margin-bottom: 10px;
+  color: var(--fg-muted); font-size: 0.95rem;
+}
+.split li::before {
+  content: ""; position: absolute; left: 6px; top: 0.62em;
+  width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+}
+.split li strong { color: var(--fg); font-weight: 600; }
+
+/* ── Table ───────────────────────────────────────────────────────────────── */
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+table.ops { width: 100%; border-collapse: collapse; font-size: 0.92rem; min-width: 480px; }
+table.ops th, table.ops td { padding: 11px 16px; text-align: left; }
+table.ops th {
+  background: var(--bg-soft); font-weight: 620; font-size: 0.82rem;
+  letter-spacing: 0.03em; text-transform: uppercase; color: var(--fg-muted);
+}
+table.ops tr + tr td { border-top: 1px solid var(--line); }
+table.ops td:first-child { font-weight: 600; white-space: nowrap; }
+table.ops td:last-child { color: var(--fg-muted); }
+
+/* ── Closing call to action ──────────────────────────────────────────────── */
+
+.cta-band {
+  margin-top: 76px; padding: 52px 24px; text-align: center;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--bg-soft);
+}
+.cta-band h2 { margin: 0 0 12px; font-size: clamp(1.4rem, 3.2vw, 1.9rem); letter-spacing: -0.02em; }
+.cta-band p { margin: 0 auto 26px; max-width: 520px; color: var(--fg-muted); }
+.cta-band .hero-cta { margin-bottom: 0; }
+
+/* ── Narrow screens ──────────────────────────────────────────────────────── */
+
+@media (max-width: 900px) {
+  .features { grid-template-columns: repeat(2, 1fr); }
+  .steps { grid-template-columns: repeat(2, 1fr); }
+  .split { grid-template-columns: 1fr; gap: 28px; }
+}
+@media (max-width: 620px) {
+  .hero { padding-top: 52px; }
+  .features, .steps { grid-template-columns: 1fr; }
+  section { padding-top: 48px; }
+  .hero-cta .btn { width: 100%; justify-content: center; }
+}

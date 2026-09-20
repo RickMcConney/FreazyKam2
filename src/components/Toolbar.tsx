@@ -17,8 +17,9 @@ import { triggerProjectSave, triggerGcodeExport, triggerGcodeExportSplit } from 
 import { buildExportPreflight, type ExportPreflight } from '../cam/exportPreflight'
 import ExportPreflightDialog from './ExportPreflightDialog'
 import DxfUnitsDialog from './DxfUnitsDialog'
+import ConfirmNewProjectDialog from './ConfirmNewProjectDialog'
 import { importFile, loadImportedGcode } from '../io/importFile'
-import { openProjectFile, newProject } from '../io/projectLoad'
+import { openProjectFile, requestNewProject } from '../io/projectLoad'
 import HelpPanel from '../panels/HelpPanel'
 
 function ToolbarButton({
@@ -209,7 +210,7 @@ export default function Toolbar() {
         <ToolbarButton
           icon={<FilePlus size={ICON.md} />}
           label="New Project (Ctrl+N)"
-          onClick={newProject}
+          onClick={requestNewProject}
         />
         <ToolbarButton
           icon={<FolderOpen size={ICON.md} />}
@@ -306,6 +307,7 @@ export default function Toolbar() {
 
       {/* DXF units prompt modal (uiStore-driven; shared with canvas drop) */}
       <DxfUnitsDialog />
+      <ConfirmNewProjectDialog />
     </header>
   )
 }

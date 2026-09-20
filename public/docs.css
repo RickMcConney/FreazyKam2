@@ -1,0 +1,181 @@
+/* Documentation pages (/docs/). Shared chrome and tokens are in site.css.
+   Written out by build/docsPlugin.ts, so this is plain CSS at a stable URL —
+   the generated pages are outside Vite's module graph and cannot import an asset. */
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* ── Three columns: contents, page, on-this-page ─────────────────────────── */
+
+.docs-layout {
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr) 190px;
+  gap: 40px;
+  align-items: start;
+  padding-top: 32px;
+}
+
+.docs-side {
+  position: sticky; top: 90px;
+  max-height: calc(100vh - 110px); overflow-y: auto;
+  padding-right: 8px;
+}
+.toc-title {
+  margin: 20px 0 8px; font-size: 0.74rem; font-weight: 700;
+  letter-spacing: 0.09em; text-transform: uppercase; color: var(--fg-faint);
+}
+ul.toc { list-style: none; margin: 0; padding: 0; }
+ul.toc li { margin: 0; }
+ul.toc a {
+  display: block; padding: 6px 10px; border-radius: 6px;
+  font-size: 0.9rem; color: var(--fg-muted); line-height: 1.4;
+}
+ul.toc a:hover { background: var(--bg-soft); color: var(--fg); text-decoration: none; }
+ul.toc a[aria-current="page"] {
+  background: var(--accent-wash); color: var(--accent); font-weight: 600;
+}
+
+.onpage { position: sticky; top: 90px; font-size: 0.86rem; }
+.onpage-title {
+  margin: 0 0 8px; font-size: 0.74rem; font-weight: 700;
+  letter-spacing: 0.09em; text-transform: uppercase; color: var(--fg-faint);
+}
+.onpage ul { list-style: none; margin: 0; padding: 0; border-left: 1px solid var(--line); }
+.onpage li { margin: 0; }
+.onpage a {
+  display: block; padding: 5px 0 5px 12px; margin-left: -1px;
+  border-left: 2px solid transparent; color: var(--fg-muted); line-height: 1.35;
+}
+.onpage a:hover { color: var(--fg); border-left-color: var(--line-firm); text-decoration: none; }
+
+.toc-toggle {
+  display: none; grid-column: 1 / -1;
+  padding: 9px 14px; margin-bottom: 4px;
+  background: var(--bg-soft); color: var(--fg);
+  border: 1px solid var(--line-firm); border-radius: 8px;
+  font: inherit; font-size: 0.9rem; font-weight: 600; cursor: pointer;
+}
+
+/* ── Search ──────────────────────────────────────────────────────────────── */
+
+.search input {
+  width: 100%; padding: 8px 11px;
+  background: var(--bg-soft); color: var(--fg);
+  border: 1px solid var(--line-firm); border-radius: 8px;
+  font: inherit; font-size: 0.9rem;
+}
+.search input::placeholder { color: var(--fg-faint); }
+.search-results { margin-top: 10px; }
+.search-results a {
+  display: block; padding: 9px 10px; border-radius: 7px;
+  border: 1px solid var(--line); margin-bottom: 6px;
+  background: var(--bg-soft);
+}
+.search-results a:hover { border-color: var(--accent); text-decoration: none; }
+.search-results .r-title { display: block; font-size: 0.88rem; font-weight: 600; color: var(--fg); }
+.search-results .r-page { display: block; font-size: 0.74rem; color: var(--accent); margin-bottom: 3px; }
+.search-results .r-body {
+  display: block; font-size: 0.79rem; color: var(--fg-muted); line-height: 1.45;
+  margin-top: 3px;
+}
+.search-results mark { background: var(--accent-wash); color: inherit; border-radius: 3px; padding: 0 1px; }
+.search-empty { padding: 8px 2px; font-size: 0.85rem; color: var(--fg-faint); }
+
+/* ── The rendered markdown ───────────────────────────────────────────────── */
+
+.prose { min-width: 0; font-size: 1rem; line-height: 1.68; }
+.prose > :first-child { margin-top: 0; }
+
+.prose h1 {
+  margin: 0 0 22px; font-size: clamp(1.7rem, 4vw, 2.3rem);
+  line-height: 1.18; letter-spacing: -0.025em; font-weight: 700;
+}
+.prose h2 {
+  margin: 48px 0 14px; padding-top: 14px; border-top: 1px solid var(--line);
+  font-size: 1.42rem; line-height: 1.25; letter-spacing: -0.018em; font-weight: 660;
+}
+.prose h3 { margin: 30px 0 10px; font-size: 1.12rem; font-weight: 640; letter-spacing: -0.01em; }
+.prose h4 { margin: 24px 0 8px; font-size: 1rem; font-weight: 640; }
+
+.prose h1, .prose h2, .prose h3, .prose h4 { scroll-margin-top: 78px; }
+
+.anchor {
+  margin-left: 8px; color: var(--fg-faint); font-weight: 400;
+  opacity: 0; transition: opacity .12s; text-decoration: none;
+}
+.prose h2:hover .anchor, .prose h3:hover .anchor, .anchor:focus-visible { opacity: 1; }
+
+.prose p { margin: 0 0 16px; }
+.prose ul, .prose ol { margin: 0 0 16px; padding-left: 24px; }
+.prose li { margin-bottom: 7px; }
+.prose li > ul, .prose li > ol { margin-top: 7px; }
+.prose strong { font-weight: 640; color: var(--fg); }
+
+.prose a { text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px; }
+.prose a:hover { text-decoration-thickness: 2px; }
+
+.prose img {
+  display: block; margin: 22px auto;
+  border: 1px solid var(--line-firm); border-radius: var(--radius);
+  box-shadow: var(--shadow); background: var(--bg-soft);
+}
+/* The diagrams are line art on a transparent ground — a frame and a shadow make
+   them look like screenshots, which they are not. */
+.prose img[src$=".svg"] { border: 0; box-shadow: none; background: none; }
+
+.prose blockquote {
+  margin: 18px 0; padding: 2px 18px;
+  border-left: 3px solid var(--accent); color: var(--fg-muted);
+}
+.prose hr { margin: 36px 0; border: 0; border-top: 1px solid var(--line); }
+
+.prose table {
+  width: 100%; border-collapse: collapse; margin: 20px 0;
+  font-size: 0.92rem; display: block; overflow-x: auto;
+}
+.prose th, .prose td {
+  padding: 9px 14px; text-align: left; vertical-align: top;
+  border: 1px solid var(--line);
+}
+.prose th { background: var(--bg-soft); font-weight: 620; }
+.prose tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--bg-soft) 45%, transparent); }
+
+.prose pre { margin: 18px 0; }
+
+/* ── Previous / next ─────────────────────────────────────────────────────── */
+
+.pager {
+  display: flex; gap: 14px; margin: 56px 0 0;
+  border-top: 1px solid var(--line); padding-top: 22px;
+}
+.pager a {
+  flex: 1; padding: 13px 16px; border: 1px solid var(--line);
+  border-radius: var(--radius); color: var(--fg); font-weight: 600; font-size: 0.95rem;
+}
+.pager a:hover { border-color: var(--accent); text-decoration: none; }
+.pager a span {
+  display: block; font-size: 0.74rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--fg-faint); margin-bottom: 3px;
+}
+.pager-next { text-align: right; }
+
+/* ── Narrow screens ──────────────────────────────────────────────────────── */
+
+@media (max-width: 1080px) {
+  .docs-layout { grid-template-columns: 210px minmax(0, 1fr); gap: 32px; }
+  .onpage { display: none; }
+}
+@media (max-width: 760px) {
+  .docs-layout { grid-template-columns: 1fr; gap: 0; padding-top: 20px; }
+  .toc-toggle { display: block; }
+  .docs-side {
+    position: static; max-height: none; overflow: visible;
+    margin-bottom: 24px; padding: 14px 0 18px;
+    border-bottom: 1px solid var(--line);
+  }
+  .docs-side[hidden] { display: none; }
+  .pager { flex-direction: column; }
+  .pager-next { text-align: left; }
+}

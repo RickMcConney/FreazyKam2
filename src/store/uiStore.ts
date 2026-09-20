@@ -155,6 +155,11 @@ interface UIState {
   // trigger the dialog; DxfUnitsDialog renders when non-null.
   pendingDxfImport: { text: string; name: string } | null
   setPendingDxfImport: (p: { text: string; name: string } | null) => void
+  // New Project waiting on its discard confirmation. Same reason as pendingDxfImport:
+  // both entry points (toolbar button, Ctrl+N) go through requestNewProject
+  // (io/projectLoad.ts) and ConfirmNewProjectDialog renders when this is true.
+  confirmNewProject: boolean
+  setConfirmNewProject: (open: boolean) => void
   setMachineFormActive: (active: boolean) => void
   setTabsFormActive: (active: boolean) => void
   setShapesPanelOpen: (open: boolean) => void
@@ -273,6 +278,8 @@ export const useUIStore = create<UIState>()(
   clearStatus: () => set({ statusMessage: null }),
   pendingDxfImport: null,
   setPendingDxfImport: (p) => set({ pendingDxfImport: p }),
+  confirmNewProject: false,
+  setConfirmNewProject: (open) => set({ confirmNewProject: open }),
   setMachineFormActive: (active) => set({ machineFormActive: active }),
   setTabsFormActive: (active) => set({ tabsFormActive: active }),
   setShapesPanelOpen: (open) => set({ shapesPanelOpen: open }),

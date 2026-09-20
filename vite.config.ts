@@ -2,6 +2,8 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { readFileSync } from 'fs'
+import { resolve } from 'path'
+import { docsPlugin } from './build/docsPlugin'
 
 // jspoly.js has require() calls guarded by DISABLE_REQUIRE=true (dead code).
 // Rolldown resolves them statically at the native level before JS transforms run,
@@ -31,9 +33,15 @@ const reloadWorkerGraph = {
   },
 }
 
+// The site is three things at one origin (freazykam.com):
+//   /       the landing page   — index.html, plain HTML, no React
+//   /app/   the CAM app        — app/index.html, the Vite/React entry
+//   /docs/  the user guide     — rendered from docs/*.md by docsPlugin at build time
+// `base` is '/' because a custom domain serves from the root; it was '/FreazyKam2/'
+// while the only home was the project page at rickmcconney.github.io.
 export default defineConfig({
-  base: '/FreazyKam2/',
-  plugins: [react(), jspolyPlugin, reloadWorkerGraph],
+  base: '/',
+  plugins: [react(), jspolyPlugin, reloadWorkerGraph, docsPlugin()],
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],
@@ -60,6 +68,11 @@ export default defineConfig({
   },
   build: {
     rollupOptions: {
+      // Two HTML entries. The landing page is listed first so it is the site root.
+      input: {
+        landing: resolve(__dirname, 'index.html'),
+        app: resolve(__dirname, 'app/index.html'),
+      },
       output: {
         manualChunks(id: string) {
           if (id.includes('/react/') || id.includes('/react-dom/')) return 'react'

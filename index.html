@@ -3,34 +3,356 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" type="image/x-icon" href="./favicon.ico" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <title>FreazyKam — CNC CAM in the browser</title>
     <meta
       name="description"
-      content="Browser-based CNC CAM for makers and woodworkers. Import or draw 2D vectors, set up stock and tools, generate and simulate toolpaths, and export G-code — all locally, no account or install."
+      content="Free browser-based CNC CAM for makers and woodworkers. Draw or import 2D vectors, generate profile, pocket, V-carve, inlay and 3D toolpaths, simulate the cut, and export G-code. No account, no install, nothing uploaded."
     />
-    <meta name="theme-color" content="#171717" />
-    <link rel="canonical" href="https://rickmcconney.github.io/FreazyKam2/" />
-    <title>FreazyKam</title>
+    <meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <link rel="canonical" href="https://freazykam.com/" />
 
-    <!-- Link previews. og:image must be an ABSOLUTE url — crawlers do not resolve
-         it against the page, and Vite's /FreazyKam2/ base is not applied inside a plain
-         <meta>, so the site root is spelled out here rather than written "./". -->
+    <!-- og:image must be ABSOLUTE — crawlers do not resolve it against the page. -->
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="FreazyKam" />
-    <meta property="og:url" content="https://rickmcconney.github.io/FreazyKam2/" />
+    <meta property="og:url" content="https://freazykam.com/" />
     <meta property="og:title" content="FreazyKam — CNC CAM in the browser" />
     <meta
       property="og:description"
-      content="Import or draw 2D vectors, set up stock and tools, generate and simulate toolpaths, and export G-code — all in the browser."
+      content="Draw or import 2D vectors, generate toolpaths, simulate the cut, and export G-code — all in the browser, all on your own machine."
     />
-    <meta property="og:image" content="https://rickmcconney.github.io/FreazyKam2/og-card.png" />
+    <meta property="og:image" content="https://freazykam.com/og-card.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta property="og:image:alt" content="FreazyKam — CNC CAM in the browser" />
     <meta name="twitter:card" content="summary_large_image" />
+
+    <link rel="stylesheet" href="/site.css" />
+    <link rel="stylesheet" href="/landing.css" />
   </head>
+
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <header class="site-head">
+      <div class="wrap">
+        <a class="brand" href="/">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 2v9" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" />
+            <path d="M8.2 11h7.6L12 17.4 8.2 11Z" fill="var(--accent)" />
+            <path d="M3 21h18" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" opacity=".45" />
+          </svg>
+          FreazyKam
+        </a>
+        <nav class="site-nav">
+          <a href="#features" class="nav-hide-sm">Features</a>
+          <a href="/docs/">Guide</a>
+          <a href="https://github.com/RickMcConney/FreazyKam2" class="nav-hide-sm">GitHub</a>
+          <a class="btn btn-primary" href="/app/">Launch app</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <!-- ── Hero ───────────────────────────────────────────────────────── -->
+      <div class="wrap hero">
+        <h1>Turn a drawing into<br /><span class="accent">G-code your CNC can run.</span></h1>
+        <p class="lede">
+          FreazyKam is a complete CAM workshop that runs in your browser. Draw or import
+          2D vectors, set up your stock and tools, generate toolpaths, watch the cut in
+          3D, and export G-code for your machine.
+        </p>
+        <div class="hero-cta">
+          <a class="btn btn-primary btn-lg" href="/app/">Launch app</a>
+          <a class="btn btn-ghost btn-lg" href="/docs/01-quick-start.html">Quick start &rarr;</a>
+        </div>
+        <p class="hero-note">
+          <span>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7"/></svg>
+            Free and open source
+          </span>
+          <span>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7"/></svg>
+            No account, no install
+          </span>
+          <span>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7"/></svg>
+            Your files never leave your machine
+          </span>
+        </p>
+      </div>
+
+      <div class="wrap shot">
+        <figure>
+          <img
+            src="/shots/design.jpg" width="1600" height="991" fetchpriority="high"
+            alt="The FreazyKam workspace: a drawing on the canvas, an operation form open on the right, and the objects and operations strips along the bottom."
+          />
+          <figcaption>
+            Designing and generating toolpaths. The strip along the bottom switches between
+            <strong>Objects</strong> — everything in the document, one chip each — and
+            <strong>Ops</strong>, every toolpath in the order the machine runs it.
+          </figcaption>
+        </figure>
+      </div>
+
+      <!-- ── How it works ───────────────────────────────────────────────── -->
+      <section id="how">
+        <div class="wrap">
+          <div class="section-head center">
+            <p class="eyebrow">How it works</p>
+            <h2>Drawing to finished part, in four steps</h2>
+            <p>The Quick Start walks one job end to end in about twenty minutes, and touches
+              every part of the app you will use on every job afterwards.</p>
+          </div>
+          <div class="steps">
+            <div class="step">
+              <div class="num">1</div>
+              <h3>Draw or import</h3>
+              <p>Bring in SVG, DXF, STL or an image — or draw it here with shapes, text, the
+                pen tool and the parametric part generators.</p>
+            </div>
+            <div class="step">
+              <div class="num">2</div>
+              <h3>Set stock and tools</h3>
+              <p>Size the material, say where zero is, and pick from a tool library that only
+                offers cutters which can actually make the cut.</p>
+            </div>
+            <div class="step">
+              <div class="num">3</div>
+              <h3>Generate toolpaths</h3>
+              <p>Profile, pocket, drill, V-carve, inlay, surface or 3D. Feeds, speeds and
+                step-down can be computed for you from material and machine.</p>
+            </div>
+            <div class="step">
+              <div class="num">4</div>
+              <h3>Simulate and export</h3>
+              <p>Watch material come off in 3D, check the chip-load gauge, then export G-code
+                through a post-processor profile for your controller.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Features ───────────────────────────────────────────────────── -->
+      <section id="features">
+        <div class="wrap">
+          <div class="section-head center">
+            <p class="eyebrow">What it does</p>
+            <h2>A full CAM toolkit, not a toy</h2>
+            <p>Everything below runs locally in the browser. Toolpath generation happens in a
+              Web Worker, so the interface stays responsive while a slow strategy computes.</p>
+          </div>
+          <div class="features">
+            <div class="feature">
+              <div class="ico"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M3 17v3a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1v-3"/></svg></div>
+              <h3>Import anything you have</h3>
+              <p>SVG with real-world dimensions and nested transforms. DXF lines, polylines,
+                arcs, circles, splines and ellipses. Binary or ASCII STL for 3D work.
+                Images as references or as the source for a photo V-carve. Existing G-code,
+                just to look at it.</p>
+            </div>
+            <div class="feature">
+              <div class="ico"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19 19 12 22 15 15 22 12 19Z"/><path d="M18 13 16.5 5.5 2 2 5.5 16.5 13 18 18 13Z"/><path d="M2 2 9.586 9.586"/><circle cx="11" cy="11" r="2"/></svg></div>
+              <h3>Draw it here</h3>
+              <p>Ten parametric shapes, vector text from bundled or web fonts, a pen tool with
+                Bezier handles, and point-by-point editing of any path.</p>
+              <p>Booleans, offsets, corner treatments (radius, chamfer, dogbone), linear and
+                circular patterns — each one re-editable from its own chip, long after you
+                made it.</p>
+            </div>
+            <div class="feature">
+              <div class="ico"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg></div>
+              <h3>Parametric parts that really work</h3>
+              <p>Involute and cycloidal <strong>gears</strong> with hobbed trochoidal roots,
+                deadbeat and recoil <strong>escapements</strong>, pendulums, snail
+                <strong>cams</strong>, cutting boards with true offset juice grooves,
+                BRIO-compatible <strong>train track</strong>, marble mazes and spirographs.</p>
+              <p>A whole <strong>clock train</strong> solves from one number — the beat — and
+                the assembled clock runs on the canvas.</p>
+            </div>
+            <div class="feature">
+              <div class="ico"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><rect x="7" y="7" width="10" height="10" rx="1"/><path d="M10.5 10.5h3v3h-3z"/></svg></div>
+              <h3>Five pocket strategies</h3>
+              <p>Auto, raster, contour, morph and adaptive — with island support, finish
+                allowance and ramp-in. Whatever a strategy's passes could not reach gets a
+                <strong>rest-clearing pass</strong> afterwards, so it is a light skim rather
+                than a full-width plunge.</p>
+            </div>
+            <div class="feature">
+              <div class="ico"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 14v7"/><path d="M6 3h12l-6 11z"/></svg></div>
+              <h3>V-carving and inlay</h3>
+              <p>Medial-axis V-carve from real V-bit or taper geometry, with islands and letter
+                holes. Photo V-carve rasters a photograph as grooves whose depth tracks
+                brightness.</p>
+              <p>Inlay generates the female socket and the male plug together, from the
+                geometry that actually makes a plug seat.</p>
+            </div>
+            <div class="feature">
+              <div class="ico"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/><path d="M13.4 10.6 19 5"/><path d="M3.3 17A9 9 0 1 1 20.7 17"/></svg></div>
+              <h3>Feeds and speeds worked out</h3>
+              <p>Cutting feed, plunge feed, spindle RPM and step-down computed from material
+                hardness, tool geometry and your machine's rigidity — with a hard max-feed
+                ceiling that generated feeds never exceed.</p>
+              <p>When the machine cannot feed fast enough to hold the target chip load, the
+                spindle is slowed instead of overloading the tool.</p>
+            </div>
+            <div class="feature">
+              <div class="ico"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7v10l9 5 9-5V7l-9-5Z"/><path d="m3 7 9 5 9-5"/><path d="M12 12v10"/></svg></div>
+              <h3>Simulate before you cut</h3>
+              <p>A 3D view that removes material as the tool cuts, orbit-pan-zoom, and a 2D
+                simulation with a seek slider, Z depth and the current G-code line
+                highlighted as it runs.</p>
+              <p>A live chip-load gauge reads feed-per-tooth against the target for your
+                machine and suggests the feed, RPM and flute count to hit it.</p>
+            </div>
+            <div class="feature">
+              <div class="ico"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></div>
+              <h3>Nesting and constraints</h3>
+              <p>Pack parts onto a sheet with the least waste, leaving the offcut as one
+                usable strip rather than scattered. Small parts drop into the holes of
+                larger ones.</p>
+              <p>Constraints hold one part a stated distance from another as either is
+                edited — four holes stay 10&nbsp;mm in from the corners when the plate is
+                resized <em>or rotated</em>.</p>
+            </div>
+            <div class="feature">
+              <div class="ico"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M4 21h16"/></svg></div>
+              <h3>Export for your controller</h3>
+              <p>Built-in post-processor profiles for Grbl (mm and inches), grblHAL, LinuxCNC,
+                Mach3, UCCNC and a generic controller — or write your own with
+                <code>{x}</code> <code>{y}</code> <code>{z}</code> <code>{f}</code>
+                <code>{s}</code> placeholders.</p>
+              <p>Optional G2/G3 arc output, a separate G-code unit mode, and a pre-export
+                preflight with a cut-time estimate.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 3D simulation ──────────────────────────────────────────────── -->
+      <section id="simulate">
+        <div class="wrap split">
+          <div>
+            <p class="eyebrow">See it before you cut it</p>
+            <h2 style="margin:0 0 12px; font-size: clamp(1.5rem,3.4vw,2.05rem); letter-spacing:-0.02em; line-height:1.2;">
+              The 3D view removes real material
+            </h2>
+            <p style="margin:0; color: var(--fg-muted);">
+              Not a toolpath preview drawn over a box — the carved surface updates as the
+              tool cuts, so you can see the finished shape and catch the pass that goes
+              too deep before the machine finds it for you.
+            </p>
+            <ul>
+              <li><strong>Play, pause, seek</strong> — with speed control and elapsed against total time</li>
+              <li><strong>Chip-load gauge</strong> — colour-banded against the target for your machine</li>
+              <li><strong>G-code viewer</strong> — the running line highlighted as it executes</li>
+              <li><strong>Preflight</strong> — warnings for anything that would surprise you at the machine</li>
+            </ul>
+          </div>
+          <div class="shot">
+            <figure>
+              <img src="/shots/sim-3d.jpg" width="1600" height="992" loading="lazy"
+                alt="The 3D simulation view, showing material removed from the workpiece as the tool follows the program." />
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Photo V-carve ──────────────────────────────────────────────── -->
+      <section id="vcarve">
+        <div class="wrap split">
+          <div class="shot">
+            <figure>
+              <img src="/shots/photo-vcarve.jpg" width="1600" height="986" loading="lazy"
+                alt="A photograph carved as V-grooves, rendered in the 3D view with the cuts shown dark." />
+            </figure>
+          </div>
+          <div>
+            <p class="eyebrow">Photo V-carve</p>
+            <h2 style="margin:0 0 12px; font-size: clamp(1.5rem,3.4vw,2.05rem); letter-spacing:-0.02em; line-height:1.2;">
+              A photograph, carved in wood
+            </h2>
+            <p style="margin:0; color: var(--fg-muted);">
+              The image is rastered as V-grooves whose depth follows brightness. The 3D view
+              renders the cuts dark, the way the finished board looks once paint is flooded
+              over it and sanded back off the face.
+            </p>
+            <p style="margin:14px 0 0; color: var(--fg-muted);">
+              The same V-bit geometry drives ordinary V-carving and inlay — one pair of
+              functions describes a tool's shape, so nothing branches on tool type to work
+              out a wall width.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Operations table ───────────────────────────────────────────── -->
+      <section id="operations">
+        <div class="wrap">
+          <div class="section-head center">
+            <p class="eyebrow">Operations</p>
+            <h2>Nine ways to cut</h2>
+          </div>
+          <div class="table-wrap">
+            <table class="ops">
+              <thead>
+                <tr><th scope="col">Operation</th><th scope="col">What it does</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Profile</td><td>Inside, outside or centreline cut, climb or conventional, ramp-in, holding tabs</td></tr>
+                <tr><td>Pocket</td><td>Five clearing strategies, island support, finish allowance, rest clearing</td></tr>
+                <tr><td>Trochoidal</td><td>Low-engagement slotting with configurable step and loop radius</td></tr>
+                <tr><td>Drill</td><td>Peck drilling at placed points, or helical drilling from circular paths</td></tr>
+                <tr><td>Surface</td><td>Full-workpiece facing passes</td></tr>
+                <tr><td>V-Carve</td><td>Medial-axis depth from V-bit or taper geometry, with islands and letter holes</td></tr>
+                <tr><td>Photo V-Carve</td><td>A photograph rastered as V-grooves whose depth tracks brightness</td></tr>
+                <tr><td>Inlay</td><td>Female socket and male plug, generated together so the plug seats</td></tr>
+                <tr><td>3D Profile</td><td>Raster surface following from an STL, with an optional roughing pass</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Local-first ────────────────────────────────────────────────── -->
+      <section id="local">
+        <div class="wrap">
+          <div class="section-head center">
+            <p class="eyebrow">Local first</p>
+            <h2>Nothing is uploaded. Nothing is installed.</h2>
+            <p>There is no backend. Your drawings, tool library and projects stay in your own
+              browser, and a project saves as a plain <code>.fkam</code> JSON file onto your
+              own disk. Close the tab with unsaved work and it is put back when you return.</p>
+          </div>
+          <div class="hero-cta">
+            <a class="btn btn-ghost" href="https://github.com/RickMcConney/FreazyKam2">Read the source on GitHub</a>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Closing CTA ────────────────────────────────────────────────── -->
+      <div class="wrap">
+        <div class="cta-band">
+          <h2>Cut your first part today</h2>
+          <p>The Quick Start takes about twenty minutes: draw a coaster, pocket a recess,
+            cut it out with holding tabs, simulate it, and export the G-code.</p>
+          <div class="hero-cta">
+            <a class="btn btn-primary btn-lg" href="/app/">Launch app</a>
+            <a class="btn btn-ghost btn-lg" href="/docs/01-quick-start.html">Read the quick start</a>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="site-foot">
+      <div class="wrap">
+        <span>FreazyKam — CNC CAM in the browser</span>
+        <span class="spacer"></span>
+        <a href="/app/">Launch</a>
+        <a href="/docs/">User guide</a>
+        <a href="https://github.com/RickMcConney/FreazyKam2">GitHub</a>
+        <a href="https://github.com/RickMcConney/FreazyKam2/issues">Report a problem</a>
+      </div>
+    </footer>
   </body>
 </html>

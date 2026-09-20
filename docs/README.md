@@ -4,7 +4,7 @@ FreazyKam turns a drawing into G-code your CNC router can run. It works entirely
 your browser — nothing is uploaded, nothing is installed, and your projects stay on
 your own machine.
 
-**[Launch the app →](https://rickmcconney.github.io/FreazyKam2/)**
+**[Launch the app →](https://freazykam.com/app/)**
 
 This guide is task-first: each page walks a job from start to finish. For a plain
 list of everything the app can do, see the [feature list](../README.md).

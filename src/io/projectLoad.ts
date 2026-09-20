@@ -312,7 +312,41 @@ function leaveDocument(): void {
   useUIStore.getState().closeDocumentUi()
 }
 
+/**
+ * Is there anything on screen that a New Project would throw away for good? The document
+ * itself is the answer — an empty one has nothing to lose, and a saved one is on disk under
+ * its own name — so this is the timeline's own dirty test (cursor !== savedSeq, the same one
+ * autosave writes into its snapshot), plus "is the document non-empty at all" for the case
+ * where the timeline has not recorded anything yet.
+ */
+export function hasUnsavedWork(): boolean {
+  const tl = useTimelineStore.getState()
+  if (tl.cursor === tl.savedSeq) return false
+  return (
+    usePathsStore.getState().paths.length > 0 ||
+    useToolpathStore.getState().operations.length > 0
+  )
+}
+
+/**
+ * New Project, with the discard confirmed first — what the toolbar button and Ctrl+N call.
+ *
+ * The button sits alongside Open and Save and Ctrl+N is a slip away from the chords next to
+ * it, and New Project is NOT recoverable: it calls resetToCurrentState, which drops every
+ * recorded event, so Ctrl+Z afterwards has nothing to undo. (An App.tsx comment used to
+ * claim otherwise.) A user hit it by accident and lost their work.
+ *
+ * The dialog only appears when there IS work to lose: over an empty or already-saved
+ * document the question has one answer, and a dialog in front of that is a step to get past
+ * rather than a decision — the same reasoning as the autosave restore (io/autosave.ts).
+ */
+export function requestNewProject(): void {
+  if (!hasUnsavedWork()) { newProject(); return }
+  useUIStore.getState().setConfirmNewProject(true)
+}
+
 export function newProject() {
+  useUIStore.getState().setConfirmNewProject(false)
   leaveDocument()
   useUIStore.getState().setWorkspaceTab('2d')
   useUIStore.getState().setSidebarTab('draw')

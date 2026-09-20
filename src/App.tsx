@@ -7,7 +7,7 @@ import ToolLibraryPanel from './panels/ToolLibraryPanel'
 import PostProcessorPanel from './panels/PostProcessorPanel'
 import { useUIStore, type WorkspaceTab } from './store/uiStore'
 import { usePathsStore } from './store/pathsStore'
-import { openProjectFile, newProject } from './io/projectLoad'
+import { openProjectFile, requestNewProject } from './io/projectLoad'
 import { triggerProjectSave } from './io/fileSystem'
 import SaveDialog from './components/SaveDialog'
 import EscapementInfoPanel from './panels/EscapementInfoPanel'
@@ -107,7 +107,7 @@ function useKeyboardShortcuts() {
 
       if (mod && (e.key === 's' || e.key === 'S')) { e.preventDefault(); void triggerProjectSave(); return }
       if (mod && e.key === 'o') { e.preventDefault(); void openProjectFile(); return }
-      if (mod && e.key === 'n') { e.preventDefault(); newProject(); return }
+      if (mod && e.key === 'n') { e.preventDefault(); requestNewProject(); return }
 
       if (inInput) return
 
@@ -198,7 +198,11 @@ function usePathClipboard() {
 // ended without the user's say-so, so the choice on the table was between their
 // own work and an empty screen. A dialog in front of that is a step to get past,
 // not a decision — and the way to an empty screen was never the dialog anyway,
-// it is New Project, which is one keystroke and undoable.
+// it is New Project, which is one keystroke away.
+//
+// New Project itself DOES ask, for the opposite reason: it resets the timeline, so it is
+// the one action here that is not undoable, and a slipped Ctrl+N cost a user their work.
+// See requestNewProject (io/projectLoad.ts).
 //
 // Order still matters: installAutosave() subscribes immediately but writes
 // nothing until armed, and arming waits on the boot-time read. Otherwise the
