@@ -49,7 +49,7 @@ import { SimulationLayer } from './layers/SimulationLayer'
 import SimulationPlayer from '../sim/SimulationPlayer'
 import { useSimStore } from '../store/simStore'
 import { HandleType, LiveTransform , RULER_W, RULER_H } from './types'
-import { getMultiBBox, applyTransformStep, extractCircles, dragBoxEncloses, wholeGroupsOnly, type TransformStep, type CircleInfo } from './selectionUtils'
+import { getMultiBBox, applyTransformStep, isIdentityStep, extractCircles, dragBoxEncloses, wholeGroupsOnly, type TransformStep, type CircleInfo } from './selectionUtils'
 import type { BBox } from './selectionUtils'
 import {
   generateShapeD,
@@ -433,7 +433,9 @@ export default function CanvasStage() {
   // moves by exactly the drag, and the numbers on screen are the numbers that
   // will be stored.
   const [pickDrag, setPickDrag] = useState<{ dx: number; dy: number } | null>(null)
-  const [dragBox, setDragBox] = useState<{ sx: number; sy: number; ex: number; ey: number } | null>(null)
+  // Ref-backed like liveTransform: mouseup reads the ref, so a release that lands before
+  // React commits the last mousemove's box selects with THAT box, not the frame before.
+  const [dragBox, dragBoxRef, setDragBox] = useRefState<{ sx: number; sy: number; ex: number; ey: number } | null>(null)
   const [snapGuides, setSnapGuides] = useState<SnapGuides | null>(null)
   // Object-snapped cursor while the pen tool is active — feeds the pen live
   // preview so it shows exactly where a click would land.
@@ -962,6 +964,10 @@ export default function CanvasStage() {
                 }],
               })
               selfWriteRef.current = false
+              // As every other join/split here does: applyPathEdit regenerates only what a
+              // CONSTRAINT carried along, and the exit commit finds this d already written
+              // and skips — so without this the path's ops kept cutting the deleted segment.
+              regenerateAffected(currentPid)
             } else {
               // Plain trim — pure node edit, local undo handles it.
               pushLocalUndo(old, oldClosed)
@@ -1745,7 +1751,8 @@ export default function CanvasStage() {
   }, [setCursorMM, setViewport, setLiveRotationAngle, snapCNC, snapPenPoint])
 
   const onMoveDragbox = useCallback((pointer: { x: number; y: number }) => {
-    setDragBox((db) => db ? { ...db, ex: pointer.x, ey: pointer.y } : null)
+    const db = dragBoxRef.current
+    if (db) setDragBox({ ...db, ex: pointer.x, ey: pointer.y })
   }, [setCursorMM, setViewport, setLiveRotationAngle, snapCNC, snapPenPoint])
 
   const onMoveDrawShape = useCallback((m: Extract<CanvasMode, { type: 'drawshape' }>, cncMouse: { x: number; y: number }, pointer: { x: number; y: number }, vp: Viewport) => {
@@ -2165,14 +2172,18 @@ export default function CanvasStage() {
       if (lt && lt.kind === 'translate') {
         const { dx, dy } = lt
         const step: TransformStep = { kind: 'translate', dx, dy }
+        // A drag that snapped back to where it began changes nothing, so it records
+        // nothing and regenerates nothing (see isIdentityStep).
         // Only the DRAGGED paths are baked. What the constraints carried along
         // was a preview of the solve, and the solve itself runs inside
         // applyPathEdit against the geometry as it will BE — baking the preview
         // here as well would move those bodies twice.
-        bakeTransform(m.pathIds, 'move', (path) => {
-          const r = applyTransformStep(path, step)
-          return { id: path.id, d: r.d, shapeParams: r.shapeParams, transforms: [step] }
-        })
+        if (!isIdentityStep(step)) {
+          bakeTransform(m.pathIds, 'move', (path) => {
+            const r = applyTransformStep(path, step)
+            return { id: path.id, d: r.d, shapeParams: r.shapeParams, transforms: [step] }
+          })
+        }
       }
       setLiveTransform(null)
       setFollowTransforms(null)
@@ -2201,14 +2212,14 @@ export default function CanvasStage() {
       if (lt && lt.kind === 'scale') {
         const { sx, sy, ax, ay } = lt
         const step: TransformStep = { kind: 'scale', sx, sy, ax, ay }
-        bakeTransform(m.pathIds, 'scale', (path) => {
+        if (!isIdentityStep(step)) bakeTransform(m.pathIds, 'scale', (path) => {
           const r = applyTransformStep(path, step)
           return { id: path.id, d: r.d, shapeParams: r.shapeParams, name: r.name, transforms: [step] }
         })
       } else if (lt && lt.kind === 'skew') {
         const { kx, ky, ax, ay } = lt
         const step: TransformStep = { kind: 'skew', kx, ky, ax, ay }
-        bakeTransform(m.pathIds, 'skew', (path) => {
+        if (!isIdentityStep(step)) bakeTransform(m.pathIds, 'skew', (path) => {
           const r = applyTransformStep(path, step)
           return { id: path.id, d: r.d, shapeParams: r.shapeParams, transforms: [step] }
         })
@@ -2225,7 +2236,7 @@ export default function CanvasStage() {
       if (lt && lt.kind === 'rotate') {
         const { angle, cx, cy } = lt
         const step: TransformStep = { kind: 'rotate', angle, cx, cy }
-        bakeTransform(m.pathIds, 'rotate', (path) => {
+        if (!isIdentityStep(step)) bakeTransform(m.pathIds, 'rotate', (path) => {
           const r = applyTransformStep(path, step)
           return { id: path.id, d: r.d, shapeParams: r.shapeParams, transforms: [step] }
         })
@@ -2248,6 +2259,7 @@ export default function CanvasStage() {
     }
 
     if (m.type === 'dragbox') {
+      const dragBox = dragBoxRef.current
       if (dragBox) {
         const { sx, sy, ex, ey } = dragBox
         const x1 = Math.min(sx, ex), x2 = Math.max(sx, ex)
@@ -2630,7 +2642,33 @@ export default function CanvasStage() {
     }
 
     setMode2({ type: 'idle' })
-  }, [livePen, dragBox, setMode2, setSelectedIds, setLiveRotationAngle, setLiveBBox, commitEditNodes, pushLocalUndo, getFlat, bakeTransform, commitConstraint, onConstrainClick, setPickHot, pickRegionAt])
+  }, [livePen, setMode2, setSelectedIds, setLiveRotationAngle, setLiveBBox, commitEditNodes, pushLocalUndo, getFlat, bakeTransform, commitConstraint, onConstrainClick, setPickHot, pickRegionAt])
+
+  // A GESTURE RELEASED OFF THE CANVAS STILL ENDS. Konva only hears a mouseup on its own
+  // content element, so a resize (or move, rotate, drag box, point drag…) let go over the
+  // sidebar never reached handleMouseUp: the mode stayed live, the next mouse move went on
+  // transforming with no button held, and the preview transform was never cleared — the
+  // shape was drawn where it was not, so clicking it missed. The window hears every
+  // release, including one outside the browser (the browser keeps delivering to the page
+  // that saw the press). A release ON the canvas reaches the stage first, on the way up to
+  // the window, and every branch of handleMouseUp leaves the mode idle — so this only ever
+  // runs for the releases the stage missed. Losing focus mid-drag (Alt+Tab) has no mouseup
+  // at all and ends the gesture the same way.
+  const handleMouseUpRef = useRef(handleMouseUp)
+  handleMouseUpRef.current = handleMouseUp
+  useEffect(() => {
+    const finish = (evt: MouseEvent) => {
+      if (modeRef.current.type === 'idle') return
+      handleMouseUpRef.current({ evt } as unknown as Konva.KonvaEventObject<MouseEvent>)
+    }
+    const onBlur = () => finish(new MouseEvent('mouseup'))
+    window.addEventListener('mouseup', finish)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('mouseup', finish)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [])
 
   const getCursor = () => {
     if (nodeEditPathId) return 'default'

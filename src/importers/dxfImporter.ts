@@ -25,10 +25,29 @@ const USER_UNITS_TO_MM: Record<DxfUnitsChoice, number> = {
 }
 
 
-function polyToD(pts: { x: number; y: number }[], closed: boolean): string {
+// A POLYLINE'S ARCS LIVE IN ITS BULGES. Each vertex may carry `bulge` = tan(θ/4), θ the
+// included angle of the arc from that vertex to the next — positive CCW, negative CW, 0 or
+// absent a straight line. It is how nearly every CAD package stores fillets, slot ends and
+// rounded rectangles in a polyline, and reading only x/y imported each one as its chord.
+// DXF is Y-up like CNC, so CCW is sweep=1 here exactly as in `arcEdge` below. A closed
+// polyline's closing segment takes the LAST vertex's bulge.
+function polyToD(pts: { x: number; y: number; bulge?: number }[], closed: boolean): string {
   if (pts.length < 2) return ''
-  const parts = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${round4(p.x)},${round4(p.y)}`)
-  if (closed) parts.push('Z')
+  const seg = (a: { x: number; y: number; bulge?: number }, b: { x: number; y: number }): string => {
+    const bulge = a.bulge ?? 0
+    const chord = Math.hypot(b.x - a.x, b.y - a.y)
+    if (Math.abs(bulge) < 1e-9 || chord < 1e-9) return `L${round4(b.x)},${round4(b.y)}`
+    const theta = 4 * Math.atan(Math.abs(bulge))
+    const r = chord / (2 * Math.sin(theta / 2))
+    return `A${round4(r)},${round4(r)},0,${theta > Math.PI ? 1 : 0},${bulge > 0 ? 1 : 0},${round4(b.x)},${round4(b.y)}`
+  }
+  const parts = [`M${round4(pts[0].x)},${round4(pts[0].y)}`]
+  for (let i = 1; i < pts.length; i++) parts.push(seg(pts[i - 1], pts[i]))
+  if (closed) {
+    const last = pts[pts.length - 1]
+    if (Math.abs(last.bulge ?? 0) >= 1e-9) parts.push(seg(last, pts[0]))
+    parts.push('Z')
+  }
   return parts.join(' ')
 }
 
@@ -346,14 +365,14 @@ export function importDxf(
         case 'LWPOLYLINE': {
           const e = entity as import('dxf-parser').LwpolylineEntity
           if (e.vertices.length < 2) continue
-          d = polyToD(e.vertices.map((v) => ({ x: sc(v.x), y: sc(v.y) })), e.shape)
+          d = polyToD(e.vertices.map((v) => ({ x: sc(v.x), y: sc(v.y), bulge: v.bulge })), e.shape)
           name = e.shape ? 'Closed Polyline' : 'Polyline'
           break
         }
         case 'POLYLINE': {
           const e = entity as import('dxf-parser').PolylineEntity
           if (e.vertices.length < 2) continue
-          d = polyToD(e.vertices.map((v) => ({ x: sc(v.x), y: sc(v.y) })), e.shape)
+          d = polyToD(e.vertices.map((v) => ({ x: sc(v.x), y: sc(v.y), bulge: v.bulge })), e.shape)
           name = 'Polyline'
           break
         }

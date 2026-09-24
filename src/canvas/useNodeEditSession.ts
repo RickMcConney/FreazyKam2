@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRefState } from './useRefState'
-import { pushLocalHistory } from './localHistory'
+import { pushLocalHistory, globalStepUndoable, globalStepRedoable } from './localHistory'
 import { usePathsStore } from '../store/pathsStore'
 import { useTimelineStore } from '../timeline/timelineStore'
+import type { TimelineEvent } from '../timeline/events'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import { regenerateAffected } from '../cam/regenerate'
@@ -18,7 +19,19 @@ import type { CrossPathEntry } from './layers/NodeEditLayer'
 // atomic global history entry (cross-path join, loop split, trim split) —
 // crossing such an entry replays the paired global undo/redo so the other
 // path involved is restored in the same step.
-export type NodeEditEntry = { nodes: PathNode[]; closed: boolean; globalStep?: boolean }
+//
+// A global step also remembers WHICH timeline events it sits between: `before`, the event
+// the timeline stood on when the gesture began (null at genesis), and `event`, the one the
+// gesture recorded (filled in on the first local undo, which is when it is known for
+// sure). Replaying `timeline.undo()` blindly assumed the gesture was still the tip — but
+// the session stays open while the rest of the app is usable, so an op edit or a
+// constraint recorded in between would have been the one taken back, with the nodes then
+// restored over the wrong document. Identities rather than cursor numbers because the
+// history sheds old events, which renumbers the cursor.
+export type NodeEditEntry = {
+  nodes: PathNode[]; closed: boolean; globalStep?: boolean
+  before?: TimelineEvent | null; event?: TimelineEvent
+}
 
 /** What is on screen, and how big a millimetre is there — see
  *  `collectCrossPathEntries`, which needs both to keep a project full of gears
@@ -192,7 +205,10 @@ export function useNodeEditSession() {
   // Snapshot the PRE-gesture nodes+closed. `globalStep: true` for gestures that
   // also write one atomic global history entry (join/split) — see NodeEditEntry.
   const pushLocalUndo = useCallback((nodes: PathNode[], closed: boolean, globalStep = false) => {
-    pushLocalHistory(localPast.current, { nodes, closed, globalStep })
+    const tl = useTimelineStore.getState()
+    pushLocalHistory(localPast.current, globalStep
+      ? { nodes, closed, globalStep, before: tl.events[tl.cursor - 1] ?? null }
+      : { nodes, closed })
     localFuture.current = []
     useUIStore.getState().setNodeEditHistoryFlags(true, false)
   }, [])
@@ -202,11 +218,29 @@ export function useNodeEditSession() {
   // subscription below doesn't re-parse our own writes.
   const selfWriteRef = useRef(false)
 
+  // The global history moved under this session in a way the local stacks cannot account
+  // for. They are dropped (the next undo is the ordinary global one), exactly as the
+  // external-change subscription below does; nothing is written.
+  const abandonLocalHistory = useCallback(() => {
+    localPast.current = []
+    localFuture.current = []
+    useUIStore.getState().setNodeEditHistoryFlags(false, false)
+  }, [])
+
   const localUndo = useCallback(() => {
     if (localPast.current.length === 0) return
     const entry = localPast.current[localPast.current.length - 1]
+    let event: TimelineEvent | undefined
+    if (entry.globalStep) {
+      const tl = useTimelineStore.getState()
+      if (!globalStepUndoable(tl.events, tl.cursor, entry.before ?? null)) {
+        abandonLocalHistory()
+        return
+      }
+      event = tl.events[tl.cursor - 1]
+    }
     localFuture.current = [
-      { nodes: editNodesRef.current, closed: editClosedRef.current, globalStep: entry.globalStep },
+      { nodes: editNodesRef.current, closed: editClosedRef.current, globalStep: entry.globalStep, before: entry.before, event },
       ...localFuture.current,
     ]
     localPast.current = localPast.current.slice(0, -1)
@@ -226,7 +260,16 @@ export function useNodeEditSession() {
   const localRedo = useCallback(() => {
     if (localFuture.current.length === 0) return
     const entry = localFuture.current[0]
-    pushLocalHistory(localPast.current, { nodes: editNodesRef.current, closed: editClosedRef.current, globalStep: entry.globalStep })
+    if (entry.globalStep) {
+      // Redo re-applies the event after the cursor, which is ours only if nothing has
+      // been recorded since the undo (a new record truncates the redo branch).
+      const tl = useTimelineStore.getState()
+      if (!globalStepRedoable(tl.events, tl.cursor, entry.before ?? null, entry.event)) {
+        abandonLocalHistory()
+        return
+      }
+    }
+    pushLocalHistory(localPast.current, { nodes: editNodesRef.current, closed: editClosedRef.current, globalStep: entry.globalStep, before: entry.before })
     localFuture.current = localFuture.current.slice(1)
     if (entry.globalStep) {
       selfWriteRef.current = true

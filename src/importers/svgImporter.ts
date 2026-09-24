@@ -308,6 +308,56 @@ function parseSvgLength(attr: string|null): {px:number; unit:string}|null {
   return { px: parseFloat(m[1])*factor, unit }
 }
 
+// ── Page fit, visibility ─────────────────────────────────────────────────────
+
+/**
+ * The viewBox that maps UNIFORMLY onto the page, as `preserveAspectRatio` asks.
+ *
+ * `svgToCncMat` scales X by widthMM/vbW and Y by heightMM/vbH independently — which is
+ * `preserveAspectRatio="none"`. The SVG default is `xMidYMid meet`: one scale for both
+ * axes, the drawing centred on the page. When the viewBox and the page disagree in
+ * aspect (width 100mm, height 50mm, viewBox 0 0 100 100) the old import stretched a
+ * circle into an ellipse. Rather than teach `svgToCncMat` alignment — the SVG exporter
+ * is its exact inverse and relies on it staying that simple — this widens the viewBox
+ * to the page's aspect about the requested alignment, and the plain transform of the
+ * widened box IS the uniform one. Units stay SVG user units, y down: `yMin` is the TOP.
+ */
+export function fitViewBox(
+  widthMM: number, heightMM: number,
+  vb: { x: number; y: number; w: number; h: number },
+  preserveAspectRatio: string | null,
+): { x: number; y: number; w: number; h: number } {
+  const par = (preserveAspectRatio ?? '').trim()
+  if (par.startsWith('none') || vb.w <= 0 || vb.h <= 0 || widthMM <= 0 || heightMM <= 0) return vb
+  const sx = widthMM / vb.w, sy = heightMM / vb.h
+  // Equal to within rounding is equal: a file whose page matches its viewBox (every
+  // file this app exports) must come back byte-for-byte where it was.
+  if (Math.abs(sx - sy) <= 1e-9 * Math.max(sx, sy)) return vb
+  const m = par.match(/x(Min|Mid|Max)Y(Min|Mid|Max)(?:\s+(meet|slice))?/)
+  const frac = (k: string | undefined) => (k === 'Min' ? 0 : k === 'Max' ? 1 : 0.5)
+  const ax = frac(m?.[1]), ay = frac(m?.[2])
+  const s = m?.[3] === 'slice' ? Math.max(sx, sy) : Math.min(sx, sy)
+  const w = widthMM / s, h = heightMM / s
+  return { x: vb.x - (w - vb.w) * ax, y: vb.y - (h - vb.h) * ay, w, h }
+}
+
+/**
+ * Is this element switched off? `display:none` hides the element AND everything in it —
+ * it is how Inkscape hides a layer (`style="display:none"` on the layer's <g>), so a
+ * hidden construction layer or the photo someone traced over was imported as paths to
+ * machine. `visibility:hidden` is honoured on the element itself only: a child may set
+ * it back to visible, so it does not prune a subtree.
+ */
+export function svgDisplayNone(get: (name: string) => string | null): boolean {
+  if (get('display')?.trim() === 'none') return true
+  return /(?:^|;)\s*display\s*:\s*none\s*(?:;|!|$)/.test(get('style') ?? '')
+}
+export function svgVisibilityHidden(get: (name: string) => string | null): boolean {
+  const v = get('visibility')?.trim()
+  if (v === 'hidden' || v === 'collapse') return true
+  return /(?:^|;)\s*visibility\s*:\s*(?:hidden|collapse)\s*(?:;|!|$)/.test(get('style') ?? '')
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 export interface ImportOptions {
   ppi?: number
@@ -371,20 +421,63 @@ export function importSvg(svgText: string, options?: ImportOptions | number, gro
     widthMM=100; heightMM=100; vbW=100; vbH=100; needsPpiPrompt=true
   }
 
+  // A viewBox whose aspect differs from the page is fitted, not stretched — see fitViewBox.
+  if (vbAttr && wParsed && hParsed) {
+    const fit = fitViewBox(widthMM, heightMM, { x: vbX, y: vbY, w: vbW, h: vbH }, svg.getAttribute('preserveAspectRatio'))
+    vbX = fit.x; vbY = fit.y; vbW = fit.w; vbH = fit.h
+  }
+
   // Global transform: SVG px → CNC mm (Y-up). See `svgToCncMat` — the exporter
   // has to invert exactly this, so it is stated once.
   const [gsx, , , gsy, gtx, gty] = svgToCncMat(widthMM, heightMM, vbX, vbY, vbW, vbH)
 
   const paths: ImportedPath[] = []
 
-  function processElement(el: Element, parentMat: Mat6) {
+  // Built on the first <use>, so a file without any never walks the document for ids.
+  let idMap: Map<string, Element> | null = null
+
+  // `depth` bounds <use> chains, which may reference each other in a cycle.
+  function processElement(el: Element, parentMat: Mat6, depth = 0) {
     const tag = el.tagName.toLowerCase().replace(/^.*:/, '')
+    const get = (n: string) => el.getAttribute(n)
+    if (svgDisplayNone(get)) return
     const elMat = matMul(parentMat, parseSvgTransform(el.getAttribute('transform')))
 
-    if (tag === 'g' || tag === 'svg') {
-      for (const child of el.children) processElement(child, elMat)
+    if (tag === 'g' || tag === 'svg' || tag === 'a') {
+      for (const child of el.children) processElement(child, elMat, depth)
       return
     }
+
+    // <use href="#id" x y>: the referenced element drawn again, shifted by (x, y) after
+    // the use's own transform. Icons, repeated parts and some font-to-path exports are
+    // drawn this way, and were silently missing. A <symbol> contributes its children.
+    // (A symbol's own viewBox scaling is not applied — rare in the files this imports.)
+    if (tag === 'use') {
+      if (depth >= 16) return
+      const href = el.getAttribute('href') ?? el.getAttribute('xlink:href')
+        ?? el.getAttributeNS('http://www.w3.org/1999/xlink', 'href')
+      if (!href?.startsWith('#')) return
+      const id = href.slice(1)
+      if (!idMap) {
+        idMap = new Map()
+        for (const n of Array.from(doc.getElementsByTagName('*'))) {
+          const nid = n.getAttribute('id')
+          if (nid && !idMap.has(nid)) idMap.set(nid, n)
+        }
+      }
+      const ref = idMap.get(id)
+      if (!ref) return
+      const num = (n: string) => parseFloat(el.getAttribute(n) ?? '0') || 0
+      const useMat = matMul(elMat, [1, 0, 0, 1, num('x'), num('y')])
+      if (ref.tagName.toLowerCase().replace(/^.*:/, '') === 'symbol') {
+        for (const child of ref.children) processElement(child, useMat, depth + 1)
+      } else {
+        processElement(ref, useMat, depth + 1)
+      }
+      return
+    }
+
+    if (svgVisibilityHidden(get)) return
 
     let rawD: string|null = null
     switch (tag) {

@@ -91,6 +91,9 @@ interface FeedCalcResult {
   spindleTooFast: boolean // true when the machine's min rpm exceeds the material's safe Vc ceiling
 }
 
+// Same floor `geom.zPasses` applies to its own step.
+const MIN_STEP_DOWN_MM = 0.01
+
 function computeFeeds(input: FeedCalcInput): FeedCalcResult {
   const { tool, materialHardness, rigidity, maxFeedMmMin, minSpindleRpm, maxSpindleRpm, maxSurfaceSpeedMMin, userStepDownMM, totalDepthMM, enabled, radialEngagementFraction } = input
   const maxFeed = maxFeedMmMin > 0 ? maxFeedMmMin : Infinity
@@ -101,7 +104,12 @@ function computeFeeds(input: FeedCalcInput): FeedCalcResult {
     return {
       xyFeedMmMin: Math.min(tool.xyFeedMmMin, maxFeed),
       plungeMmMin: Math.min(tool.zFeedMmMin, maxFeed),
-      stepDownMM: userStepDownMM,
+      // The user's value, but never one no pass can take. `geom.zPasses` has always
+      // floored its step, but inlay and profile3d step themselves, and a 0 (a hand-edited
+      // file, stale form defaults) looped them forever — a worker growing an array of
+      // -0 passes until it ran out of memory. Every generator's step-down comes through
+      // here, so the floor goes here once.
+      stepDownMM: Number.isFinite(userStepDownMM) ? Math.max(MIN_STEP_DOWN_MM, Math.abs(userStepDownMM)) : MIN_STEP_DOWN_MM,
       rpm: tool.rpm,
       rpmAdjusted: false,
       spindleTooFast: false,

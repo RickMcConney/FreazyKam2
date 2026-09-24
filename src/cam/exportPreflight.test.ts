@@ -156,6 +156,30 @@ describe('operations that will not be in the file', () => {
     expect(texts()).toContain('warn: 3 operations have no toolpath and are NOT in this file — A, B, C.')
   })
 
+  // Thin text: the V-bit's walls meet and take the whole socket, so the end-mill half
+  // generates to nothing. That is right, and it must not be reported as a failure.
+  const inlayPair = (endmillSegs: MotionSegment[]) => {
+    const fields = { type: 'inlay', role: 'female', pathId: 'p', islandIds: [], pocketToolId: 'em', vbitToolId: 'em',
+      angleDeg: 60, pocketDepthMM: 3, stepDownMM: 3, stepoverPercent: 40, glueLineMM: 0, clearanceMM: 0, rampIn: false }
+    return [
+      op({ ...fields, id: 'iv', name: 'Inlay Female (V-bit): Text', phase: 'vbit', linkedOpId: 'ie' }),
+      op({ ...fields, id: 'ie', name: 'Inlay Female (End Mill): Text', phase: 'endmill', linkedOpId: 'iv', segments: endmillSegs }),
+    ]
+  }
+
+  it('says an inlay half its partner cuts completely has nothing to cut — info, not a warning', () => {
+    setOps(...inlayPair([]))
+    expect(texts()).toEqual([
+      'info: Inlay Female (End Mill): Text: nothing to cut — the V-bit clears it completely, so it is not in this file and its tool is not called for.',
+    ])
+  })
+
+  it('still warns when BOTH halves of an inlay are empty — that pair cuts nothing', () => {
+    const [v, e] = inlayPair([])
+    setOps({ ...v, segments: [] } as AnyOperation, e)
+    expect(has(/^warn: 2 operations have no toolpath/)).toBe(true)
+  })
+
   it('reports hidden operations as a deliberate exclusion, and leaves them out of the extents', () => {
     setOps(op(), op({ name: 'Off', visible: false, segments: square(500, 500, 600, 600) }))
     const p = buildExportPreflight()

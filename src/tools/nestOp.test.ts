@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { nest, groupPathsForNesting, type NestItem, type NestParams, type NestPlacement } from './nestOp'
+import { nest, groupPathsForNesting, nestIsStale, type NestItem, type NestParams, type NestPlacement } from './nestOp'
 import type { Pt2 } from '../cam/pathFlattener'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -558,5 +558,31 @@ describe('groupPathsForNesting', () => {
       { id: 'loose', d: rectD(20, 20, 5, 5) },
     ])
     expect(groups).toHaveLength(2)
+  })
+})
+
+// The nest's result is applied to the snapshot it was solved from, so an edit made to a
+// part while the worker ran would be written over. NestForm refuses the result instead.
+describe('nestIsStale', () => {
+  const a = { id: 'a', d: 'M0,0' }, b = { id: 'b', d: 'M1,1' }, c = { id: 'c', d: 'M2,2' }
+  const before = [a, b, c]
+
+  it('accepts a result when nothing it nested was touched', () => {
+    expect(nestIsStale(before, before, ['a', 'b'], false)).toBe(false)
+    // An unrelated path edited: irrelevant without obstacles.
+    expect(nestIsStale(before, [a, b, { ...c, d: 'M9,9' }], ['a', 'b'], false)).toBe(false)
+  })
+
+  it('refuses it when a nested part was edited while the nest ran', () => {
+    expect(nestIsStale(before, [a, { ...b, d: 'M5,5' }, c], ['a', 'b'], false)).toBe(true)
+  })
+
+  it('does not refuse over a nested part that was deleted — it just drops out', () => {
+    expect(nestIsStale(before, [a, c], ['a', 'b'], false)).toBe(false)
+  })
+
+  it('refuses any change at all when other paths were obstacles', () => {
+    expect(nestIsStale(before, [a, b, { ...c, d: 'M9,9' }], ['a', 'b'], true)).toBe(true)
+    expect(nestIsStale(before, before, ['a', 'b'], true)).toBe(false)
   })
 })

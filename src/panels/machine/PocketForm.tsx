@@ -212,7 +212,9 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
     // The strategies are named for the user here, not in cam/pocket.ts: the toggle shows
     // hybrid as "auto", and a message naming a word that is not on the button is no help.
     const noteFallback = (note: PocketNote) => {
-      if (note.kind !== 'strategy-fallback') return
+      // Anything else (an area too narrow for the tool) has no banner wording of its
+      // own here — the status bar's short line says it.
+      if (note.kind !== 'strategy-fallback') { useUIStore.getState().showStatus(note.short, 'warn'); return }
       const name = (id: PocketStrategy) => STRATEGY_LABELS[id] ?? id
       const chosen = name(form.strategy)
       setNoticeMsg(

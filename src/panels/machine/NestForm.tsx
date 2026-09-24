@@ -7,9 +7,10 @@ import { useFormDefaultsStore } from '../../store/formDefaultsStore'
 import { usePathsStore, useSelectedPaths, type ImportedPath } from '../../store/pathsStore'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 import { useUIStore } from '../../store/uiStore'
+import { useProjectStore } from '../../store/projectStore'
 import { regenerateAffectedMany } from '../../cam/regenerate'
 import { applyTransformStep, placedAngleDeg, type TransformStep } from '../../canvas/selectionUtils'
-import { groupPathsForNesting, type NestItem } from '../../tools/nestOp'
+import { groupPathsForNesting, nestIsStale, type NestItem } from '../../tools/nestOp'
 import { copyPathsUnderSteps } from '../../tools/pathCopy'
 import { uid } from '../../uid'
 import { runInWorkerFor } from '../../workers/workerClient'
@@ -108,11 +109,12 @@ export function NestForm({ onClose }: { onClose: () => void }) {
     const selected = new Set(selPaths.map((p) => p.id))
     // Read BEFORE the await, and the updates below are built from this snapshot:
     // the nest is a transform per part, so it has to be applied to the geometry
-    // it was computed from. A path deleted while the worker ran simply drops out
-    // (the `if (!path) continue` below); one MOVED while it ran would be moved
-    // again by its nest transform, which is the honest answer — the alternative
-    // is silently discarding the whole nest.
+    // it was computed from. That also means an edit made to a nested part while the
+    // worker ran would be silently REVERTED — the update writes the snapshot's `d`
+    // back — so the result is checked against the live store before it lands (below).
+    // A path deleted meanwhile simply drops out (the `if (!path) continue`).
     const byIdPre = new Map(paths.map((p) => [p.id, p]))
+    const epoch = useProjectStore.getState().documentEpoch
     const items: NestItem[] = groups.map((g, i) => ({
       id: `g${i}`,
       rings: g.rings,
@@ -153,6 +155,19 @@ export function NestForm({ onClose }: { onClose: () => void }) {
       obstacles,
       fill: filling,
     })
+
+    // THE DRAWING MAY HAVE MOVED ON while the worker ran. Paths are replaced, never
+    // mutated, so a nested part that is not the same object any more was edited — a
+    // drag, a point edit, a parameter step — and applying the nest to the snapshot
+    // would throw that edit away. With "avoid other paths" on, ANY path edit can have
+    // moved an obstacle the nest packed around. A different document (New, Open, an
+    // autosave restore) can bring the same ids back, so the epoch is checked as well.
+    // Refused rather than re-based: the nest was solved for the old geometry.
+    if (useProjectStore.getState().documentEpoch !== epoch
+      || nestIsStale(paths, usePathsStore.getState().paths, groups.flatMap((g) => g.ids), form.avoidOthers)) {
+      setError('The drawing changed while nesting — run Nest again.')
+      return
+    }
 
     const onStock = result.placements.filter((p) => p.onStock)
     if (onStock.length === 0) {

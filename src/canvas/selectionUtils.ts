@@ -210,6 +210,24 @@ export type TransformStep =
   | { kind: 'skew'; kx: number; ky: number; ax: number; ay: number }
   | { kind: 'mirror'; axis: 'x' | 'y'; cx: number; cy: number }
 
+/**
+ * Does this step leave every point where it is?
+ *
+ * A drag that lands back where it began — which grid snap makes routine, since a part
+ * already on the grid dragged a few pixels snaps straight back — used to bake anyway: a
+ * Move chip, the simulation thrown away, and every operation on the part regenerated,
+ * all for nothing. The gesture's commit asks this first. A mirror is never the identity.
+ */
+export function isIdentityStep(step: TransformStep, eps = 1e-9): boolean {
+  switch (step.kind) {
+    case 'translate': return Math.abs(step.dx) < eps && Math.abs(step.dy) < eps
+    case 'scale': return Math.abs(step.sx - 1) < eps && Math.abs(step.sy - 1) < eps
+    case 'rotate': return Math.abs(step.angle % 360) < eps
+    case 'skew': return Math.abs(step.kx) < eps && Math.abs(step.ky) < eps
+    case 'mirror': return false
+  }
+}
+
 // Compose two Mat6es where `m1` is applied first, then `m2` — i.e. the
 // single matrix equivalent to point => m2(m1(point)).
 function composeMat6(m1: Mat6, m2: Mat6): Mat6 {

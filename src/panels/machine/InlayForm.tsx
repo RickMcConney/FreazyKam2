@@ -10,7 +10,7 @@ import { usePathsStore, type ImportedPath } from '../../store/pathsStore'
 import { useSelectedPaths } from '../../store/pathsStore'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 import { isWorkCancelled } from '../../workers/workerClient'
-import { generateOperation } from '../../cam/opJob'
+import { generateOperation, showGenNotes } from '../../cam/opJob'
 import { effectiveStepDownMM, seedStepDownMM } from '../../cam/feeds'
 import { includedAngleDeg, isVCutter } from '../../cam/geom'
 import { groupPathsByContainment } from './containment'
@@ -224,7 +224,7 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
         try {
           // Generated from the settings just written — the same call an automatic
           // regenerate makes (cam/opJob), which also writes the linked half.
-          await generateOperation(editOp.id)
+          showGenNotes((await generateOperation(editOp.id)).notes)
         } catch (err) {
           if (!isWorkCancelled(err)) {
             reportError(editOp.id, err)
@@ -280,7 +280,7 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
           try {
             // Generated from the fields just written (roughing-only: vbitToolId is
             // INLAY_NO_FINISH, phase endmill) — the same call an automatic regenerate makes.
-            await generateOperation(ids[i])
+            showGenNotes((await generateOperation(ids[i])).notes)
           } catch (err) {
             // A cancel abandons the whole Generate, not just this group.
             if (isWorkCancelled(err)) break
@@ -372,7 +372,7 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
           // Generated from the fields and links just written — the same call an automatic
           // regenerate makes (cam/opJob). It writes the first op by its phase and the linked
           // second op with the other half — exactly what this loop's own two writes used to do.
-          await generateOperation(firstIds[i])
+          showGenNotes((await generateOperation(firstIds[i])).notes)
         } catch (err) {
           if (isWorkCancelled(err)) break
           reportError(firstIds[i], err)

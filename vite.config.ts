@@ -3,7 +3,23 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
+import { execSync } from 'child_process'
 import { docsPlugin } from './build/docsPlugin'
+
+// The date shown in the status bar ("FreazyKam MM/DD/YYYY") is the date of the commit
+// being built. It is read at build time rather than written into a source file: the
+// old repo stamped src/version.ts from a local pre-commit hook, and hooks are not
+// cloned, so the date froze the day the project moved. `git log` works in the Pages
+// workflow's shallow checkout too (HEAD is always fetched). Outside a git checkout
+// it falls back to today.
+function commitDate(): string {
+  try {
+    return execSync('git log -1 --format=%cd --date=format:%m/%d/%Y', { encoding: 'utf-8' }).trim()
+  } catch {
+    const d = new Date()
+    return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`
+  }
+}
 
 // jspoly.js has require() calls guarded by DISABLE_REQUIRE=true (dead code).
 // Rolldown resolves them statically at the native level before JS transforms run,
@@ -41,6 +57,9 @@ const reloadWorkerGraph = {
 // while the only home was the project page at rickmcconney.github.io.
 export default defineConfig({
   base: '/',
+  define: {
+    __BUILD_DATE__: JSON.stringify(commitDate()),
+  },
   plugins: [react(), jspolyPlugin, reloadWorkerGraph, docsPlugin()],
   test: {
     environment: 'node',

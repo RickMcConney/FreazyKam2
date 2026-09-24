@@ -11,7 +11,8 @@ import { loadImageLuminance } from '../io/imageLuminance'
 import { decodeStlMesh } from '../importers/stlImporter'
 import { effectiveStepDownMM, trochoidalEngagementFraction } from './feeds'
 import { resolveStartZForOp } from './startHeight'
-import type { PocketNote } from './pocket'
+import type { GenNote } from './notes'
+import { useUIStore } from '../store/uiStore'
 
 // ONE PLACE THAT TURNS A STORED OPERATION INTO ITS GENERATOR CALL.
 //
@@ -42,6 +43,15 @@ export function inlayJobKey(op: { id: string; linkedOpId?: string }): string {
   return op.linkedOpId ? `inlay-pair:${[op.id, op.linkedOpId].sort()[0]}` : op.id
 }
 
+/**
+ * Put a generation's notes on the status bar — for callers that have no banner of their
+ * own to say it in. No op-name prefix: StatusBar truncates, and a name like
+ * 'Pocket: Path 1 (1/8" End Mill)' would consume the whole line before the note starts.
+ */
+export function showGenNotes(notes: GenNote[]): void {
+  for (const note of notes) useUIStore.getState().showStatus(note.short, 'warn')
+}
+
 export interface GenerateOverrides {
   /** Alt-click on PocketForm: run the chosen strategy on a shape it would decline. Not a
    *  setting — an override of a measured verdict for this one Generate. */
@@ -49,9 +59,10 @@ export interface GenerateOverrides {
 }
 
 export interface GenerateResult {
-  /** A pocket strategy that declined the shape and fell back. The CALLER says so: a form
-   *  in its own banner, an automatic regenerate on the status bar. */
-  notes: PocketNote[]
+  /** What the generator skipped or substituted (see cam/notes.ts) — a pocket strategy
+   *  that fell back, a v-carve region or inlay sub-cut too small to cut. The CALLER says
+   *  so: a form in its own banner, an automatic regenerate on the status bar. */
+  notes: GenNote[]
 }
 
 /**
@@ -67,7 +78,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
   const { paths } = usePathsStore.getState()
   const { tools } = useToolStore.getState()
   const { safeHeightMM, widthMM: stockW, heightMM: stockH } = useWorkpieceStore.getState()
-  const notes: PocketNote[] = []
+  const notes: GenNote[] = []
 
   const op = operations.find((o) => o.id === opId)
   if (!op) return { notes }
@@ -181,10 +192,12 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
     // `maxDepthMM` caps the TOTAL) — that convention is load-bearing for the male-inlay
     // path, so the conversion from "depth below the start surface" happens here.
     const zStartMM = -startZMM
-    setSegments(opId, await runInWorkerFor(opId, 'generateVCarve', path.d, tool, {
+    const vcarve = await runInWorkerFor(opId, 'generateVCarve', path.d, tool, {
       angleDeg: op.angleDeg, maxDepthMM: op.maxDepthMM + zStartMM, zStartMM, islandDs,
       startNear: op.entryHint, safeHeightMM,
-    }), builtWith)
+    })
+    setSegments(opId, vcarve.segments, builtWith)
+    notes.push(...vcarve.notes)
 
   } else if (op.type === 'photovcarve') {
     const imgPath = paths.find((p) => p.id === op.pathId)
@@ -289,6 +302,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       ? await runInWorkerFor(inlayJobKey(op), 'generateInlayFemale', path.d, pocketTool, vbitTool, inlayParams)
       : await runInWorkerFor(inlayJobKey(op), 'generateInlayMale', path.d, pocketTool, vbitTool, inlayParams)
     setSegments(opId, op.phase === 'vbit' ? result.vbitSegs : result.endmillSegs, builtWith)
+    notes.push(...result.notes)
     if (op.linkedOpId) {
       const linkedOp = useToolpathStore.getState().operations.find((o) => o.id === op.linkedOpId)
       if (linkedOp?.type === 'inlay') {

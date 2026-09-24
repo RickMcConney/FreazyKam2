@@ -1,5 +1,8 @@
 declare module 'dxf-parser' {
   interface DxfPoint { x: number; y: number; z?: number }
+  /** A polyline vertex. `bulge` = tan(θ/4) of the arc to the NEXT vertex (group 42),
+   *  positive CCW; absent when the segment is straight. */
+  interface DxfPolyVertex extends DxfPoint { bulge?: number }
 
   interface BaseEntity { type: string; layer?: string; handle?: string }
 
@@ -7,13 +10,13 @@ declare module 'dxf-parser' {
 
   interface LwpolylineEntity extends BaseEntity {
     type: 'LWPOLYLINE'
-    vertices: DxfPoint[]
+    vertices: DxfPolyVertex[]
     shape: boolean
   }
 
   interface PolylineEntity extends BaseEntity {
     type: 'POLYLINE'
-    vertices: DxfPoint[]
+    vertices: DxfPolyVertex[]
     shape: boolean
   }
 

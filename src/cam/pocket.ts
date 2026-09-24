@@ -11,6 +11,8 @@
 //
 // This file stays the module everything imports — several scripts/ harnesses
 // import '../src/cam/pocket.ts' by explicit path.
+import { GeometryTooSmallError } from './errors'
+import { addNote, type GenNote } from './notes'
 import { flattenPath, splitSelfIntersecting, requireClosedSubpaths, douglasPeucker, type Pt2 } from './pathFlattener'
 import { zPasses, pointInPolygon, classifySubpaths } from './geom'
 import { reportProgress, subProgress } from './progress'
@@ -41,21 +43,9 @@ const PLANNERS: Record<PocketStrategy, PocketPlanner> = {
 // open ground, contour around the islands, and it is what a user would have picked.
 const DECLINE_FALLBACK: PocketStrategy = 'hybrid'
 
-/**
- * A non-fatal note from the last generatePocket call — a strategy fallback, today.
- *
- * `kind` rather than a string the caller matches on, because the two callers want to say
- * different things: the status bar is one truncating line and takes `short`, while a form's
- * banner has room for a sentence and knows the user-facing name of the strategy the user
- * actually picked (the toggle shows hybrid as "auto"). Naming strategies is the UI's job,
- * so the wording lives there and this only says what happened.
- */
-export interface PocketNote { kind: 'strategy-fallback'; short: string }
-
-// Drained by the caller (the worker handler) so it can be shown to the user; harnesses
-// ignore it.
-const _notes: PocketNote[] = []
-export function takePocketNotes(): PocketNote[] { return _notes.splice(0, _notes.length) }
+/** A non-fatal note from a pocket generation — see `cam/notes.ts`, which it now shares
+ *  with every other generator. Kept as a name because the form and opJob import it. */
+export type PocketNote = GenNote
 
 // ─── Public API ────────────────────────────────────────────────────────────────
 
@@ -75,7 +65,7 @@ export function generatePocket(
     remedy: 'Close the path, or use a centerline profile to cut a groove along it.',
   })
   const rings = splitSelfIntersecting(flat)
-  if (rings.length === 0) throw new Error('No geometry found in boundary path')
+  if (rings.length === 0) throw new GeometryTooSmallError('No geometry found in boundary path')
 
   const stepoverMM = tool.diameterMM * (params.stepoverPercent / 100)
   if (stepoverMM < 0.01) throw new Error('Stepover too small')
@@ -137,13 +127,13 @@ export function generatePocket(
   const rampDist = params.rampIn ? 2 * tool.diameterMM : undefined
 
   _perfReset()
-  _notes.length = 0
   // Progress is split per boundary; within one, planning gets the lion's share because
   // that is where the field solve and the adaptive march live, and the depth levels are
   // just replays of the plan.
   reportProgress(0, 'Planning')
   const PLAN_SHARE = 0.8
   let lastPos: Pt2 | null = null
+  let skippedRegions = 0
   for (let bi = 0; bi < regions.length; bi++) {
     const boundary = regions[bi].outer
     const bLo = bi / regions.length
@@ -182,11 +172,12 @@ export function generatePocket(
       // threshold it crossed, not the total it would have reached (5.0x on the dog against
       // the 2.0x quoted); finishing the march for an exact number would cost the user the
       // wait this gate exists to save.
-      _notes.push({ kind: 'strategy-fallback', short: 'Reverted to Auto, Alt click to force' })
+      addNote({ kind: 'strategy-fallback', short: 'Reverted to Auto, Alt click to force' })
       plan = _timed('plan', () => PLANNERS[DECLINE_FALLBACK](boundary, localIslands, tool, params,
         subProgress(bLo, bLo + bSpan * PLAN_SHARE, 'Planning')))
     }
-    if (!plan) continue
+    if (!plan) { skippedRegions++; continue }
+    const regionStart = segs.length
 
     // Every depth level cuts an IDENTICAL 2D path. Each level is emitted with no incoming
     // position, so ring order, start vertices and the links between them are chosen from
@@ -232,9 +223,20 @@ export function generatePocket(
       lastPos = _timed('emitFinish', () => emitLinkedContourRings(plan.finishRings, z, plan.travelObstacles, segs, params.startNear,
         rampDist, roughed || rest.length > 0 ? z : prevZ, safeZ, tool.diameterMM, lastPos))
     }
+    // AN AREA TOO NARROW FOR THE TOOL IS CUT NOT AT ALL, and until this was counted
+    // nothing said so: a planner hands back a plan for it that emits no cuts (or no plan
+    // at all, above), the other areas are cut, and the op reports success. Only an error
+    // when it is EVERY area (below); otherwise the user is told this part was not cut.
+    // Rapids do not count — a level's retract is emitted whether or not it cut.
+    let cut = false
+    for (let i = regionStart; i < segs.length && !cut; i++) if (!segs[i].rapid) cut = true
+    if (!cut) skippedRegions++
   }
 
-  if (segs.length === 0) throw new Error('Pocket area is too small for the selected tool diameter')
+  if (segs.length === 0) throw new GeometryTooSmallError('Pocket area is too small for the selected tool diameter')
+  if (skippedRegions > 0) {
+    addNote({ kind: 'region-skipped', short: `${skippedRegions} of ${regions.length} pocket areas too narrow for the tool` })
+  }
 
   // Single retract at the end after all depth levels.
   if (lastPos) segs.push({ x: lastPos[0], y: lastPos[1], z: safeZ, rapid: true })

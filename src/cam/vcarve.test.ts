@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { generateVCarve } from './vcarve'
+import { generateVCarve, __vcarveTraverse } from './vcarve'
 import { classifySubpaths, pointInPolygon, ptSegDistSq, toolRadiusAtHeight, includedAngleDeg } from './geom'
 import { flattenPath } from './pathFlattener'
 import type { MotionSegment } from '../store/toolpathStore'
@@ -577,5 +577,45 @@ describe('an open boundary is refused, not carved', () => {
 
   it('still carves a closed path', async () => {
     expect((await generateVCarve(CLOSED, vbit(60), params)).length).toBeGreaterThan(0)
+  })
+})
+
+// JSPoly's filter angle can cut one region's medial axis in two. The walk only ever
+// reached the piece it started in — its searches go through the graph, and the graph does
+// not connect the pieces — so the other piece was silently never cut.
+describe('v-carve skeleton traversal', () => {
+  const seg = (x0: number, y0: number, x1: number, y1: number, r = 50) =>
+    ({ point0: { x: x0, y: y0, radius: r }, point1: { x: x1, y: y1, radius: r } })
+  const edgesOf = (paths: { x: number; y: number }[][]) => {
+    const out = new Set<string>()
+    for (const p of paths) for (let i = 1; i < p.length; i++) {
+      const a = `${p[i - 1].x},${p[i - 1].y}`, b = `${p[i].x},${p[i].y}`
+      out.add(a < b ? `${a}|${b}` : `${b}|${a}`)
+    }
+    return out
+  }
+
+  it('cuts every edge of a skeleton that comes in two pieces', () => {
+    // A chain near the origin and a Y-shaped piece far away, not joined.
+    const segs = [
+      seg(0, 0, 100, 0), seg(100, 0, 200, 0),
+      seg(1000, 0, 1100, 0), seg(1100, 0, 1200, 100), seg(1100, 0, 1200, -100),
+    ]
+    const paths = __vcarveTraverse(segs, 0, 0)
+    expect(paths).toHaveLength(2)
+    const cut = edgesOf(paths)
+    for (const sg of segs) {
+      const a = `${sg.point0.x},${sg.point0.y}`, b = `${sg.point1.x},${sg.point1.y}`
+      expect(cut.has(a < b ? `${a}|${b}` : `${b}|${a}`)).toBe(true)
+    }
+  })
+
+  it('cuts the piece nearest the tool first', () => {
+    const segs = [seg(0, 0, 100, 0), seg(1000, 0, 1100, 0)]
+    expect(__vcarveTraverse(segs, 1050, 0)[0].some((p) => p.x >= 1000)).toBe(true)
+  })
+
+  it('leaves a connected skeleton as one walk', () => {
+    expect(__vcarveTraverse([seg(0, 0, 100, 0), seg(100, 0, 200, 50)], 0, 0)).toHaveLength(1)
   })
 })

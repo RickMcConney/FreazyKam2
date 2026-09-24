@@ -1,4 +1,6 @@
-import { pointInPolygon, interiorPoint, pushAll, isVCutter, tipBallRadiusMM, vProfileHeightMM, vRadiusAtHeightMM } from './geom'
+import { pointInPolygon, interiorPoint, pushAll, zPasses, isVCutter, tipBallRadiusMM, vProfileHeightMM, vRadiusAtHeightMM } from './geom'
+import { GeometryTooSmallError } from './errors'
+import { addNote } from './notes'
 import { flattenPath, signedArea, splitSelfIntersecting, requireClosedSubpaths, sharesVertex, type Pt2 } from './pathFlattener'
 import { edtSq } from './lib/edt'
 import { generatePocket } from './pocket'
@@ -348,11 +350,13 @@ function letterReliefPlunges(
   return out
 }
 
-// Returns true for geometry-constraint errors that are expected and safe to skip.
-// Unknown errors (regressions, bad config) are re-thrown so they surface immediately.
-function isExpectedGeometryError(e: unknown): boolean {
-  if (!(e instanceof Error)) return false
-  return /too small|no geometry|medial axis|boundary vcarve/i.test(e.message)
+// A sub-cut too small for its tool is skipped rather than failing the whole half — a
+// counter narrower than the end mill, a wall band with nothing in it — but it is NOT
+// silent any more: an inlay socket whose floor clear was skipped cannot seat its plug,
+// and neither half looks wrong on the canvas. Anything else (a setting, a bug) rethrows.
+function skipTooSmall(e: unknown, what: string): void {
+  if (!(e instanceof GeometryTooSmallError)) throw e
+  addNote({ kind: 'subcut-skipped', short: `Inlay: ${what} too small to cut` })
 }
 
 // Round all convex (outer) corners of path d to radius r using the corner tool.
@@ -539,13 +543,10 @@ function mirrorPathD(d: string): string {
 // re-marking the same spot once per depth. Direction is kept constant across passes
 // so the finish wall is cut consistently (climb/conventional) rather than alternating.
 // Step-down Z levels from the surface to -depth, ending on the full-depth pass.
+// The shared `zPasses`, which floors the step — this was a private copy without the floor,
+// and a step-down of 0 looped forever.
 function zStepsTo(depthMM: number, stepDownMM: number): number[] {
-  const depth = Math.abs(depthMM), step = Math.abs(stepDownMM)
-  const out: number[] = []
-  let z = -step
-  while (z > -depth) { out.push(z); z -= step }
-  out.push(-depth)
-  return out
+  return zPasses(depthMM, stepDownMM)
 }
 
 // When `rampLenMM` is given, each pass enters by ramping down along the contour over
@@ -779,9 +780,9 @@ async function insideClear(
         islandDs: pocketIslandDs, angle: 0, safeHeightMM: params.safeHeightMM,
         finishAllowanceMM: -c, rampIn: params.rampIn,
       }))
-    } catch (e) { if (!isExpectedGeometryError(e)) throw e }
+    } catch (e) { skipTooSmall(e, 'socket clearing') }
     if (endmillSegs.length === 0)
-      throw new Error('Inlay socket is too small for the selected tool')
+      throw new GeometryTooSmallError('Inlay socket is too small for the selected tool')
     return { endmillSegs, vbitSegs: [] }
   }
 
@@ -801,7 +802,7 @@ async function insideClear(
         islandDs: protrusionDs,
         safeHeightMM: params.safeHeightMM,
       })
-      if (!vbitSegs.length) throw new Error('Inlay socket is too small for the selected tools')
+      if (!vbitSegs.length) throw new GeometryTooSmallError('Inlay socket is too small for the selected tools')
       return { vbitSegs, endmillSegs: [] }
     }
 
@@ -822,7 +823,7 @@ async function insideClear(
         islandDs: islandPocketDs, angle: 0, safeHeightMM: params.safeHeightMM,
         rampIn: params.rampIn,
       }))
-    } catch (e) { if (!isExpectedGeometryError(e)) throw e }
+    } catch (e) { skipTooSmall(e, 'socket floor clearing') }
 
     // V-carve the outer wall: socketD down to the flat-bottom boundary (vcarveIslandD),
     // MINUS anything standing in that band. The band is 3 × halfWidth wide (8.7 mm for a
@@ -840,7 +841,7 @@ async function insideClear(
         angleDeg: params.angleDeg, maxDepthMM: 2.5 * totalDepthMM,
         islandDs: wallRegionD ? [] : [vcarveIslandD], safeHeightMM: params.safeHeightMM,
       }))
-    } catch (e) { if (!isExpectedGeometryError(e)) throw e }
+    } catch (e) { skipTooSmall(e, 'socket wall V-carve') }
 
     // V-carve each protrusion's annular wall (nominal — clearance is on the socket only).
     // The annulus is fullWidth (2 × halfWidth) proud of the protrusion, which is easily
@@ -870,11 +871,11 @@ async function insideClear(
           angleDeg: params.angleDeg, maxDepthMM: 2.5 * totalDepthMM,
           islandDs: bandD ? [] : [iD], safeHeightMM: params.safeHeightMM,
         }))
-      } catch (e) { if (!isExpectedGeometryError(e)) throw e }
+      } catch (e) { skipTooSmall(e, 'protrusion wall V-carve') }
     }
 
     if (pocketSegs.length === 0 && vcarveSegs.length === 0)
-      throw new Error('Inlay socket is too small for the selected tools')
+      throw new GeometryTooSmallError('Inlay socket is too small for the selected tools')
     return { endmillSegs: pocketSegs, vbitSegs: vcarveSegs }
   }
 
@@ -893,7 +894,7 @@ async function insideClear(
   // offset(roundedD, c − finishR) — a net inward offset for normal clearances, so it
   // doesn't merge self-intersecting loops either.
   const finishContourD = offsetPathRound(roundedD, c - finishR)
-  if (!finishContourD) throw new Error('Inlay socket is too small for the selected tools')
+  if (!finishContourD) throw new GeometryTooSmallError('Inlay socket is too small for the selected tools')
 
   // Protrusions: rounded; pre-grown by clearance so the pocket's −c allowance nets back
   // to nominal (clearance stays on the socket, not the protrusion). Finish-contoured
@@ -920,7 +921,7 @@ async function insideClear(
       islandDs: pocketIslandDs, angle: 0, safeHeightMM: params.safeHeightMM,
       finishAllowanceMM: -c, rampIn: params.rampIn,
     }))
-  } catch (e) { if (!isExpectedGeometryError(e)) throw e }
+  } catch (e) { skipTooSmall(e, 'socket clearing') }
 
   const wallRampLen = params.rampIn ? 2 * wallTool.diameterMM : undefined
   const vbitSegs: MotionSegment[] = []
@@ -929,7 +930,7 @@ async function insideClear(
     for (const pts of getOuters(cD)) addContourStack(pts, zPasses, vbitSegs, safeZ, wallRampLen)
 
   if (endmillSegs.length === 0 && vbitSegs.length === 0)
-    throw new Error('Inlay socket is too small for the selected tools')
+    throw new GeometryTooSmallError('Inlay socket is too small for the selected tools')
   return { endmillSegs, vbitSegs }
 }
 
@@ -1021,7 +1022,7 @@ export async function generateInlayFemale(
       islandDs: params.islandDs,
       safeHeightMM: params.safeHeightMM,
     })
-    if (!vbitSegs.length) throw new Error('Inlay socket is too small for the selected tools')
+    if (!vbitSegs.length) throw new GeometryTooSmallError('Inlay socket is too small for the selected tools')
     return { vbitSegs, endmillSegs: [] }
   }
 
@@ -1038,7 +1039,8 @@ export async function generateInlayFemale(
       pushAll(out.vbitSegs, r.vbitSegs)
       pushAll(out.endmillSegs, r.endmillSegs)
     } catch (e) {
-      if (boundaries.length === 1 || !isExpectedGeometryError(e)) throw e
+      if (boundaries.length === 1 || !(e instanceof GeometryTooSmallError)) throw e
+      addNote({ kind: 'subcut-skipped', short: 'Inlay: a socket region too small to cut' })
       lastErr = e
     }
   }
@@ -1188,7 +1190,7 @@ async function generateInlayMaleText(
       safeHeightMM:   params.safeHeightMM,
       rampIn:         params.rampIn,
     }))
-  } catch (e) { if (!isExpectedGeometryError(e)) throw e }
+  } catch (e) { skipTooSmall(e, 'plug background clearing') }
 
   // ── End mill counter pockets ────────────────────────────────────────────────
   // Letter counters (e.g. the void inside 'O') must be recessed to inlay depth
@@ -1207,7 +1209,7 @@ async function generateInlayMaleText(
         safeHeightMM:   params.safeHeightMM,
         rampIn:         params.rampIn,
       }))
-    } catch (e) { if (!isExpectedGeometryError(e)) throw e }
+    } catch (e) { skipTooSmall(e, 'counter clearing') }
   }
 
   // ── Release profile ─────────────────────────────────────────────────────────
@@ -1224,20 +1226,15 @@ async function generateInlayMaleText(
   const releaseOffset = profileTool.diameterMM / 4
   const releaseD = offsetPathD(bboxD, releaseOffset)
   if (releaseD) {
-    const depth = params.pocketDepthMM
-    const step  = Math.abs(params.stepDownMM)
-    const zPasses: number[] = []
-    let zr = -step
-    while (zr > -depth) { zPasses.push(zr); zr -= step }
-    zPasses.push(-depth)
+    const releasePasses = zStepsTo(params.pocketDepthMM, params.stepDownMM)
     const rampLen = params.rampIn ? 2 * profileTool.diameterMM : undefined
     for (const pts of getOuters(releaseD)) {
-      addContourStack(pts, zPasses, endmillSegs, safeZ, rampLen)
+      addContourStack(pts, releasePasses, endmillSegs, safeZ, rampLen)
     }
   }
 
   if (vbitSegs.length === 0 && endmillSegs.length === 0)
-    throw new Error('Inlay text plug is too small for the selected tools')
+    throw new GeometryTooSmallError('Inlay text plug is too small for the selected tools')
   return { vbitSegs, endmillSegs }
 }
 
@@ -1324,7 +1321,7 @@ export async function generateInlayMale(
           { ...params, glueLineMM: 0, clearanceMM: 0 }, plugDs)
         pushAll(vbitSegs, socket.vbitSegs)
         pushAll(endmillSegs, socket.endmillSegs)
-      } catch (e) { if (!isExpectedGeometryError(e)) throw e }
+      } catch (e) { skipTooSmall(e, 'plug hole') }
     }
   }
 
@@ -1364,7 +1361,7 @@ export async function generateInlayMale(
         safeHeightMM:    params.safeHeightMM,
         rampIn:          params.rampIn,
       }))
-    } catch (e) { if (!isExpectedGeometryError(e)) throw e }
+    } catch (e) { skipTooSmall(e, 'field clearing') }
 
     // Release profile — frees the male piece the way outerCut's does for an un-nested
     // plug, since the field outline is this piece's own perimeter. Offset by HALF a
@@ -1382,6 +1379,6 @@ export async function generateInlayMale(
   }
 
   if (vbitSegs.length === 0 && endmillSegs.length === 0)
-    throw new Error('Inlay plug is too small for the selected tools')
+    throw new GeometryTooSmallError('Inlay plug is too small for the selected tools')
   return { vbitSegs, endmillSegs }
 }

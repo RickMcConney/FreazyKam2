@@ -7,7 +7,8 @@
 // return value the duplicate did not have, so every audited pocket failed with
 // "pocket.notes is not iterable". One table, two consumers.
 import { generateProfile } from '../cam/profile'
-import { generatePocket, takePocketNotes } from '../cam/pocket'
+import { generatePocket } from '../cam/pocket'
+import { takeNotes, type GenNote } from '../cam/notes'
 import { generateVCarve } from '../cam/vcarve'
 import { generatePhotoVCarve } from '../cam/photoVcarve'
 import { generateProfile3d } from '../cam/profile3d'
@@ -16,21 +17,28 @@ import { generateTrochoidal } from '../cam/trochoidal'
 import { generateSurface } from '../cam/surfacing'
 import { nest } from '../tools/nestOp'
 
+// Clear, run, drain: a note left over from a job that threw must not be reported against
+// the next one. Pocket, v-carve and inlay are the generators that can skip part of what
+// they were asked for (see cam/notes.ts); their results carry `notes` alongside the
+// motion, since the worker has no UI and the progress channel is transient by design.
+async function withNotes<R extends object>(run: () => R | Promise<R>): Promise<R & { notes: GenNote[] }> {
+  takeNotes()
+  const result = await run()
+  return { ...result, notes: takeNotes() }
+}
+
 export const handlers = {
   generateProfile,
-  // Pocket rides its notes back with the motion — a strategy that declined the shape and
-  // fell back, today (see pocket.ts). They cannot travel any other way: the worker has no
-  // UI, and the progress channel is transient by design. `notes` is drained AFTER the call,
-  // so the property order here matters.
-  generatePocket: (...args: Parameters<typeof generatePocket>) => ({
-    segments: generatePocket(...args),
-    notes: takePocketNotes(),
-  }),
-  generateVCarve,
+  generatePocket: (...args: Parameters<typeof generatePocket>) =>
+    withNotes(() => ({ segments: generatePocket(...args) })),
+  generateVCarve: (...args: Parameters<typeof generateVCarve>) =>
+    withNotes(async () => ({ segments: await generateVCarve(...args) })),
   generatePhotoVCarve,
   generateProfile3d,
-  generateInlayFemale,
-  generateInlayMale,
+  generateInlayFemale: (...args: Parameters<typeof generateInlayFemale>) =>
+    withNotes(() => generateInlayFemale(...args)),
+  generateInlayMale: (...args: Parameters<typeof generateInlayMale>) =>
+    withNotes(() => generateInlayMale(...args)),
   generateTrochoidal,
   generateSurface,
   // Not a toolpath, but the same shape of job: one long synchronous solve over

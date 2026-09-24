@@ -1,4 +1,4 @@
-import { useToolpathStore } from '../store/toolpathStore'
+import { useToolpathStore, nothingToCut } from '../store/toolpathStore'
 import { useToolStore } from '../store/toolStore'
 import { usePostProcessorStore } from '../store/postProcessorStore'
 import { useWorkpieceStore, MATERIAL_INFO } from '../store/workpieceStore'
@@ -157,8 +157,22 @@ export function buildExportPreflight(): ExportPreflight {
     })
   }
 
+  // An inlay half its partner already cuts completely (thin text: the V-bit's walls meet
+  // and take the whole socket) is empty on PURPOSE. It is out of the file for the same
+  // reason, and no tool change is emitted for it — but saying so as a warning, in the
+  // words used for an op that failed, read as something having gone wrong.
+  const noCut = exportable.filter((o) => o.visible && nothingToCut(o, operations))
+  if (noCut.length > 0) {
+    warnings.push({
+      level: 'info',
+      text: `${named(noCut)}: nothing to cut — the V-bit clears ${noCut.length === 1 ? 'it' : 'them'} completely, so ` +
+        `${noCut.length === 1 ? 'it is' : 'they are'} not in this file and ${noCut.length === 1 ? 'its tool is' : 'their tools are'} not called for.`,
+    })
+  }
+
   const ungenerated = exportable.filter(
-    (o) => o.visible && (o.status === 'pending' || o.status === 'generating' || (o.status === 'done' && o.segments.length === 0))
+    (o) => o.visible && !nothingToCut(o, operations)
+      && (o.status === 'pending' || o.status === 'generating' || (o.status === 'done' && o.segments.length === 0))
   )
   if (ungenerated.length > 0) {
     warnings.push({

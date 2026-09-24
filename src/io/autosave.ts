@@ -6,6 +6,9 @@ import { useToolpathStore } from '../store/toolpathStore'
 import { useTabStore } from '../store/tabStore'
 import { useProjectStore } from '../store/projectStore'
 import { useTimelineStore } from '../timeline/timelineStore'
+import { useWorkpieceStore } from '../store/workpieceStore'
+import { useToolStore } from '../store/toolStore'
+import { usePostProcessorStore } from '../store/postProcessorStore'
 import { claimTabId, type TabClaim } from './tabClaim'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -402,10 +405,20 @@ export function installAutosave(): () => void {
     // Not a document change, but it flips `dirty` — rewrite so a project saved
     // and then discarded is not offered back as unsaved work.
     watch(useTimelineStore, (s) => s.savedSeq, schedule),
+    // THE STOCK, THE MACHINE AND THE TOOL LIBRARY ARE IN THE SNAPSHOT, so they are
+    // watched like the document. They used not to be — "persisted to localStorage on
+    // their own" — but a restore goes through loadProject, which installs EVERY one of
+    // them from the snapshot: add a tool or change the stock after the last path edit,
+    // lose the tab, and the restore rolled them back over the newer localStorage
+    // values. Keeping the snapshot current is the fix rather than skipping them on
+    // restore, because localStorage is shared by every tab while a snapshot is this
+    // tab's own: with two projects open, the other tab's stock size is the one in
+    // localStorage.
+    watch(useWorkpieceStore, (s) => s, schedule),
+    watch(useToolStore, (s) => s.tools, schedule),
+    watch(usePostProcessorStore, (s) => s.profiles, schedule),
+    watch(usePostProcessorStore, (s) => s.activeId, schedule),
   ]
-  // Workpiece and tools are deliberately not watched: both are persisted to
-  // localStorage on their own, so they survive the reload that loses everything
-  // else, and buildProjectData picks up their current values on the next write.
 
   const onHide = () => {
     if (document.visibilityState !== 'hidden') return

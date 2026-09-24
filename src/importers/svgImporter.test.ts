@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseD, stringifyD, applyMat, type Mat6 } from './svgImporter'
+import { parseD, stringifyD, applyMat, fitViewBox, svgDisplayNone, svgVisibilityHidden, svgToCncMat, type Mat6 } from './svgImporter'
 
 describe('parseD', () => {
   it('parses absolute M/L/Z', () => {
@@ -88,5 +88,61 @@ describe('applyMat', () => {
     const l = out[1] as { t: 'L'; x: number; y: number }
     expect(l.x).toBeCloseTo(-2)
     expect(l.y).toBeCloseTo(0)
+  })
+})
+
+// A viewBox whose aspect differs from the page is FITTED (SVG's default xMidYMid meet),
+// not stretched: the import used to scale X and Y independently, so a circle in a
+// 100×50 mm page over a square viewBox came in as an ellipse.
+describe('fitViewBox', () => {
+  const vb = { x: 0, y: 0, w: 100, h: 100 }
+  // Where a viewBox point lands on the page, in CNC mm.
+  const land = (fit: typeof vb, x: number, y: number) => {
+    const [a, , , d, e, f] = svgToCncMat(100, 50, fit.x, fit.y, fit.w, fit.h)
+    return { x: a * x + e, y: d * y + f }
+  }
+
+  it('scales both axes alike and centres the drawing by default', () => {
+    const fit = fitViewBox(100, 50, vb, null)
+    const [a, , , d] = svgToCncMat(100, 50, fit.x, fit.y, fit.w, fit.h)
+    expect(Math.abs(a)).toBeCloseTo(Math.abs(d), 12)
+    // A 100-unit square on a 100×50 page, meet: 50 mm wide, centred across the width.
+    expect(land(fit, 0, 0).x).toBeCloseTo(25, 9)
+    expect(land(fit, 100, 0).x).toBeCloseTo(75, 9)
+  })
+
+  it('honours the alignment it is given — xMin puts the drawing at the left edge', () => {
+    const fit = fitViewBox(100, 50, vb, 'xMinYMid meet')
+    expect(land(fit, 0, 0).x).toBeCloseTo(0, 9)
+    expect(land(fit, 100, 0).x).toBeCloseTo(50, 9)
+  })
+
+  it('slice fills the page and crops instead', () => {
+    const fit = fitViewBox(100, 50, vb, 'xMidYMid slice')
+    expect(land(fit, 100, 0).x - land(fit, 0, 0).x).toBeCloseTo(100, 9)
+  })
+
+  it('leaves "none", and a page that already matches, exactly as they were', () => {
+    expect(fitViewBox(100, 50, vb, 'none')).toBe(vb)
+    const same = { x: 3, y: 4, w: 200, h: 100 }
+    expect(fitViewBox(100, 50, same, null)).toBe(same)
+  })
+})
+
+// Inkscape hides a layer with style="display:none" on its <g>; those layers (construction
+// lines, a traced photo) were imported as paths to machine.
+describe('svg visibility', () => {
+  const attrs = (o: Record<string, string>) => (n: string) => o[n] ?? null
+  it('reads display:none from the attribute or the style', () => {
+    expect(svgDisplayNone(attrs({ display: 'none' }))).toBe(true)
+    expect(svgDisplayNone(attrs({ style: 'fill:red;display:none' }))).toBe(true)
+    expect(svgDisplayNone(attrs({ style: 'display: none !important' }))).toBe(true)
+    expect(svgDisplayNone(attrs({ style: 'display:inline' }))).toBe(false)
+    expect(svgDisplayNone(attrs({ style: 'fill:none' }))).toBe(false)
+  })
+  it('reads visibility:hidden, and leaves visible alone', () => {
+    expect(svgVisibilityHidden(attrs({ visibility: 'hidden' }))).toBe(true)
+    expect(svgVisibilityHidden(attrs({ style: 'visibility:collapse' }))).toBe(true)
+    expect(svgVisibilityHidden(attrs({ style: 'visibility:visible' }))).toBe(false)
   })
 })

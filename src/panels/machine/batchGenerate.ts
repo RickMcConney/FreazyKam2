@@ -16,7 +16,7 @@
 import { useToolpathStore, type AddPayload, type AnyOperation } from '../../store/toolpathStore'
 import { useUIStore } from '../../store/uiStore'
 import { isWorkCancelled } from '../../workers/workerClient'
-import { generateOperation } from '../../cam/opJob'
+import { generateOperation, showGenNotes } from '../../cam/opJob'
 import { entryHintAt } from '../../cam/startOptimizer'
 
 /** One thing to cut: a path, or a boundary with its islands. */
@@ -74,7 +74,7 @@ const newPayload = (a: BatchGenerateArgs, it: BatchItem): AddPayload =>
  */
 export async function runBatchGenerate(a: BatchGenerateArgs): Promise<void> {
   const store = () => useToolpathStore.getState()
-  const run = a.run ?? ((id: string) => generateOperation(id).then(() => {}))
+  const run = a.run ?? ((id: string) => generateOperation(id).then(({ notes }) => showGenNotes(notes)))
   const createdIds: string[] = []
   try {
     // (op id, fields to write before generating) in cut order.

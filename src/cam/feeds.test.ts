@@ -178,6 +178,14 @@ describe('effectiveStepDownMM', () => {
     expect(effectiveStepDownMM(EM6, 7.3, 20)).toBe(7.3)
   })
 
+  it('never hands back a step-down no pass can take, even with auto feeds off', () => {
+    // A 0 (hand-edited file, stale form default) looped inlay and profile3d forever.
+    machine({ autoFeedEnabled: false })
+    expect(effectiveStepDownMM(EM6, 0, 20)).toBe(0.01)
+    expect(effectiveStepDownMM(EM6, NaN, 20)).toBe(0.01)
+    expect(effectiveStepDownMM(EM6, -2, 20)).toBe(2)
+  })
+
   it('divides the total depth into whole, even passes', () => {
     // 10 mm at a ~3 mm ideal comes out as three 3.33 mm passes, not three and a stub.
     const step = effectiveStepDownMM(EM6, 0, 10)

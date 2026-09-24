@@ -3,7 +3,7 @@
 // stores and history; only regeneration is stubbed (it would reach for the worker pool).
 // See pathsStore.test.ts for why the clock is faked and every action is `step()`-ped.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { useToolpathStore, batchOf, type AnyOperation, type AddPayload } from './toolpathStore'
+import { useToolpathStore, batchOf, nothingToCut, type AnyOperation, type AddPayload } from './toolpathStore'
 import { usePathsStore, type ImportedPath } from './pathsStore'
 import { useToolStore } from './toolStore'
 import { useWorkpieceStore } from './workpieceStore'
@@ -297,5 +297,34 @@ describe('program order and visibility', () => {
     expect(events()).toBe(1)
     await undo()
     expect(ops().map((o) => o.visible)).toEqual([true, true, true])
+  })
+})
+
+// An inlay half whose partner cuts everything (thin text) is EMPTY BY DESIGN, and every
+// report on empty operations — the export check, the chip, the project audit — asks this
+// before calling it missing.
+describe('nothingToCut', () => {
+  const seg = { x: 0, y: 0, z: -1, rapid: false }
+  const half = (id: string, linkedOpId: string | undefined, segments: unknown[], over: Record<string, unknown> = {}) =>
+    ({ id, type: 'inlay', status: 'done', linkedOpId, segments, ...over }) as unknown as AnyOperation
+
+  it('is true for a generated, empty inlay half whose linked half has motion', () => {
+    const ops = [half('v', 'e', [seg]), half('e', 'v', [])]
+    expect(nothingToCut(ops[1], ops)).toBe(true)
+    expect(nothingToCut(ops[0], ops)).toBe(false)   // the half WITH motion
+  })
+
+  it('is false when both halves are empty — that pair cut nothing at all', () => {
+    const ops = [half('v', 'e', []), half('e', 'v', [])]
+    expect(nothingToCut(ops[1], ops)).toBe(false)
+  })
+
+  it('is false until the op has actually generated, and for an unlinked or non-inlay op', () => {
+    const pending = [half('v', 'e', [seg]), half('e', 'v', [], { status: 'pending' })]
+    expect(nothingToCut(pending[1], pending)).toBe(false)
+    const alone = [half('e', undefined, [])]
+    expect(nothingToCut(alone[0], alone)).toBe(false)
+    const pocket = [half('v', 'e', [seg]), half('e', 'v', [], { type: 'pocket' })]
+    expect(nothingToCut(pocket[1], pocket)).toBe(false)
   })
 })

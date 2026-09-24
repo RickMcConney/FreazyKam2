@@ -284,6 +284,24 @@ interface ToolpathState {
   revalidateStartHeights: () => void
 }
 
+/**
+ * An inlay half that generated to an EMPTY toolpath because its partner cuts it all.
+ *
+ * Thin shapes (text, fine linework) leave the end mill nothing to clear: the V-bit's
+ * walls meet in the middle and remove the whole socket on their own. That is a correct
+ * result, not a failure — but an op with no segments looks exactly like one that never
+ * generated, so the export check warned that it was missing from the file and the project
+ * audit called it an error. Everything that reports on empty ops asks this first.
+ *
+ * Only an inlay half, only once generated, and only while its linked half HAS motion —
+ * a pair that is empty on both sides has cut nothing and is still worth a warning.
+ */
+export function nothingToCut(op: AnyOperation, operations: AnyOperation[]): boolean {
+  if (op.type !== 'inlay' || op.status !== 'done' || op.segments.length > 0 || !op.linkedOpId) return false
+  const partner = operations.find((o) => o.id === op.linkedOpId)
+  return !!partner && partner.type === 'inlay' && partner.status === 'done' && partner.segments.length > 0
+}
+
 export function refsPathId(op: AnyOperation, pathId: string): boolean {
   if (op.type === 'profile') return op.pathId === pathId
   if (op.type === 'trochoidal') return op.pathId === pathId

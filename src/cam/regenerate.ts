@@ -3,7 +3,7 @@ import { useToolpathStore, refsPathId, type AnyOperation } from '../store/toolpa
 import { useToolStore } from '../store/toolStore'
 import { useSimStore } from '../store/simStore'
 import { useUIStore } from '../store/uiStore'
-import { generateOperation } from './opJob'
+import { generateOperation, showGenNotes } from './opJob'
 
 // The automatic regeneration — an edit to a path, a tab, a start reference or the undo
 // history made an operation stale and nobody clicked Generate. What it runs is exactly
@@ -25,9 +25,7 @@ export async function regenerateOperation(opId: string): Promise<void> {
 
   try {
     const { notes } = await generateOperation(opId)
-    // No op-name prefix: StatusBar truncates, and a name like
-    // 'Pocket: Path 1 (1/8" End Mill)' consumes the whole line before the note starts.
-    for (const note of notes) useUIStore.getState().showStatus(note.short, 'warn')
+    showGenNotes(notes)
   } catch (err) {
     // A cancelled regenerate is not a failure: abortGeneration has already settled the
     // op's status, and the state it was computing against is gone.

@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import {
   ChevronDown, ChevronUp, Circle, RefreshCw, Target, CircleDot, Layers, Star, Box,
   Image as ImageIcon,
-  FileCode, Wrench, Loader2, AlertCircle, Eye, EyeOff, ArrowRightLeft, Combine, GripVertical, X,
+  FileCode, Wrench, Loader2, AlertCircle, Eye, EyeOff, ArrowRightLeft, Combine, GripVertical, X, CircleSlash,
 } from 'lucide-react'
-import { useToolpathStore, batchOf, pathIdsOf, GCODE_IMPORT_TOOL_ID, type AnyOperation } from '../store/toolpathStore'
+import { useToolpathStore, batchOf, pathIdsOf, nothingToCut, GCODE_IMPORT_TOOL_ID, type AnyOperation } from '../store/toolpathStore'
 import { usePathsStore } from '../store/pathsStore'
 import { useToolStore, type Tool } from '../store/toolStore'
 import { useUIStore } from '../store/uiStore'
@@ -107,10 +107,12 @@ function gcodeDetail(op: AnyOperation): string | null {
   return `${op.filename} — ${cut.toLocaleString()} cut, ${rapid.toLocaleString()} rapid moves (read-only)`
 }
 
-function OpChip({ op, dragging, compact, onGrab }: {
+function OpChip({ op, dragging, compact, noCut, onGrab }: {
   op: AnyOperation
   dragging: boolean
   compact: boolean
+  /** Generated to nothing because its linked half cuts it all — see `nothingToCut`. */
+  noCut: boolean
   onGrab: (e: React.MouseEvent) => void
 }) {
   const Icon = OP_ICONS[op.type] ?? Wrench
@@ -143,6 +145,11 @@ function OpChip({ op, dragging, compact, onGrab }: {
           ? '⚠ Needs regenerating — excluded from the exported G-code until you do.'
           : null,
         hidden ? 'Hidden — excluded from the exported G-code.' : null,
+        // Not a failure, and it must not read as one: thin shapes leave the end mill
+        // nothing the V-bit has not already cut, so the op is empty by design.
+        noCut
+          ? 'Nothing to cut — the V-bit clears this completely, so it is left out of the G-code and its tool is never called for.'
+          : null,
         op.name,
         gcodeDetail(op),
         'Drag to reorder · Alt-click to hide',
@@ -160,7 +167,7 @@ function OpChip({ op, dragging, compact, onGrab }: {
       {/* Compact drops the name AND the inline status icons — the ring already says
           needs-update/error and the dashed faded chip already says hidden, so those icons
           are duplicates paying for themselves in width. Everything stays in the tooltip. */}
-      <span className={['flex items-center gap-1 min-w-0', hidden ? 'opacity-40' : ''].join(' ')}>
+      <span className={['flex items-center gap-1 min-w-0', hidden ? 'opacity-40' : noCut ? 'opacity-60' : ''].join(' ')}>
         <Icon size={12} style={{ color }} />
         {!compact && <>
           <span className="max-w-[130px] truncate text-gray-700 dark:text-neutral-300">{op.name}</span>
@@ -169,6 +176,8 @@ function OpChip({ op, dragging, compact, onGrab }: {
           {op.status === 'error' && <AlertCircle size={10} className="text-red-600 dark:text-red-500" />}
           {hidden && <EyeOff size={10} className="text-gray-600 dark:text-neutral-400" />}
         </>}
+        {/* Shown in compact too: unlike the others, no ring or dash stands in for it. */}
+        {noCut && <CircleSlash size={10} className="text-gray-500 dark:text-neutral-400" />}
         {compact && op.status === 'generating' && <Loader2 size={10} className="animate-spin text-blue-400" />}
       </span>
 
@@ -433,6 +442,7 @@ export default function OperationsPanel() {
                           op={op}
                           dragging={draggingIds.includes(op.id)}
                           compact={compact}
+                          noCut={nothingToCut(op, operations)}
                           onGrab={beginDrag([op.id])}
                         />
                       ))}

@@ -13,12 +13,14 @@
 //     r/tan(halfAngle); a taper adds the ball on its tip, which is why a stroke
 //     narrower than the taper comes out round-bottomed instead of pointed.
 
+import { GeometryTooSmallError } from './errors'
 import { classifySubpaths, centroidX, isVCutter, tipBallRadiusMM, vProfileHeightMM, vRadiusAtHeightMM } from './geom'
 import { jspoly as JSPOLY } from './lib/jspoly.js'
 // jspoly.js's internal methods reference `JSPoly` as a bare global (written for <script> context).
 // In ES module scope it's never defined, so we pin it on globalThis once at import time.
 ;(globalThis as any).JSPoly = JSPOLY
 import { flattenPath, splitSelfIntersecting, requireClosedSubpaths, type Pt2 } from './pathFlattener'
+import { addNote } from './notes'
 import type { MotionSegment } from '../store/toolpathStore'
 import type { Tool } from '../store/toolStore'
 
@@ -342,6 +344,75 @@ function findBestPath(segs: Seg[], entrySX = 0, entrySY = 0): TPoint[] {
   return bestPath
 }
 
+// THE SKELETON OF ONE REGION NEED NOT BE ONE PIECE. JSPoly's filter angle drops the
+// near-tangent edges, and that can cut a region's medial axis in two. `findBestPath`
+// walks only the component it starts in — its leaf search and its sweep of leftover
+// edges both go by shortest path through the graph, and neither can reach a piece the
+// graph does not connect — so every other piece was silently never cut. Each component
+// is walked on its own here, nearest first, with a lift between them like the lift
+// between regions. A single component takes exactly the road it always did.
+function connectedComponents(segs: Seg[]): Seg[][] {
+  const parent = new Map<string, string>()
+  const find = (k: string): string => {
+    let r = k
+    while (parent.get(r) !== r) r = parent.get(r)!
+    let c = k
+    while (c !== r) { const n = parent.get(c)!; parent.set(c, r); c = n }
+    return r
+  }
+  const keys = segs.map((sg) => [nodeKey(sg.point0.x, sg.point0.y), nodeKey(sg.point1.x, sg.point1.y)] as const)
+  for (const [a, b] of keys) {
+    if (!parent.has(a)) parent.set(a, a)
+    if (!parent.has(b)) parent.set(b, b)
+    const ra = find(a), rb = find(b)
+    if (ra !== rb) parent.set(ra, rb)
+  }
+  const byRoot = new Map<string, Seg[]>()
+  segs.forEach((sg, i) => {
+    const r = find(keys[i][0])
+    const list = byRoot.get(r)
+    if (list) list.push(sg); else byRoot.set(r, [sg])
+  })
+  return [...byRoot.values()]
+}
+
+// entrySX/entrySY are in scaled units (mm × SCALE). One toolpath per connected piece of
+// the skeleton, in cutting order.
+function findBestPaths(segs: Seg[], entrySX = 0, entrySY = 0): TPoint[][] {
+  const comps = connectedComponents(segs)
+  if (comps.length <= 1) {
+    const only = findBestPath(segs, entrySX, entrySY)
+    return only.length ? [only] : []
+  }
+  const out: TPoint[][] = []
+  let cx = entrySX, cy = entrySY
+  const left = comps.slice()
+  while (left.length > 0) {
+    let bi = 0, bd = Infinity
+    left.forEach((c, i) => {
+      for (const sg of c) {
+        for (const pt of [sg.point0, sg.point1]) {
+          const d = Math.hypot(pt.x - cx, pt.y - cy)
+          if (d < bd) { bd = d; bi = i }
+        }
+      }
+    })
+    const [comp] = left.splice(bi, 1)
+    const path = findBestPath(comp, cx, cy)
+    // A piece that is a single point (a zero-length segment on its own) has nothing to
+    // cut along, and plunging there would only drill a cone into the middle of the shape.
+    if (path.length < 2) continue
+    out.push(path)
+    const last = path[path.length - 1]
+    cx = last.x; cy = last.y
+  }
+  return out
+}
+
+/** Test hook: the traversal as the generator runs it. */
+export const __vcarveTraverse = (segs: Seg[], entrySX = 0, entrySY = 0): TPoint[][] =>
+  findBestPaths(segs, entrySX, entrySY)
+
 // ─── Branch pruning (ported from toolPath.js) ────────────────────────────────
 
 // Removes noisy short branches produced by curve discretization.
@@ -528,7 +599,7 @@ export async function generateVCarve(
     remedy: 'Close the path, or use a centerline profile with the V-bit to cut a groove along it.',
   })
   const allSubpathsPt2 = splitSelfIntersecting(flat)
-  if (!allSubpathsPt2.length) throw new Error('No geometry found in path')
+  if (!allSubpathsPt2.length) throw new GeometryTooSmallError('No geometry found in path')
 
   const islandPt2: Pt2[][] = []
   for (const iD of params.islandDs) {
@@ -620,6 +691,7 @@ export async function generateVCarve(
     return out
   }
 
+  let skippedRegions = 0
   for (const { outer, holes } of regions) {
     const scaledOuter = toScaledXY(outer)
     const scaledHoles = holes.map(toScaledXY)
@@ -637,49 +709,57 @@ export async function generateVCarve(
       )
     } catch (e) {
       console.error('JSPoly medial axis error:', e)
+      skippedRegions++
       continue
     }
     if (!jsSegs.length) {
       console.warn('JSPoly returned no segments for region', scaledOuter.length, 'pts')
+      skippedRegions++
       continue
     }
 
     jsSegs = pruneNoisyBranches(jsSegs, scaledOuter, scaledHoles, maxRadiusScaled)
     if (!jsSegs.length) {
       console.warn('pruneNoisyBranches removed all segments')
+      skippedRegions++
       continue
     }
 
-    const toolpath = findBestPath(jsSegs, curSX, curSY)
-    if (!toolpath.length) continue
+    for (const toolpath of findBestPaths(jsSegs, curSX, curSY)) {
+      const first = toolpath[0]
+      const firstZ = zAtRadius(first.r)
 
-    const first = toolpath[0]
-    const firstZ = zAtRadius(first.r)
+      segs.push({ x: first.x / SCALE, y: first.y / SCALE, z: safeZ, rapid: true })
+      segs.push({ x: first.x / SCALE, y: first.y / SCALE, z: firstZ, rapid: false })
 
-    segs.push({ x: first.x / SCALE, y: first.y / SCALE, z: safeZ, rapid: true })
-    segs.push({ x: first.x / SCALE, y: first.y / SCALE, z: firstZ, rapid: false })
+      let prev = first, prevZ = firstZ
+      for (let i = 1; i < toolpath.length; i++) {
+        const pt = toolpath[i]
+        const z = zAtRadius(pt.r)
+        // The machine drives Z linearly between the points we emit. For a V-bit that is
+        // exact; for a taper it is not, and the error lands on sharp corners — see
+        // refineRun. Nothing is inserted for a V-bit.
+        if (tipR > 0) emitRun(prev, prevZ, pt, z, segs)
+        segs.push({ x: pt.x / SCALE, y: pt.y / SCALE, z, rapid: false })
+        prev = pt; prevZ = z
+      }
 
-    let prev = first, prevZ = firstZ
-    for (let i = 1; i < toolpath.length; i++) {
-      const pt = toolpath[i]
-      const z = zAtRadius(pt.r)
-      // The machine drives Z linearly between the points we emit. For a V-bit that is
-      // exact; for a taper it is not, and the error lands on sharp corners — see
-      // refineRun. Nothing is inserted for a V-bit.
-      if (tipR > 0) emitRun(prev, prevZ, pt, z, segs)
-      segs.push({ x: pt.x / SCALE, y: pt.y / SCALE, z, rapid: false })
-      prev = pt; prevZ = z
+      const last = toolpath[toolpath.length - 1]
+      segs.push({ x: last.x / SCALE, y: last.y / SCALE, z: safeZ, rapid: true })
+
+      // Update current position to this piece's exit for the next one's start selection
+      curSX = last.x
+      curSY = last.y
     }
-
-    const last = toolpath[toolpath.length - 1]
-    segs.push({ x: last.x / SCALE, y: last.y / SCALE, z: safeZ, rapid: true })
-
-    // Update current position to this region's exit for the next region's start selection
-    curSX = last.x
-    curSY = last.y
   }
 
-  if (!segs.length) throw new Error('Could not compute V-Carve medial axis — check that the selected path is a closed shape')
+  if (!segs.length) throw new GeometryTooSmallError('Could not compute V-Carve medial axis — check that the selected path is a closed shape')
+  // A region skipped above is uncut — a letter missing from a word — and until now only
+  // the console said so. Every region failing is the error just above; some failing is
+  // a note the user sees (cam/notes.ts).
+  if (skippedRegions > 0) {
+    addNote({ kind: 'region-skipped', short: `V-carve skipped ${skippedRegions} of ${regions.length} areas` })
+  }
 
   return segs
 }

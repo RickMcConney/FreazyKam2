@@ -14,7 +14,7 @@ import { __setWorkerFactoryForTests } from '../workers/workerClient'
 import { handlers } from '../workers/handlers'
 import { resolveStartZ } from '../cam/startHeight'
 import { generateGcode } from '../cam/gcode'
-import { useToolpathStore } from '../store/toolpathStore'
+import { useToolpathStore, nothingToCut } from '../store/toolpathStore'
 import { usePathsStore } from '../store/pathsStore'
 import { useToolStore } from '../store/toolStore'
 import { useWorkpieceStore } from '../store/workpieceStore'
@@ -104,7 +104,10 @@ export async function auditProjectFile(filePath: string, opts: { cellMM?: number
   const fresh = useToolpathStore.getState().operations
   for (const op of fresh) {
     if (op.errorMessage) errors.push(`${op.type} "${op.name}": ${op.errorMessage}`)
-    if (!op.segments || op.segments.length === 0) errors.push(`${op.type} "${op.name}": produced no motion`)
+    // An inlay half its partner cuts completely is empty by design (see nothingToCut).
+    if ((!op.segments || op.segments.length === 0) && !nothingToCut(op, fresh)) {
+      errors.push(`${op.type} "${op.name}": produced no motion`)
+    }
   }
 
   const toolsById = Object.fromEntries(useToolStore.getState().tools.map(t => [t.id, t]))

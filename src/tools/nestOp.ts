@@ -1157,3 +1157,28 @@ function insideEvenOdd(x: number, y: number, rings: Pt2[][]): boolean {
   }
   return crossings % 2 === 1
 }
+
+/**
+ * Has the drawing moved on since a nest was started from `before`?
+ *
+ * The nest runs on a worker and its result is a transform per part, applied to the
+ * geometry it was computed from — so if a nested part was edited meanwhile, applying it
+ * would write the old `d` back and silently revert the edit. Paths are replaced, never
+ * mutated, so "not the same object" is exactly "edited". A part deleted meanwhile is not
+ * a reason to refuse (it simply drops out of the result). With obstacles in play, ANY
+ * change to the path list can have moved something the nest packed around.
+ */
+export function nestIsStale<P extends { id: string }>(
+  before: P[],
+  after: P[],
+  nestedIds: string[],
+  usedObstacles: boolean,
+): boolean {
+  if (usedObstacles && after !== before) return true
+  const was = new Map(before.map((p) => [p.id, p]))
+  const now = new Map(after.map((p) => [p.id, p]))
+  return nestedIds.some((id) => {
+    const a = was.get(id), b = now.get(id)
+    return !!a && !!b && a !== b
+  })
+}

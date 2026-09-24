@@ -3,7 +3,7 @@ import {
   getBBox, getMultiBBox, translateD, scaleAroundD, rotateAroundD, mirrorD, skewAroundD,
   extractCircles, extractRectInfo, isPlacementOnly, gestureForSteps, consolidateSteps,
   foldPlacement, applyPlacementD, applyTransformSteps, transformPoint,
-  dragBoxEncloses, wholeGroupsOnly, type TransformStep,
+  dragBoxEncloses, wholeGroupsOnly, isIdentityStep, type TransformStep,
 } from './selectionUtils'
 import type { ImportedPath } from '../store/pathsStore'
 import { flattenPath } from '../cam/pathFlattener'
@@ -467,5 +467,28 @@ describe('wholeGroupsOnly', () => {
     // would make a group with one hidden part impossible to enclose at all.
     const withHidden = [paths[0], asPath(rect, { id: 'b', userGroups: ['G'], visible: false }), paths[2]]
     expect(wholeGroupsOnly(['a', 'b'], [withHidden[0]], withHidden)).toEqual(['a', 'b'])
+  })
+})
+
+// A drag that snaps back to where it began must not record an edit or regenerate the
+// part's operations — the canvas asks this before it bakes.
+describe('isIdentityStep', () => {
+  it('calls a zero move, a unit scale, a zero skew and a whole turn the identity', () => {
+    expect(isIdentityStep({ kind: 'translate', dx: 0, dy: 0 })).toBe(true)
+    expect(isIdentityStep({ kind: 'scale', sx: 1, sy: 1, ax: 5, ay: 5 })).toBe(true)
+    expect(isIdentityStep({ kind: 'skew', kx: 0, ky: 0, ax: 5, ay: 5 })).toBe(true)
+    expect(isIdentityStep({ kind: 'rotate', angle: 0, cx: 5, cy: 5 })).toBe(true)
+    expect(isIdentityStep({ kind: 'rotate', angle: -360, cx: 5, cy: 5 })).toBe(true)
+  })
+
+  it('calls any real change a change — one axis is enough', () => {
+    expect(isIdentityStep({ kind: 'translate', dx: 0, dy: 0.001 })).toBe(false)
+    expect(isIdentityStep({ kind: 'scale', sx: 1, sy: -1, ax: 0, ay: 0 })).toBe(false)
+    expect(isIdentityStep({ kind: 'skew', kx: 0.01, ky: 0, ax: 0, ay: 0 })).toBe(false)
+    expect(isIdentityStep({ kind: 'rotate', angle: 5, cx: 0, cy: 0 })).toBe(false)
+  })
+
+  it('never calls a mirror the identity', () => {
+    expect(isIdentityStep({ kind: 'mirror', axis: 'x', cx: 0, cy: 0 })).toBe(false)
   })
 })

@@ -73,4 +73,18 @@ describe('an open path is refused by both halves', () => {
     const f = await generateInlayFemale(CLOSED, EM, null, P)
     expect(f.endmillSegs.length + f.vbitSegs.length).toBeGreaterThan(0)
   })
+
+  // Inlay stepped its own depth passes, without the floor `zPasses` has: `while (z >
+  // -depth) z -= 0` never ends, and the worker grew an array of -0 passes until it died.
+  // A synchronous loop cannot be timed out, so a regression here crashes the run rather
+  // than hanging politely — which is still a failure, and a loud one.
+  it('finishes both halves on a step-down of 0 instead of looping forever', async () => {
+    const zero = { ...P, stepDownMM: 0 }
+    const f = await generateInlayFemale(CLOSED, EM, null, zero)
+    const m = await generateInlayMale(CLOSED, EM, null, zero)
+    expect(f.endmillSegs.length).toBeGreaterThan(0)
+    expect(m.endmillSegs.length).toBeGreaterThan(0)
+    // Every depth reached is a real one: nothing below the requested floor.
+    for (const s of [...f.endmillSegs, ...m.endmillSegs]) expect(s.z).toBeGreaterThanOrEqual(-P.pocketDepthMM - 1e-9)
+  })
 })

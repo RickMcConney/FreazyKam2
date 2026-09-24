@@ -298,6 +298,8 @@ function generateStepDownPasses(
     }
   }
   const effectiveMaxDepth = Math.min(surfaceMaxDepth, maxDepthMM)
+  // Floored like `zPasses`: a step of 0 made this Infinity and the loop below unbounded.
+  if (!(stepDownMM >= 0.01)) stepDownMM = 0.01
   const numPasses = Math.ceil(effectiveMaxDepth / stepDownMM)
 
   perfLog(`[profile3d] roughing: ${numPasses} passes, effectiveMaxDepth=${effectiveMaxDepth.toFixed(2)}mm, stepDown=${stepDownMM}mm, stock=${stockAllowanceMM}mm`)
