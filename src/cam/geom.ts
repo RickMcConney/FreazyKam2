@@ -1,7 +1,5 @@
 // Shared CAM geometry helpers. Canonical home for utilities that were once
-// duplicated across the per-operation modules (see tofix.md R2). Note:
-// adaptiveClearing.ts is deliberately excluded from this consolidation — it is
-// a faithful FreeCAD port and must stay byte-for-byte comparable (tofix.md H6).
+// duplicated across the per-operation modules (see tofix.md R2).
 
 import { signedArea, sharesVertex, type Pt2 } from './pathFlattener'
 import type { Tool } from '../store/toolStore'

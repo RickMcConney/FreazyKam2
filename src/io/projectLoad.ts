@@ -133,12 +133,15 @@ export function parseProject(data: unknown): ParsedProject {
   // A newer version's operation type cannot be generated, shown or exported here, and
   // would trip the first switch over op.type that meets it. Leave it out, and say so.
   const known = allOps.filter((op) => op.type in OP_TYPES)
-  // The offset-ring spiral pocket strategy was dropped in 2026-07; rewrite the stored id so
-  // the operation form shows a valid selection instead of an empty one.
+  // Dropped pocket strategies — the offset-ring spiral (2026-07) and the Adaptive2d port
+  // (2026-09); rewrite the stored id so the operation form shows a valid selection instead
+  // of an empty one.
   const operations = known.map((op) => {
     if (op.type !== 'pocket') return op
-    const legacy = (op.strategy as string) === 'spiral' || (op.strategy as string) === 'spiralOffset'
-    return legacy ? { ...op, strategy: 'morph' as const } : op
+    const s = op.strategy as string
+    if (s === 'spiral' || s === 'spiralOffset') return { ...op, strategy: 'morph' as const }
+    if (s === 'adaptive') return { ...op, strategy: 'adaptive2' as const }
+    return op
   })
 
   // v2 and earlier kept a generated path's parameters in the event log rather than on the

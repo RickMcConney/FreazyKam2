@@ -178,7 +178,7 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
   // 60% of it is asking the marcher for something it will not hold. Auto (hybrid) spends
   // most of its path rastering and contouring, where the number simply IS the stepover: it
   // takes the same name and the same 10–90% range as those two.
-  const adaptiveStrategy = form.strategy === 'adaptive' || form.strategy === 'adaptive2'
+  const adaptiveStrategy = form.strategy === 'adaptive2'
   const autoPassAngle = form.strategy === 'hybrid' && form.autoAngle
 
   function handleToolChange(toolId: string) {
@@ -187,7 +187,7 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
   }
 
   function handleStrategyChange(strategy: PocketStrategy) {
-    const adaptive = strategy === 'adaptive' || strategy === 'adaptive2'
+    const adaptive = strategy === 'adaptive2'
     setForm((f) => ({
       ...f,
       strategy,
@@ -267,8 +267,8 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
       {/* 'hybrid' is shown as "Auto" — it picks per area: raster the open ground, contour
           around islands, adaptive on the junctions between them. Listed first as the one to
           reach for by default.
-          'adaptive' (the old Adaptive2d port) stays hidden — too slow; 'adaptive2' is the
-          fast raster-marching engine and is what the UI shows as "adaptive".
+          'adaptive2' is the raster-marching engine and is what the UI shows as "adaptive"
+          (the id outlived the Adaptive2d port it replaced).
           The ids are what saved projects store, so they stay as they are. */}
       <ToggleRow label="Strategy" options={['hybrid', 'raster', 'contour', 'morph', 'adaptive2'] as PocketStrategy[]} value={form.strategy} onChange={handleStrategyChange} labels={STRATEGY_LABELS} />
       <div>

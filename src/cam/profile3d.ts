@@ -22,14 +22,41 @@ export interface Profile3dParams {
 
 // ─── Height map ───────────────────────────────────────────────────────────────
 //
-// The height map stores, for each grid cell (ix, iy), the maximum CNC Z value
-// of any STL triangle that covers that cell.  CNC Z = 0 at the workpiece top
-// surface; negative values go into the material.
+// The height map stores, for each grid cell (ix, iy), the maximum CNC Z of the STL
+// surface ANYWHERE WITHIN THE CELL — the square of one cell's size centred on the node —
+// not the height at the node itself. CNC Z = 0 at the workpiece top surface; negative
+// values go into the material.
+//
+// The maximum over the cell, rather than a point sample, is what makes the finish
+// gouge-free. A point sample under-reads any surface that rises between two nodes: at the
+// foot of a steep wall the node sees the floor while the wall stands half a cell away, and
+// the tool, told the wall is not there, cut 0.7 mm into it (6 mm ball, 30% stepover), and
+// 0.1 mm into a 45° wall. Reading high instead can only lift the tool — it leaves at most
+// about slope × half a cell of stock on a slope, and none on a flat.
 //
 // STL model space → CNC space:
 //   cncX = (stlX - modelCX) * scaleX + cncBbox.cx
 //   cncY = (stlY - modelCY) * scaleY + cncBbox.cy
 //   cncZ = (stlZ - bounds.maxZ) * scaleZ   (≤ 0)
+
+type P3 = [number, number, number]
+
+// Clip a polygon to the half-space `sign·(p[axis] − bound) ≤ 0`, interpolating Z (and the
+// other coordinate) along each cut edge — Sutherland–Hodgman, one plane.
+function clipPlane(poly: P3[], axis: 0 | 1, bound: number, sign: 1 | -1): P3[] {
+  const out: P3[] = []
+  const n = poly.length
+  for (let i = 0; i < n; i++) {
+    const a = poly[i], b = poly[(i + 1) % n]
+    const da = sign * (a[axis] - bound), db = sign * (b[axis] - bound)
+    if (da <= 0) out.push(a)
+    if ((da < 0 && db > 0) || (da > 0 && db < 0)) {
+      const t = da / (da - db)
+      out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t])
+    }
+  }
+  return out
+}
 
 export function buildHeightMap(
   positions: Float32Array,
@@ -47,10 +74,11 @@ export function buildHeightMap(
 
   const cellX = bbox.width  / (nx - 1)
   const cellY = bbox.height / (ny - 1)
+  const hx = cellX / 2, hy = cellY / 2
 
   const grid = new Float32Array(nx * ny).fill(-Infinity)
 
-  function vertXYZ(idx: number): [number, number, number] {
+  function vertXYZ(idx: number): P3 {
     const sx = positions[idx * 3], sy = positions[idx * 3 + 1], sz = positions[idx * 3 + 2]
     return [
       (sx - modelCX) * scaleX + bbox.cx,
@@ -65,46 +93,34 @@ export function buildHeightMap(
     const i0 = indices ? indices[t * 3]     : t * 3
     const i1 = indices ? indices[t * 3 + 1] : t * 3 + 1
     const i2 = indices ? indices[t * 3 + 2] : t * 3 + 2
+    const tri: P3[] = [vertXYZ(i0), vertXYZ(i1), vertXYZ(i2)]
 
-    const [ax, ay, az] = vertXYZ(i0)
-    const [bx, by, bz] = vertXYZ(i1)
-    const [cx, cy, cz] = vertXYZ(i2)
+    const tMinX = Math.min(tri[0][0], tri[1][0], tri[2][0])
+    const tMaxX = Math.max(tri[0][0], tri[1][0], tri[2][0])
+    const tMinY = Math.min(tri[0][1], tri[1][1], tri[2][1])
+    const tMaxY = Math.max(tri[0][1], tri[1][1], tri[2][1])
+    const tMaxZ = Math.max(tri[0][2], tri[1][2], tri[2][2])
 
-    const tMinX = Math.min(ax, bx, cx)
-    const tMaxX = Math.max(ax, bx, cx)
-    const tMinY = Math.min(ay, by, cy)
-    const tMaxY = Math.max(ay, by, cy)
-
-    const ix0 = Math.max(0, Math.floor((tMinX - bbox.minX) / cellX))
-    const ix1 = Math.min(nx - 1, Math.ceil((tMaxX - bbox.minX) / cellX))
-    const iy0 = Math.max(0, Math.floor((tMinY - bbox.minY) / cellY))
-    const iy1 = Math.min(ny - 1, Math.ceil((tMaxY - bbox.minY) / cellY))
-
-    // Pre-compute barycentric denominator
-    const denom = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
+    // Every node whose cell the triangle's footprint can touch.
+    const ix0 = Math.max(0, Math.ceil((tMinX - hx - bbox.minX) / cellX))
+    const ix1 = Math.min(nx - 1, Math.floor((tMaxX + hx - bbox.minX) / cellX))
+    const iy0 = Math.max(0, Math.ceil((tMinY - hy - bbox.minY) / cellY))
+    const iy1 = Math.min(ny - 1, Math.floor((tMaxY + hy - bbox.minY) / cellY))
 
     for (let iy = iy0; iy <= iy1; iy++) {
+      const py = bbox.minY + iy * cellY
+      // Clip to the cell's row once; each cell in the row then only clips in X.
+      let row = clipPlane(tri, 1, py - hy, -1)
+      if (row.length) row = clipPlane(row, 1, py + hy, 1)
+      if (!row.length) continue
       for (let ix = ix0; ix <= ix1; ix++) {
-        const px = bbox.minX + ix * cellX
-        const py = bbox.minY + iy * cellY
-
-        // Cross-product sign test (point-in-triangle)
-        const d1 = (px - ax) * (by - ay) - (py - ay) * (bx - ax)
-        const d2 = (px - bx) * (cy - by) - (py - by) * (cx - bx)
-        const d3 = (px - cx) * (ay - cy) - (py - cy) * (ax - cx)
-        if ((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0)) continue
-
-        // Barycentric Z interpolation
-        let z: number
-        if (Math.abs(denom) < 1e-12) {
-          z = (az + bz + cz) / 3
-        } else {
-          const w1 = ((by - cy) * (px - cx) + (cx - bx) * (py - cy)) / denom
-          const w2 = ((cy - ay) * (px - cx) + (ax - cx) * (py - cy)) / denom
-          z = w1 * az + w2 * bz + (1 - w1 - w2) * cz
-        }
-
         const idx = iy * nx + ix
+        if (grid[idx] >= tMaxZ) continue   // nothing in this triangle can raise the cell
+        const px = bbox.minX + ix * cellX
+        let cellPoly = clipPlane(row, 0, px - hx, -1)
+        if (cellPoly.length) cellPoly = clipPlane(cellPoly, 0, px + hx, 1)
+        let z = -Infinity
+        for (const p of cellPoly) if (p[2] > z) z = p[2]
         if (z > grid[idx]) grid[idx] = z
       }
     }
@@ -193,14 +209,20 @@ function computeToolSurface(
   const cellX = bbox.width  / Math.max(1, nx - 1)
   const cellY = bbox.height / Math.max(1, ny - 1)
 
-  // Downsample using max so no surface peak is missed
+  // Downsample using max so no surface peak is missed. Each source node goes to the coarse
+  // node nearest its POSITION: the two grids both span the box edge to edge, so their
+  // spacings differ unless (srcN − 1) happens to divide by `scale`, and `round(ix / scale)`
+  // then drifts — up to half a source cell by the far edge, which moved a steep wall under
+  // the tool and gouged a dome's foot 0.1 mm.
+  const srcCellX = bbox.width  / Math.max(1, srcNX - 1)
+  const srcCellY = bbox.height / Math.max(1, srcNY - 1)
   const src = new Float32Array(nx * ny).fill(-Infinity)
   for (let iy = 0; iy < srcNY; iy++) {
     for (let ix = 0; ix < srcNX; ix++) {
       const v = srcGrid[iy * srcNX + ix]
       if (v === -Infinity) continue
-      const di = Math.min(Math.round(ix / scale), nx - 1)
-      const dj = Math.min(Math.round(iy / scale), ny - 1)
+      const di = Math.min(Math.round((ix * srcCellX) / cellX), nx - 1)
+      const dj = Math.min(Math.round((iy * srcCellY) / cellY), ny - 1)
       const idx = dj * nx + di
       if (v > src[idx]) src[idx] = v
     }

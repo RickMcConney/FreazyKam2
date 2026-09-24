@@ -13,14 +13,15 @@ import type {  CuttingDirection, Tool } from '../../store/toolStore'
 
 // 'morph' is the field-based curvilinear spiral (Poisson isotherms, helix entry — cf.
 // Fusion's "Morphed Spiral") — best for chunky pockets and islands.
-// 'adaptive' is the FreeCAD Adaptive2d port (slow on large pockets, kept intact);
 // 'adaptive2' is the fast raster-marching constant-engagement engine (./adaptive2);
 // 'hybrid' is that same engine clearing the open core with raster passes first, so the
 // march only pays its steering cost near walls and in tight regions.
 // Dropped 2026-07: the offset-ring spiral ('spiral', earlier 'spiralOffset'), which left
 // stock even at 50% stepover. generatePocket regenerates those operations as 'morph', and
-// project load rewrites the stored id — see loadProject.
-export type PocketStrategy = 'raster' | 'contour' | 'adaptive' | 'morph' | 'adaptive2' | 'hybrid'
+// project load rewrites the stored id — see loadProject. Dropped 2026-09: 'adaptive', the
+// FreeCAD Adaptive2d port (far slower than adaptive2, and hidden from the UI); rewritten
+// to 'adaptive2' the same way.
+export type PocketStrategy = 'raster' | 'contour' | 'morph' | 'adaptive2' | 'hybrid'
 
 export interface PocketParams {
   /** Run the chosen strategy even where it would normally decline the shape as a poor fit

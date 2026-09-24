@@ -1,6 +1,6 @@
 // Adaptive2 — fast constant-engagement (adaptive) pocket clearing.
 //
-// A from-scratch replacement for the Adaptive2d port in ./adaptiveClearing.ts. The old engine
+// A from-scratch replacement for the FreeCAD Adaptive2d port (removed 2026-09). The old engine
 // maintains the cleared region as a Clipper polygon, so every engagement probe, lead path and
 // link check is a boolean/offset op against geometry whose vertex count grows with everything
 // cut so far — that is the measured superlinear blowup on large pockets.
@@ -58,7 +58,9 @@ export interface Adaptive2Params {
   toolDiameterMM: number
   /** Target radial engagement (the UI engagement % × tool diameter). */
   stepoverMM: number
-  /** Spiral winding: CCW = conventional for an inside pocket (codebase convention). */
+  /** Spiral winding. The march grows outward with the stock OUTSIDE the path, like the
+   *  inside of a pocket wall, so CCW is climb for an M3 spindle — the same rule as every
+   *  other inside cut here. */
   wantCCW: boolean
   /** Helix-bore entries (the rampIn checkbox); false = straight plunge at each seed. */
   helixEntry: boolean
@@ -199,13 +201,15 @@ export function computeAdaptive2Plan(boundary: Pt2[], islands: Pt2[][], prm: Ada
   if (rb <= cell) return []   // tool of the order of grid resolution — nothing sensible to do
 
   // Tool-centre allowed region: boundary ⊖ R, islands ⊕ R — the single polygon op. The
-  // extra half cell covers raster quantization (a cell centre can sit up to ~0.7 cell
-  // inside the polygon while its true position is outside), so no committed step can
-  // stray past the real inset wall; the finishing pass owns that margin anyway.
+  // extra margin covers raster quantization: a point anywhere in a machinable cell reads
+  // as machinable, and it can sit half a cell DIAGONAL (0.707 cell) from that cell's
+  // centre. So the margin must be at least that, or a step can stray past the real inset
+  // wall. It was half a cell, which put the tool centre 2 µm into a reflex corner of a
+  // narrow neck; the finishing pass owns that margin anyway.
   const wound = (pts: Pt2[], ccw: boolean) => toCP(ensureWinding(pts, ccw))
   const machPolys = inflatePathsD(
     [wound(boundary, true), ...islands.map(i => wound(i, false))],
-    -(R + 0.5 * cell), JoinType.Round, EndType.Polygon, 4, 6,
+    -(R + 0.75 * cell), JoinType.Round, EndType.Polygon, 4, 6,
   ).map(fromCP).filter(r => r.length >= 3)
   if (machPolys.length === 0) return []
 
@@ -402,6 +406,14 @@ export function computeAdaptive2Plan(boundary: Pt2[], islands: Pt2[][], prm: Ada
   const idleLimit = Math.ceil((2 * Math.PI * 0.45 * R) / dsBase) + 4
 
   let px = 0, py = 0, theta = 0               // march state
+  // Radians of turn a plunge entry still owes in the winding direction before it may turn
+  // against it. A helix start is aimed along its bore rim, which fixes the winding; a
+  // plunge sits in a hole exactly its own size, where every heading and both turns are
+  // symmetric, so grid noise in the swept-area check chose the side — and it chose the
+  // WRONG one on every shape measured, turning climb into conventional (and back) with
+  // the Ramp In checkbox. Holding the first loop to the winding side fixes the spiral's
+  // hand; the frontier keeps it from there.
+  let entryTurn = 0
 
   // Read-only preview of a step's newly-swept stock area (mm²): uncut cells inside the
   // leading crescent (within rb of the step end, beyond rb of the start).
@@ -444,17 +456,22 @@ export function computeAdaptive2Plan(boundary: Pt2[], islands: Pt2[][], prm: Ada
     // picked by the ACTUAL swept area, which is exactly the quantity the stepover asks
     // for and is curvature-correct by construction.
     const scored: { c: number; score: number }[] = []
-    for (let i = 0; i < CAND.length; i++) {
-      const c = CAND[i]
-      const th = theta + c * A
-      const nx = px + Math.cos(th) * ds
-      const ny = py + Math.sin(th) * ds
-      if (!machAt(nx, ny)) continue
-      const e = engagement(nx, ny)
-      const score = Math.abs(e - ft) + 0.02 * Math.abs(c) - 0.012 * c * dirSign
-        + (inBandZone(nx, ny) ? 0.6 : 0)
-      scored.push({ c, score })
+    const scoreCands = (windingOnly: boolean) => {
+      for (let i = 0; i < CAND.length; i++) {
+        const c = CAND[i]
+        if (windingOnly && c * dirSign < 0) continue
+        const th = theta + c * A
+        const nx = px + Math.cos(th) * ds
+        const ny = py + Math.sin(th) * ds
+        if (!machAt(nx, ny)) continue
+        const e = engagement(nx, ny)
+        const score = Math.abs(e - ft) + 0.02 * Math.abs(c) - 0.012 * c * dirSign
+          + (inBandZone(nx, ny) ? 0.6 : 0)
+        scored.push({ c, score })
+      }
     }
+    scoreCands(entryTurn > 0)
+    if (scored.length === 0 && entryTurn > 0) { entryTurn = 0; scoreCands(false) }
     if (scored.length === 0) return null
     scored.sort((a, b) => a.score - b.score)
 
@@ -481,6 +498,7 @@ export function computeAdaptive2Plan(boundary: Pt2[], islands: Pt2[][], prm: Ada
     if (Number.isNaN(bestDelta)) return null
 
     theta += bestDelta
+    if (entryTurn > 0) entryTurn -= bestDelta * dirSign
     const nx = px + Math.cos(theta) * ds
     const ny = py + Math.sin(theta) * ds
     const st = stampSeg(px, py, nx, ny, rb)
@@ -704,7 +722,9 @@ export function computeAdaptive2Plan(boundary: Pt2[], islands: Pt2[][], prm: Ada
       px = sx + hr                      // bore rim at angle 0 — the emitter ends the helix here
       py = sy
       theta = dirSign * (Math.PI / 2)   // tangent to the rim in the winding direction
+      entryTurn = 0
     } else {
+      entryTurn = 2 * Math.PI
       stampDisk(sx, sy, rb)
       px = sx
       py = sy

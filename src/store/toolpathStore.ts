@@ -81,7 +81,7 @@ export interface PocketOperation extends BaseOperation {
   stepoverPercent: number
   passAngleDeg: number
   direction: CuttingDirection
-  strategy: 'raster' | 'contour' | 'adaptive' | 'morph' | 'adaptive2' | 'hybrid'
+  strategy: 'raster' | 'contour' | 'morph' | 'adaptive2' | 'hybrid'
   /** Auto pass angle (hybrid only); false pins it to passAngleDeg. */
   autoAngle?: boolean
   rampIn: boolean

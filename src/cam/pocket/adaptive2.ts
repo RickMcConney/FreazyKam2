@@ -19,7 +19,10 @@ export const planAdaptive2Pocket: PocketPlanner = (boundary, islands, tool, para
   const regions = computeAdaptive2Plan(boundary, islands, {
     toolDiameterMM: tool.diameterMM,
     stepoverMM: tool.diameterMM * (params.stepoverPercent / 100),
-    wantCCW: params.direction === 'conventional',
+    // The march is an inside cut like the finishing rings — the stock is outside the
+    // path — so it winds the same way. This was once `=== 'conventional'`, which made
+    // every helix-entered adaptive pocket mill conventional when climb was asked for.
+    wantCCW,
     helixEntry: params.rampIn ?? false,
     onProgress,
   })

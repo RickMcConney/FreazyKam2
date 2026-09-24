@@ -77,6 +77,11 @@ describe('parseProject — reads what it can', () => {
     expect((parseProject(data).operations[0] as { strategy: string }).strategy).toBe('morph')
   })
 
+  it('rewrites the dropped Adaptive2d pocket strategy to adaptive2', () => {
+    const data = { ...good(), operations: [{ ...good().operations[0], strategy: 'adaptive' }] }
+    expect((parseProject(data).operations[0] as { strategy: string }).strategy).toBe('adaptive2')
+  })
+
   it('reads a v4 X-distance constraint as a polar one', () => {
     const data = { ...good(), constraints: [{ id: 'c1', kind: 'distX', from: { kind: 'stock' }, to: { kind: 'path', id: 'p1' }, valueMM: -40 }] }
     expect(parseProject(data).constraints[0]).toMatchObject({ distanceMM: 40, angleDeg: 180 })
