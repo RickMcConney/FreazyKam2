@@ -4,7 +4,7 @@ import type { Viewport } from '../CanvasStage'
 import { usePathsStore } from '../../store/pathsStore'
 import { useConstraintsStore } from '../../store/constraintsStore'
 import { constraintEnds, constraintsInFocus, type Constraint } from '../../store/constraints'
-import { useWorkpieceStore } from '../../store/workpieceStore'
+import { useWorkpieceStore, fmtLen as formatLen } from '../../store/workpieceStore'
 import { useUIStore } from '../../store/uiStore'
 
 // Dimensions for the constraints on the current selection.
@@ -328,8 +328,7 @@ export const ConstraintLayer = memo(function ConstraintLayer({ viewport, pending
 
   const toScreenX = (x: number) => viewport.x + x * viewport.scale
   const toScreenY = (y: number) => viewport.y - y * viewport.scale
-  const fmtLen = (mm: number) =>
-    units === 'in' ? `${(mm / 25.4).toFixed(3)}"` : `${mm.toFixed(2)} mm`
+  const fmtLen = (mm: number) => formatLen(mm, units)
 
   return (
     <Group listening={false}>

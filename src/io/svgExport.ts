@@ -22,12 +22,7 @@
 
 import { parseD, stringifyD, applyMat, type ImportedPath } from '../importers/svgImporter'
 import { usePathsStore } from '../store/pathsStore'
-import { useWorkpieceStore } from '../store/workpieceStore'
-import { useProjectStore } from '../store/projectStore'
-import { useUIStore } from '../store/uiStore'
-import { sanitizeFileName } from './filename'
 import { round4 as mm } from '../util/num'
-import { downloadText } from './download'
 
 const INKSCAPE_NS = 'http://www.inkscape.org/namespaces/inkscape'
 
@@ -75,37 +70,15 @@ export function pathsToSvg(
 
 /** What an export would take: the selection if there is one, else everything on
  *  the canvas. Split out so the caller can say which, and how much is going. */
-export function pathsForSvgExport(): { paths: ImportedPath[]; fromSelection: boolean; skipped: number } {
+export function pathsForExport(): { paths: ImportedPath[]; fromSelection: boolean; skipped: number } {
   const { paths, selectedIds } = usePathsStore.getState()
   const fromSelection = selectedIds.length > 0
   const pool = fromSelection ? paths.filter((p) => selectedIds.includes(p.id)) : paths
   const drawn = pool.filter((p) => p.visible && !p.hidden)
-  // An SVG holds outlines. A picture and an STL are carried by paths whose `d`
-  // is only their bounding box, so exporting them would put a plain rectangle in
-  // the file where the user is expecting their photo — better to leave them out
-  // and say how many.
+  // SVG and DXF alike hold outlines. A picture and an STL are carried by paths
+  // whose `d` is only their bounding box, so exporting them would put a plain
+  // rectangle in the file where the user is expecting their photo — better to
+  // leave them out and say how many.
   const out = drawn.filter((p) => !p.imageSrc && !p.stlSrc)
   return { paths: out, fromSelection, skipped: drawn.length - out.length }
-}
-
-function download(content: string, filename: string) {
-  downloadText(content, filename.endsWith('.svg') ? filename : `${filename}.svg`, 'image/svg+xml')
-}
-
-/** Toolbar entry point: write the selection (or the whole drawing) to a file. */
-export function exportSvg() {
-  const { paths, fromSelection, skipped } = pathsForSvgExport()
-  const ui = useUIStore.getState()
-  if (paths.length === 0) {
-    ui.showStatus('Nothing to export — no visible paths.', 'warn')
-    return
-  }
-  const { widthMM, heightMM } = useWorkpieceStore.getState()
-  download(pathsToSvg(paths, { widthMM, heightMM }), sanitizeFileName(useProjectStore.getState().name || 'drawing'))
-  ui.showStatus(
-    `Exported ${paths.length} path${paths.length > 1 ? 's' : ''}`
-    + `${fromSelection ? ' (selection)' : ''} as SVG, in mm on a ${mm(widthMM)} × ${mm(heightMM)} page.`
-    + (skipped > 0 ? ` ${skipped} image/STL path${skipped > 1 ? 's' : ''} left out — an SVG holds outlines only.` : ''),
-    skipped > 0 ? 'warn' : 'info',
-  )
 }

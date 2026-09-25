@@ -12,7 +12,7 @@ import { useToolpathStore, pathIdsOf, type AnyOperation } from '../store/toolpat
 import { useTabStore, type Tab } from '../store/tabStore'
 import { useConstraintsStore } from '../store/constraintsStore'
 import { constraintChains, constraintName, bodyKeyOf, type Constraint } from '../store/constraints'
-import { useWorkpieceStore } from '../store/workpieceStore'
+import { useWorkpieceStore, fmtLen } from '../store/workpieceStore'
 import { shapeDisplayName } from '../shapes/shapeGenerators'
 import { useUIStore } from '../store/uiStore'
 import { OP_TYPE_COLORS } from '../colors'
@@ -431,16 +431,13 @@ export default function TimelinePanel() {
     if (chip.clockId) return null
     // Deleting an attached chip removes what it stands for, not the path: the
     // tabs go, or the corner treatments are undone back to the sharp outline.
-    // Both change what the machine would cut, so both regenerate — every edit
-    // site owes its toolpaths that.
+    // Both change what the machine would cut, so both regenerate — the tabs
+    // here, the corners inside the path edit clearCorners makes.
     if (chip.form === 'tabs') return () => {
       useTabStore.getState().deletePathTabs(chip.pathIds[0])
       regenerateAffected(chip.pathIds[0])
     }
-    if (chip.form === 'nodeedit') return () => {
-      clearCorners(chip.pathIds[0])
-      regenerateAffected(chip.pathIds[0])
-    }
+    if (chip.form === 'nodeedit') return () => clearCorners(chip.pathIds[0])
     // Deleting the chip releases the whole chain and leaves every part exactly
     // where it stands — nothing is cut differently, so nothing regenerates.
     if (chip.constraintIds) return () => useConstraintsStore.getState().deleteConstraints(chip.constraintIds!)
@@ -526,9 +523,8 @@ function bodyOfChip(paths: ImportedPath[], c: Constraint): string[] {
  * on screen.
  */
 function constraintLabel(c: Constraint, units: 'mm' | 'in'): string {
-  const len = (mm: number) => units === 'in'
-    ? `${(mm / 25.4).toFixed(3)}"`
-    : `${+mm.toFixed(1)} mm`
+  // Trailing zeros dropped in mm ("12 mm", not "12.0 mm") — a chip is short on room.
+  const len = (mm: number) => units === 'in' ? fmtLen(mm, units) : `${+mm.toFixed(1)} mm`
   const bits: string[] = []
   if (c.mode === 'xy') {
     if (c.offsetXMM !== undefined) bits.push(`X${+c.offsetXMM.toFixed(1)}`)

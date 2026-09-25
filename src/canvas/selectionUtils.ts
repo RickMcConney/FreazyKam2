@@ -71,15 +71,25 @@ export interface BBox {
 // Cached on the d string, which is what decides the answer (paths are replaced, never
 // mutated): a selection's box is asked for on every render of the panels that show it.
 // Entries are tuples and each call builds a fresh BBox, so no caller can corrupt the cache.
-const BBOX_CACHE_MAX = 256
-const bboxCache = new Map<string, [number, number, number, number] | null>()
+//
+// Two generations, not a FIFO. The old one was a 256-entry FIFO, and a sweep over more
+// paths than that (every drag start runs `collectSnapTargets` over the whole drawing)
+// evicted each entry before it came round again: a 0% hit rate. Now a hit in the old
+// generation is promoted, and when the current one fills it becomes the old one. A sweep
+// over up to BBOX_GEN_MAX paths always hits, and a string no path holds any more is
+// dropped within two generations.
+const BBOX_GEN_MAX = 4096
+type Ext = [number, number, number, number] | null
+let bboxCur = new Map<string, Ext>()
+let bboxOld = new Map<string, Ext>()
 
 export function getBBox(d: string): BBox | null {
-  let ext = bboxCache.get(d)
+  let ext = bboxCur.get(d)
   if (ext === undefined) {
-    ext = pathExtents(d)
-    if (bboxCache.size >= BBOX_CACHE_MAX) bboxCache.delete(bboxCache.keys().next().value!)
-    bboxCache.set(d, ext)
+    ext = bboxOld.get(d)
+    if (ext === undefined) ext = pathExtents(d)
+    if (bboxCur.size >= BBOX_GEN_MAX) { bboxOld = bboxCur; bboxCur = new Map() }
+    bboxCur.set(d, ext)
   }
   if (!ext) return null
   const [minX, minY, maxX, maxY] = ext

@@ -4,6 +4,7 @@ import type { ImportedPath } from '../store/pathsStore'
 import { PATH_COLOR } from '../colors'
 import { uid } from '../uid'
 import { getMultiBBox, translateD } from '../canvas/selectionUtils'
+import { parseD, stringifyD, applyMat, type Mat6 } from './svgImporter'
 import { douglasPeucker } from '../cam/pathFlattener'
 import { round4 } from '../util/num'
 
@@ -297,6 +298,109 @@ function stitchEdges(edges: Edge[], tol = 0.001): string[] {
   return result
 }
 
+// ─── Blocks and the object coordinate system ──────────────────────────────────
+//
+// A part drawn as a BLOCK arrives as one INSERT naming it: position, X/Y scale, rotation
+// and optionally a rows × columns array. Its geometry lives in the BLOCKS section in the
+// block's own coordinates, measured from the block's base point. Ignoring INSERT imported
+// such a file as nothing.
+//
+// A 2D entity in a MIRRORED view carries extrusion (0,0,−1): its coordinates are in the
+// object coordinate system, whose X axis then points the other way (the DXF arbitrary-axis
+// rule gives Ax = (−1,0,0), Ay = (0,1,0) for that normal). Reading them as world X/Y put
+// the part mirrored — and the ARCS the wrong way round, since "CCW" is CCW in the flipped
+// plane. Only CIRCLE, ARC, LWPOLYLINE, 2D POLYLINE and INSERT are OCS entities; LINE,
+// ELLIPSE and SPLINE are already world coordinates. A normal with any X or Y in it is a
+// plane tilted out of the XY plane, which has no honest flat outline: it is skipped and
+// reported, not flattened.
+
+const IDENTITY: Mat6 = [1, 0, 0, 1, 0, 0]
+const OCS_FLIP: Mat6 = [-1, 0, 0, 1, 0, 0]
+// m1 ∘ m2 — m2 applied first.
+function mul(m1: Mat6, m2: Mat6): Mat6 {
+  const [a1, b1, c1, d1, e1, f1] = m1
+  const [a2, b2, c2, d2, e2, f2] = m2
+  return [a1 * a2 + c1 * b2, b1 * a2 + d1 * b2, a1 * c2 + c1 * d2, b1 * c2 + d1 * d2,
+    a1 * e2 + c1 * f2 + e1, b1 * e2 + d1 * f2 + f1]
+}
+const translate = (x: number, y: number): Mat6 => [1, 0, 0, 1, x, y]
+const isIdentity = (m: Mat6) => m.every((v, i) => Math.abs(v - IDENTITY[i]) < 1e-12)
+// Rotation, uniform scale and mirror keep a circular arc circular.
+function isSimilarity([a, b, c, d]: Mat6): boolean {
+  const n1 = a * a + b * b, n2 = c * c + d * d
+  return Math.abs(a * c + b * d) < 1e-9 * Math.max(1, n1) && Math.abs(n1 - n2) < 1e-9 * Math.max(1, n1)
+}
+const mapD = (d: string, m: Mat6) => (isIdentity(m) ? d : stringifyD(applyMat(parseD(d), m)))
+
+// An edge carried through `m`, still stitchable. An ARC stays an Edge only under a
+// similarity (its radius just scales); under a mirror its CCW sweep would run CW, so the
+// endpoints swap to keep the Edge convention (CCW from p0 to p1). Null for an arc under a
+// non-uniform scale — it is an elliptical arc now, and goes out as a path of its own.
+function mapEdge(e: Edge, m: Mat6): Edge | null {
+  if (isIdentity(m)) return e
+  const [a, b, c, d, tx, ty] = m
+  const px = (x: number, y: number) => a * x + c * y + tx
+  const py = (x: number, y: number) => b * x + d * y + ty
+  const x1 = px(e.x1, e.y1), y1 = py(e.x1, e.y1), x2 = px(e.x2, e.y2), y2 = py(e.x2, e.y2)
+  if (e.kind === 'L') return { kind: 'L', x1, y1, x2, y2 }
+  if (!isSimilarity(m)) return null
+  const r = e.r * Math.sqrt(a * a + b * b)
+  return a * d - b * c < 0
+    ? { kind: 'A', x1: x2, y1: y2, x2: x1, y2: y1, r, large: e.large }
+    : { kind: 'A', x1, y1, x2, y2, r, large: e.large }
+}
+const edgeToD = (e: Edge) => e.kind === 'L'
+  ? `M${round4(e.x1)},${round4(e.y1)} L${round4(e.x2)},${round4(e.y2)}`
+  : `M${round4(e.x1)},${round4(e.y1)} A${round4(e.r)},${round4(e.r)},0,${e.large},1,${round4(e.x2)},${round4(e.y2)}`
+
+// The extrusion normal, where dxf-parser keeps it: separate X/Y/Z fields on some
+// entities, one point on others. Absent means the default (0,0,1).
+function normalOf(e: Record<string, unknown>): { x: number; y: number; z: number } {
+  const pt = e.extrusionDirection as { x?: number; y?: number; z?: number } | undefined
+  return {
+    x: (e.extrusionDirectionX as number | undefined) ?? pt?.x ?? 0,
+    y: (e.extrusionDirectionY as number | undefined) ?? pt?.y ?? 0,
+    z: (e.extrusionDirectionZ as number | undefined) ?? pt?.z ?? 1,
+  }
+}
+
+/**
+ * Handles of the CIRCLEs whose extrusion Z is negative. dxf-parser reads codes 210–230 on
+ * ARC and LWPOLYLINE but not on CIRCLE, so a mirrored circle would land on the wrong side
+ * of the part with nothing in the parsed entity to say so. One pass over the group codes;
+ * a circle without a handle (code 5 is optional) cannot be matched and is left as parsed.
+ */
+function flippedCircleHandles(text: string): Set<string> {
+  const out = new Set<string>()
+  const lines = text.split(/\r?\n/)
+  let inCircle = false, handle = '', z = 1
+  const close = () => { if (inCircle && handle && z < 0) out.add(handle) }
+  for (let i = 0; i + 1 < lines.length; i += 2) {
+    const code = lines[i].trim(), val = lines[i + 1].trim()
+    if (code === '0') { close(); inCircle = val === 'CIRCLE'; handle = ''; z = 1 }
+    else if (inCircle && code === '5') handle = val
+    else if (inCircle && code === '230') z = parseFloat(val)
+  }
+  close()
+  return out
+}
+
+// What a skipped entity is called in the report. Text in all its forms is one thing to
+// the user; what matters is that it has no outline to cut.
+function skipLabel(type: string): string {
+  if (type === 'TEXT' || type === 'MTEXT' || type === 'ATTDEF' || type === 'ATTRIB') return 'text'
+  return type.toLowerCase()
+}
+// Entities that are never geometry, so leaving them out is not worth a word.
+const SILENT = new Set(['VIEWPORT', 'SEQEND', 'VERTEX'])
+// A block that inserts itself (directly or not) would recurse forever…
+const MAX_BLOCK_DEPTH = 16
+// …and one that inserts itself several times multiplies at every level inside it (three
+// self-inserts is 3^16 ≈ 43 million). A cap on
+// the entities expanded from blocks in all, far above any real drawing (an arrayed insert
+// of a detailed part is thousands), keeps a hostile or broken file from hanging the tab.
+const MAX_BLOCK_ENTITIES = 200_000
+
 // Session-local numbering for display NAMES only ("Polyline 3") — ids come from
 // uid() so they can never collide with ids loaded from a saved project.
 let _pathCounter = 0
@@ -306,6 +410,14 @@ export interface DxfImportResult {
   needsUnitsPrompt: boolean
   groupId: string
   error?: string  // set when the file failed to parse (vs. parsed but empty)
+  // Entities left out, by what the user would call them ('text', 'hatch', 'dimension', …).
+  // Empty when everything was imported.
+  skipped: Record<string, number>
+}
+
+/** "3 text, 1 hatch" — the skipped report as a phrase for the status bar. */
+export function describeSkipped(skipped: Record<string, number>): string {
+  return Object.entries(skipped).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n} ${k}`).join(', ')
 }
 
 export function importDxf(
@@ -322,9 +434,9 @@ export function importDxf(
     dxf = parser.parseSync(text)
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'not a valid DXF file'
-    return { paths: [], needsUnitsPrompt: false, groupId, error: msg }
+    return { paths: [], needsUnitsPrompt: false, groupId, error: msg, skipped: {} }
   }
-  if (!dxf) return { paths: [], needsUnitsPrompt: false, groupId, error: 'not a valid DXF file' }
+  if (!dxf) return { paths: [], needsUnitsPrompt: false, groupId, error: 'not a valid DXF file', skipped: {} }
 
   const insunits: number = (dxf.header as { $INSUNITS?: number })?.$INSUNITS ?? 0
   let toMM: number
@@ -340,108 +452,128 @@ export function importDxf(
   }
 
   const paths: ImportedPath[] = []
-  const entities = dxf.entities ?? []
+  const blocks = (dxf as { blocks?: Record<string, { entities?: DxfAny[]; position?: { x: number; y: number } }> }).blocks ?? {}
+  const flippedCircles = flippedCircleHandles(text)
+  const skipped: Record<string, number> = {}
+  const skip = (label: string) => { skipped[label] = (skipped[label] ?? 0) + 1 }
+  const sc = (v: number) => v * toMM
 
   // LINE and partial ARC edges collected for stitching into connected paths
   const edges: Edge[] = []
-
-  for (const entity of entities) {
-    let d = ''
-    let name = ''
-
-    try {
-      const sc = (v: number) => v * toMM
-
-      switch (entity.type) {
-        case 'LINE': {
-          const e = entity as import('dxf-parser').LineEntity
-          const p0 = e.vertices[0], p1 = e.vertices[1]
-          if (!p0 || !p1) continue
-          // Skip zero-length segments
-          if (Math.abs(p0.x - p1.x) < 1e-9 && Math.abs(p0.y - p1.y) < 1e-9) continue
-          edges.push({ kind: 'L', x1: sc(p0.x), y1: sc(p0.y), x2: sc(p1.x), y2: sc(p1.y) })
-          continue  // handled via stitchEdges below
-        }
-        case 'LWPOLYLINE': {
-          const e = entity as import('dxf-parser').LwpolylineEntity
-          if (e.vertices.length < 2) continue
-          d = polyToD(e.vertices.map((v) => ({ x: sc(v.x), y: sc(v.y), bulge: v.bulge })), e.shape)
-          name = e.shape ? 'Closed Polyline' : 'Polyline'
-          break
-        }
-        case 'POLYLINE': {
-          const e = entity as import('dxf-parser').PolylineEntity
-          if (e.vertices.length < 2) continue
-          d = polyToD(e.vertices.map((v) => ({ x: sc(v.x), y: sc(v.y), bulge: v.bulge })), e.shape)
-          name = 'Polyline'
-          break
-        }
-        case 'ARC': {
-          const e = entity as import('dxf-parser').ArcEntity
-          const edge = arcEdge(sc(e.center.x), sc(e.center.y), sc(e.radius), e.startAngle, e.endAngle)
-          if (edge) { edges.push(edge); continue }  // handled via stitchEdges below
-          d = circleToD(sc(e.center.x), sc(e.center.y), sc(e.radius))
-          name = 'Circle'
-          break
-        }
-        case 'CIRCLE': {
-          const e = entity as import('dxf-parser').CircleEntity
-          d = circleToD(sc(e.center.x), sc(e.center.y), sc(e.radius))
-          name = 'Circle'
-          break
-        }
-        case 'ELLIPSE': {
-          const e = entity as import('dxf-parser').EllipseEntity
-          d = ellipseToD(
-            sc(e.center.x), sc(e.center.y),
-            sc(e.majorAxisEndPoint.x), sc(e.majorAxisEndPoint.y),
-            e.axisRatio,
-            e.startAngle, e.endAngle,
-          )
-          name = 'Ellipse'
-          break
-        }
-        case 'SPLINE': {
-          const e = entity as import('dxf-parser').SplineEntity
-          d = splineToD(
-            e.controlPoints.map((p) => ({ x: sc(p.x), y: sc(p.y) })),
-            e.degree,
-            e.knots,
-            e.closed,
-          )
-          name = 'Spline'
-          break
-        }
-        default:
-          continue
-      }
-    } catch { continue }
-
-    if (!d.trim()) continue
-
-    paths.push({
-      id: uid('dxf-path'),
-      name: `${name} ${++_pathCounter}`,
-      d,
-      visible: true,
-      color: PATH_COLOR,
-      groupId,
-      groupName,
-    })
+  const pushPath = (d: string, name: string) => {
+    if (!d.trim()) return
+    paths.push({ id: uid('dxf-path'), name: `${name} ${++_pathCounter}`, d, visible: true, color: PATH_COLOR, groupId, groupName })
   }
+
+  // `m` is where this list of entities lands: identity for the file's own entities, an
+  // INSERT's placement (in mm) for a block's. Geometry is built in mm exactly as it always
+  // was and only then carried through `m`, so a file with no blocks and no mirrored
+  // entities imports byte-for-byte as before.
+  let expanded = 0
+  const collect = (entities: DxfAny[], m: Mat6, depth: number) => {
+    for (const entity of entities) {
+      if (depth > 0 && ++expanded > MAX_BLOCK_ENTITIES) { skip('block expansion over the limit'); return }
+      // This entity's own frame: its object coordinate system, then where the list lands.
+      let own = m
+      if (OCS_TYPES.has(entity.type)) {
+        const n = normalOf(entity as unknown as Record<string, unknown>)
+        if (Math.abs(n.x) > 1e-6 || Math.abs(n.y) > 1e-6) { skip(`${skipLabel(entity.type)} (tilted)`); continue }
+        const flipped = n.z < 0 || (entity.type === 'CIRCLE' && !!entity.handle && flippedCircles.has(entity.handle))
+        if (flipped) own = mul(m, OCS_FLIP)
+      }
+      try {
+        switch (entity.type) {
+          case 'LINE': {
+            const e = entity as import('dxf-parser').LineEntity
+            const p0 = e.vertices[0], p1 = e.vertices[1]
+            if (!p0 || !p1) continue
+            // Skip zero-length segments
+            if (Math.abs(p0.x - p1.x) < 1e-9 && Math.abs(p0.y - p1.y) < 1e-9) continue
+            edges.push(mapEdge({ kind: 'L', x1: sc(p0.x), y1: sc(p0.y), x2: sc(p1.x), y2: sc(p1.y) }, own)!)
+            continue  // handled via stitchEdges below
+          }
+          case 'LWPOLYLINE': {
+            const e = entity as import('dxf-parser').LwpolylineEntity
+            if (e.vertices.length < 2) continue
+            pushPath(mapD(polyToD(e.vertices.map((v) => ({ x: sc(v.x), y: sc(v.y), bulge: v.bulge })), e.shape), own),
+              e.shape ? 'Closed Polyline' : 'Polyline')
+            continue
+          }
+          case 'POLYLINE': {
+            const e = entity as import('dxf-parser').PolylineEntity
+            if (e.vertices.length < 2) continue
+            pushPath(mapD(polyToD(e.vertices.map((v) => ({ x: sc(v.x), y: sc(v.y), bulge: v.bulge })), e.shape), own), 'Polyline')
+            continue
+          }
+          case 'ARC': {
+            const e = entity as import('dxf-parser').ArcEntity
+            const edge = arcEdge(sc(e.center.x), sc(e.center.y), sc(e.radius), e.startAngle, e.endAngle)
+            if (edge) {
+              const moved = mapEdge(edge, own)
+              if (moved) edges.push(moved)
+              else pushPath(mapD(edgeToD(edge), own), 'Arc')  // squashed by a non-uniform scale
+              continue  // handled via stitchEdges below
+            }
+            pushPath(mapD(circleToD(sc(e.center.x), sc(e.center.y), sc(e.radius)), own), 'Circle')
+            continue
+          }
+          case 'CIRCLE': {
+            const e = entity as import('dxf-parser').CircleEntity
+            pushPath(mapD(circleToD(sc(e.center.x), sc(e.center.y), sc(e.radius)), own), 'Circle')
+            continue
+          }
+          case 'ELLIPSE': {
+            const e = entity as import('dxf-parser').EllipseEntity
+            pushPath(mapD(ellipseToD(
+              sc(e.center.x), sc(e.center.y),
+              sc(e.majorAxisEndPoint.x), sc(e.majorAxisEndPoint.y),
+              e.axisRatio,
+              e.startAngle, e.endAngle,
+            ), own), 'Ellipse')
+            continue
+          }
+          case 'SPLINE': {
+            const e = entity as import('dxf-parser').SplineEntity
+            pushPath(mapD(splineToD(
+              e.controlPoints.map((p) => ({ x: sc(p.x), y: sc(p.y) })),
+              e.degree,
+              e.knots,
+              e.closed,
+            ), own), 'Spline')
+            continue
+          }
+          case 'INSERT': {
+            const e = entity as unknown as InsertEntity
+            const block = blocks[e.name]
+            if (!block) { skip('missing block'); continue }
+            if (depth >= MAX_BLOCK_DEPTH) { skip('block nested too deep'); continue }
+            // position · rotation · (array cell) · scale · −base, all translations in mm.
+            const rot = ((e.rotation ?? 0) * Math.PI) / 180
+            const cos = Math.cos(rot), sin = Math.sin(rot)
+            const base = block.position ?? { x: 0, y: 0 }
+            const sx = e.xScale ?? 1, sy = e.yScale ?? 1
+            const place = mul(translate(sc(e.position.x), sc(e.position.y)), [cos, sin, -sin, cos, 0, 0])
+            const fromBase = mul([sx, 0, 0, sy, 0, 0], translate(-sc(base.x), -sc(base.y)))
+            const cols = Math.max(1, e.columnCount ?? 1), rows = Math.max(1, e.rowCount ?? 1)
+            for (let r = 0; r < rows; r++) {
+              for (let c = 0; c < cols; c++) {
+                const cell = translate(sc(c * (e.columnSpacing ?? 0)), sc(r * (e.rowSpacing ?? 0)))
+                collect(block.entities ?? [], mul(own, mul(place, mul(cell, fromBase))), depth + 1)
+              }
+            }
+            continue
+          }
+          default:
+            if (!SILENT.has(entity.type)) skip(skipLabel(entity.type))
+            continue
+        }
+      } catch { continue }
+    }
+  }
+  collect(dxf.entities ?? [], IDENTITY, 0)
 
   // Stitch collected LINE and ARC edges into connected paths
-  for (const d of stitchEdges(edges)) {
-    paths.push({
-      id: uid('dxf-path'),
-      name: `Path ${++_pathCounter}`,
-      d,
-      visible: true,
-      color: PATH_COLOR,
-      groupId,
-      groupName,
-    })
-  }
+  for (const d of stitchEdges(edges)) pushPath(d, 'Path')
 
   // Translate all paths so the group bbox center lands on centerMM (workpiece center)
   if (centerMM && paths.length > 0) {
@@ -457,5 +589,14 @@ export function importDxf(
     }
   }
 
-  return { paths, needsUnitsPrompt, groupId }
+  return { paths, needsUnitsPrompt, groupId, skipped }
 }
+
+type DxfAny = import('dxf-parser').DxfEntity & { handle?: string }
+interface InsertEntity {
+  type: 'INSERT'; name: string; position: { x: number; y: number }
+  xScale?: number; yScale?: number; rotation?: number
+  columnCount?: number; rowCount?: number; columnSpacing?: number; rowSpacing?: number
+}
+// The entities whose coordinates are in their object coordinate system (see above).
+const OCS_TYPES = new Set(['CIRCLE', 'ARC', 'LWPOLYLINE', 'POLYLINE', 'INSERT'])

@@ -6,7 +6,6 @@ import { AlertCircle } from 'lucide-react'
 import { useFormDefaultsStore } from '../../store/formDefaultsStore'
 import { usePathsStore, useSelectedPaths } from '../../store/pathsStore'
 import { applyCornerTreatments, getTreatableCorners, pathSimilarityTransform, transformPathBySimilarity, type CornerTreatmentType } from '../../tools/cornerTreatment'
-import { regenerateAffected } from '../../cam/regenerate'
 import { useUIStore } from '../../store/uiStore'
 
 // 'none' removes the treatment on the targeted corners (restores the sharp corner)
@@ -149,7 +148,6 @@ export function NodeEditForm({ onClose }: { onClose: () => void }) {
       // it was cut from, and storing the pair is what keeps a later edit of the
       // radius re-cutting the ORIGINAL corner rather than rounding a round one.
       batchUpdatePaths([{ id: activePath.id, d: newD, shapeParams: null, corner, cornerBaseD: baseD }], 'corner')
-      regenerateAffected(activePath.id)
     }
     setTreatedCorners([...treatmentsRef.current.keys()])
     clearSelectedCorners()

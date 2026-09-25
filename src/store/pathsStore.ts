@@ -2,9 +2,9 @@ import { useMemo } from 'react'
 import { create } from 'zustand'
 import type { ImportedPath, PathDefinition } from '../importers/svgImporter'
 import type { ClockSpec } from '../shapes/clockTrain'
-import { applyPlacementD, placementMat, foldPlacement, isPlacementOnly, getBBox, applyTransformSteps, type TransformStep } from '../canvas/selectionUtils'
+import { applyPlacementD, placementMat, foldPlacement, isPlacementOnly, getBBox, applyTransformStep, applyTransformSteps, isIdentityStep, type TransformStep } from '../canvas/selectionUtils'
 import { generateShapeD, generateShapeParts, shapeDisplayName, ANNOTATION_SWITCH, type ShapeParams } from '../shapes/shapeGenerators'
-import { useToolpathStore, refsPathId, remapOpsForSplit } from './toolpathStore'
+import { useToolpathStore, refsPathId, remapOpsForSplit, type AnyOperation } from './toolpathStore'
 import { useTabStore } from './tabStore'
 import { useTimelineStore } from '../timeline/timelineStore'
 import { serializeOp, type PathsAddSource, type PathEditGesture } from '../timeline/events'
@@ -75,8 +75,11 @@ interface PathsState {
   batchUpdatePaths: (updates: PathUpdate[], gesture?: PathEditGesture) => void
   // Atomic update + add + delete in ONE history entry. Use for gestures that
   // touch multiple paths at once (node-edit join/weld) so a single undo reverts
-  // the whole gesture. Deleted paths' operations and tabs are cleaned up.
-  applyPathEdit: (edit: { updates?: PathUpdate[]; add?: ImportedPath[]; deleteIds?: string[]; label?: string; gesture?: PathEditGesture; selectAfter?: string[] }) => void
+  // the whole gesture. Deleted paths' operations and tabs are cleaned up, and
+  // the operations on every path whose `d` changed are regenerated — callers do
+  // not. `regenerate: false` leaves the edit's OWN paths to the caller (a live
+  // parameter drag regenerates on pointerup); constraint followers still go.
+  applyPathEdit: (edit: { updates?: PathUpdate[]; add?: ImportedPath[]; deleteIds?: string[]; label?: string; gesture?: PathEditGesture; selectAfter?: string[]; regenerate?: boolean }) => void
   // Raw, NON-recording path rewrite for edit-in-place flows that amend the
   // timeline themselves (e.g. BooleanForm edit mode) — never use for normal
   // edits, which must record events.
@@ -174,15 +177,37 @@ function annotationSwitchOff(
  * G-code. So it goes visibly, and the one snapshot the caller records puts it
  * back in one undo. Each store is only written when something actually changed,
  * because a fresh array re-renders every subscriber.
+ *
+ * EXCEPT AN ISLAND. Deleting the island of a pocket or v-carve is a change to
+ * what that operation clears, not the end of it: the island comes out of
+ * `islandIds` and the operation is rebuilt without it. Dropping the whole pocket
+ * lost the user's settings for the sake of one inner path, and its chip then
+ * reopened a form with nothing behind it. Returns the ids of the operations that
+ * lost an island — the caller regenerates them once the paths are written, since
+ * generation reads the boundary back from the store.
+ *
+ * An inlay still goes whole: its halves are built as a matched pair, and taking
+ * an island out of one half without its plug in the other would cut a socket
+ * the plug no longer fits.
  */
-function dropDependentsOf(deleteIds: string[]): void {
-  if (deleteIds.length === 0) return
+function dropDependentsOf(deleteIds: string[]): string[] {
+  if (deleteIds.length === 0) return []
+  const gone = new Set(deleteIds)
   const opsBefore = useToolpathStore.getState().operations
-  const newOps = opsBefore.filter((op) => !deleteIds.some((id) => refsPathId(op, id)))
-  if (newOps.length !== opsBefore.length) useToolpathStore.getState().replaceOperations(newOps)
+  const reshaped: string[] = []
+  const newOps = opsBefore.flatMap((op): AnyOperation[] => {
+    if (!deleteIds.some((id) => refsPathId(op, id))) return [op]
+    if ((op.type === 'pocket' || op.type === 'vcarve') && !gone.has(op.pathId)) {
+      reshaped.push(op.id)
+      return [{ ...op, islandIds: op.islandIds.filter((id) => !gone.has(id)) }]
+    }
+    return []
+  })
+  if (newOps.length !== opsBefore.length || reshaped.length > 0) useToolpathStore.getState().replaceOperations(newOps)
   const tabsBefore = useTabStore.getState().tabs
-  const newTabs = tabsBefore.filter((t) => !deleteIds.includes(t.pathId))
+  const newTabs = tabsBefore.filter((t) => !gone.has(t.pathId))
   if (newTabs.length !== tabsBefore.length) useTabStore.getState().replaceTabs(newTabs)
+  return reshaped
 }
 
 /**
@@ -316,6 +341,31 @@ function applyUpdateToPath(p: ImportedPath, upd: PathUpdate): ImportedPath {
   return newPath
 }
 
+/**
+ * Whether `upd` would leave `p` exactly as it is.
+ *
+ * An edit that changes nothing must not RECORD anything (review2 Q2): an undo
+ * step that undoes nothing costs the user a press of Ctrl+Z to find out, and a
+ * chip for it sits in the strip. `d` first — it is the one field every update
+ * carries and the one that is nearly always what changed, so the common edit
+ * costs one string compare. Only when `d` is identical is the update actually
+ * applied and the result compared field by field: a rename, a soft-hide, a
+ * group change or a transform that only moves the placement record all leave
+ * `d` alone and are real edits.
+ */
+function isNoOpUpdate(p: ImportedPath, upd: PathUpdate): boolean {
+  if (upd.d !== p.d) return false
+  const next = applyUpdateToPath(p, upd) as unknown as Record<string, unknown>
+  const prev = p as unknown as Record<string, unknown>
+  for (const k of new Set([...Object.keys(prev), ...Object.keys(next)])) {
+    const a = prev[k], b = next[k]
+    if (a === b) continue
+    if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false
+    if (JSON.stringify(a) !== JSON.stringify(b)) return false
+  }
+  return true
+}
+
 // The last constraint failure reported, so a document left over-constrained
 // says so ONCE rather than on every subsequent edit. Cleared when a solve
 // succeeds, so the next genuine failure is announced again.
@@ -436,21 +486,42 @@ export function applyConstraintSolve(anchorIds: string[] = []): void {
   const solved = enforceConstraints(usePathsStore.getState().paths, [], anchorIds)
   if (solved.movedIds.length === 0) return
   usePathsStore.setState({ paths: solved.paths })
-  regenerateConstrained(solved.movedIds)
+  regenerateEdited(solved.movedIds)
 }
 
 /**
- * Regenerate the toolpaths on parts a constraint moved.
+ * Regenerate the operations on the given paths, each operation once.
  *
- * The gesture's own caller regenerates what IT touched (see bakeTransform) and
- * has no way to know a constraint carried something else along, so this is the
- * only place that owes those operations a rebuild. Dynamically imported for the
- * same reason the timeline's scheduled regen is: cam/regenerate reads this store
- * back, and a static import would close the cycle at module-evaluation time.
+ * THE STORE OWES AN EDIT ITS TOOLPATHS, not the caller. It used to be the
+ * caller's job to pair every `applyPathEdit` with a `regenerateAffected`, and
+ * one Delete-key branch in point edit forgot (review2 B1): its operations kept
+ * status `done` with segments that still cut the deleted segment, and export
+ * machined them. It is also what gets an operation touching BOTH a dragged part
+ * and a part a constraint carried along rebuilt ONCE rather than twice — the
+ * gesture's ids and the solve's go out in the one call.
+ *
+ * Dynamically imported for the same reason the timeline's scheduled regen is:
+ * cam/regenerate reads this store back, and a static import would close the
+ * cycle at module-evaluation time. The module is kept once loaded, so after the
+ * first edit the regeneration is synchronous again — as it was when every caller
+ * made the call itself.
  */
-function regenerateConstrained(ids: string[]): void {
-  if (ids.length === 0) return
-  void import('../cam/regenerate').then(({ regenerateAffectedMany }) => regenerateAffectedMany(ids))
+let regenModule: typeof import('../cam/regenerate') | null = null
+function regenerateEdited(ids: string[], opIds: string[] = []): void {
+  if (ids.length === 0 && opIds.length === 0) return
+  if (regenModule) { regenModule.regenerateAffectedMany(ids, opIds); return }
+  void import('../cam/regenerate').then((m) => { regenModule = m; m.regenerateAffectedMany(ids, opIds) })
+}
+
+/**
+ * The ids among `updates` whose outline actually changed. A toolpath is cut from
+ * `d` and nothing else, so an update that restates it — a checkbox, a group, a
+ * soft-hide — has nothing to regenerate.
+ */
+function changedIds(before: ImportedPath[], updates: PathUpdate[]): string[] {
+  if (updates.length === 0) return []
+  const old = new Map(before.map((p) => [p.id, p.d]))
+  return updates.filter((u) => old.has(u.id) && old.get(u.id) !== u.d).map((u) => u.id)
 }
 
 export const usePathsStore = create<PathsState>()((set, get) => ({
@@ -567,7 +638,7 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
 
   rewriteGeneratedRaw: ({ updates = [], add = [], deleteIds = [] }) => {
     const s = get()
-    dropDependentsOf(deleteIds)
+    const reshaped = dropDependentsOf(deleteIds)
     const map = new Map(updates.map((u) => [u.id, u]))
     const paths = s.paths
       .filter((p) => !deleteIds.includes(p.id))
@@ -595,12 +666,22 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
         ? { selectedIds: s.selectedIds.filter((sid) => !deleteIds.includes(sid)) }
         : {}),
     })
-    regenerateConstrained(solved.movedIds)
+    regenerateEdited(solved.movedIds, reshaped)
   },
 
-  applyPathEdit: ({ updates = [], add = [], deleteIds = [], label, gesture, selectAfter }) => {
-    if (updates.length === 0 && add.length === 0 && deleteIds.length === 0) return
+  applyPathEdit: ({ updates = [], add = [], deleteIds = [], label, gesture, selectAfter, regenerate = true }) => {
     const s = get()
+    // Updates that would leave their path exactly as it is are dropped, and an
+    // edit with nothing left records nothing (see isNoOpUpdate). A selection the
+    // caller asked for still lands — it is not part of the document.
+    if (updates.length > 0) {
+      const byId = new Map(s.paths.map((p) => [p.id, p]))
+      updates = updates.filter((u) => { const p = byId.get(u.id); return !p || !isNoOpUpdate(p, u) })
+    }
+    if (updates.length === 0 && add.length === 0 && deleteIds.length === 0) {
+      if (selectAfter) set({ selectedIds: selectAfter })
+      return
+    }
     // Deleting a marking or a pitch circle turns its switch off across the whole
     // shape, in THIS edit — so the ops/tabs cleanup below covers the parts that
     // go with it and one undo puts everything back. See ANNOTATION_SWITCH.
@@ -608,7 +689,7 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
       const off = annotationSwitchOff(s.paths, deleteIds, updates)
       if (off) { deleteIds = off.deleteIds; updates = off.updates }
     }
-    dropDependentsOf(deleteIds)
+    const reshaped = dropDependentsOf(deleteIds)
     const map = new Map(updates.map((u) => [u.id, u]))
     let paths = s.paths
       .filter((p) => !deleteIds.includes(p.id))
@@ -648,7 +729,11 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
       },
       { label, selectionAfter: selectAfter },
     )
-    regenerateConstrained(solved.movedIds)
+    // Deleted paths have taken their operations with them (dropDependentsOf) and
+    // added ones have none yet, so what is owed is the updates, whatever the
+    // constraints carried along, and any pocket that has just lost an island.
+    const own = regenerate ? changedIds(s.paths, updates) : []
+    regenerateEdited(own.length > 0 ? [...new Set([...own, ...solved.movedIds])] : solved.movedIds, reshaped)
   },
 
   updateShapeParams: (id, params) => {
@@ -775,7 +860,8 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
       } else {
         // One atomic edit: one undo step, and operations on a part that has gone away
         // are cleaned up with it. Later keystrokes join this step.
-        get().applyPathEdit({ updates, add, deleteIds, label: shapeDisplayName(params.type) })
+        // The caller regenerates: a live parameter drag does so on pointerup.
+        get().applyPathEdit({ updates, add, deleteIds, label: shapeDisplayName(params.type), regenerate: false })
       }
       return
     }
@@ -787,7 +873,7 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
     const solved = enforceConstraints(
       s0.paths.map((p) => p.id === id ? { ...p, d, shapeParams: params } : p), [], [id])
     set({ paths: solved.paths })
-    regenerateConstrained(solved.movedIds)
+    regenerateEdited(solved.movedIds)
     // Parameter edits join the step that created/last defined the shape when it is the
     // latest step — changing text or a star's point count is an argument edit to that
     // call. Otherwise (an older definer, or none) this records a shape.params step, which
@@ -941,6 +1027,27 @@ function transformCorners(
     baseD: applyPlacementD(corners.baseD, steps),
     treatments: corners.treatments.map(([i, t]) => [i, { ...t, radiusMM: t.radiusMM * scale }]),
   }
+}
+
+/**
+ * Carry the given paths through one transform step, as ONE edit.
+ *
+ * Every place that bakes a gesture comes through here — a canvas drag, resize,
+ * skew or rotate, an arrow-key nudge, and the Properties panel's typed move,
+ * size, angle and mirror — so a typed move and a dragged one leave the same
+ * recipe behind, byte for byte. A step that leaves every point where it is (a
+ * drag that snapped back to where it began: see `isIdentityStep`) records
+ * nothing and regenerates nothing. `gesture` names the timeline chip.
+ */
+export function bakePathsStep(pathIds: string[], step: TransformStep, gesture: PathEditGesture): void {
+  if (isIdentityStep(step)) return
+  const { paths, applyPathEdit } = usePathsStore.getState()
+  const want = new Set(pathIds)
+  const updates: PathUpdate[] = paths.filter((p) => want.has(p.id)).map((p) => {
+    const r = applyTransformStep(p, step)
+    return { id: p.id, d: r.d, shapeParams: r.shapeParams, name: r.name, transforms: [step] }
+  })
+  if (updates.length > 0) applyPathEdit({ updates, gesture })
 }
 
 /** Undo a path's corner treatments, restoring the outline they were cut from. */

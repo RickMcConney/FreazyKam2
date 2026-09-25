@@ -1,13 +1,13 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Dices } from 'lucide-react'
-import { usePathsStore, useSelectedPaths, outerGroupOf } from '../store/pathsStore'
+import { usePathsStore, bakePathsStep, useSelectedPaths, outerGroupOf } from '../store/pathsStore'
 import { useUIStore } from '../store/uiStore'
 import { splitCompoundPath } from '../canvas/nodeUtils'
 import { regenerateAffectedMany } from '../cam/regenerate'
 import { useCanvasStore } from '../store/canvasStore'
 import { parseNumeric, NUMERIC_HINT } from '../components/parseNumeric'
 import { useWorkpieceStore, fromMM, toMM } from '../store/workpieceStore'
-import { getMultiBBox, applyTransformStep, placedAngleDeg, type TransformStep } from '../canvas/selectionUtils'
+import { getMultiBBox, placedAngleDeg, type TransformStep } from '../canvas/selectionUtils'
 import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
 import { spirographLoops, SPIRO_RATIO_RANGE, scaleShapeParams, type ShapeParams } from '../shapes/shapeGenerators'
 import { loadFont, isFontLoaded, SINGLE_LINE_FONT_FAMILY } from '../shapes/textGenerator'
@@ -263,7 +263,7 @@ const ShapeParamsEditor = memo(function ShapeParamsEditor({ id, params, units, f
       </>)
     case 'circle':
       return (<>
-        <EditField label="R" valueMM={params.radius} units={u} onChange={(radius) => update({ ...params, radius })} />
+        <EditField label="Ø" valueMM={params.radius * 2} units={u} onChange={(dia) => update({ ...params, radius: dia / 2 })} />
       </>)
     case 'ellipse':
       return (<>
@@ -990,22 +990,10 @@ export default function PropertiesPanel() {
   // one into the other against the live bbox. Same road as a canvas drag, so a
   // typed move and a dragged one leave the same recipe behind.
   function applyTransform(step: TransformStep, gesture: 'move' | 'scale') {
-    const { paths: allPaths, batchUpdatePaths } = usePathsStore.getState()
-    const updates = selectedPaths
-      .map((p) => allPaths.find((ap) => ap.id === p.id))
-      .filter((p): p is NonNullable<typeof p> => !!p)
-      .map((p) => {
-        const r = applyTransformStep(p, step)
-        return { id: p.id, d: r.d, shapeParams: r.shapeParams, name: r.name, transforms: [step] }
-      })
-    if (updates.length) {
-      batchUpdatePaths(updates, gesture)
-      regenerateAffectedMany(updates.map((u) => u.id))
-    }
+    bakePathsStep(selectedPaths.map((p) => p.id), step, gesture)
   }
 
   function applyTranslate(dx: number, dy: number) {
-    if (Math.abs(dx) < 1e-9 && Math.abs(dy) < 1e-9) return
     applyTransform({ kind: 'translate', dx, dy }, 'move')
   }
 
@@ -1015,7 +1003,6 @@ export default function PropertiesPanel() {
   function applyResize(w: number, h: number) {
     if (!bbox || bbox.width === 0 || bbox.height === 0) return
     const sx = w / bbox.width, sy = h / bbox.height
-    if (Math.abs(sx - 1) < 1e-9 && Math.abs(sy - 1) < 1e-9) return
     applyTransform({ kind: 'scale', sx, sy, ax: bbox.minX, ay: bbox.maxY }, 'scale')
   }
 
@@ -1023,38 +1010,14 @@ export default function PropertiesPanel() {
     if (!bbox) return
     const cx = (bbox.minX + bbox.maxX) / 2
     const cy = (bbox.minY + bbox.maxY) / 2
-    const step: TransformStep = { kind: 'rotate', angle, cx, cy }
-    const { paths: allPaths, batchUpdatePaths } = usePathsStore.getState()
-    const updates = selectedPaths
-      .map((p) => allPaths.find((ap) => ap.id === p.id))
-      .filter((p): p is NonNullable<typeof p> => !!p)
-      .map((p) => {
-        const r = applyTransformStep(p, step)
-        return { id: p.id, d: r.d, shapeParams: r.shapeParams, transforms: [step] }
-      })
-    if (updates.length) {
-      batchUpdatePaths(updates, 'rotate')
-      regenerateAffectedMany(updates.map((u) => u.id))
-    }
+    bakePathsStep(selectedPaths.map((p) => p.id), { kind: 'rotate', angle, cx, cy }, 'rotate')
   }
 
   function applyMirror(axis: 'x' | 'y') {
     if (!bbox) return
     const cx = (bbox.minX + bbox.maxX) / 2
     const cy = (bbox.minY + bbox.maxY) / 2
-    const step: TransformStep = { kind: 'mirror', axis, cx, cy }
-    const { paths: allPaths, batchUpdatePaths } = usePathsStore.getState()
-    const updates = selectedPaths
-      .map((p) => allPaths.find((ap) => ap.id === p.id))
-      .filter((p): p is NonNullable<typeof p> => !!p)
-      .map((p) => {
-        const r = applyTransformStep(p, step)
-        return { id: p.id, d: r.d, shapeParams: r.shapeParams, transforms: [step] }
-      })
-    if (updates.length) {
-      batchUpdatePaths(updates, 'mirror')
-      regenerateAffectedMany(updates.map((u) => u.id))
-    }
+    bakePathsStep(selectedPaths.map((p) => p.id), { kind: 'mirror', axis, cx, cy }, 'mirror')
   }
 
   // How this object grows — outward from its middle, or from a fixed corner.

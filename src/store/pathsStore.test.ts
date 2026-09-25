@@ -8,7 +8,8 @@
 // snapshot at the cursor is refreshed in a microtask after every write, so `step()`
 // flushes those before the next action reads anything.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { usePathsStore, type ImportedPath } from './pathsStore'
+import { usePathsStore, bakePathsStep, type ImportedPath } from './pathsStore'
+import { regenerateAffectedMany } from '../cam/regenerate'
 import { useToolpathStore, type AnyOperation } from './toolpathStore'
 import { useTabStore, type Tab } from './tabStore'
 import { useConstraintsStore } from './constraintsStore'
@@ -99,7 +100,8 @@ describe('applyPathEdit — one gesture is one undo step', () => {
     const before = useToolpathStore.getState().operations
     S().deletePath('a')
     await step()
-    expect(useToolpathStore.getState().operations.map((o) => o.id)).toEqual(['onB'])
+    // 'islandOfB' only used 'a' as an island, so it stays — without it (see below).
+    expect(useToolpathStore.getState().operations.map((o) => o.id)).toEqual(['islandOfB', 'onB'])
     expect(useTabStore.getState().tabs.map((t) => t.id)).toEqual(['tB'])
     expect(useConstraintsStore.getState().constraints.map((c) => c.id)).toEqual(['k2'])
     await undo()
@@ -110,6 +112,81 @@ describe('applyPathEdit — one gesture is one undo step', () => {
     after.forEach((o, i) => expect(o).toBe(before[i]))
     expect(useTabStore.getState().tabs.map((t) => t.id)).toEqual(['tA', 'tB'])
     expect(useConstraintsStore.getState().constraints.map((c) => c.id)).toEqual(['k1', 'k2'])
+  })
+
+  it('deleting an island keeps its pocket, takes the island out of it, and regenerates it', async () => {
+    // Dropping the whole pocket for one inner path threw away its settings, and its chip
+    // reopened a form that still showed the island.
+    await load({
+      paths: [path('outer', { d: rectD(-50, -50, 100, 100) }), path('i1'), path('i2', { d: rectD(20, 20, 5, 5) })],
+      ops: [op('pocket', 'outer', { islandIds: ['i1', 'i2'] }),
+        op('carve', 'outer', { type: 'vcarve', islandIds: ['i1'] })],
+    })
+    vi.mocked(regenerateAffectedMany).mockClear()
+    S().deletePath('i1')
+    await step()
+    const ops = useToolpathStore.getState().operations
+    expect(ops.map((o) => o.id)).toEqual(['pocket', 'carve'])
+    expect((ops[0] as { islandIds: string[] }).islandIds).toEqual(['i2'])
+    expect((ops[1] as { islandIds: string[] }).islandIds).toEqual([])
+    expect(vi.mocked(regenerateAffectedMany)).toHaveBeenCalledWith([], ['pocket', 'carve'])
+    await undo()
+    expect((useToolpathStore.getState().operations[0] as { islandIds: string[] }).islandIds).toEqual(['i1', 'i2'])
+  })
+
+  it('deleting a boundary together with its island still drops the pocket', async () => {
+    await load({
+      paths: [path('outer', { d: rectD(-50, -50, 100, 100) }), path('i1')],
+      ops: [op('pocket', 'outer', { islandIds: ['i1'] })],
+    })
+    S().applyPathEdit({ deleteIds: ['i1', 'outer'] })
+    await step()
+    expect(useToolpathStore.getState().operations).toEqual([])
+  })
+
+  it('deleting an inlay island drops that inlay half — the pair is cut to fit as one', async () => {
+    await load({
+      paths: [path('outer', { d: rectD(-50, -50, 100, 100) }), path('i1')],
+      ops: [op('female', 'outer', { type: 'inlay', islandIds: ['i1'] })],
+    })
+    S().deletePath('i1')
+    await step()
+    expect(useToolpathStore.getState().operations).toEqual([])
+  })
+
+  it('records nothing for an edit whose updates would leave every path as it is', async () => {
+    // An undo step that undoes nothing costs a press of Ctrl+Z to find out (review2 Q2).
+    await load({ paths: [path('a', { name: 'A', hidden: false, userGroups: ['g'] })] })
+    const a = S().paths[0]
+    S().applyPathEdit({ updates: [{ id: 'a', d: a.d, name: 'A', hidden: false, userGroups: ['g'] }] })
+    await step()
+    expect(events()).toBe(0)
+    expect(S().paths[0]).toBe(a)
+  })
+
+  it('still records an update that keeps the outline but changes a field — a rename, a hide, a group', async () => {
+    await load({ paths: [path('a'), path('b'), path('c')] })
+    S().applyPathEdit({ updates: [{ id: 'a', d: S().paths[0].d, name: 'renamed' }] })
+    await step()
+    S().applyPathEdit({ updates: [{ id: 'b', d: S().paths[1].d, hidden: true }] })
+    await step()
+    S().applyPathEdit({ updates: [{ id: 'c', d: S().paths[2].d, userGroups: ['g'] }] })
+    await step()
+    expect(events()).toBe(3)
+    expect(S().paths.map((p) => [p.name, !!p.hidden, p.userGroups])).toEqual([['renamed', false, undefined], ['b', true, undefined], ['c', false, ['g']]])
+  })
+
+  it('keeps only the updates that change something, and still records a delete riding with a no-op', async () => {
+    await load({ paths: [path('a'), path('b'), path('c')] })
+    S().applyPathEdit({ updates: [{ id: 'a', d: S().paths[0].d }, { id: 'b', d: rectD(5, 5, 10, 10) }] })
+    await step()
+    const evs = useTimelineStore.getState().events
+    const ev = evs[evs.length - 1] as { updates: { id: string }[] }
+    expect(ev.updates.map((u) => u.id)).toEqual(['b'])
+    S().applyPathEdit({ updates: [{ id: 'a', d: S().paths[0].d }], deleteIds: ['c'] })
+    await step()
+    expect(events()).toBe(2)
+    expect(ids()).toEqual(['a', 'b'])
   })
 
   it('takes deleted paths out of the selection, and leaves the selection alone on a plain edit', async () => {
@@ -132,6 +209,87 @@ describe('applyPathEdit — one gesture is one undo step', () => {
     expect(S().paths[0].userGroups).toBeUndefined()
     expect(S().paths[1].userGroups).toEqual(['g1'])
   })
+})
+
+describe('the store regenerates what an edit changed — callers do not', () => {
+  const regen = vi.mocked(regenerateAffectedMany)
+  // Ids per call, sorted, so an assertion reads as "which ops were rebuilt, in how many goes".
+  const calls = () => regen.mock.calls.map(([ids]) => [...ids].sort())
+  // b's centre held 50 mm to the right of a's.
+  const held: Constraint = { ...between('k', 'a', 'b'), mode: 'xy', offsetXMM: 50, offsetYMM: 0 }
+  beforeEach(() => { regen.mockClear() })
+
+  it('regenerates every path whose outline changed, in ONE call for the whole edit', async () => {
+    await load({ paths: [path('a'), path('b'), path('c')] })
+    regen.mockClear()
+    S().applyPathEdit({ updates: [{ id: 'a', d: rectD(5, 5, 10, 10) }, { id: 'b', d: rectD(1, 1, 10, 10) }] })
+    await step()
+    expect(calls()).toEqual([['a', 'b']])
+  })
+
+  it('does not regenerate an update that restates the outline — a group, a checkbox, a soft-hide', async () => {
+    await load({ paths: [path('a'), path('b')], selected: ['a', 'b'] })
+    regen.mockClear()
+    S().groupSelected()
+    S().applyPathEdit({ updates: [{ id: 'a', d: rectD(0, 0, 10, 10), hidden: true }] })
+    await step()
+    expect(calls()).toEqual([])
+  })
+
+  it('rebuilds a dragged part and the part a constraint carried along in the SAME call', async () => {
+    await load({ paths: [path('a'), path('b', { d: rectD(50, 0, 10, 10) })], constraints: [held] })
+    regen.mockClear()
+    S().applyPathEdit({ updates: [{ id: 'a', d: rectD(5, 0, 10, 10) }] })
+    await step()
+    expect(getBBox(S().paths[1].d)!.minX).toBeCloseTo(55)
+    expect(calls()).toEqual([['a', 'b']])
+  })
+
+  it("leaves the edit's own paths to the caller with regenerate: false, but still rebuilds what a constraint moved", async () => {
+    await load({ paths: [path('a'), path('b', { d: rectD(50, 0, 10, 10) })], constraints: [held] })
+    regen.mockClear()
+    S().applyPathEdit({ updates: [{ id: 'a', d: rectD(5, 0, 10, 10) }], regenerate: false })
+    await step()
+    expect(getBBox(S().paths[1].d)!.minX).toBeCloseTo(55)
+    expect(calls()).toEqual([['b']])
+  })
+
+  it('regenerates the path a point-edit trim split, and nothing for the piece it added', async () => {
+    await load({ paths: [path('a')] })
+    regen.mockClear()
+    S().applyPathEdit({ gesture: 'trim', updates: [{ id: 'a', d: 'M 0 0 L 10 0', shapeParams: null }], add: [path('t', { d: 'M 10 10 L 0 10' })] })
+    await step()
+    expect(calls()).toEqual([['a']])
+  })
+})
+
+describe('bakePathsStep — every gesture bake, dragged or typed', () => {
+  const regen = vi.mocked(regenerateAffectedMany)
+  beforeEach(() => { regen.mockClear() })
+
+  it('moves the named paths in one step and regenerates them', async () => {
+    await load({ paths: [path('a'), path('b'), path('c')] })
+    regen.mockClear()
+    bakePathsStep(['a', 'b'], { kind: 'translate', dx: 5, dy: 0 }, 'move')
+    await step()
+    expect(events()).toBe(1)
+    expect(getBBox(S().paths[0].d)!.minX).toBeCloseTo(5)
+    expect(getBBox(S().paths[1].d)!.minX).toBeCloseTo(5)
+    expect(getBBox(S().paths[2].d)!.minX).toBeCloseTo(0)
+    expect(regen.mock.calls.map(([ids]) => [...ids].sort())).toEqual([['a', 'b']])
+  })
+
+  it('records nothing and regenerates nothing for a step that leaves every point where it is', async () => {
+    await load({ paths: [path('a')] })
+    regen.mockClear()
+    bakePathsStep(['a'], { kind: 'translate', dx: 0, dy: 0 }, 'move')
+    bakePathsStep(['a'], { kind: 'scale', sx: 1, sy: 1, ax: 0, ay: 0 }, 'scale')
+    bakePathsStep(['a'], { kind: 'rotate', angle: 0, cx: 5, cy: 5 }, 'rotate')
+    await step()
+    expect(events()).toBe(0)
+    expect(regen).not.toHaveBeenCalled()
+  })
+
 })
 
 describe('a corner treatment is a recipe that lives as long as its outline', () => {

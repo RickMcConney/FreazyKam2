@@ -2,7 +2,7 @@ import type { AnyOperation, MotionSegment } from '../store/toolpathStore'
 import { perfLog } from '../debug'
 import type { Tool } from '../store/toolStore'
 import type { PostProcessorProfile } from '../store/postProcessorStore'
-import { useWorkpieceStore, zDatumOffsetMM } from '../store/workpieceStore'
+import { useWorkpieceStore, zDatumOffsetMM, MM_PER_INCH as MM_PER_IN } from '../store/workpieceStore'
 import { SPINDLE_INFO, spindleDialLabel } from '../store/spindle'
 import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
 import { feedsForTool } from './feeds'
@@ -12,7 +12,6 @@ import { lineSpacingMM } from './photoVcarve'
 import { sanitizeFileName } from '../io/filename'
 import { downloadText } from '../io/download'
 
-const MM_PER_IN = 25.4
 
 function f(n: number, decimals = 3) { return n.toFixed(decimals) }
 
@@ -212,6 +211,23 @@ export function generateGcode(
   projectName: string,
   profile: PostProcessorProfile,
 ): string {
+  return generateGcodeWithOps(operations, toolsById, projectName, profile).gcode
+}
+
+/**
+ * `generateGcode`, plus the line each operation's section STARTS on (0-based, in emission
+ * order; an op that emits nothing is absent). A section runs from its `=== name ===`
+ * header to the next one, so it holds the transit from wherever the previous op left the
+ * tool — which is how a per-op run time (`cam/opTime.ts`) adds up to the whole program's,
+ * where timing each op on its own charged every one a rapid from the origin.
+ */
+export function generateGcodeWithOps(
+  operations: AnyOperation[],
+  toolsById: Record<string, Tool>,
+  projectName: string,
+  profile: PostProcessorProfile,
+): { gcode: string; opStarts: { opId: string; line: number }[] } {
+  const opStarts: { opId: string; line: number }[] = []
   const _tStart = performance.now()
   let _arcMs = 0
   let _segIn = 0
@@ -268,7 +284,7 @@ export function generateGcode(
   if (doneOps.length === 0) {
     c('No toolpaths to export.')
     lines.push('M30')
-    return lines.join('\n')
+    return { gcode: lines.join('\n'), opStarts }
   }
 
   let lastToolId = ''
@@ -285,6 +301,7 @@ export function generateGcode(
     const firstToolId = roughTool ? roughingToolId! : op.toolId
     const firstFeeds = feedsForTool(firstTool)
 
+    opStarts.push({ opId: op.id, line: lines.length })
     c(`=== ${op.name} ===`)
     if (roughingToolId && toolsById[roughingToolId]) {
       const rt = toolsById[roughingToolId]
@@ -504,7 +521,7 @@ export function generateGcode(
 
   perfLog(`[perf] generateGcode total ${(performance.now() - _tStart).toFixed(0)}ms | arc-fit ${_arcMs.toFixed(0)}ms | segs ${_segIn}→${_segOut}`)
 
-  return lines.join('\n')
+  return { gcode: lines.join('\n'), opStarts }
 }
 
 // ─── Split-by-tool export ──────────────────────────────────────────────────

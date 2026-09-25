@@ -3,10 +3,11 @@ import { useRefState } from './useRefState'
 import { pushLocalHistory, globalStepUndoable, globalStepRedoable } from './localHistory'
 import { usePathsStore } from '../store/pathsStore'
 import { useTimelineStore } from '../timeline/timelineStore'
-import type { TimelineEvent } from '../timeline/events'
+import type { TimelineEvent, PathEditGesture } from '../timeline/events'
+import { nextPathColor } from '../importers/svgImporter'
+import { uid } from '../uid'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
-import { regenerateAffected } from '../cam/regenerate'
 import { parseDToNodes, nodesToD, type PathNode } from './nodeUtils'
 import type { CrossPathEntry } from './layers/NodeEditLayer'
 
@@ -281,6 +282,61 @@ export function useNodeEditSession() {
     useUIStore.getState().setNodeEditHistoryFlags(true, localFuture.current.length > 0)
   }, [])
 
+  /**
+   * A point-edit gesture that has to write the DOCUMENT mid-session — a join
+   * that swallows another path, a loop or a trim that splits one off. Those
+   * cannot wait for the session's commit on exit, because the other path is
+   * created or removed now.
+   *
+   * Five call sites each spelled this out (review2 S4): push a global-marked
+   * local undo step, write ONE atomic `applyPathEdit` under `selfWriteRef` so
+   * the store subscription does not re-parse our own write, then show the new
+   * nodes. One copy now, and it always:
+   *  - passes `shapeParams: null`, as a plain point edit's commit does — joins
+   *    and welds used to leave the old parameters on the path, so the next edit
+   *    in its shape panel regenerated the plain shape over the join;
+   *  - lets the store regenerate (A1): nothing here has to remember to.
+   *
+   * `undoFrom` is the nodes as the gesture found them; a drag whose start was
+   * never snapshotted passes null and records no local step, as before.
+   * `splitOff` is the piece that becomes a path of its own, named and coloured
+   * after the one it came from.
+   */
+  const commitNodeEditGlobal = useCallback((g: {
+    gesture: PathEditGesture
+    undoFrom: PathNode[] | null
+    undoClosed: boolean
+    d: string
+    nextNodes: PathNode[]
+    nextClosed: boolean
+    splitOff?: { idPrefix: string; d: string } | null
+    deleteIds?: string[]
+  }) => {
+    const pid = useUIStore.getState().nodeEditPathId
+    if (!pid) return
+    const src = usePathsStore.getState().paths.find((p) => p.id === pid)
+    if (g.undoFrom) pushLocalUndo(g.undoFrom, g.undoClosed, true)
+    selfWriteRef.current = true
+    try {
+      usePathsStore.getState().applyPathEdit({
+        gesture: g.gesture,
+        updates: [{ id: pid, d: g.d, shapeParams: null }],
+        add: g.splitOff ? [{
+          id: uid(g.splitOff.idPrefix),
+          name: src?.name ?? 'Path',
+          d: g.splitOff.d,
+          visible: true,
+          color: src?.color ?? nextPathColor(),
+        }] : [],
+        deleteIds: g.deleteIds,
+      })
+    } finally {
+      selfWriteRef.current = false
+    }
+    setEditNodes(g.nextNodes)
+    setEditClosed(g.nextClosed)
+  }, [pushLocalUndo])
+
   const commitEditNodes = useCallback((pid: string, nodes: PathNode[]) => {
     if (!pid) return
     const path = usePathsStore.getState().paths.find((p) => p.id === pid)
@@ -292,7 +348,6 @@ export function useNodeEditSession() {
     const d = nodesToD(nodes, editClosedRef.current)
     if (d === path.d) return // unchanged (e.g. join already wrote this d) — no history entry
     usePathsStore.getState().batchUpdatePaths([{ id: pid, d, shapeParams: null }], 'points')
-    regenerateAffected(pid)
   }, [])
 
   const exitNodeEdit = useCallback(() => {
@@ -376,6 +431,6 @@ export function useNodeEditSession() {
     crossPathWeldTarget, crossPathWeldTargetRef, setCrossPathWeldTarget,
     editDragInitRef, selfWriteRef,
     pushLocalUndo, localUndo, localRedo,
-    commitEditNodes, exitNodeEdit, clearConnectState,
+    commitNodeEditGlobal, commitEditNodes, exitNodeEdit, clearConnectState,
   }
 }

@@ -1,7 +1,7 @@
 import { useToolpathStore, nothingToCut } from '../store/toolpathStore'
 import { useToolStore } from '../store/toolStore'
 import { usePostProcessorStore } from '../store/postProcessorStore'
-import { useWorkpieceStore, MATERIAL_INFO } from '../store/workpieceStore'
+import { useWorkpieceStore, MATERIAL_INFO, fmtLen } from '../store/workpieceStore'
 import { feedsForTool, targetChipLoad, rigidityFeedFactor } from './feeds'
 import { feedDiameterMM } from './geom'
 import { generateGcode, initialToolId } from './gcode'
@@ -61,7 +61,7 @@ export function buildExportPreflight(): ExportPreflight {
     tableLimitWidthMM, tableLimitHeightMM, tableLimitDepthMM,
   } = wp
 
-  const fmt = (mm: number) => (units === 'in' ? `${(mm / 25.4).toFixed(3)}"` : `${mm.toFixed(1)} mm`)
+  const fmt = (mm: number) => fmtLen(mm, units, 1)
   // These warnings are read while deciding whether to run a job, so the grammar has to
   // hold at n = 1 rather than fall back to "operation(s)".
   const nS = (n: number) => (n === 1 ? '' : 's')

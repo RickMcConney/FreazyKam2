@@ -5,7 +5,7 @@ import { useWorkpieceStore } from '../store/workpieceStore'
 import { useToolStore } from '../store/toolStore'
 import { usePathsStore } from '../store/pathsStore'
 import { useToolpathStore } from '../store/toolpathStore'
-import { usePostProcessorStore, type PostProcessorProfile } from '../store/postProcessorStore'
+import type { PostProcessorProfile } from '../store/postProcessorStore'
 import { useSimStore } from '../store/simStore'
 import { useUIStore } from '../store/uiStore'
 import { useCanvasStore } from '../store/canvasStore'
@@ -15,6 +15,7 @@ import { useConstraintsStore } from '../store/constraintsStore'
 import type { Constraint } from '../store/constraints'
 import { useTimelineStore } from '../timeline/timelineStore'
 import { migrateProvenance } from './migrateProvenance'
+import { mergeProjectTools } from './toolMerge'
 import type { ImportedPath } from '../store/pathsStore'
 import type { AnyOperation } from '../store/toolpathStore'
 import type { Tool } from '../store/toolStore'
@@ -196,31 +197,22 @@ function installProject(project: ParsedProject, fileName?: string) {
   wps.setOrigin(wp.origin ?? 'bottom-left')
   wps.setZOrigin(wp.zOrigin ?? 'top')
   wps.setMaterial(wp.material ?? 'mdf')
-  wps.setTableLimitWidth(num(wp.tableLimitWidthMM, 800))
-  wps.setTableLimitHeight(num(wp.tableLimitHeightMM, 600))
-  wps.setTableLimitDepth(num(wp.tableLimitDepthMM, 70))
-  wps.setMachineRigidity(num(wp.machineRigidity, 3))
-  wps.setMaxFeed(num(wp.maxFeedMmMin, 3000))
-  wps.setMinSpindleRpm(num(wp.minSpindleRpm, 8000))
-  wps.setMaxSpindleRpm(num(wp.maxSpindleRpm, 24000))
-  wps.setAutoFeedEnabled(wp.autoFeedEnabled ?? false)
-  // Absent in projects saved before these were added to the file format — keep
-  // the machine-local (localStorage) values instead of resetting to defaults.
+  // Absent in projects saved before it was added to the file format — keep the
+  // local value instead of resetting to a default.
   if (typeof wp.safeHeightMM === 'number' && Number.isFinite(wp.safeHeightMM)) wps.setSafeHeight(wp.safeHeightMM)
-  if (wp.spindleType !== undefined) wps.setSpindleType(wp.spindleType)
-
-  if (project.tools.length > 0) useToolStore.getState().setTools(project.tools)
+  // THE MACHINE IS NOT PART OF THE DOCUMENT (review2 A3). Table limits, rigidity, max
+  // feed, the spindle's rpm range and type, auto-feed and the post-processors describe
+  // the router this browser drives, and they persist in localStorage for that reason.
+  // A file still CARRIES them — it is written by the same `buildProjectData` the
+  // autosave uses — but opening one no longer installs them: a project a friend sent
+  // used to make their machine yours from then on. The tool library likewise is merged,
+  // never replaced — see mergeProjectTools.
+  const merged = mergeProjectTools(useToolStore.getState().tools, project.tools, project.operations)
+  if (merged.added > 0) useToolStore.setState({ tools: merged.tools })
   usePathsStore.getState().replacePaths(project.paths)
-  useToolpathStore.getState().replaceOperations(project.operations)
+  useToolpathStore.getState().replaceOperations(merged.operations)
   const nameFromFile = fileName?.replace(/\.[^.]+$/, '').trim()
   useProjectStore.getState().setName(nameFromFile || project.name || 'Untitled Project')
-
-  if (project.postProcessors?.profiles?.length) {
-    usePostProcessorStore.getState().replaceState(
-      project.postProcessors.profiles,
-      project.postProcessors.activeId,
-    )
-  }
 
   useTabStore.getState().replaceTabs(project.tabs)
   // After the paths: `replacePaths` drops constraints whose ends are not in the
@@ -251,6 +243,14 @@ function installProject(project: ParsedProject, fileName?: string) {
       clocks > 0 ? `${clocks} clock${clocks > 1 ? 's' : ''}` : '',
     ].filter(Boolean).join(' and ')
     useUIStore.getState().showStatus(`Upgraded an older project — ${bits} can be edited from their chips again.`, 'info')
+  } else if (merged.added > 0) {
+    // The library just grew behind the user's back, and a tool that came in under a new
+    // id sits beside one of the same name — say which it was.
+    const n = merged.added
+    const clash = merged.renamed > 0
+      ? ` ${merged.renamed === n ? (n > 1 ? 'They' : 'It') : `${merged.renamed} of them`} shared an id with a different tool of yours, so ${merged.renamed > 1 ? 'were' : 'was'} added alongside it.`
+      : ''
+    useUIStore.getState().showStatus(`Added ${n} tool${n > 1 ? 's' : ''} this project uses to your library.${clash}`, 'info')
   }
   regenerateAll()
 }

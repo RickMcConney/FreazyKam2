@@ -8,7 +8,6 @@ import { usePathsStore, useSelectedPaths, type ImportedPath } from '../../store/
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 import { useUIStore } from '../../store/uiStore'
 import { useProjectStore } from '../../store/projectStore'
-import { regenerateAffectedMany } from '../../cam/regenerate'
 import { applyTransformStep, placedAngleDeg, type TransformStep } from '../../canvas/selectionUtils'
 import { groupPathsForNesting, nestIsStale, type NestItem } from '../../tools/nestOp'
 import { copyPathsUnderSteps } from '../../tools/pathCopy'
@@ -253,7 +252,6 @@ export function NestForm({ onClose }: { onClose: () => void }) {
           ? { label: 'Fill stock', selectAfter: [...updates.map((u) => u.id), ...add.map((p) => p.id)] }
           : {}),
       })
-      regenerateAffectedMany(updates.map((u) => u.id))
     }
     setReport({
       placed: onStock.length,

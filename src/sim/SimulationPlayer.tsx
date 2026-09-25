@@ -3,7 +3,7 @@ import { ICON } from '../theme'
 import { Play, Pause, Rewind, FileText, X } from 'lucide-react'
 import { useSimStore, type SimSpeed } from '../store/simStore'
 import { useUIStore } from '../store/uiStore'
-import { useWorkpieceStore, MATERIAL_INFO } from '../store/workpieceStore'
+import { useWorkpieceStore, MATERIAL_INFO, MM_PER_INCH as MM_PER_IN } from '../store/workpieceStore'
 import { spindleDialLabel } from '../store/spindle'
 import type { ToolType } from '../store/toolStore'
 import { targetChipLoad, rigidityFeedFactor } from '../cam/feeds'
@@ -41,7 +41,6 @@ const W_CHIP_LABEL = 17  // 'rubbing · too hot'
 // -0.1969 beside a line reading Z-5.000 would be its own kind of wrong. simStore holds
 // everything in mm (the parser converts an inch program on the way in — the heightfield
 // and cut trail depend on that), so the conversion belongs here, at the last step.
-const MM_PER_IN = 25.4
 const progLen = (mm: number, inch: boolean) => (inch ? (mm / MM_PER_IN).toFixed(4) : mm.toFixed(3))
 const progFeed = (mmMin: number, inch: boolean) => (inch ? (mmMin / MM_PER_IN).toFixed(1) : String(Math.round(mmMin)))
 const progFz = (mm: number, inch: boolean) => (inch ? (mm / MM_PER_IN).toFixed(4) : mm.toFixed(3))

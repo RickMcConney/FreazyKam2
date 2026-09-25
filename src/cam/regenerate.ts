@@ -45,10 +45,12 @@ export async function regenerateOperation(opId: string): Promise<void> {
 // selection) must use this rather than calling regenerateAffected per path —
 // an op referencing several of the paths would otherwise regenerate once per
 // path, multiplying seconds-long adaptive/morph generations (bugs.md H1).
-export function regenerateAffectedMany(pathIds: string[]): void {
-  if (pathIds.length === 0) return
+// `opIds` names operations to rebuild that no longer reference any of the paths — a
+// pocket whose island was just deleted — so they go out in the same once-each sweep.
+export function regenerateAffectedMany(pathIds: string[], opIds: string[] = []): void {
+  if (pathIds.length === 0 && opIds.length === 0) return
   const { operations } = useToolpathStore.getState()
-  const affected = operations.filter((op) => pathIds.some((id) => refsPathId(op, id)))
+  const affected = operations.filter((op) => opIds.includes(op.id) || pathIds.some((id) => refsPathId(op, id)))
   if (affected.length > 0) {
     useSimStore.getState().invalidateSim()
     regenerateMany(affected)

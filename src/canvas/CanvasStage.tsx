@@ -8,13 +8,11 @@ import { ICON } from '../theme'
 import { Stage, Layer, Group, Circle } from 'react-konva'
 import type Konva from 'konva'
 import { Maximize2, ZoomIn, ZoomOut } from 'lucide-react'
-import { useWorkpieceStore } from '../store/workpieceStore'
+import { useWorkpieceStore, fmtLen } from '../store/workpieceStore'
 import { useCanvasStore } from '../store/canvasStore'
-import { usePathsStore, clockSpecOf, setClockSpec, useSelectedPaths, expandUserGroups } from '../store/pathsStore'
-import { regenerateAffected, regenerateAffectedMany } from '../cam/regenerate'
+import { usePathsStore, bakePathsStep, clockSpecOf, setClockSpec, useSelectedPaths, expandUserGroups } from '../store/pathsStore'
 import { flattenPath, signedArea } from '../cam/pathFlattener'
-import type { ImportedPath, PathUpdate } from '../store/pathsStore'
-import type { PathEditGesture } from '../timeline/events'
+import type { ImportedPath } from '../store/pathsStore'
 import { useUIStore } from '../store/uiStore'
 import { nextPathColor } from '../importers/svgImporter'
 import { importFile } from '../io/importFile'
@@ -49,7 +47,7 @@ import { SimulationLayer } from './layers/SimulationLayer'
 import SimulationPlayer from '../sim/SimulationPlayer'
 import { useSimStore } from '../store/simStore'
 import { HandleType, LiveTransform , RULER_W, RULER_H } from './types'
-import { getMultiBBox, applyTransformStep, isIdentityStep, extractCircles, dragBoxEncloses, wholeGroupsOnly, type TransformStep, type CircleInfo } from './selectionUtils'
+import { getBBox, getMultiBBox, extractCircles, dragBoxEncloses, wholeGroupsOnly, type CircleInfo } from './selectionUtils'
 import type { BBox } from './selectionUtils'
 import {
   generateShapeD,
@@ -205,6 +203,32 @@ type CanvasMode =
   | { type: 'clocklink-drag'; nodeIdx: number }
 
 const MOVE_THRESHOLD_PX = 4  // pixels before a click is treated as a drag
+
+/**
+ * What a MOVE of `ids` measures against, built once when it starts.
+ *
+ * Three gestures move paths — a click-drag, the Constrain tool's drag of a
+ * second point, and an arrow-key nudge — and each built these three things by
+ * hand (review2 S3). One place, so they cannot disagree about what a part snaps
+ * to or which followers ride along:
+ *  - `bbox`: the moved paths' exact box, which the snaps align (null when there
+ *    is no geometry — a nudge then moves without snapping);
+ *  - `snapTargets`: every OTHER visible shape's edges and centres, and the
+ *    stock's;
+ *  - `plan`: the constraint solve for this set, resolved now so each frame of
+ *    the preview is arithmetic (see `constraintPlanRef`).
+ */
+function beginMoveSession(ids: string[]): { bbox: BBox | null; snapTargets: SnapTargets; plan: ConstraintPlan | null } {
+  const allPaths = usePathsStore.getState().paths
+  const { widthMM, heightMM } = useWorkpieceStore.getState()
+  const moving = new Set(ids)
+  return {
+    bbox: getMultiBBox(allPaths.filter((p) => moving.has(p.id)).map((p) => p.d)),
+    snapTargets: collectSnapTargets(allPaths.filter((p) => onCanvas(p) && !moving.has(p.id)), { widthMM, heightMM }),
+    plan: planConstraints(allPaths, useConstraintsStore.getState().constraints, { widthMM, heightMM }, ids).plan,
+  }
+}
+const EMPTY_BBOX: BBox = { minX: 0, minY: 0, maxX: 0, maxY: 0, width: 0, height: 0, cx: 0, cy: 0 }
 const OBJECT_SNAP_PX = 8     // screen px within which a dragged bbox edge snaps to another shape's edge
 const PICK_SHOW_PX = 70      // screen px within which a part offers its constraint points
 const PICK_HOT_PX = 16       // screen px within which one of those points would be taken by a click
@@ -245,8 +269,7 @@ function NodeEditDimensionOverlay({
   const { units } = useWorkpieceStore()
   if (nodes.length < 2) return null
 
-  const fmt = (d: number) =>
-    units === 'in' ? (d / 25.4).toFixed(3) + '"' : d.toFixed(2) + ' mm'
+  const fmt = (d: number) => fmtLen(d, units)
 
   const segLabel = (fromIdx: number, toIdx: number) => {
     const a = nodes[fromIdx], b = nodes[toIdx]
@@ -361,9 +384,7 @@ function PenLengthOverlay({ viewport, draggingHandle, snappedCursor }: { viewpor
 
   const sx = viewport.x + cursor.x * viewport.scale
   const sy = viewport.y - cursor.y * viewport.scale
-  const label = units === 'in'
-    ? (dist / 25.4).toFixed(3) + '"'
-    : dist.toFixed(2) + ' mm'
+  const label = fmtLen(dist, units)
 
   return (
     <div
@@ -694,8 +715,8 @@ export default function CanvasStage() {
     connectSnapTargetIdx, setConnectSnapTargetIdx,
     crossPathEntriesRef, crossPathCandidates, setCrossPathCandidates,
     crossPathWeldTarget, crossPathWeldTargetRef, setCrossPathWeldTarget,
-    editDragInitRef, selfWriteRef,
-    pushLocalUndo,
+    editDragInitRef,
+    pushLocalUndo, commitNodeEditGlobal,
     commitEditNodes, exitNodeEdit, clearConnectState,
   } = useNodeEditSession()
   // Pen-tool session state + pen-local undo/redo (tofix.md R3)
@@ -718,6 +739,31 @@ export default function CanvasStage() {
   const setMode2 = useCallback((m: CanvasMode) => {
     modeRef.current = m
   }, [])
+
+  // ONE START AND ONE END FOR EVERY POINTER GESTURE (review2 A4). A press
+  // starts from "not dragged yet" whatever the mode; the release (or the
+  // window's fallback for a release off the canvas, below handleMouseUp) goes
+  // back to idle with EVERY live preview cleared, not only the ones its own
+  // mode drew. Each mode used to clear its own subset — move six things,
+  // resize four, rotate three — which is exactly how a preview outlives the
+  // gesture that drew it. Clearing one that is already null costs nothing.
+  const beginGesture = useCallback((m: CanvasMode) => {
+    didDragRef.current = false
+    setMode2(m)
+  }, [setMode2])
+
+  const endGesture = useCallback(() => {
+    setLiveTransform(null)
+    setFollowTransforms(null)
+    constraintPlanRef.current = null
+    setLiveBBox(null)
+    setLiveRotationAngle(null)
+    setSnapGuides(null)
+    setPickDrag(null)
+    setDragBox(null)
+    setLiveShapeD(null)
+    setMode2({ type: 'idle' })
+  }, [setMode2, setLiveTransform, setLiveBBox, setLiveRotationAngle, setDragBox])
 
   const snapCNC = useCallback((cnc: { x: number; y: number }): { x: number; y: number } => {
     const { snapEnabled } = useUIStore.getState()
@@ -781,6 +827,37 @@ export default function CanvasStage() {
   // then bbox edge/center axis alignment (same dashed guides as drag snapping),
   // then grid. Committed pen nodes count as vertices/alignment targets too so
   // grid-like pen drawings line up with themselves.
+  //
+  // The drawing's half is built once per paths state (and re-bucketed only when the zoom
+  // moves the snap radius a factor of 2 off the cell size), not on every mouse move: it
+  // used to walk every vertex of every visible path, and recompute every bbox, per frame.
+  // Vertices go into a grid of cells about one snap radius wide, so a query reads the 3×3
+  // cells round the cursor. The axis guides come from the exact `getBBox`, as the drag's
+  // `collectSnapTargets` does, not from the 0.5 mm flattened box.
+  const penSnapIndexRef = useRef<{
+    paths: ImportedPath[]; cell: number; buckets: Map<string, [number, number][]>; xs: number[]; ys: number[]
+  } | null>(null)
+  const penSnapIndex = useCallback((allPaths: ImportedPath[], tolMM: number) => {
+    const cur = penSnapIndexRef.current
+    if (cur && cur.paths === allPaths && tolMM <= cur.cell * 2 && tolMM >= cur.cell / 2) return cur
+    const cell = tolMM
+    const buckets = new Map<string, [number, number][]>()
+    const xs: number[] = [], ys: number[] = []
+    for (const p of allPaths) {
+      if (!onCanvas(p)) continue
+      for (const poly of getFlat(p, 0.5)) {
+        for (const v of poly) {
+          const key = `${Math.floor(v[0] / cell)},${Math.floor(v[1] / cell)}`
+          const b = buckets.get(key)
+          if (b) b.push(v); else buckets.set(key, [v])
+        }
+      }
+      const bb = getBBox(p.d)
+      if (bb) { xs.push(bb.minX, bb.maxX, bb.cx); ys.push(bb.minY, bb.maxY, bb.cy) }
+    }
+    return (penSnapIndexRef.current = { paths: allPaths, cell, buckets, xs, ys })
+  }, [getFlat])
+
   const snapPenPoint = useCallback((cnc: { x: number; y: number }): { point: { x: number; y: number }; guides: SnapGuides | null } => {
     const { snapEnabled, penNodes } = useUIStore.getState()
     if (!snapEnabled) return { point: cnc, guides: null }
@@ -788,27 +865,24 @@ export default function CanvasStage() {
     const tolMM = OBJECT_SNAP_PX / vp.scale
     const { paths: allPaths } = usePathsStore.getState()
     const { widthMM: wMM, heightMM: hMM } = useWorkpieceStore.getState()
+    const idx = penSnapIndex(allPaths, tolMM)
 
     let bestDist = tolMM
     let bestVert: { x: number; y: number } | null = null
-    const xs: number[] = [0, wMM, wMM / 2]
-    const ys: number[] = [0, hMM, hMM / 2]
-    for (const p of allPaths) {
-      if (!onCanvas(p)) continue
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-      for (const poly of getFlat(p, 0.5)) {
-        for (const [vx, vy] of poly) {
+    const r = Math.ceil(tolMM / idx.cell)
+    const cx0 = Math.floor(cnc.x / idx.cell), cy0 = Math.floor(cnc.y / idx.cell)
+    for (let i = cx0 - r; i <= cx0 + r; i++) {
+      for (let j = cy0 - r; j <= cy0 + r; j++) {
+        const b = idx.buckets.get(`${i},${j}`)
+        if (!b) continue
+        for (const [vx, vy] of b) {
           const d = Math.hypot(vx - cnc.x, vy - cnc.y)
           if (d < bestDist) { bestDist = d; bestVert = { x: vx, y: vy } }
-          if (vx < minX) minX = vx; if (vx > maxX) maxX = vx
-          if (vy < minY) minY = vy; if (vy > maxY) maxY = vy
         }
       }
-      if (isFinite(minX)) {
-        xs.push(minX, maxX, (minX + maxX) / 2)
-        ys.push(minY, maxY, (minY + maxY) / 2)
-      }
     }
+    const xs: number[] = [0, wMM, wMM / 2, ...idx.xs]
+    const ys: number[] = [0, hMM, hMM / 2, ...idx.ys]
     for (const n of penNodes) {
       const d = Math.hypot(n.x - cnc.x, n.y - cnc.y)
       if (d < bestDist) { bestDist = d; bestVert = { x: n.x, y: n.y } }
@@ -825,7 +899,7 @@ export default function CanvasStage() {
     if (!ox) x = grid.x
     if (!oy) y = grid.y
     return { point: { x, y }, guides: ox || oy ? { x: ox?.guide, y: oy?.guide } : null }
-  }, [snapCNC, getFlat])
+  }, [snapCNC, penSnapIndex])
 
   // Dropped files go through the same shared import pipeline as the toolbar
   // Import button (io/importFile.ts) — all formats, same prompts and messages.
@@ -938,39 +1012,21 @@ export default function CanvasStage() {
             const old = editNodesRef.current
             const oldClosed = editClosedRef.current
             const result = deleteSegment(old, segIdx, editClosedRef.current)
-            setEditNodes(result.nodes)
-            if (result.closed !== editClosedRef.current) {
-              setEditClosed(result.closed)
-            }
-            const { nodeEditPathId: currentPid } = useUIStore.getState()
             const secondD = result.secondPath ? nodesToD(result.secondPath, false) : null
-            if (secondD && currentPid) {
+            if (secondD) {
               // Trim split also adds a new path — commit remainder + add it as ONE
               // atomic global entry, and mark this local step as global so a
               // single local undo removes the split-off path again.
-              pushLocalUndo(old, oldClosed, true)
-              const { paths: allPaths } = usePathsStore.getState()
-              const srcPath = allPaths.find((p) => p.id === currentPid)
-              selfWriteRef.current = true
-              usePathsStore.getState().applyPathEdit({
-                gesture: 'trim',
-                updates: [{ id: currentPid, d: nodesToD(result.nodes, result.closed), shapeParams: null }],
-                add: [{
-                  id: uid('trim'),
-                  name: srcPath?.name ?? 'Path',
-                  d: secondD,
-                  visible: true,
-                  color: srcPath?.color ?? nextPathColor(),
-                }],
+              commitNodeEditGlobal({
+                gesture: 'trim', undoFrom: old, undoClosed: oldClosed,
+                d: nodesToD(result.nodes, result.closed), nextNodes: result.nodes, nextClosed: result.closed,
+                splitOff: { idPrefix: 'trim', d: secondD },
               })
-              selfWriteRef.current = false
-              // As every other join/split here does: applyPathEdit regenerates only what a
-              // CONSTRAINT carried along, and the exit commit finds this d already written
-              // and skips — so without this the path's ops kept cutting the deleted segment.
-              regenerateAffected(currentPid)
             } else {
               // Plain trim — pure node edit, local undo handles it.
               pushLocalUndo(old, oldClosed)
+              setEditNodes(result.nodes)
+              if (result.closed !== oldClosed) setEditClosed(result.closed)
             }
             setHoverSegIdx(null)
           }
@@ -1014,14 +1070,7 @@ export default function CanvasStage() {
           // want out of is the gesture, not the tool. A drag in flight is part of
           // that gesture: dropping the preview without dropping the mode would
           // leave the part hanging at an offset nothing will ever bake.
-          if (modeRef.current.type === 'move' && modeRef.current.pick) {
-            setLiveTransform(null)
-            setFollowTransforms(null)
-            setLiveBBox(null)
-            setSnapGuides(null)
-            constraintPlanRef.current = null
-            setMode2({ type: 'idle' })
-          }
+          if (modeRef.current.type === 'move' && modeRef.current.pick) endGesture()
           setPickDrag(null)
           setPickHeld(null)
         } else if (activeTool !== 'select' && activeTool !== 'region') {
@@ -1054,7 +1103,7 @@ export default function CanvasStage() {
       window.removeEventListener('keyup', onUp)
       window.removeEventListener('blur', onBlur)
     }
-  }, [setMode2, exitNodeEdit, pushLocalUndo])
+  }, [setMode2, endGesture, exitNodeEdit, pushLocalUndo, commitNodeEditGlobal])
 
   useEffect(() => {
     const el = containerRef.current
@@ -1116,9 +1165,8 @@ export default function CanvasStage() {
   const startDrawShape = useCallback((pointer: { x: number; y: number }) => {
     const vp = viewportRef.current
     const cnc = snapCNC(screenToCNC(pointer.x, pointer.y, vp))
-    didDragRef.current = false
-    setMode2({ type: 'drawshape', startCNC: cnc, currentCNC: cnc })
-  }, [setMode2, snapCNC])
+    beginGesture({ type: 'drawshape', startCNC: cnc, currentCNC: cnc })
+  }, [beginGesture, snapCNC])
 
   // Start placing a pen node from the given screen pointer position
   const startPenDraw = useCallback((pointer: { x: number; y: number }) => {
@@ -1131,16 +1179,14 @@ export default function CanvasStage() {
       const fsx = vp.x + first.x * vp.scale
       const fsy = vp.y - first.y * vp.scale
       if (Math.hypot(pointer.x - fsx, pointer.y - fsy) < 10) {
-        didDragRef.current = false
-        setMode2({ type: 'pendraw', anchorCNC: cnc, closing: true })
+        beginGesture({ type: 'pendraw', anchorCNC: cnc, closing: true })
         return
       }
     }
 
-    didDragRef.current = false
-    setMode2({ type: 'pendraw', anchorCNC: cnc, closing: false })
+    beginGesture({ type: 'pendraw', anchorCNC: cnc, closing: false })
     setLivePen({ anchor: cnc, handle: null })
-  }, [setMode2, snapPenPoint, setLivePen])
+  }, [beginGesture, snapPenPoint, setLivePen])
 
   // Register drill-local undo only while there are pending drill points to undo.
   // When points are empty (e.g. after generation or after undoing all), unregister so
@@ -1196,8 +1242,7 @@ export default function CanvasStage() {
       })),
       startCNC: cnc,
     }
-    didDragRef.current = false
-    setMode2({ type: 'nodedit-drag', nodeIdx, kind })
+    beginGesture({ type: 'nodedit-drag', nodeIdx, kind })
     setDragNodeIdx(kind === 'anchor' ? nodeIdx : null)
 
     // Gather cross-path weld candidates when dragging an endpoint of an open path
@@ -1214,7 +1259,7 @@ export default function CanvasStage() {
     } else {
       setCrossPathCandidates([])
     }
-  }, [setMode2])
+  }, [beginGesture])
 
   const handleSegmentMouseDown = useCallback((segIdx: number, cncX: number, cncY: number) => {
     const { nodeEditPathId: pid } = useUIStore.getState()
@@ -1292,8 +1337,7 @@ export default function CanvasStage() {
     const { widthMM, heightMM } = useWorkpieceStore.getState()
     const snapTargets = collectSnapTargets(allPaths.filter(p => onCanvas(p) && !ids.includes(p.id)), { widthMM, heightMM })
 
-    didDragRef.current = false
-    setMode2({
+    beginGesture({
       type: 'resize',
       pathIds: ids,
       handle,
@@ -1314,7 +1358,7 @@ export default function CanvasStage() {
       shiftHeld: e.evt.shiftKey,
       snapTargets,
     })
-  }, [setMode2])
+  }, [beginGesture])
 
   // Called by SelectionLayer rotation handle
   const handleRotateHandleDown = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
@@ -1330,9 +1374,8 @@ export default function CanvasStage() {
     const cncMouse = screenToCNC(pointer.x, pointer.y, vp)
     const initAngle = Math.atan2(cncMouse.y - bbox.cy, cncMouse.x - bbox.cx) * 180 / Math.PI
 
-    didDragRef.current = false
-    setMode2({ type: 'rotate', pathIds: ids, center: { x: bbox.cx, y: bbox.cy }, initAngle })
-  }, [setMode2])
+    beginGesture({ type: 'rotate', pathIds: ids, center: { x: bbox.cx, y: bbox.cy }, initAngle })
+  }, [beginGesture])
 
   const panStartRef = useRef({ mouseX: 0, mouseY: 0, vpX: 0, vpY: 0 })
 
@@ -1525,16 +1568,12 @@ export default function CanvasStage() {
           // gear's rim away from its bore would take the gear apart.
           const moveIds = bodyPathsOf(allPaths, hotRef.id).map((p) => p.id)
           if (moveIds.length > 0) {
-            const moveBbox = getMultiBBox(allPaths.filter((p) => moveIds.includes(p.id)).map((p) => p.d))
-            const { widthMM, heightMM } = useWorkpieceStore.getState()
-            const snapTargets = collectSnapTargets(
-              allPaths.filter((p) => onCanvas(p) && !moveIds.includes(p.id)), { widthMM, heightMM })
-            constraintPlanRef.current = planConstraints(
-              allPaths, useConstraintsStore.getState().constraints, { widthMM, heightMM }, moveIds).plan
+            const session = beginMoveSession(moveIds)
+            constraintPlanRef.current = session.plan
             setPickDrag(null)
-            setMode2({
-              type: 'move', pathIds: moveIds, startCNC: cnc, snapTargets,
-              initBbox: moveBbox ?? { minX: 0, minY: 0, maxX: 0, maxY: 0, width: 0, height: 0, cx: 0, cy: 0 },
+            beginGesture({
+              type: 'move', pathIds: moveIds, startCNC: cnc, snapTargets: session.snapTargets,
+              initBbox: session.bbox ?? EMPTY_BBOX,
               pick: { held: heldPick, hot: hotPick },
             })
             return
@@ -1587,26 +1626,20 @@ export default function CanvasStage() {
       } else if (!currentIds.includes(hit.id)) {
         usePathsStore.getState().setSelectedIds(hitIds)
       }
-      didDragRef.current = false
       const moveIds = usePathsStore.getState().selectedIds
-      const allPaths = usePathsStore.getState().paths
-      const moveBbox = getMultiBBox(allPaths.filter(p => moveIds.includes(p.id)).map(p => p.d))
-      const { widthMM, heightMM } = useWorkpieceStore.getState()
-      const snapTargets = collectSnapTargets(allPaths.filter(p => onCanvas(p) && !moveIds.includes(p.id)), { widthMM, heightMM })
-      constraintPlanRef.current = planConstraints(
-        allPaths, useConstraintsStore.getState().constraints, { widthMM, heightMM }, moveIds).plan
-      setMode2({ type: 'move', pathIds: moveIds, startCNC: cnc, initBbox: moveBbox ?? { minX: 0, minY: 0, maxX: 0, maxY: 0, width: 0, height: 0, cx: 0, cy: 0 }, snapTargets })
+      const session = beginMoveSession(moveIds)
+      constraintPlanRef.current = session.plan
+      beginGesture({ type: 'move', pathIds: moveIds, startCNC: cnc, initBbox: session.bbox ?? EMPTY_BBOX, snapTargets: session.snapTargets })
     } else {
       if (neid) { exitNodeEdit(); return }
       // Region picking (on while the Pocket form is open) decides on mouseup: a
       // press that never moves picks the enclosed area under it, so the selection
       // has to survive until then — a drag is still a drag box.
       if (activeTool !== 'region') selectPath(null)
-      didDragRef.current = false
-      setMode2({ type: 'dragbox', startScreen: { x: stagePointer.x, y: stagePointer.y } })
+      beginGesture({ type: 'dragbox', startScreen: { x: stagePointer.x, y: stagePointer.y } })
       setDragBox({ sx: stagePointer.x, sy: stagePointer.y, ex: stagePointer.x, ey: stagePointer.y })
     }
-  }, [selectPath, setMode2, startDrawShape, startPenDraw, exitNodeEdit, getFlat,
+  }, [selectPath, setMode2, beginGesture, startDrawShape, startPenDraw, exitNodeEdit, getFlat,
       onConstrainClick, bodyOfRef, pickHeldRef, pickHotRef])
 
 
@@ -1617,14 +1650,16 @@ export default function CanvasStage() {
   // but dragbox and drawshape deliberately fall through to the pen close-hover
   // check, and idle runs both that and the connect preview. Collapsing those
   // into returning switch cases would silently kill the pen hover indicator.
-  // All handlers close over the same refs/setters and share one dependency list
-  // of stable references, so this is a pure restructuring.
+  // Each lists what IT uses. They shared one copy-pasted list of five stable
+  // references that had nothing to do with any of them (review2 A4) — correct
+  // only because everything in it happened to be stable, and silently stale the
+  // day one of them closed over something that was not.
 
   const onMovePan = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
     // Pan uses clientX/Y deltas — both are in screen pixels so delta is correct
     const { mouseX, mouseY, vpX, vpY } = panStartRef.current
     setViewport((v) => ({ ...v, x: vpX + (e.evt.clientX - mouseX), y: vpY + (e.evt.clientY - mouseY) }))
-  }, [setCursorMM, setViewport, setLiveRotationAngle, snapCNC, snapPenPoint])
+  }, [setViewport])
 
   const onMoveTranslate = useCallback((m: Extract<CanvasMode, { type: 'move' }>, cncMouse: { x: number; y: number }, pointer: { x: number; y: number }, vp: Viewport) => {
     const dx = cncMouse.x - m.startCNC.x
@@ -1674,7 +1709,7 @@ export default function CanvasStage() {
         }))
         : null)
     }
-  }, [setCursorMM, setViewport, setLiveRotationAngle, snapCNC, snapPenPoint])
+  }, [snapCNC, setLiveTransform, setLiveBBox])
 
   const onMoveResize = useCallback((m: Extract<CanvasMode, { type: 'resize' }>, cncMouse: { x: number; y: number }, e: Konva.KonvaEventObject<MouseEvent>, vp: Viewport) => {
     didDragRef.current = true
@@ -1739,7 +1774,7 @@ export default function CanvasStage() {
     const x1 = anchor.x + (ib.minX - anchor.x) * sx, x2 = anchor.x + (ib.maxX - anchor.x) * sx
     const y1 = anchor.y + (ib.minY - anchor.y) * sy, y2 = anchor.y + (ib.maxY - anchor.y) * sy
     setLiveBBox({ minX: Math.min(x1, x2), minY: Math.min(y1, y2), width: Math.abs(x2 - x1), height: Math.abs(y2 - y1) })
-  }, [setCursorMM, setViewport, setLiveRotationAngle, snapCNC, snapPenPoint])
+  }, [snapCNC, setLiveTransform, setLiveBBox])
 
   const onMoveRotate = useCallback((m: Extract<CanvasMode, { type: 'rotate' }>, cncMouse: { x: number; y: number }) => {
     didDragRef.current = true
@@ -1748,12 +1783,12 @@ export default function CanvasStage() {
     if (useUIStore.getState().snapEnabled) delta = Math.round(delta / 5) * 5
     setLiveTransform({ kind: 'rotate', pathIds: new Set(m.pathIds), angle: delta, cx: m.center.x, cy: m.center.y })
     setLiveRotationAngle(delta)
-  }, [setCursorMM, setViewport, setLiveRotationAngle, snapCNC, snapPenPoint])
+  }, [setLiveTransform, setLiveRotationAngle])
 
   const onMoveDragbox = useCallback((pointer: { x: number; y: number }) => {
     const db = dragBoxRef.current
     if (db) setDragBox({ ...db, ex: pointer.x, ey: pointer.y })
-  }, [setCursorMM, setViewport, setLiveRotationAngle, snapCNC, snapPenPoint])
+  }, [setDragBox])
 
   const onMoveDrawShape = useCallback((m: Extract<CanvasMode, { type: 'drawshape' }>, cncMouse: { x: number; y: number }, pointer: { x: number; y: number }, vp: Viewport) => {
     const startScreenX = vp.x + m.startCNC.x * vp.scale
@@ -1780,7 +1815,7 @@ export default function CanvasStage() {
         setLiveShapeD(generateShapeD(params))
       }
     }
-  }, [setCursorMM, setViewport, setLiveRotationAngle, snapCNC, snapPenPoint])
+  }, [snapCNC])
 
   // Runs for every mode EXCEPT pendraw — highlights the pen's first node when
   // the cursor is near enough to close the path, and tracks the snapped cursor.
@@ -1802,7 +1837,7 @@ export default function CanvasStage() {
     } else if (penClosingRef.current) {
       setPenClosing(false)
     }
-  }, [setCursorMM, setViewport, setLiveRotationAngle, snapCNC, snapPenPoint])
+  }, [snapPenPoint, setPenClosing])
 
   const onMoveConnectPreview = useCallback((cncMouse: { x: number; y: number }, vp: Viewport) => {
     // Caller already checks this, but the narrowing doesn't cross the call.
@@ -1845,7 +1880,7 @@ export default function CanvasStage() {
       setConnectSnapTargetIdx(snapSameIdx)
       setCrossPathWeldTarget(snapCrossEntry)
     }
-  }, [setCursorMM, setViewport, setLiveRotationAngle, snapCNC, snapPenPoint])
+  }, [setCrossPathWeldTarget])
 
   const onMovePenDraw = useCallback((m: Extract<CanvasMode, { type: 'pendraw' }>, cncMouse: { x: number; y: number }, pointer: { x: number; y: number }, vp: Viewport) => {
     const asx = vp.x + m.anchorCNC.x * vp.scale
@@ -1859,7 +1894,7 @@ export default function CanvasStage() {
         setLivePen({ anchor: m.anchorCNC, handle: cncMouse })
       }
     }
-  }, [setCursorMM, setViewport, setLiveRotationAngle, snapCNC, snapPenPoint])
+  }, [setLivePen])
 
   const onMoveNodeEditDrag = useCallback((m: Extract<CanvasMode, { type: 'nodedit-drag' }>, cncMouse: { x: number; y: number }, e: Konva.KonvaEventObject<MouseEvent>) => {
     // Caller already checks init, but the narrowing doesn't cross the call.
@@ -1932,7 +1967,7 @@ export default function CanvasStage() {
     setWeldTargetIdx(newWeldTarget)
     setCrossPathWeldTarget(newCrossTarget)
     setEditNodes(updatedNodes)
-  }, [setCursorMM, setViewport, setLiveRotationAngle, snapCNC, snapPenPoint])
+  }, [snapCNC, setWeldTargetIdx, setCrossPathWeldTarget, setEditNodes])
 
   const moveBody = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
     const stage = stageRef.current
@@ -1980,22 +2015,6 @@ export default function CanvasStage() {
 
   const handleMouseMove = moveBody
 
-
-  // Shared commit for the move/resize/skew/rotate bakes: batch-update the
-  // touched paths and regenerate each affected operation ONCE (bugs.md H1/R4).
-  // `gesture` names the timeline chip (Move/Scale/Rotate/Skew).
-  const bakeTransform = useCallback((pathIds: string[], gesture: PathEditGesture, makeUpdate: (p: ImportedPath) => PathUpdate) => {
-    const { paths: allPaths, batchUpdatePaths } = usePathsStore.getState()
-    const updates = pathIds.flatMap((id) => {
-      const path = allPaths.find((p) => p.id === id)
-      return path ? [makeUpdate(path)] : []
-    })
-    if (updates.length) {
-      batchUpdatePaths(updates, gesture)
-      regenerateAffectedMany(pathIds)
-    }
-  }, [])
-
   // ARROW KEYS NUDGE THE SELECTION — 1 mm (0.1" in inch mode), Shift ×10, Alt ÷10.
   // A run of presses is ONE move: each press only previews (the same liveTransform
   // a drag uses, constraint followers included) and the bake lands once the keys go
@@ -2015,8 +2034,8 @@ export default function CanvasStage() {
     type Pending = {
       ids: string[]; dx: number; dy: number; timer: number
       bbox: BBox | null
-      plan: ReturnType<typeof planConstraints>['plan']
-      targets: ReturnType<typeof collectSnapTargets>
+      plan: ConstraintPlan | null
+      targets: SnapTargets
     }
     let pending: Pending | null = null
     // The guides OUTLIVE the commit: the bake lands just as the user is looking to
@@ -2035,13 +2054,7 @@ export default function CanvasStage() {
       const { ids, dx, dy, timer } = pending
       window.clearTimeout(timer)
       pending = null
-      if (dx !== 0 || dy !== 0) {
-        const step: TransformStep = { kind: 'translate', dx, dy }
-        bakeTransform(ids, 'move', (path) => {
-          const r = applyTransformStep(path, step)
-          return { id: path.id, d: r.d, shapeParams: r.shapeParams, transforms: [step] }
-        })
-      }
+      bakePathsStep(ids, { kind: 'translate', dx, dy }, 'move')
       setLiveTransform(null)
       setFollowTransforms(null)
       setLiveBBox(null)
@@ -2058,20 +2071,15 @@ export default function CanvasStage() {
       if (modeRef.current.type !== 'idle') return
       const ui = useUIStore.getState()
       if ((ui.activeTool !== 'select' && ui.activeTool !== 'region') || ui.nodeEditPathId) return
-      const { selectedIds, paths: allPaths } = usePathsStore.getState()
+      const { selectedIds } = usePathsStore.getState()
       if (selectedIds.length === 0) return
       e.preventDefault()
 
       if (pending && (pending.ids.length !== selectedIds.length || pending.ids.some((id, i) => id !== selectedIds[i]))) flush()
       if (!pending) {
-        const { widthMM, heightMM } = useWorkpieceStore.getState()
-        pending = {
-          ids: selectedIds, dx: 0, dy: 0, timer: 0,
-          bbox: getMultiBBox(allPaths.filter((p) => selectedIds.includes(p.id)).map((p) => p.d)),
-          plan: planConstraints(allPaths, useConstraintsStore.getState().constraints, { widthMM, heightMM }, selectedIds).plan,
-          // The same targets a drag aligns to: every other shape's edges and centre, and the stock's.
-          targets: collectSnapTargets(allPaths.filter((q) => onCanvas(q) && !selectedIds.includes(q.id)), { widthMM, heightMM }),
-        }
+        // The same session a drag begins: the same targets to align to, the same followers.
+        const { bbox, plan, snapTargets } = beginMoveSession(selectedIds)
+        pending = { ids: selectedIds, dx: 0, dy: 0, timer: 0, bbox, plan, targets: snapTargets }
       }
       const base = useWorkpieceStore.getState().units === 'in' ? 2.54 : 1
       const stepMM = base * (e.shiftKey ? 10 : e.altKey ? 0.1 : 1)
@@ -2128,7 +2136,7 @@ export default function CanvasStage() {
       window.removeEventListener('pointerdown', commitAndClear, true)
       window.removeEventListener('blur', commitAndClear)
     }
-  }, [bakeTransform])
+  }, [])
 
   const handleMouseUp = useCallback((_e: Konva.KonvaEventObject<MouseEvent>) => {
     const m = modeRef.current
@@ -2145,25 +2153,19 @@ export default function CanvasStage() {
       )
       if (joined) {
         const newD = nodesToD(joined, false)
-        const { nodeEditPathId: pid } = useUIStore.getState()
-        if (pid && newD) {
-          // Join deletes the other path via ONE atomic global entry; a global-
-          // marked local step lets Ctrl+Z revert both, in-session, in one press.
-          pushLocalUndo(nodes, editClosedRef.current, true)
-          selfWriteRef.current = true
-          usePathsStore.getState().applyPathEdit({ gesture: 'join', updates: [{ id: pid, d: newD }], deleteIds: [crossTarget.pathId] })
-          selfWriteRef.current = false
-          regenerateAffected(pid)
-          setEditNodes(joined)
-          setEditClosed(false)
-        }
+        // Join deletes the other path via ONE atomic global entry; a global-
+        // marked local step lets Ctrl+Z revert both, in-session, in one press.
+        if (newD) commitNodeEditGlobal({
+          gesture: 'join', undoFrom: nodes, undoClosed: editClosedRef.current,
+          d: newD, nextNodes: joined, nextClosed: false, deleteIds: [crossTarget.pathId],
+        })
       }
       clearConnectState()
       return
     }
 
     if (m.type === 'pan') {
-      setMode2({ type: 'idle' })
+      endGesture()
       return
     }
 
@@ -2171,26 +2173,15 @@ export default function CanvasStage() {
       const lt = liveTransformRef.current
       if (lt && lt.kind === 'translate') {
         const { dx, dy } = lt
-        const step: TransformStep = { kind: 'translate', dx, dy }
         // A drag that snapped back to where it began changes nothing, so it records
         // nothing and regenerates nothing (see isIdentityStep).
         // Only the DRAGGED paths are baked. What the constraints carried along
         // was a preview of the solve, and the solve itself runs inside
         // applyPathEdit against the geometry as it will BE — baking the preview
         // here as well would move those bodies twice.
-        if (!isIdentityStep(step)) {
-          bakeTransform(m.pathIds, 'move', (path) => {
-            const r = applyTransformStep(path, step)
-            return { id: path.id, d: r.d, shapeParams: r.shapeParams, transforms: [step] }
-          })
-        }
+        bakePathsStep(m.pathIds, { kind: 'translate', dx, dy }, 'move')
       }
-      setLiveTransform(null)
-      setFollowTransforms(null)
-      constraintPlanRef.current = null
-      setLiveBBox(null)
-      setSnapGuides(null)
-      setPickDrag(null)
+      endGesture()
       // AFTER the bake, so the constraint is measured off where the part now IS
       // — it is created holding what is already there, and what is already there
       // is the drag that has just landed. Two history entries, the move and the
@@ -2203,7 +2194,6 @@ export default function CanvasStage() {
         setPickCandidates([])
         setPickHot(null)
       }
-      setMode2({ type: 'idle' })
       return
     }
 
@@ -2211,23 +2201,12 @@ export default function CanvasStage() {
       const lt = liveTransformRef.current
       if (lt && lt.kind === 'scale') {
         const { sx, sy, ax, ay } = lt
-        const step: TransformStep = { kind: 'scale', sx, sy, ax, ay }
-        if (!isIdentityStep(step)) bakeTransform(m.pathIds, 'scale', (path) => {
-          const r = applyTransformStep(path, step)
-          return { id: path.id, d: r.d, shapeParams: r.shapeParams, name: r.name, transforms: [step] }
-        })
+        bakePathsStep(m.pathIds, { kind: 'scale', sx, sy, ax, ay }, 'scale')
       } else if (lt && lt.kind === 'skew') {
         const { kx, ky, ax, ay } = lt
-        const step: TransformStep = { kind: 'skew', kx, ky, ax, ay }
-        if (!isIdentityStep(step)) bakeTransform(m.pathIds, 'skew', (path) => {
-          const r = applyTransformStep(path, step)
-          return { id: path.id, d: r.d, shapeParams: r.shapeParams, transforms: [step] }
-        })
+        bakePathsStep(m.pathIds, { kind: 'skew', kx, ky, ax, ay }, 'skew')
       }
-      setLiveTransform(null)
-      setLiveBBox(null)
-      setSnapGuides(null)
-      setMode2({ type: 'idle' })
+      endGesture()
       return
     }
 
@@ -2235,15 +2214,9 @@ export default function CanvasStage() {
       const lt = liveTransformRef.current
       if (lt && lt.kind === 'rotate') {
         const { angle, cx, cy } = lt
-        const step: TransformStep = { kind: 'rotate', angle, cx, cy }
-        if (!isIdentityStep(step)) bakeTransform(m.pathIds, 'rotate', (path) => {
-          const r = applyTransformStep(path, step)
-          return { id: path.id, d: r.d, shapeParams: r.shapeParams, transforms: [step] }
-        })
+        bakePathsStep(m.pathIds, { kind: 'rotate', angle, cx, cy }, 'rotate')
       }
-      setLiveTransform(null)
-      setLiveRotationAngle(null)
-      setMode2({ type: 'idle' })
+      endGesture()
       return
     }
 
@@ -2251,10 +2224,8 @@ export default function CanvasStage() {
       // Pure click without drag — selection already updated on mousedown. Under
       // the Constrain tool there was no selection to update: a press that never
       // moved is the ordinary second click, and takes the point where it is.
-      constraintPlanRef.current = null
-      setPickDrag(null)
+      endGesture()
       if (m.pick) onConstrainClick()
-      setMode2({ type: 'idle' })
       return
     }
 
@@ -2284,17 +2255,11 @@ export default function CanvasStage() {
           const { paths: allPaths } = usePathsStore.getState()
           const caught = allPaths.filter((p) => {
             if (!onCanvas(p)) return false
-            // bbox from the per-path flatten cache (same 0.5 tolerance as
-            // getBBox) — box-select over hundreds of paths used to re-flatten
-            // every path on every mouseup (tofix.md H5)
-            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-            for (const poly of getFlat(p, 0.5)) {
-              for (const [x, y] of poly) {
-                if (x < minX) minX = x; if (x > maxX) maxX = x
-                if (y < minY) minY = y; if (y > maxY) maxY = y
-              }
-            }
-            if (!isFinite(minX)) return false
+            // The exact, cached box: the same one the selection handles draw, so a
+            // box that visibly encloses a part's handles catches it.
+            const bb = getBBox(p.d)
+            if (!bb) return false
+            const { minX, minY, maxX, maxY } = bb
             return enclose
               ? minX >= cncMin.x && maxX <= cncMax.x && minY >= cncMin.y && maxY <= cncMax.y
               : minX <= cncMax.x && maxX >= cncMin.x && minY <= cncMax.y && maxY >= cncMin.y
@@ -2315,14 +2280,12 @@ export default function CanvasStage() {
           if (!pickRegionAt(cnc, _e.evt.shiftKey)) usePathsStore.getState().selectPath(null)
         }
       }
-      setDragBox(null)
-      setMode2({ type: 'idle' })
+      endGesture()
       return
     }
 
     if (m.type === 'drawshape') {
-      setLiveShapeD(null)
-      setMode2({ type: 'idle' })
+      endGesture()
 
       const { activeTool, shapeToolConfig, shapeFromCenter } = useUIStore.getState()
       if (activeTool !== 'select') {
@@ -2448,18 +2411,12 @@ export default function CanvasStage() {
         )
         if (joined) {
           const newD = nodesToD(joined, false)
-          const { nodeEditPathId: pid } = useUIStore.getState()
-          if (pid && newD) {
-            // Join deletes the other path via ONE atomic global entry; a global-
-            // marked local step lets Ctrl+Z revert both, in-session, in one press.
-            if (initSnap) pushLocalUndo(initSnap, editClosedRef.current, true)
-            selfWriteRef.current = true
-            usePathsStore.getState().applyPathEdit({ gesture: 'join', updates: [{ id: pid, d: newD }], deleteIds: [crossTgt.pathId] })
-            selfWriteRef.current = false
-            regenerateAffected(pid)
-            setEditNodes(joined)
-            setEditClosed(false)
-          }
+          // Join deletes the other path via ONE atomic global entry; a global-
+          // marked local step lets Ctrl+Z revert both, in-session, in one press.
+          if (newD) commitNodeEditGlobal({
+            gesture: 'join', undoFrom: initSnap ?? null, undoClosed: editClosedRef.current,
+            d: newD, nextNodes: joined, nextClosed: false, deleteIds: [crossTgt.pathId],
+          })
         }
       } else if (tgt !== null && didDragRef.current) {
         const curNodes = editNodesRef.current
@@ -2475,30 +2432,13 @@ export default function CanvasStage() {
           const { loopNodes, remainNodes } = lollipop
           const loopD = nodesToD(loopNodes, true)
           const remainD = nodesToD(remainNodes, false)
-          const { nodeEditPathId: pid } = useUIStore.getState()
-          if (pid && remainD) {
-            const { paths: allPaths } = usePathsStore.getState()
-            const srcPath = allPaths.find((p) => p.id === pid)
-            // Loop split adds a new path via ONE atomic global entry; a global-
-            // marked local step lets Ctrl+Z revert both, in-session, in one press.
-            if (initSnap) pushLocalUndo(initSnap, curClosed, true)
-            selfWriteRef.current = true
-            usePathsStore.getState().applyPathEdit({
-              gesture: 'weld',
-              updates: [{ id: pid, d: remainD }],
-              add: loopD ? [{
-                id: uid('weld-loop'),
-                name: srcPath?.name ?? 'Path',
-                d: loopD,
-                visible: true,
-                color: srcPath?.color ?? nextPathColor(),
-              }] : [],
-            })
-            selfWriteRef.current = false
-            regenerateAffected(pid)
-            setEditNodes(remainNodes)
-            setEditClosed(false)
-          }
+          // Loop split adds a new path via ONE atomic global entry; a global-
+          // marked local step lets Ctrl+Z revert both, in-session, in one press.
+          if (remainD) commitNodeEditGlobal({
+            gesture: 'weld', undoFrom: initSnap ?? null, undoClosed: curClosed,
+            d: remainD, nextNodes: remainNodes, nextClosed: false,
+            splitOff: loopD ? { idPrefix: 'weld-loop', d: loopD } : null,
+          })
         } else {
           // Standard same-path weld (endpoint→endpoint close, or mid→any merge) —
           // pure node edit, store untouched until commit, so local undo handles it.
@@ -2536,30 +2476,13 @@ export default function CanvasStage() {
               const { loopNodes, remainNodes } = result
               const loopD = nodesToD(loopNodes, true)
               const remainD = nodesToD(remainNodes, false)
-              const { nodeEditPathId: pid } = useUIStore.getState()
-              if (pid && remainD) {
-                const { paths: allPaths } = usePathsStore.getState()
-                const srcPath = allPaths.find((p) => p.id === pid)
-                // Loop split adds a new path via ONE atomic global entry; a global-
-                // marked local step lets Ctrl+Z revert both, in-session, in one press.
-                pushLocalUndo(nodes, editClosedRef.current, true)
-                selfWriteRef.current = true
-                usePathsStore.getState().applyPathEdit({
-                  gesture: 'weld',
-                  updates: [{ id: pid, d: remainD }],
-                  add: loopD ? [{
-                    id: uid('connect-loop'),
-                    name: srcPath?.name ?? 'Path',
-                    d: loopD,
-                    visible: true,
-                    color: srcPath?.color ?? nextPathColor(),
-                  }] : [],
-                })
-                selfWriteRef.current = false
-                regenerateAffected(pid)
-                setEditNodes(remainNodes)
-                setEditClosed(false)
-              }
+              // Loop split adds a new path via ONE atomic global entry; a global-
+              // marked local step lets Ctrl+Z revert both, in-session, in one press.
+              if (remainD) commitNodeEditGlobal({
+                gesture: 'weld', undoFrom: nodes, undoClosed: editClosedRef.current,
+                d: remainD, nextNodes: remainNodes, nextClosed: false,
+                splitOff: loopD ? { idPrefix: 'connect-loop', d: loopD } : null,
+              })
               clearConnectState()
             }
             // else: degenerate (adjacent endpoints only, nothing to split) — stay in connect mode
@@ -2642,7 +2565,7 @@ export default function CanvasStage() {
     }
 
     setMode2({ type: 'idle' })
-  }, [livePen, setMode2, setSelectedIds, setLiveRotationAngle, setLiveBBox, commitEditNodes, pushLocalUndo, getFlat, bakeTransform, commitConstraint, onConstrainClick, setPickHot, pickRegionAt])
+  }, [livePen, setMode2, endGesture, setSelectedIds, commitEditNodes, pushLocalUndo, commitNodeEditGlobal, getFlat, commitConstraint, onConstrainClick, setPickHot, pickRegionAt])
 
   // A GESTURE RELEASED OFF THE CANVAS STILL ENDS. Konva only hears a mouseup on its own
   // content element, so a resize (or move, rotate, drag box, point drag…) let go over the

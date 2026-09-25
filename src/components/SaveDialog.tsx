@@ -5,17 +5,21 @@ import { useProjectStore } from '../store/projectStore'
 import { saveProject } from '../io/projectSave'
 import { exportGcode } from '../io/gcodeExport'
 import { sanitizeFileName } from '../io/filename'
+import { exportDrawing, DRAWING_FORMATS, type DrawingFormat } from '../io/drawingExport'
+import { pathsForExport } from '../io/svgExport'
 
 const META = {
   project: { title: 'Save Project', ext: '.fkam', verb: 'Save' },
   gcode:   { title: 'Export G-code', ext: '.gcode', verb: 'Export' },
+  drawing: { title: 'Export Drawing', ext: '', verb: 'Export' },
 } as const
 
-// Filename prompt shown before a project save or G-code export. Pre-fills the
-// current project name, lets the user rename, and confirms with Enter. For a
-// project save the chosen name also becomes the project name in the toolbar.
+// Filename prompt shown before a project save, a G-code export or a drawing
+// export. Pre-fills the current project name, lets the user rename, and confirms
+// with Enter. For a project save the chosen name also becomes the project name in
+// the toolbar. A drawing export also picks its format, SVG or DXF.
 export default function SaveDialog() {
-  const { open, kind, closeSaveDialog } = useSaveDialogStore()
+  const { open, kind, closeSaveDialog, drawingFormat, setDrawingFormat } = useSaveDialogStore()
   const projectName = useProjectStore((s) => s.name)
   const [draft, setDraft] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -28,11 +32,17 @@ export default function SaveDialog() {
 
   if (!open) return null
   const meta = META[kind]
+  const ext = kind === 'drawing' ? DRAWING_FORMATS[drawingFormat].ext : meta.ext
+  // What a drawing export will take — read once per render; the dialog is modal,
+  // so the selection cannot change underneath it.
+  const going = kind === 'drawing' ? pathsForExport() : null
 
   function confirm() {
-    const name = sanitizeFileName(draft, 'project')
+    const name = sanitizeFileName(draft, kind === 'drawing' ? 'drawing' : 'project')
     if (kind === 'project') {
       saveProject(name) // updates the project name (toolbar header) and downloads .fkam
+    } else if (kind === 'drawing') {
+      exportDrawing(name, drawingFormat)
     } else {
       void exportGcode(name)
     }
@@ -74,14 +84,41 @@ export default function SaveDialog() {
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={onKeyDown}
-              placeholder="project"
+              placeholder={kind === 'drawing' ? 'drawing' : 'project'}
               className="flex-1 text-sm bg-gray-100 dark:bg-neutral-700 text-gray-900 dark:text-neutral-100 rounded-l px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
               autoFocus
             />
             <span className="text-sm text-gray-500 dark:text-neutral-400 bg-gray-200 dark:bg-neutral-600 px-2.5 py-1.5 rounded-r border-l border-gray-300 dark:border-neutral-500">
-              {meta.ext}
+              {ext}
             </span>
           </div>
+          {kind === 'drawing' && (
+            <>
+              <span className="text-sm text-gray-600 dark:text-neutral-400 mt-2">Format</span>
+              <div role="radiogroup" aria-label="Format" className="flex flex-col gap-1">
+                {(Object.keys(DRAWING_FORMATS) as DrawingFormat[]).map((f) => (
+                  <label key={f} className="flex items-baseline gap-2 text-sm text-gray-900 dark:text-neutral-100 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="drawing-format"
+                      checked={drawingFormat === f}
+                      onChange={() => setDrawingFormat(f)}
+                      onKeyDown={onKeyDown}
+                    />
+                    <span className="font-medium w-9">{DRAWING_FORMATS[f].label}</span>
+                    <span className="text-xs text-gray-500 dark:text-neutral-400">{DRAWING_FORMATS[f].hint}</span>
+                  </label>
+                ))}
+              </div>
+              {going && (
+                <p className="text-xs text-gray-500 dark:text-neutral-400 mt-1">
+                  {going.paths.length} path{going.paths.length === 1 ? '' : 's'}
+                  {going.fromSelection ? ' from the selection' : ', everything visible'}, in mm
+                  {going.skipped > 0 && ` — ${going.skipped} image/STL path${going.skipped > 1 ? 's' : ''} left out`}
+                </p>
+              )}
+            </>
+          )}
         </div>
 
         {/* Footer */}
@@ -94,7 +131,8 @@ export default function SaveDialog() {
           </button>
           <button
             onClick={confirm}
-            className="px-3 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+            disabled={going?.paths.length === 0}
+            className="px-3 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors disabled:opacity-50 disabled:pointer-events-none"
           >
             {meta.verb}
           </button>

@@ -59,7 +59,7 @@ export const MATERIAL_INFO: Record<Material, { label: string; hardness: number; 
   other: { label: 'Other', hardness: 1.0 },
 }
 
-const MM_PER_INCH = 25.4
+export const MM_PER_INCH = 25.4
 
 export const toMM = (value: number, units: Units): number =>
   units === 'in' ? value * MM_PER_INCH : value

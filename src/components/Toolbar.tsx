@@ -12,7 +12,7 @@ import { useWorkpieceStore } from '../store/workpieceStore'
 import { useSimStore } from '../store/simStore'
 import { generateGcode } from '../cam/gcode'
 import { buildGcodeInputs } from '../io/gcodeExport'
-import { exportSvg } from '../io/svgExport'
+import { useSaveDialogStore } from '../store/saveDialogStore'
 import { triggerProjectSave, triggerGcodeExport, triggerGcodeExportSplit } from '../io/fileSystem'
 import { buildExportPreflight, type ExportPreflight } from '../cam/exportPreflight'
 import ExportPreflightDialog from './ExportPreflightDialog'
@@ -247,11 +247,11 @@ export default function Toolbar() {
         />
         {/* Geometry OUT, for another tool. Copying paths between two projects of
             this app is Ctrl+C/Ctrl+V, which keeps the objects — see
-            io/pathClipboard.ts — and an SVG cannot: it carries outlines. */}
+            io/pathClipboard.ts — and an SVG or DXF cannot: it carries outlines. */}
         <ToolbarButton
           icon={<Share size={ICON.md} />}
-          label="Export SVG (selected paths, or all)"
-          onClick={exportSvg}
+          label="Export SVG or DXF (selected paths, or all)"
+          onClick={() => useSaveDialogStore.getState().openSaveDialog('drawing')}
         />
         <Sep />
 

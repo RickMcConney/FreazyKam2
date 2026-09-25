@@ -12,6 +12,9 @@ import { OP_TYPE_COLORS, TOOL_BAND_HUES } from '../colors'
 import { InlayIcon } from './MachinePanel'
 import { BottomTabs } from './BottomTabs'
 import { toolRuns, groupedByTool, sameOrder, reorderedFor } from './operationsOrder'
+import { usePostProcessorStore } from '../store/postProcessorStore'
+import { useWorkpieceStore } from '../store/workpieceStore'
+import { opRunTimesS, fmtDuration, fmtDurationShort } from '../cam/opTime'
 
 // The PROGRAM strip: one chip per operation, in the order the machine will run them,
 // docked under the 2D canvas next to the timeline.
@@ -107,12 +110,44 @@ function gcodeDetail(op: AnyOperation): string | null {
   return `${op.filename} — ${cut.toLocaleString()} cut, ${rapid.toLocaleString()} rapid moves (read-only)`
 }
 
-function OpChip({ op, dragging, compact, noCut, onGrab }: {
+/**
+ * How long each operation runs (`cam/opTime.ts`), recomputed once edits settle.
+ *
+ * Writing and parsing the whole program costs 5–40 ms on the largest projects measured,
+ * which is nothing once but a lot to pay on every store write while a batch Generate is
+ * landing one op after another — so it waits for the program to stop changing. Keyed on
+ * everything the estimate reads: the ops, the tools, the post-processor, and the machine
+ * settings auto-feeds computes from.
+ */
+function useOpRunTimes(operations: AnyOperation[], tools: Tool[]): Map<string, number> {
+  const profile = usePostProcessorStore((s) => s.profiles.find((p) => p.id === s.activeId))
+  const material = useWorkpieceStore((s) => s.material)
+  const rigidity = useWorkpieceStore((s) => s.machineRigidity)
+  const maxFeed = useWorkpieceStore((s) => s.maxFeedMmMin)
+  const minRpm = useWorkpieceStore((s) => s.minSpindleRpm)
+  const maxRpm = useWorkpieceStore((s) => s.maxSpindleRpm)
+  const autoFeed = useWorkpieceStore((s) => s.autoFeedEnabled)
+  const [times, setTimes] = useState<Map<string, number>>(() => new Map())
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const toolsById = Object.fromEntries(tools.map((x) => [x.id, x]))
+      setTimes(opRunTimesS(operations, toolsById, usePostProcessorStore.getState().getActiveProfile()))
+    }, 300)
+    return () => clearTimeout(t)
+  }, [operations, tools, profile, material, rigidity, maxFeed, minRpm, maxRpm, autoFeed])
+  return times
+}
+
+function OpChip({ op, dragging, compact, noCut, timeS, share, onGrab }: {
   op: AnyOperation
   dragging: boolean
   compact: boolean
   /** Generated to nothing because its linked half cuts it all — see `nothingToCut`. */
   noCut: boolean
+  /** Estimated run time, when the op is in the program and it has been worked out. */
+  timeS: number | undefined
+  /** That time as a fraction of the whole program's. */
+  share: number
   onGrab: (e: React.MouseEvent) => void
 }) {
   const Icon = OP_ICONS[op.type] ?? Wrench
@@ -152,6 +187,11 @@ function OpChip({ op, dragging, compact, noCut, onGrab }: {
           : null,
         op.name,
         gcodeDetail(op),
+        // A floor, like the export dialog's total it adds up to: programmed feeds, no
+        // acceleration, no time for tool changes.
+        timeS !== undefined && timeS > 0
+          ? `${fmtDuration(timeS)} to run — ${Math.round(share * 100)}% of the program`
+          : null,
         'Drag to reorder · Alt-click to hide',
       ].filter(Boolean).join('\n')}
       className={[
@@ -175,6 +215,9 @@ function OpChip({ op, dragging, compact, noCut, onGrab }: {
           {op.status === 'needs-update' && <AlertCircle size={10} className="text-amber-600 dark:text-amber-500" />}
           {op.status === 'error' && <AlertCircle size={10} className="text-red-600 dark:text-red-500" />}
           {hidden && <EyeOff size={10} className="text-gray-600 dark:text-neutral-400" />}
+          {timeS !== undefined && timeS > 0 && (
+            <span className="text-[11px] tabular-nums text-gray-500 dark:text-neutral-400 flex-shrink-0">{fmtDurationShort(timeS)}</span>
+          )}
         </>}
         {/* Shown in compact too: unlike the others, no ring or dash stands in for it. */}
         {noCut && <CircleSlash size={10} className="text-gray-500 dark:text-neutral-400" />}
@@ -233,6 +276,12 @@ export default function OperationsPanel() {
     return () => clearTimeout(t)
   }, [confirmRun])
 
+  const runTimes = useOpRunTimes(operations, tools)
+  // Only for an op still in the state it was timed in: one being regenerated has no
+  // honest time until the next estimate lands.
+  const timeOf = (op: AnyOperation) => (op.status === 'done' && op.visible ? runTimes.get(op.id) : undefined)
+  const totalTimeS = [...runTimes.values()].reduce((a, b) => a + b, 0)
+
   const runs = toolRuns(operations)
   const toolChanges = Math.max(0, runs.length - 1)
   const staleCount = operations.filter((o) => o.status === 'needs-update').length
@@ -250,7 +299,8 @@ export default function OperationsPanel() {
   const CHIP_CHROME_W = 34   // icon + padding + border + gap
   const TOOL_CHANGE_W = 34   // marker + its margins
   const RUN_LABEL_W = 14     // the grip + band padding under every run
-  const labeledW = operations.reduce((w, op) => w + CHIP_CHROME_W + Math.min(130, op.name.length * 6.8), 0)
+  const labeledW = operations.reduce((w, op) => w + CHIP_CHROME_W + Math.min(130, op.name.length * 6.8)
+    + (timeOf(op) ? 4 + fmtDurationShort(timeOf(op)!).length * 6 : 0), 0)
     + toolChanges * TOOL_CHANGE_W + runs.length * RUN_LABEL_W
   const compact = stripW > 0 && labeledW > stripW
 
@@ -443,6 +493,8 @@ export default function OperationsPanel() {
                           dragging={draggingIds.includes(op.id)}
                           compact={compact}
                           noCut={nothingToCut(op, operations)}
+                          timeS={timeOf(op)}
+                          share={totalTimeS > 0 ? (timeOf(op) ?? 0) / totalTimeS : 0}
                           onGrab={beginDrag([op.id])}
                         />
                       ))}
@@ -522,8 +574,10 @@ export default function OperationsPanel() {
         )}
 
         <span className="text-[13px] text-gray-500 dark:text-neutral-400 font-mono px-1 flex-shrink-0"
-          title={`${operations.length} operations, ${toolChanges} tool change${toolChanges === 1 ? '' : 's'}`}>
+          title={`${operations.length} operations, ${toolChanges} tool change${toolChanges === 1 ? '' : 's'}`
+            + (totalTimeS > 0 ? `\n${fmtDuration(totalTimeS)} to run the program` : '')}>
           {operations.length} op{operations.length === 1 ? '' : 's'} · {toolChanges} TC
+          {totalTimeS > 0 && <> · {fmtDurationShort(totalTimeS)}</>}
         </span>
         {staleCount > 0 && (
           <span className="flex items-center gap-1 text-[13px] text-amber-600 dark:text-amber-500 flex-shrink-0"

@@ -1,5 +1,5 @@
 import { importSvg } from '../importers/svgImporter'
-import { importDxf, type DxfUnitsChoice } from '../importers/dxfImporter'
+import { importDxf, describeSkipped, type DxfUnitsChoice } from '../importers/dxfImporter'
 import { importStl } from '../importers/stlImporter'
 import { getMultiBBox, translateD } from '../canvas/selectionUtils'
 import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
@@ -41,10 +41,18 @@ export function completeDxfImport(text: string, fileName: string, units?: DxfUni
     store.toggleGroupCollapsed(result.groupId)
     selectImported(result.paths)
     useUIStore.getState().setSidebarTab('draw')
+    // Text, hatches and dimensions have no outline to cut, so they are not imported —
+    // but leaving them out without a word reads as a lost part of the drawing.
+    const left = describeSkipped(result.skipped)
+    if (left) {
+      useUIStore.getState().showStatus(
+        `Imported ${result.paths.length} path${result.paths.length === 1 ? '' : 's'}. Not imported: ${left} — convert text to outlines (explode) in your CAD program to cut it.`, 'warn')
+    }
   } else if (result.error) {
     useUIStore.getState().showStatus(`DXF import failed — ${result.error}`, 'error')
   } else if (!result.needsUnitsPrompt) {
-    useUIStore.getState().showStatus('DXF import failed — no supported geometry in the file', 'warn')
+    const left = describeSkipped(result.skipped)
+    useUIStore.getState().showStatus(`DXF import failed — no supported geometry in the file${left ? ` (found only: ${left})` : ''}`, 'warn')
   }
 }
 

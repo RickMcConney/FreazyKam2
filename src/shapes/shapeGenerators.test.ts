@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { generateShapeD, translateShapeParams, scaleShapeParams, shapeParamsFromDrag, DEFAULT_SHAPE_CONFIG, SCALE_LOCKED_SHAPES, type ShapeParams, type ShapeType } from './shapeGenerators'
+import { generateShapeD, translateShapeParams, scaleShapeParams, shapeParamsFromDrag, DEFAULT_SHAPE_CONFIG, SCALE_LOCKED_SHAPES, SQUARE_DRAG_SHAPES, fixedDragAspect, type ShapeParams, type ShapeType } from './shapeGenerators'
 import { getBBox } from '../canvas/selectionUtils'
 import { flattenPath, signedArea } from '../cam/pathFlattener'
 import { stripClosingDuplicate } from '../cam/geom'
@@ -134,9 +134,6 @@ describe('scaleShapeParams', () => {
 describe('shapeParamsFromDrag from the centre', () => {
   const ORIGIN = { x: 100, y: 80 }
   const END = { x: 130, y: 100 }
-  // The corner-to-corner drag that should produce the SAME shape: the box
-  // centred on the origin with the cursor at its corner.
-  const MIRRORED = { x: 2 * ORIGIN.x - END.x, y: 2 * ORIGIN.y - END.y }
 
   const types = (Object.keys(DEFAULT_SHAPE_CONFIG) as ShapeType[])
     .filter((t) => !SCALE_LOCKED_SHAPES.has(t) && t !== 'text')
@@ -155,10 +152,23 @@ describe('shapeParamsFromDrag from the centre', () => {
       : 'w' in p ? { x: p.x + p.w / 2, y: p.y + p.h / 2 }
       : { x: p.x, y: p.y }
 
+  // A shape of fixed proportions grows its drag to them FIRST, so it is dragged
+  // here along its own aspect — the box it is centred in is then the one END
+  // spans, and the equality below says the same thing for it as for the rest.
+  // (Off-aspect drags are covered by the tests after this loop.)
+  const endFor = (type: ShapeType) => {
+    const aspect = fixedDragAspect(type, DEFAULT_SHAPE_CONFIG)
+    return aspect === null ? END : { x: END.x, y: ORIGIN.y + (END.x - ORIGIN.x) / aspect }
+  }
+
   for (const type of types) {
     it(`centres a ${type} on the drag origin`, () => {
-      const centred = shapeParamsFromDrag(type, ORIGIN, END, DEFAULT_SHAPE_CONFIG, true)
-      const corner = shapeParamsFromDrag(type, MIRRORED, END, DEFAULT_SHAPE_CONFIG, false)
+      const end = endFor(type)
+      // The corner-to-corner drag that should produce the SAME shape: the box
+      // centred on the origin with the cursor at its corner.
+      const mirrored = { x: 2 * ORIGIN.x - end.x, y: 2 * ORIGIN.y - end.y }
+      const centred = shapeParamsFromDrag(type, ORIGIN, end, DEFAULT_SHAPE_CONFIG, true)
+      const corner = shapeParamsFromDrag(type, mirrored, end, DEFAULT_SHAPE_CONFIG, false)
       // Identical params, so identical geometry — the mode is exactly "drag the
       // box that is centred here", not an approximation of it. This is the
       // assertion that covers shapes added later for free. (The preference
@@ -180,6 +190,73 @@ describe('shapeParamsFromDrag from the centre', () => {
     for (const type of types) {
       expect(shapeParamsFromDrag(type, ORIGIN, END, DEFAULT_SHAPE_CONFIG, false))
         .toEqual(shapeParamsFromDrag(type, ORIGIN, END, DEFAULT_SHAPE_CONFIG))
+    }
+  })
+
+  // A round shape dragged anything but a true diagonal used to shrink to the SHORT
+  // side about the box's middle, and so trailed the pointer: 100 right and 20 up
+  // gave a 20 mm circle whose edge sat 40 mm short of the cursor.
+  it('grows a circle to the cursor along the longer side of the drag', () => {
+    for (const end of [
+      { x: ORIGIN.x + 100, y: ORIGIN.y + 20 },     // mostly right
+      { x: ORIGIN.x - 15, y: ORIGIN.y - 60 },      // mostly down, and leftward
+    ]) {
+      const b = getBBox(generateShapeD(shapeParamsFromDrag('circle', ORIGIN, end, DEFAULT_SHAPE_CONFIG)))!
+      const side = Math.max(Math.abs(end.x - ORIGIN.x), Math.abs(end.y - ORIGIN.y))
+      expect(b.width).toBeCloseTo(side, 3)
+      expect(b.height).toBeCloseTo(side, 3)
+      // The corner stays where the drag began, and the far side is under the
+      // cursor on the axis it moved further along.
+      const sx = Math.sign(end.x - ORIGIN.x), sy = Math.sign(end.y - ORIGIN.y)
+      expect(b.cx).toBeCloseTo(ORIGIN.x + sx * side / 2, 3)
+      expect(b.cy).toBeCloseTo(ORIGIN.y + sy * side / 2, 3)
+    }
+  })
+
+  it('grows a centred circle to the cursor along the longer side of the drag', () => {
+    const b = getBBox(generateShapeD(
+      shapeParamsFromDrag('circle', ORIGIN, { x: ORIGIN.x + 50, y: ORIGIN.y + 10 }, DEFAULT_SHAPE_CONFIG, true)))!
+    expect(b.cx).toBeCloseTo(ORIGIN.x, 6)
+    expect(b.cy).toBeCloseTo(ORIGIN.y, 6)
+    expect(b.width).toBeCloseTo(100, 3)
+  })
+
+  it('grows a heart to the cursor along whichever axis reaches past its proportions', () => {
+    const aspect = fixedDragAspect('heart', DEFAULT_SHAPE_CONFIG)!
+    for (const end of [
+      { x: ORIGIN.x + 100, y: ORIGIN.y + 20 },     // wider than a heart: width reaches the cursor
+      { x: ORIGIN.x - 15, y: ORIGIN.y - 80 },      // taller than a heart: height does
+    ]) {
+      const dx = Math.abs(end.x - ORIGIN.x), dy = Math.abs(end.y - ORIGIN.y)
+      const b = getBBox(generateShapeD(shapeParamsFromDrag('heart', ORIGIN, end, DEFAULT_SHAPE_CONFIG)))!
+      const w = Math.max(dx, dy * aspect)
+      expect(b.width).toBeCloseTo(w, 2)
+      expect(b.height).toBeCloseTo(w / aspect, 2)
+      // Neither side falls short of the cursor, and one of them is exactly on it.
+      expect(b.width).toBeGreaterThanOrEqual(dx - 1e-6)
+      expect(b.height).toBeGreaterThanOrEqual(dy - 1e-6)
+      expect(Math.min(Math.abs(b.width - dx), Math.abs(b.height - dy))).toBeLessThan(0.01)
+      // Its corner stays where the drag began.
+      const sx = Math.sign(end.x - ORIGIN.x), sy = Math.sign(end.y - ORIGIN.y)
+      expect(b.cx).toBeCloseTo(ORIGIN.x + sx * b.width / 2, 2)
+      expect(b.cy).toBeCloseTo(ORIGIN.y + sy * b.height / 2, 2)
+    }
+  })
+
+  it('keeps a centred heart on the drag origin whatever the drag\'s proportions', () => {
+    const b = getBBox(generateShapeD(
+      shapeParamsFromDrag('heart', ORIGIN, { x: ORIGIN.x + 50, y: ORIGIN.y + 5 }, DEFAULT_SHAPE_CONFIG, true)))!
+    expect(b.cx).toBeCloseTo(ORIGIN.x, 2)
+    expect(b.cy).toBeCloseTo(ORIGIN.y, 2)
+    expect(b.width).toBeCloseTo(100, 2)
+  })
+
+  it('sizes every round shape by the longer side of the drag, not the shorter', () => {
+    for (const type of SQUARE_DRAG_SHAPES) {
+      if (!types.includes(type)) continue
+      const wide = shapeParamsFromDrag(type, ORIGIN, { x: ORIGIN.x + 60, y: ORIGIN.y + 10 }, DEFAULT_SHAPE_CONFIG)
+      const square = shapeParamsFromDrag(type, ORIGIN, { x: ORIGIN.x + 60, y: ORIGIN.y + 60 }, DEFAULT_SHAPE_CONFIG)
+      expect(wide).toEqual(square)
     }
   })
 

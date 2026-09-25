@@ -73,7 +73,9 @@ function ShapeConfig({ type, config, onChange, units }: {
       </div>)
     case 'circle':
       return (<div className="space-y-1">
-        <NumInput label="Radius" valueMM={c.circle.radius} units={u} onChange={(radius) => onChange({ ...c, circle: { radius } })} />
+        {/* Stated as a diameter — what a hole or a disc is measured by — while the
+            params keep the radius the generator draws from. */}
+        <NumInput label="Diameter" valueMM={c.circle.radius * 2} units={u} onChange={(dia) => onChange({ ...c, circle: { radius: dia / 2 } })} />
       </div>)
     case 'ellipse':
       return (<div className="space-y-1">

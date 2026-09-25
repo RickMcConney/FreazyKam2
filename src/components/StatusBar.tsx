@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useUIStore } from '../store/uiStore'
 import { useCanvasStore } from '../store/canvasStore'
-import { useWorkpieceStore, MATERIAL_INFO } from '../store/workpieceStore'
+import { useWorkpieceStore, MATERIAL_INFO, MM_PER_INCH, fmtLen } from '../store/workpieceStore'
 import { MATERIAL_COLORS } from '../colors'
 import { RIGIDITY_INFO } from '../rigidity'
 import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
@@ -35,14 +35,11 @@ export default function StatusBar() {
 
   const orgWorld = originWorldXY(origin, widthMM, heightMM)
 
-  const formatCoord = (mm: number) =>
-    units === 'in'
-      ? (mm / 25.4).toFixed(3) + '"'
-      : mm.toFixed(1) + 'mm'
+  const formatCoord = (mm: number) => fmtLen(mm, units, 1)
 
   // Stock size as W × H × T in the active units (unit symbol appended once).
   const dim = (mm: number) => {
-    const v = units === 'in' ? mm / 25.4 : mm
+    const v = units === 'in' ? mm / MM_PER_INCH : mm
     return (Math.round(v * 100) / 100).toString()
   }
   const dims = `${dim(widthMM)} × ${dim(heightMM)} × ${dim(thicknessMM)}${units === 'in' ? '"' : ' mm'}`

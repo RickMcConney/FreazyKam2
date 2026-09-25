@@ -632,6 +632,16 @@ export function shapeDisplayName(type: ShapeType): string {
  * yields centre = start and width = 2·|end − start|, which IS the centred box.
  * So every shape follows, including ones added later, and nothing in the switch
  * has to know the mode exists.
+ *
+ * A shape of FIXED PROPORTIONS (`fixedDragAspect`: the round ones, and the heart)
+ * first grows its box to its own aspect, out to the LONGER reach of the drag,
+ * held at the origin. Its size is one number, and fitted INSIDE the box about
+ * the box's middle it trailed the cursor on any drag that did not happen to
+ * have its proportions — a drag 100 right and 20 up made a 20 mm circle sitting
+ * 40 mm back from the pointer. Grown to the box, its extent reaches the cursor
+ * along the axis being dragged, as a rectangle does. It has to happen BEFORE the
+ * reflection: done after it, the box would hang off the reflected corner and a
+ * centred circle would slide off its origin.
  */
 export function shapeParamsFromDrag(
   type: ShapeType,
@@ -643,7 +653,41 @@ export function shapeParamsFromDrag(
   // Reflecting the origin makes the drag box the CENTRED one. Nothing is recorded
   // here — the preference lives on the PATH (ImportedPath.fromCenter), because it
   // has to outlive the params: a rotate or a mirror drops shapeParams entirely.
+  const aspect = fixedDragAspect(type, config)
+  if (aspect !== null) {
+    const dx = end.x - origin.x, dy = end.y - origin.y
+    // The smallest box of the shape's proportions that reaches the cursor on both axes.
+    const w = Math.max(Math.abs(dx), Math.abs(dy) * aspect)
+    const h = w / aspect
+    end = { x: origin.x + (dx < 0 ? -w : w), y: origin.y + (dy < 0 ? -h : h) }
+  }
   return dragParams(type, fromCenter ? { x: 2 * origin.x - end.x, y: 2 * origin.y - end.y } : origin, end, config)
+}
+
+/** Shapes sized by ONE radius (`min(w, h)/2` in `dragParams`), whose drag box is
+ *  squared before use — see `shapeParamsFromDrag`. */
+export const SQUARE_DRAG_SHAPES: ReadonlySet<ShapeType> = new Set<ShapeType>([
+  'circle', 'polygon', 'star', 'spirograph', 'cam', 'escapement', 'gear',
+])
+
+/** Width over height of a heart's box, per unit lobe radius — the proportions its
+ *  lobe angle fixes. `a` is HALF the angle, in radians. */
+function heartBox(a: number): { w: number; h: number } {
+  const ca = Math.cos(a), sa = Math.sin(a)
+  return { w: 2 * (1 + ca), h: 2 / ca - sa + 1 }
+}
+
+const heartHalfAngle = (angle: number) => (Math.max(1, Math.min(179, angle)) / 2) * (Math.PI / 180)
+
+/** The width/height a shape's drag box is grown to before use, or null for a shape
+ *  that fills whatever box it is dragged — see `shapeParamsFromDrag`. */
+export function fixedDragAspect(type: ShapeType, config: ShapeToolConfig): number | null {
+  if (SQUARE_DRAG_SHAPES.has(type)) return 1
+  if (type === 'heart') {
+    const { w, h } = heartBox(heartHalfAngle(config.heart.angle))
+    return w / h
+  }
+  return null
 }
 
 function dragParams(
@@ -679,11 +723,8 @@ function dragParams(
     }
     case 'heart': {
       const { angle } = config.heart
-      const a = (Math.max(1, Math.min(179, angle)) / 2) * (Math.PI / 180)
-      const ca = Math.cos(a), sa = Math.sin(a)
-      const r_from_W = w / (2 * (1 + ca))
-      const r_from_H = h / (2 / ca - sa + 1)
-      const r = Math.max(0.5, Math.min(r_from_W, r_from_H))
+      const box = heartBox(heartHalfAngle(angle))
+      const r = Math.max(0.5, Math.min(w / box.w, h / box.h))
       return { type: 'heart', cx, cy, curveRadius: r, angle }
     }
     case 'slot': {

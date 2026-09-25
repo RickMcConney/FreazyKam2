@@ -1,21 +1,11 @@
 import { useEffect, useState } from 'react'
+import { fmtDuration } from '../cam/opTime'
 import { AlertTriangle, Info, CheckCircle2, X } from 'lucide-react'
 import { ICON } from '../theme'
 import { rigidityInfo } from '../rigidity'
 import { useProjectStore } from '../store/projectStore'
 import type { ExportPreflight } from '../cam/exportPreflight'
 import { fmtLen, fmtFeed } from '../store/workpieceStore'
-
-function fmtDuration(s: number): string {
-  if (s <= 0) return '—'
-  const t = Math.round(s)
-  const h = Math.floor(t / 3600)
-  const m = Math.floor((t % 3600) / 60)
-  const sec = t % 60
-  if (h > 0) return `~${h}h ${m}m`
-  if (m > 0) return `~${m}m ${sec}s`
-  return `~${sec}s`
-}
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
