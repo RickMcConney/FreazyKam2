@@ -260,6 +260,9 @@ export class HeightfieldMaterial {
     // Show the board painted and sanded back — cuts dark against bare wood — instead
     // of the fresh-cut look. See patchSurfaceShader.
     paintedCuts = false,
+    // Below 1 the stock is drawn see-through (clear acrylic), so the carve and the
+    // toolpaths inside it stay visible.
+    opacity = 1,
   ) {
     this._toolStates = toolStates
 
@@ -344,6 +347,17 @@ export class HeightfieldMaterial {
       patchSkirtShader(this._skirtMat, this._texture, T, woodTex, tileMM, Z_DATUM_COLOR_THREE, zOrigin === 'top')
     } else {
       this._skirtMat = null
+    }
+
+    // Every face shares one tint, so the order translucent layers blend in hardly
+    // shows; depthWrite off keeps a near face from hiding the ones behind it.
+    if (opacity < 1) {
+      for (const m of [this._surfaceMat, this._floorMat, this._stockMat, this._skirtMat]) {
+        if (!m) continue
+        m.transparent = true
+        m.opacity = opacity
+        m.depthWrite = false
+      }
     }
 
     this.group = new THREE.Group()

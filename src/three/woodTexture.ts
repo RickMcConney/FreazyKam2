@@ -68,10 +68,15 @@ const WOOD_FILES: Partial<Record<Material, string>> = {
 }
 
 // Procedural finish for materials without a photo texture.
-const PROCEDURAL: Record<string, { kind: 'speckle' } | { kind: 'flat'; streak: number }> = {
+// `tone` is the broad, low-frequency variation; `streak` the fine brushed lines.
+// Plastics are molded or cast, not grown, so they get very little of either — at
+// the 0.03 tone "other" uses, the broad noise reads as waves across a flat sheet.
+const PROCEDURAL: Record<string, { kind: 'speckle' } | { kind: 'flat'; tone: number; streak: number }> = {
   mdf:   { kind: 'speckle' },
-  hdpe:  { kind: 'flat', streak: 0.015 },
-  other: { kind: 'flat', streak: 0.015 },
+  hdpe:  { kind: 'flat', tone: 0.008, streak: 0.006 },
+  delrin: { kind: 'flat', tone: 0.006, streak: 0.004 },
+  acrylic: { kind: 'flat', tone: 0.004, streak: 0.002 },
+  other: { kind: 'flat', tone: 0.03, streak: 0.015 },
 }
 
 // Materials whose photo tile is recolored to their MATERIAL_COLORS hue on load.
@@ -201,7 +206,7 @@ function makeCanvas(m: Material, size: number, procedural: boolean): HTMLCanvasE
     for (let i = 0; i < size; i++) {
       let b = p.kind === 'speckle'
         ? 1 + 0.05 * tone[i] + 0.1 * (rng() - 0.5)
-        : 1 + 0.03 * tone[i] + p.streak * streak[i] + 0.02 * (rng() - 0.5)
+        : 1 + p.tone * tone[i] + p.streak * streak[i] + 0.02 * (rng() - 0.5)
       b = Math.max(0.7, Math.min(1.3, b))
       const k = (j * size + i) * 4
       data[k]     = Math.min(255, br * b)

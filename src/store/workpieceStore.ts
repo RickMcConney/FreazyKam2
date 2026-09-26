@@ -26,7 +26,7 @@ export function zDatumOffsetMM(zOrigin: ZOrigin, thicknessMM: number): number {
 
 export type Material =
   | 'pine' | 'cedar' | 'oak' | 'maple' | 'walnut' | 'cherry'
-  | 'mdf' | 'plywood' | 'hdpe' | 'aluminum' | 'brass' | 'other'
+  | 'mdf' | 'plywood' | 'hdpe' | 'delrin' | 'acrylic' | 'aluminum' | 'brass' | 'other'
 
 // Single source of truth for the materials list and their relative machining
 // hardness (mdf ≈ 0.8 baseline). Higher = harder = gentler feeds/step-down.
@@ -37,13 +37,25 @@ export type Material =
 // the underlying Janka figures are roughly: cedar (W. red) ~350, pine (E. white)
 // ~380, cherry ~950, walnut ~1010, maple (hard) ~1450, oak (red) ~1290. Metals
 // (aluminum, brass) are scaled higher by relative cutting resistance, not Janka.
+// Plastics are placed by published chip loads: Delrin (acetal/POM) is stiffer
+// than HDPE and wants a lighter chip — about 0.003–0.005"/tooth for a 1/4"
+// 2-flute carbide end mill, against HDPE's 0.007–0.010" — but still machines cleanly
+// and dry, so it sits just above HDPE, level with plywood. Acrylic (PMMA) takes a
+// similar chip — about 0.004–0.006"/tooth on a 1/4" single-flute O-flute — but is
+// harder and brittle, chipping or crazing under a deep pass, so it sits a step
+// above Delrin, which also makes its step-down shallower.
 //
 // maxSurfaceSpeedMMin (optional): a cutting-speed (Vc) ceiling in m/min, used to
 // cap spindle RPM for metals so the edge doesn't overheat. Woods/plastics love
 // max RPM and omit it. Values are conservative dry-cutting limits for carbide on
 // a hobby machine (no flood coolant): aluminum tolerates higher Vc thanks to its
 // high thermal conductivity; free-machining brass runs hotter at the edge (lower
-// conductivity, higher cutting force) so it gets a lower ceiling.
+// conductivity, higher cutting force) so it gets a lower ceiling. Delrin is the
+// exception among plastics: it softens around 175 °C, so it is capped at the top
+// of its published carbide range (500–1500 SFM ≈ 150–450 m/min). That only bites
+// on bits of about 6 mm and up at full router speed; smaller bits are unaffected.
+// Acrylic softens sooner still (glass transition ~105 °C) and its routing
+// settings top out around 18,000 rpm on a 1/4" bit, so it is capped at 360 m/min.
 export const MATERIAL_INFO: Record<Material, { label: string; hardness: number; maxSurfaceSpeedMMin?: number }> = {
   pine: { label: 'Pine', hardness: 0.6 },
   cedar: { label: 'Cedar', hardness: 0.5 },
@@ -54,6 +66,8 @@ export const MATERIAL_INFO: Record<Material, { label: string; hardness: number; 
   mdf: { label: 'MDF', hardness: 0.8 },
   plywood: { label: 'Plywood', hardness: 0.9 },
   hdpe: { label: 'HDPE', hardness: 0.7 },
+  delrin: { label: 'Delrin', hardness: 0.9, maxSurfaceSpeedMMin: 450 }, // acetal/POM; carbide 150–450 m/min
+  acrylic: { label: 'Acrylic', hardness: 1.0, maxSurfaceSpeedMMin: 360 }, // PMMA; ≈18k rpm on a 1/4" bit
   aluminum: { label: 'Aluminum', hardness: 2.5, maxSurfaceSpeedMMin: 150 }, // dry carbide range 150–250
   brass: { label: 'Brass', hardness: 2.8, maxSurfaceSpeedMMin: 100 }, // leaded C360; dry carbide range 100–150
   other: { label: 'Other', hardness: 1.0 },

@@ -11,7 +11,7 @@ import { getCurrentSegIdx, interpolatePos, segTool, type SimSegment } from '../s
 import { flattenPath } from '../cam/pathFlattener'
 import { includedAngleDeg, isVCutter, maxCutRadiusMM } from '../cam/geom'
 import { getBBox } from '../canvas/selectionUtils'
-import { THREE_BG_COLOR_THREE } from '../colors'
+import { THREE_BG_COLOR_THREE, MATERIAL_COLORS } from '../colors'
 import { HeightfieldMaterial } from './HeightfieldMaterial'
 import { getWoodTexture, setWoodTextureListener, woodTileMM } from './woodTexture'
 import SimulationPlayer from '../sim/SimulationPlayer'
@@ -793,7 +793,7 @@ function rebuildHeightfield(refs: SceneRefs) {
   // edge, it fills every cut that was made before it.
   const paintedCuts = useToolpathStore.getState().operations
     .some((o) => o.type === 'photovcarve' && o.visible)
-  const hf = new HeightfieldMaterial(W, H, T, segments, toolStates, org.x, org.y, getWoodTexture(material), woodTileMM(material), zOrigin, paintedCuts)
+  const hf = new HeightfieldMaterial(W, H, T, segments, toolStates, org.x, org.y, getWoodTexture(material), woodTileMM(material), zOrigin, paintedCuts, MATERIAL_COLORS[material].opacity ?? 1)
   refs.heightfield = hf
   refs.scene.add(hf.group)
   perfLog(`[heightfield] built ${hf.topZ.length.toLocaleString()} samples @ ${hf.cellMM.toFixed(3)}mm cell`)
