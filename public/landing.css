@@ -27,7 +27,7 @@
 
 /* ── Screenshots ─────────────────────────────────────────────────────────── */
 
-.shot { margin: 44px 0 0; }
+.shot { margin-top: 44px; }
 .shot figure { margin: 0; }
 .shot img {
   display: block; width: 100%;
