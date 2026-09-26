@@ -4,6 +4,12 @@
 /* ── Hero ────────────────────────────────────────────────────────────────── */
 
 .hero { padding: 76px 0 8px; text-align: center; }
+/* The logo PNGs are cut in the page's own background colour (the groove), so each
+   one only reads on its matching theme — the <picture> swaps them with the OS. */
+.hero-logo img {
+  display: block; margin: 0 auto 40px;
+  width: min(100%, 520px); height: auto;
+}
 .hero h1 {
   margin: 0 0 18px;
   font-size: clamp(2.1rem, 6vw, 3.6rem);

@@ -3,7 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>FreazyKam — CNC CAM in the browser</title>
     <meta
       name="description"
@@ -36,10 +38,12 @@
     <header class="site-head">
       <div class="wrap">
         <a class="brand" href="/">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M12 2v9" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" />
-            <path d="M8.2 11h7.6L12 17.4 8.2 11Z" fill="var(--accent)" />
-            <path d="M3 21h18" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" opacity=".45" />
+          <svg width="20" height="24" viewBox="0 0 100 122" aria-hidden="true">
+            <rect y="56.5" width="100" height="65.5" fill="#b45309" />
+            <path d="M46.8 64C45 71 30 71 27.5 79 25 87 40 90 58 96 74 101 88 110 97 124" fill="none" stroke="var(--bg)" stroke-width="9" stroke-linecap="round" />
+            <rect x="27.3" width="39" height="16.6" rx="1.2" fill="currentColor" />
+            <rect x="31.2" y="19.8" width="31.2" height="7.1" rx=".8" fill="currentColor" />
+            <path d="M34.4 30H59.3V51.5L46.8 66 34.4 51.5Z" fill="currentColor" />
           </svg>
           FreazyKam
         </a>
@@ -55,6 +59,10 @@
     <main>
       <!-- ── Hero ───────────────────────────────────────────────────────── -->
       <div class="wrap hero">
+        <picture class="hero-logo">
+          <source srcset="/logo-dark.png" media="(prefers-color-scheme: dark)" />
+          <img src="/logo-light.png" width="2400" height="593" alt="FreazyKam" />
+        </picture>
         <h1>Turn a drawing into<br /><span class="accent">G-code your CNC can run.</span></h1>
         <p class="lede">
           FreazyKam is a complete CAM workshop that runs in your browser. Draw or import

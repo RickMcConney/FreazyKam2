@@ -204,6 +204,14 @@ export default function Toolbar() {
   return (
     <header className="h-10 bg-gray-200 dark:bg-neutral-800 border-b border-gray-300 dark:border-neutral-700 flex items-center px-2 gap-0.5 flex-shrink-0 select-none">
 
+      {/* Not a link to the landing page: one stray click would leave unsaved work. */}
+      <img
+        src={darkMode ? '/logo-dark.png' : '/logo-light.png'}
+        alt="FreazyKam"
+        draggable={false}
+        className="h-8 w-auto mr-2 flex-shrink-0"
+      />
+      <Sep />
 
       {/* File */}
       <div style={{ display: 'flex', gap: '12px' }}>

@@ -1,4 +1,9 @@
-# FreazyKam
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="public/logo-dark.png">
+    <img src="public/logo-light.png" alt="FreazyKam" width="520">
+  </picture>
+</h1>
 
 **Browser-based CNC CAM application for makers, woodworkers, and hobby CNC users.**
 
