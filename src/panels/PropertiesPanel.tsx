@@ -14,6 +14,7 @@ import { loadFont, isFontLoaded, SINGLE_LINE_FONT_FAMILY } from '../shapes/textG
 import { carriedPinion, gearDims, gearHubOf, gearLabel, gearMesh, gearRimW, gearRotationSense, gearSpokeW, pinionDims, pinionLabel, TOOTH_LABEL_SIZE } from '../shapes/gearGenerator'
 import { hubGrownWhy } from '../shapes/spokedWheel'
 import { camDims } from '../shapes/camGenerator'
+import { ratchetDims } from '../shapes/ratchetGenerator'
 import type { EscapementSpec } from '../shapes/escapementGenerator'
 import EscapementInfoButton from './EscapementInfoButton'
 import { pendulumDims } from '../shapes/pendulumGenerator'
@@ -539,7 +540,7 @@ const ShapeParamsEditor = memo(function ShapeParamsEditor({ id, params, units, f
           <br />
           OD {fromMM(d.outsideDia, u as 'mm' | 'in').toFixed(2)} · Root {fromMM(d.rootDia, u as 'mm' | 'in').toFixed(2)} {u}
           <br />
-          Meshes at {fromMM(d.pitchDia / 2, u as 'mm' | 'in').toFixed(2)} + partner pitch radius
+          Meshes at {fromMM(d.pitchDia / 2, u as 'mm' | 'in').toFixed(2)} + {fromMM(mesh.matePitchRadius, u as 'mm' | 'in').toFixed(2)} ({mesh.mateTeeth}{cyc ? '-pin' : 'T'} mate) = {fromMM(mesh.centreDistance, u as 'mm' | 'in').toFixed(2)}
           <br />
           Tooth {fromMM(d.toothThickness, u as 'mm' | 'in').toFixed(2)} at pitch
           {hub.grown && <><br /><span className="text-blue-400">Hub grown to {fromMM(hub.dia, u as 'mm' | 'in').toFixed(2)} {hubGrownWhy(hub, params.spokes)}.</span></>}
@@ -700,6 +701,49 @@ const ShapeParamsEditor = memo(function ShapeParamsEditor({ id, params, units, f
             Friction may not hold {dm.pressureAngleDeg.toFixed(1)}° — bigger base, or less rise.
           </span></>}
           {dm.handleTooShort && <><br /><span className="text-yellow-500">Lever inside the crest — no leverage.</span></>}
+        </div>
+      </>)
+    }
+    case 'ratchet': {
+      const dm = ratchetDims(params)
+      const N = (mm: number) => fromMM(mm, u as 'mm' | 'in').toFixed(2)
+      return (<>
+        <div className="col-span-2 flex items-center gap-1.5">
+          <span className={labelCls}>Dir</span>
+          <select value={params.freeSense === 1 ? 'ccw' : 'cw'} className={fieldCls + ' cursor-pointer'}
+            onChange={(e) => update({ ...params, freeSense: e.target.value === 'ccw' ? 1 : -1 })}>
+            <option value="cw">Gear turns clockwise</option>
+            <option value="ccw">Gear turns anticlockwise</option>
+          </select>
+        </div>
+        <EditField label="Z"    valueMM={params.teeth} units="" min={3} integer onChange={(teeth) => update({ ...params, teeth: Math.max(3, Math.round(teeth)) })} />
+        <EditField label="Pwl"  valueMM={params.pawls} units="" min={1} integer onChange={(pawls) => update({ ...params, pawls: Math.max(1, Math.round(pawls)) })} />
+        <EditField label="OD"   valueMM={params.outerDia} units={u} min={4} onChange={(outerDia) => update({ ...params, outerDia })} />
+        <EditField label="Dep"  valueMM={params.toothDepth} units={u} min={0.2} onChange={(toothDepth) => update({ ...params, toothDepth })} />
+        <EditField label="TipR" valueMM={params.tipRadius ?? 0} units={u} min={0} onChange={(tipRadius) => update({ ...params, tipRadius })} />
+        <EditField label="Len"  valueMM={params.pawlLength} units={u} min={1} onChange={(pawlLength) => update({ ...params, pawlLength })} />
+        <EditField label="W"    valueMM={params.pawlWidth} units={u} min={1} onChange={(pawlWidth) => update({ ...params, pawlWidth })} />
+        <EditField label="Ø"    valueMM={params.bore} units={u} min={0} onChange={(bore) => update({ ...params, bore })} />
+        <EditField label="Pin"  valueMM={params.pivotDia} units={u} min={0} onChange={(pivotDia) => update({ ...params, pivotDia })} />
+        <EditField label="Clr"  valueMM={params.clearance} units={u} min={0} onChange={(clearance) => update({ ...params, clearance })} />
+        <EditField label="Tool" valueMM={params.toolDia} units={u} min={0} onChange={(toolDia) => update({ ...params, toolDia })} />
+        <div className="col-span-2 text-label text-gray-600 dark:text-neutral-400 leading-tight">
+          Locks every {dm.pitchDeg.toFixed(1)}° · root {N(2 * dm.rootR)}
+          <br />
+          Lifts {N(params.toothDepth)} ({dm.liftDeg.toFixed(1)}°) per tooth
+          <br />
+          At least {dm.engagedMin} of {params.pawls} always drop in
+          <br />
+          Pivots on Ø{N(2 * dm.pivotR)}
+          <br />
+          Housing Ø{N(2 * dm.housingR)} · stops pawls at {dm.stopDeg.toFixed(1)}°{dm.heeled ? ' (heel)' : ''}
+          {dm.teethRounded && <><br /><span className="text-blue-400">Cut with {dm.teeth} teeth, a multiple of the pawls.</span></>}
+          {dm.mayNotEngage && <><br /><span className="text-red-400">Can stop with no pawl in — more pawls.</span></>}
+          {dm.cannotClear && <><br /><span className="text-red-400">Pawls can't lift clear of the teeth — longer pawls.</span></>}
+          {dm.pawlsCollide && <><br /><span className="text-red-400">Pawls overlap — fewer or shorter.</span></>}
+          {dm.bossThin && <><br /><span className="text-yellow-500">Little wood round the pin — a wider pawl.</span></>}
+          {dm.toothTooShallow && <><br /><span className="text-yellow-500">Cutter rounds off most of each tooth face.</span></>}
+          {dm.boreTooBig && <><br /><span className="text-yellow-500">Bore leaves no wall inside the root.</span></>}
         </div>
       </>)
     }

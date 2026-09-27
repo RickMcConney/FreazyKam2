@@ -3,6 +3,7 @@ import { generateMazeD } from './mazeGenerator'
 import { generateCuttingBoardD, type BoardShape, type BoardHandle } from './cuttingBoardGenerator'
 import { generateGearD, generateGearParts, moduleForRadius, type ToothProfile } from './gearGenerator'
 import { generateCamD, generateCamParts, baseDiaForRadius } from './camGenerator'
+import { generateRatchetD, generateRatchetParts } from './ratchetGenerator'
 import {
   generateEscapementD, generateEscapementParts, wheelDiaForRadius, type EscapementType,
 } from './escapementGenerator'
@@ -13,7 +14,7 @@ import {
 } from './trackGenerator'
 import { fmt4 as f } from '../util/num'
 
-export type ShapeType = 'rectangle' | 'roundrect' | 'inroundrect' | 'circle' | 'ellipse' | 'polygon' | 'star' | 'heart' | 'slot' | 'shield' | 'spirograph' | 'maze' | 'board' | 'gear' | 'cam' | 'escapement' | 'pendulum' | 'track' | 'text'
+export type ShapeType = 'rectangle' | 'roundrect' | 'inroundrect' | 'circle' | 'ellipse' | 'polygon' | 'star' | 'heart' | 'slot' | 'shield' | 'spirograph' | 'maze' | 'board' | 'gear' | 'cam' | 'ratchet' | 'escapement' | 'pendulum' | 'track' | 'text'
 
 export type ShapeParams =
   | { type: 'rectangle'; x: number; y: number; w: number; h: number }
@@ -40,6 +41,15 @@ export type ShapeParams =
   // absent on every gear drawn by hand; see GearSpec.
   | { type: 'gear'; cx: number; cy: number; module: number; teeth: number; toothProfile: ToothProfile; mateTeeth: number; pinDia: number; backRelief?: number; actingSense?: 1 | -1; drivenByPins?: boolean; emitPinion: boolean; pressureAngle: number; bore: number; hubDia: number; spokes: number; spokeWidth?: number; rimWidth?: number; backlash: number; toothLabel: boolean; pitchCircle: boolean; hubCircle?: boolean; arborPins?: number; arborPinCircleDia?: number; arborPinDia?: number }
   | { type: 'cam'; cx: number; cy: number; baseDia: number; riseMM: number; sweepDeg: number; boreDia: number; handleLength: number; handleWidth: number }
+  // A sawtooth wheel and gravity pawls on pivots outside it — see ratchetGenerator.ts.
+  | {
+      type: 'ratchet'; cx: number; cy: number
+      teeth: number; outerDia: number; toothDepth: number; tipRadius: number; bore: number
+      pawls: number; pawlAngle: number
+      pawlLength: number; pawlWidth: number; pivotDia: number
+      clearance: number; toolDia: number
+      freeSense: 1 | -1
+    }
   | {
       type: 'escapement'; cx: number; cy: number
       escType: EscapementType; teeth: number; wheelDia: number
@@ -90,6 +100,13 @@ export interface ShapeToolConfig {
   }
   gear: { module: number; teeth: number; toothProfile: ToothProfile; mateTeeth: number; pinDia: number; backRelief: number; actingSense: 1 | -1; emitPinion: boolean; pressureAngle: number; bore: number; hubDia: number; spokes: number; spokeWidth?: number; rimWidth?: number; backlash: number; toothLabel: boolean; pitchCircle: boolean }
   cam: { baseDia: number; riseMM: number; sweepDeg: number; boreDia: number; handleLength: number; handleWidth: number }
+  ratchet: {
+    teeth: number; outerDia: number; toothDepth: number; tipRadius: number; bore: number
+    pawls: number; pawlAngle: number
+    pawlLength: number; pawlWidth: number; pivotDia: number
+    clearance: number; toolDia: number
+    freeSense: 1 | -1
+  }
   escapement: {
     escType: EscapementType; teeth: number; wheelDia: number
     toothDepth: number; drop: number; lift: number
@@ -147,6 +164,15 @@ export const DEFAULT_SHAPE_CONFIG: ShapeToolConfig = {
   // at the base circle — well inside what wood-on-wood friction holds — and a 100 mm
   // lever on a Ø32 crest is a lever rather than a lump.
   cam: { baseDia: 40, riseMM: 12, sweepDeg: 360, boreDia: 8, handleLength: 100, handleWidth: 18 },
+  // Four pawls round eight teeth: at any angle the gear stops at, at least one
+  // pawl is high enough for gravity to drop it in.
+  ratchet: {
+    teeth: 8, outerDia: 50, toothDepth: 8, tipRadius: 0.5, bore: 8,
+    pawls: 4, pawlAngle: 90,
+    pawlLength: 24, pawlWidth: 8, pivotDia: 4,
+    clearance: 0.3, toolDia: 3.175,
+    freeSense: -1,
+  },
   // A 30-tooth Graham deadbeat on a Ø100 wheel: the standard seconds-pendulum
   // escape wheel. 2° of drop out of the 6° beat leaves 4° of impulse at the
   // wheel for 3° of lift at the anchor. The span the pallets stand at is derived
@@ -446,6 +472,7 @@ export function generateShapeD(p: ShapeParams): string {
     case 'board': return generateCuttingBoardD(p)
     case 'gear': return generateGearD(p)
     case 'cam': return generateCamD(p)
+    case 'ratchet': return generateRatchetD(p)
     case 'escapement': return generateEscapementD(p)
     case 'pendulum': return generatePendulumD(p)
     case 'track': return generateTrackD(p)
@@ -475,6 +502,10 @@ export interface ShapePart {
 }
 
 const CAM_PART_LABELS: Record<string, string> = { cam: 'Outline', bore: 'Bore' }
+
+const RATCHET_PART_LABELS: Record<string, string> = {
+  wheel: 'Wheel', bore: 'Bore', housing: 'Housing', pawl: 'Pawls', pivot: 'Pivot Holes',
+}
 
 // The outline is profiled and the grooves are not — a groove is a 3 mm deep
 // slot cut with a different tool, which is the gear's argument for parts.
@@ -558,6 +589,13 @@ export function generateShapeParts(p: ShapeParams): ShapePart[] | null {
       d: g.d,
     }))
   }
+  if (p.type === 'ratchet') {
+    return generateRatchetParts(p).map((g) => ({
+      part: g.key,
+      label: RATCHET_PART_LABELS[g.key] ?? g.key,
+      d: g.d,
+    }))
+  }
   if (p.type === 'pendulum') {
     return generatePendulumParts(p).map((g) => ({
       part: g.key,
@@ -613,6 +651,7 @@ export function shapeDisplayName(type: ShapeType): string {
     case 'board': return 'Cutting Board'
     case 'gear': return 'Gear'
     case 'cam': return 'Cam'
+    case 'ratchet': return 'Ratchet'
     case 'escapement': return 'Escapement'
     case 'pendulum': return 'Pendulum'
     case 'track': return 'Train Track'
@@ -667,7 +706,7 @@ export function shapeParamsFromDrag(
 /** Shapes sized by ONE radius (`min(w, h)/2` in `dragParams`), whose drag box is
  *  squared before use — see `shapeParamsFromDrag`. */
 export const SQUARE_DRAG_SHAPES: ReadonlySet<ShapeType> = new Set<ShapeType>([
-  'circle', 'polygon', 'star', 'spirograph', 'cam', 'escapement', 'gear',
+  'circle', 'polygon', 'star', 'spirograph', 'cam', 'ratchet', 'escapement', 'gear',
 ])
 
 /** Width over height of a heart's box, per unit lobe radius — the proportions its
@@ -766,6 +805,17 @@ function dragParams(
         handleLength: config.cam.handleLength * (radius / Math.max(0.5, config.cam.baseDia / 2 + (config.cam.riseMM * config.cam.sweepDeg) / 360)),
         handleWidth: config.cam.handleWidth,
       }
+    case 'ratchet': {
+      // The drag box sizes the WHEEL; the pawls hang outside it. Teeth and pawls
+      // follow in proportion; the fits — clearance, cutter, bore, screws, pin —
+      // are the tooling's and the hardware's, so they come from the panel.
+      const k = radius / Math.max(1, config.ratchet.outerDia / 2)
+      return {
+        type: 'ratchet', cx, cy, ...config.ratchet,
+        outerDia: 2 * radius, toothDepth: config.ratchet.toothDepth * k, tipRadius: config.ratchet.tipRadius * k,
+        pawlLength: config.ratchet.pawlLength * k, pawlWidth: config.ratchet.pawlWidth * k,
+      }
+    }
     case 'escapement':
       // The drag box sizes the WHEEL, which is what a user is thinking about.
       // Everything else is the mechanism and comes from the panel untouched —
@@ -840,6 +890,7 @@ export function shapeParamsFromConfig(
     }
     case 'gear': return { type: 'gear', cx, cy, ...config.gear }
     case 'cam': return { type: 'cam', cx, cy, ...config.cam }
+    case 'ratchet': return { type: 'ratchet', cx, cy, ...config.ratchet }
     case 'escapement': return { type: 'escapement', cx, cy, ...config.escapement }
     case 'pendulum': return { type: 'pendulum', cx, cy, ...config.pendulum }
     case 'track': return { type: 'track', cx, cy, ...config.track }
@@ -865,6 +916,7 @@ export function translateShapeParams(p: ShapeParams, dx: number, dy: number): Sh
     case 'board': return { ...p, x: p.x + dx, y: p.y + dy }
     case 'gear': return { ...p, cx: p.cx + dx, cy: p.cy + dy }
     case 'cam': return { ...p, cx: p.cx + dx, cy: p.cy + dy }
+    case 'ratchet': return { ...p, cx: p.cx + dx, cy: p.cy + dy }
     case 'escapement': return { ...p, cx: p.cx + dx, cy: p.cy + dy }
     case 'pendulum': return { ...p, cx: p.cx + dx, cy: p.cy + dy }
     case 'track': return { ...p, cx: p.cx + dx, cy: p.cy + dy }
@@ -988,6 +1040,19 @@ export function scaleShapeParams(
         ...p, cx: ncx, cy: ncy,
         baseDia: p.baseDia * asx, riseMM: p.riseMM * asx, boreDia: p.boreDia * asx,
         handleLength: p.handleLength * asx, handleWidth: p.handleWidth * asx,
+      }
+    }
+    case 'ratchet': {
+      // Stretched on one axis the faces stop being radial and the pivots leave
+      // the line of action. Uniformly, the sizes scale and the fits do not:
+      // clearance and cutter are the tooling's, bore, screws and pin the
+      // hardware's.
+      if (Math.abs(asx - asy) > 0.001) return null
+      const ncx = ax + sx * (p.cx - ax), ncy = ay + sy * (p.cy - ay)
+      return {
+        ...p, cx: ncx, cy: ncy,
+        outerDia: p.outerDia * asx, toothDepth: p.toothDepth * asx, tipRadius: p.tipRadius * asx,
+        pawlLength: p.pawlLength * asx, pawlWidth: p.pawlWidth * asx,
       }
     }
     case 'escapement': {

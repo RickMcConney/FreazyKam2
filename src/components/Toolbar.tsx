@@ -204,15 +204,6 @@ export default function Toolbar() {
   return (
     <header className="h-10 bg-gray-200 dark:bg-neutral-800 border-b border-gray-300 dark:border-neutral-700 flex items-center px-2 gap-0.5 flex-shrink-0 select-none">
 
-      {/* Not a link to the landing page: one stray click would leave unsaved work. */}
-      <img
-        src={darkMode ? '/logo-dark.png' : '/logo-light.png'}
-        alt="FreazyKam"
-        draggable={false}
-        className="h-8 w-auto mr-2 flex-shrink-0"
-      />
-      <Sep />
-
       {/* File */}
       <div style={{ display: 'flex', gap: '12px' }}>
         <ToolbarButton
@@ -280,9 +271,22 @@ export default function Toolbar() {
         {/* Editable project name */}
         <ProjectNameEditor />
       </div>
-      {/* Right side */}
 
-      <div className="ml-auto flex items-center gap-0.5">
+      {/* The logo, centred in the space between the project name and the right-hand
+          group — not on the bar, which would put it off-centre in the gap whenever
+          the two sides differ in width. Not a link to the landing page: one stray
+          click would leave unsaved work. */}
+      <div className="flex-1 min-w-0 flex justify-center overflow-hidden">
+        <img
+          src={darkMode ? '/logo-dark.png' : '/logo-light.png'}
+          alt="FreazyKam"
+          draggable={false}
+          className="h-8 w-auto"
+        />
+      </div>
+
+      {/* Right side */}
+      <div className="flex items-center gap-0.5">
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
           <UnitToggle />
           <Sep />

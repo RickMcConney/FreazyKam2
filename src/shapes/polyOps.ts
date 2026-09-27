@@ -94,12 +94,14 @@ function meanWidth(ring: Pt[]): number {
   return per < 1e-12 ? 0 : (2 * Math.abs(signedArea(ring))) / per
 }
 
-export function boolRings(op: 'union' | 'difference', a: Pt[][], b: Pt[][]): Pt[][] {
+export function boolRings(op: 'union' | 'difference' | 'intersection', a: Pt[][], b: Pt[][]): Pt[][] {
   if (a.length === 0) return []
-  if (b.length === 0) return a
+  if (b.length === 0) return op === 'intersection' ? [] : a
   const A = a.map((r) => [r]) as never
   const B = b.map((r) => [r]) as never
-  const out = op === 'union' ? polygonClipping.union(A, B) : polygonClipping.difference(A, B)
+  const out = op === 'union' ? polygonClipping.union(A, B)
+    : op === 'difference' ? polygonClipping.difference(A, B)
+    : polygonClipping.intersection(A, B)
   // Drop the slivers clipper leaves along a coincident edge. They carry seven or
   // eight points, so a point count cannot see them, and they survive all the way
   // to the canvas — where a ring with no width still draws, as a stray line

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ICON } from '../../theme'
-import { Square, Circle, Ellipse, Hexagon, Star as StarIcon, PenTool, Type, Squircle, Heart, Pill, Signpost, Shield, Orbit, Grid3x3, CookingPot, Cog, Cloud, Anchor, Dices, ChevronDown, Clock, Weight, TrainTrack } from 'lucide-react'
+import { Square, Circle, Ellipse, Hexagon, Star as StarIcon, PenTool, Type, Squircle, Heart, Pill, Signpost, Shield, Orbit, Grid3x3, CookingPot, Cog, Cloud, Anchor, Dices, ChevronDown, Clock, Weight, TrainTrack, Webhook } from 'lucide-react'
 import { useUIStore } from '../../store/uiStore'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 import { spirographLoops, spirographRadii, spirographCentrePen, SPIRO_RATIO_RANGE, SCALE_LOCKED_SHAPES, type ShapeType, type ShapeToolConfig } from '../../shapes/shapeGenerators'
@@ -8,6 +8,7 @@ import { mazeGrid } from '../../shapes/mazeGenerator'
 import { gearDims, gearHubOf, gearLabel, gearMesh, gearRimW, gearRotationSense, gearSpokeW, pinionDims, pinionLabel, TOOTH_LABEL_SIZE } from '../../shapes/gearGenerator'
 import { hubGrownWhy } from '../../shapes/spokedWheel'
 import { camDims } from '../../shapes/camGenerator'
+import { ratchetDims } from '../../shapes/ratchetGenerator'
 import type { EscapementSpec } from '../../shapes/escapementGenerator'
 import EscapementInfoButton from '../EscapementInfoButton'
 import { pendulumDims } from '../../shapes/pendulumGenerator'
@@ -38,6 +39,7 @@ const SHAPES: { type: ShapeType; label: string; icon: React.ReactNode }[] = [
   { type: 'board',     label: 'Board',   icon: <CookingPot size={ICON.md} /> },
   { type: 'gear',      label: 'Gear',    icon: <Cog size={ICON.md} /> },
   { type: 'cam',       label: 'Cam',     icon: <Cloud size={ICON.md} /> },
+  { type: 'ratchet',   label: 'Ratchet', icon: <Webhook size={ICON.md} /> },
   { type: 'escapement', label: 'Escape', icon: <Anchor size={ICON.md} /> },
   { type: 'pendulum', label: 'Pend',    icon: <Weight size={ICON.md} /> },
   { type: 'track',    label: 'Track',   icon: <TrainTrack size={ICON.md} /> },
@@ -321,7 +323,7 @@ function ShapeConfig({ type, config, onChange, units }: {
           <br />
           Outside {L(d.outsideDia)} · Root {L(d.rootDia)}
           <br />
-          Meshes at centre distance {L(d.pitchDia / 2)} + partner&apos;s pitch radius
+          Meshes at centre distance {L(d.pitchDia / 2)} + {L(mesh.matePitchRadius)} ({mesh.mateTeeth}{cyc ? '-pin' : '-tooth'} mate) = {L(mesh.centreDistance)}
           <br />
           Tooth {L(d.toothThickness)} at pitch{g.backlash > 0 ? ` (${L(Math.PI * g.module / 2)} nominal)` : ''}
           {/* The play the pair will really have. Two gears come out at the
@@ -493,6 +495,61 @@ function ShapeConfig({ type, config, onChange, units }: {
         </p>}
         {dm.handleTooShort && <p className="text-label text-yellow-500">
           Lever is inside the crest ({L(dm.maxDia / 2)}) — no leverage. Make it longer.
+        </p>}
+      </div>)
+    }
+    case 'ratchet': {
+      const m = c.ratchet
+      const set = (patch: Partial<ShapeToolConfig['ratchet']>) => onChange({ ...c, ratchet: { ...c.ratchet, ...patch } })
+      const dm = ratchetDims({ ...m, cx: 0, cy: 0 })
+      const L = (mm: number) => fmtLen(mm, u as 'mm' | 'in')
+      return (<div className="space-y-1">
+        {/* Which way the GEAR — which carries the pawls — may turn. */}
+        <Select label="Gear turns" value={m.freeSense === 1 ? 'ccw' : 'cw'}
+          options={[['cw', 'Clockwise'], ['ccw', 'Anticlockwise']]}
+          onChange={(v) => set({ freeSense: v === 'ccw' ? 1 : -1 })} />
+        <NumInput label="Teeth"    valueMM={m.teeth} units="" min={3} integer onChange={(teeth) => set({ teeth: Math.max(3, Math.round(teeth)) })} />
+        <NumInput label="Outside Ø" valueMM={m.outerDia} units={u} min={4} onChange={(outerDia) => set({ outerDia })} />
+        <NumInput label="Depth"    valueMM={m.toothDepth} units={u} min={0.2} step={u === 'in' ? 0.01 : 0.5} onChange={(toothDepth) => set({ toothDepth })} />
+        <NumInput label="Tip R"    valueMM={m.tipRadius} units={u} min={0} step={u === 'in' ? 0.01 : 0.25} onChange={(tipRadius) => set({ tipRadius })} />
+        <NumInput label="Bore Ø"   valueMM={m.bore} units={u} min={0} onChange={(bore) => set({ bore })} />
+        <NumInput label="Pawls"    valueMM={m.pawls} units="" min={1} integer onChange={(pawls) => set({ pawls: Math.max(1, Math.round(pawls)) })} />
+        <NumInput label="Length"   valueMM={m.pawlLength} units={u} min={1} onChange={(pawlLength) => set({ pawlLength })} />
+        <NumInput label="Width"    valueMM={m.pawlWidth} units={u} min={1} onChange={(pawlWidth) => set({ pawlWidth })} />
+        <NumInput label="Pin Ø"    valueMM={m.pivotDia} units={u} min={0} onChange={(pivotDia) => set({ pivotDia })} />
+        <NumInput label="Clearance" valueMM={m.clearance} units={u} min={0} step={u === 'in' ? 0.005 : 0.05} onChange={(clearance) => set({ clearance })} />
+        <NumInput label="Cutter Ø" valueMM={m.toolDia} units={u} min={0} step={u === 'in' ? 0.0625 : 0.5} onChange={(toolDia) => set({ toolDia })} />
+        <p className="text-label text-gray-600 dark:text-neutral-400">
+          Locks every {dm.pitchDeg.toFixed(1)}° · root Ø {L(2 * dm.rootR)}
+          <br />
+          Pawls lift {L(m.toothDepth)} ({dm.liftDeg.toFixed(1)}°) per tooth
+          <br />
+          At least {dm.engagedMin} of {m.pawls} pawl{m.pawls > 1 ? 's' : ''} always high enough to drop in
+          <br />
+          Pivot pins on a Ø{L(2 * dm.pivotR)} circle in the pocket floor.
+          <br />
+          Housing pocket Ø{L(2 * dm.housingR)} — its wall stops each pawl at {dm.stopDeg.toFixed(1)}°{dm.heeled ? ' (on a heel)' : ''}.
+        </p>
+        {dm.teethRounded && <p className="text-label text-blue-400">
+          Cut with {dm.teeth} teeth — a multiple of the pawls, so every pawl seats at once.
+        </p>}
+        {dm.mayNotEngage && <p className="text-label text-red-400">
+          The gear can stop where no pawl is high enough to fall in — more pawls.
+        </p>}
+        {dm.cannotClear && <p className="text-label text-red-400">
+          The pawls can't lift clear of the teeth — their pivot ends reach into them. Longer pawls, or a narrower pivot end.
+        </p>}
+        {dm.pawlsCollide && <p className="text-label text-red-400">
+          Pawls overlap — fewer or shorter pawls, or a bigger wheel.
+        </p>}
+        {dm.bossThin && <p className="text-label text-yellow-500">
+          Little wood round the Ø{L(m.pivotDia)} pin — a wider pawl.
+        </p>}
+        {dm.toothTooShallow && <p className="text-label text-yellow-500">
+          The cutter rounds off most of each {L(m.toothDepth)} tooth face — deeper teeth, or a smaller cutter.
+        </p>}
+        {dm.boreTooBig && <p className="text-label text-yellow-500">
+          The bore leaves no wall inside the root circle.
         </p>}
       </div>)
     }
