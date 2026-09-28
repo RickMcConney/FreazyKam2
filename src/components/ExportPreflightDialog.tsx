@@ -168,7 +168,7 @@ export default function ExportPreflightDialog({
                 autoFocus
                 className="flex-1 min-w-0 text-sm bg-gray-100 dark:bg-neutral-700 text-gray-900 dark:text-neutral-100 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
-              <span className="text-[12px] text-gray-600 dark:text-neutral-400 font-mono whitespace-nowrap">_1_tool.gcode</span>
+              <span className="text-[12px] text-gray-600 dark:text-neutral-400 font-mono whitespace-nowrap">_A_tool.gcode</span>
             </div>
           )}
           <div className="flex items-center justify-between gap-3">

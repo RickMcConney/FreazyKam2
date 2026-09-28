@@ -9,7 +9,7 @@ import { feedsForTool } from './feeds'
 import { includedAngleDeg, isVCutter, maxCutRadiusMM } from './geom'
 import { arcFitPolyline, douglasPeucker, ARC_FIT_MAX_SPAN, type Pt2 } from './pathFlattener'
 import { lineSpacingMM } from './photoVcarve'
-import { sanitizeFileName } from '../io/filename'
+import { asciiFileName } from '../io/filename'
 import { downloadText } from '../io/download'
 
 
@@ -572,6 +572,13 @@ function opsForTool(operations: AnyOperation[], toolId: string): AnyOperation[] 
   return out
 }
 
+// 0 → A, 25 → Z, 26 → AA — sorts in run order in a file listing up to 26 tools.
+function runLetter(i: number): string {
+  let s = ''
+  for (let n = i + 1; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + ((n - 1) % 26)) + s
+  return s
+}
+
 export function generateGcodePerTool(
   operations: AnyOperation[],
   toolsById: Record<string, Tool>,
@@ -594,7 +601,9 @@ export function generateGcodePerTool(
     const ops = opsForTool(operations, toolId)
     if (ops.length === 0) continue
     const tool = toolsById[toolId]
-    const filename = `${baseName}_${files.length + 1}_${sanitizeFileName(tool.name, 'tool')}`
+    // A letter, not a number, marks the run order: tool names are full of numbers
+    // (1/4" end mill, 60° V-bit) and a leading "_2_" reads as a bit size.
+    const filename = `${asciiFileName(baseName)}_${runLetter(files.length)}_${asciiFileName(tool.name, 'tool')}`
     files.push({
       toolId,
       toolName: tool.name,

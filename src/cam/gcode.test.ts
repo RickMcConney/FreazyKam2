@@ -499,14 +499,23 @@ describe('generateGcodePerTool — which files come out', () => {
     }
   })
 
-  it('numbers the files and sanitises the tool name into them', () => {
-    const odd: Tool = { ...TOOL, id: 'tx', name: '1/2" Bit: rough/finish' }
+  it('orders the files by letter, not number, so the run order never reads as a bit size', () => {
+    const files = split([
+      makeOp([rapid(0, 0, 5), cut(0, 0, -1)], { id: 'a', toolId: 't1' }),
+      makeOp([rapid(0, 0, 5), cut(0, 0, -1)], { id: 'b', toolId: 't2' }),
+    ])
+    expect(files.map((f) => f.filename)).toEqual(['proj_A_Test_End_Mill', 'proj_B_Small_End_Mill'])
+  })
+
+  it('names the files in plain ASCII, with underscores for spaces and no degree signs or reserved characters', () => {
+    const odd: Tool = { ...TOOL, id: 'tx', name: '60° V-Bit: rough/finish ½"' }
     const files = generateGcodePerTool(
-      [makeOp([rapid(0, 0, 5), cut(0, 0, -1)], { id: 'a', toolId: 'tx' })], { tx: odd }, 'my proj', POST)
-    expect(files[0].filename).toBe('my proj_1_1_2_ Bit_ rough_finish')
+      [makeOp([rapid(0, 0, 5), cut(0, 0, -1)], { id: 'a', toolId: 'tx' })], { tx: odd }, 'café proj', POST)
+    expect(files[0].filename).toBe('cafe_proj_A_60_V-Bit_rough_finish_1_2')
+    expect(files[0].filename).toMatch(/^[A-Za-z0-9._-]+$/)
     // The file names itself in its own header, so a loose file on a USB stick says
     // which tool it wants.
-    expect(files[0].gcode.split('\n')[0]).toBe('; my proj_1_1_2_ Bit_ rough_finish')
+    expect(files[0].gcode.split('\n')[0]).toBe(`; ${files[0].filename}`)
   })
 })
 
