@@ -1,15 +1,21 @@
 import { useEffect, type ReactNode } from 'react'
 import { ICON } from '../theme'
+import { SIM_HEAT_COLORS } from '../colors'
 import { Play, Pause, Rewind, FileText, X } from 'lucide-react'
 import { useSimStore, type SimSpeed } from '../store/simStore'
 import { useUIStore } from '../store/uiStore'
 import { useWorkpieceStore, MATERIAL_INFO, MM_PER_INCH as MM_PER_IN } from '../store/workpieceStore'
 import { spindleDialLabel } from '../store/spindle'
 import type { ToolType } from '../store/toolStore'
-import { targetChipLoad, rigidityFeedFactor } from '../cam/feeds'
-import { getCurrentSegIdx, interpolatePos, segTool, formatSimTime } from './gcodeParser'
+import { targetChipLoad, aimChipLoad } from '../cam/feeds'
+import { getCurrentSegIdx, interpolatePos, segTool, segFeedAt, toolTypeOf, feedDiameterOf, formatSimTime } from './gcodeParser'
 
 const SPEEDS: SimSpeed[] = [1, 5, 20, 100]
+
+// The heat map's bands, in the legend's words (sim/cutTrail.ts heatBand).
+const HEAT_KEY: [number, string][] = [
+  [1, '<35%'], [2, '<55%'], [3, '<75%'], [4, 'sweet spot'], [5, 'heavy'], [0, 'not judged'],
+]
 
 // Chip-load bands: actual / target ratio → color + meaning.
 const CHIP_STATUS = {
@@ -88,6 +94,7 @@ export default function SimulationPlayer() {
   const machineRigidity = useWorkpieceStore((s) => s.machineRigidity)
   const minSpindleRpm = useWorkpieceStore((s) => s.minSpindleRpm)
   const spindleType = useWorkpieceStore((s) => s.spindleType)
+  const workspaceTab = useUIStore((s) => s.workspaceTab)
   const { play, pause, stop, seekToTime, setSpeed, toggleGcodeViewer, clearSim } = useSimStore()
 
   // Animation loop — reads fresh store state each frame to avoid stale closures
@@ -127,14 +134,10 @@ export default function SimulationPlayer() {
   // Spindle speed (read from the G-code) + chip-load feedback for the current move.
   const ts = curSeg ? segTool(curSeg, toolStates) : null
   const spindleRpm = ts?.spindleRpm ?? 0
-  const toolType: ToolType = ts?.toolBallNose ? 'ballnose'
-    : ts?.toolTipRadiusMM ? 'taper'
-    : ts?.toolVbitHalfAngleTan !== undefined ? 'vbit' : 'endmill'
-  // Judge a taper by its MEAN cutting diameter, the same figure geom.feedDiameterMM
-  // fed the feed calculation — its parsed `dia` is the widest it opens out to, and its
-  // tip is far narrower, so either end alone would move the gauge off the aim.
-  const feedDiaMM = ts ? (ts.toolTipRadiusMM ? ts.toolTipRadiusMM + ts.toolDiameterMM / 2 : ts.toolDiameterMM) : 0
-  const targetFz = ts ? targetChipLoad(toolType, feedDiaMM, MATERIAL_INFO[material].hardness) : 0
+  // A drill is judged as the end mill it is shaped like, as it always was here.
+  const toolType: ToolType = ts ? (toolTypeOf(ts) === 'drill' ? 'endmill' : toolTypeOf(ts)) : 'endmill'
+  const feedDiaMM = ts ? feedDiameterOf(ts) : 0
+  const targetFz = ts ? targetChipLoad(toolType, feedDiaMM, material) : 0
   // Chip-load color applies only to steady side-cutting: the tip must be below the
   // material top (z < 0, not cutting air) AND not descending. Descending moves —
   // ramp-in, plunges, helical entries — run a deliberately reduced feed and have
@@ -142,18 +145,28 @@ export default function SimulationPlayer() {
   const descending = !!curSeg && curSeg.z < curSeg.prevZ - 1e-3
   // Segments are top-referenced (simStore.loadGcode), so below zero is in the material.
   const cutting = !!curSeg && !curSeg.rapid && !!pos && pos.z < -0.001 && !descending
+  // The speed the machine is REALLY moving at this instant (sim/motionPlanner.ts), not the
+  // F word: on a short move or into a corner it never gets there, and the chip thins.
+  const actualFeed = curSeg ? segFeedAt(curSeg, elapsedTimeS) : 0
   const actualFz = ts && cutting && spindleRpm > 0 && ts.fluteCount > 0
-    ? curSeg!.feedRateMmMin / (spindleRpm * ts.fluteCount)
+    ? actualFeed / (spindleRpm * ts.fluteCount)
     : null
   // Display the intrinsic target, but judge the color against the rigidity-adjusted
-  // aim — so a hobby machine running its lighter feed still reads "sweet spot".
-  const aimFz = targetFz * rigidityFeedFactor(machineRigidity)
+  // aim — so a hobby machine running its lighter chip still reads "sweet spot".
+  const aimFz = ts ? aimChipLoad(toolType, feedDiaMM, material, machineRigidity) : 0
   const status = chipStatus(actualFz, aimFz)
   const chip = CHIP_STATUS[status]
   // For manual feeds, suggest the feed that puts chip load in the sweet spot at the
   // current spindle & flute count, with the RPM direction as an alternative lever.
   const sweetFeed = ts ? Math.round(aimFz * spindleRpm * ts.fluteCount) : 0
+  // Rubbing only because the machine is SLOWING here — a corner, or a move too short to
+  // get up to speed — while the programmed feed itself is fine. Raising the F word does
+  // nothing for that, so no feed advice is given; and a banner that came and went at
+  // every corner flashed too fast to read. The trail's heat map shows those spots instead.
+  const programmedFz = actualFz !== null && curSeg ? curSeg.feedRateMmMin / (spindleRpm * ts!.fluteCount) : null
+  const slowingDown = status === 'rubbing' && chipStatus(programmedFz, aimFz) !== 'rubbing'
   const suggestion =
+    slowingDown ? '' :
     status === 'rubbing' && sweetFeed > 0 ? `raise feed to ~${progFeed(sweetFeed, inch)} ${programUnits}/min (or lower RPM / fewer flutes)` :
     status === 'heavy'   && sweetFeed > 0 ? `lower feed to ~${progFeed(sweetFeed, inch)} ${programUnits}/min (or raise RPM / more flutes)` : ''
 
@@ -211,8 +224,13 @@ export default function SimulationPlayer() {
         {/* 'rapid' is the feed's VALUE, not a replacement label — swapping the label out
             was half the flicker, and it moved the clock beside it. */}
         <span className={curSeg?.rapid ? 'text-gray-600 dark:text-neutral-400' : ''}>
+          {/* The speed the machine actually reaches, then the programmed feed: they part
+              company on every short move and every corner. */}
           F: <Slot ch={wFeed}>
-            {!curSeg ? '—' : curSeg.rapid ? 'rapid' : progFeed(curSeg.feedRateMmMin, inch)}
+            {!curSeg ? '—' : curSeg.rapid ? 'rapid' : progFeed(actualFeed, inch)}
+          </Slot>
+          <Slot ch={wFeed + 1} align="left">
+            {curSeg && !curSeg.rapid ? `/${progFeed(curSeg.feedRateMmMin, inch)}` : ''}
           </Slot>
           {/* Held in a fixed slot rather than dropped on a rapid — vanishing would move
               the clock beside it, which is the flicker this bar is built to avoid. */}
@@ -319,6 +337,20 @@ export default function SimulationPlayer() {
             the move isn't steady side-cutting and there is nothing to judge. */}
         <Slot ch={W_CHIP_LABEL} align="left" color={chip.color}>{chip.label || '—'}</Slot>
       </div>
+
+      {/* Key to the 2D trail's heat map (sim/cutTrail.ts heatBand): chip load against the
+          gauge's aim, at the speed the machine really reaches. The 3D view has no trail. */}
+      {workspaceTab === '2d' && (
+        <div className="bg-gray-50/95 dark:bg-neutral-900/95 border border-gray-300 dark:border-neutral-700 rounded-md px-3 py-1 text-body text-gray-700 dark:text-neutral-300 flex items-center gap-2.5 whitespace-nowrap pointer-events-none">
+          <span className="text-gray-500 dark:text-neutral-400">Trail · chip vs aim</span>
+          {HEAT_KEY.map(([band, label]) => (
+            <span key={band} className="flex items-center gap-1">
+              <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: SIM_HEAT_COLORS[band] }} />
+              {label}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

@@ -5,11 +5,11 @@
 // quiet on a clean job, since a report that always warns is one nobody reads.
 import { describe, it, expect, beforeEach } from 'vitest'
 import { buildExportPreflight } from './exportPreflight'
-import { targetChipLoad, rigidityFeedFactor } from './feeds'
+import { aimChipLoad } from './feeds'
 import { useToolpathStore, type AnyOperation, type MotionSegment } from '../store/toolpathStore'
 import { useToolStore, type Tool } from '../store/toolStore'
 import { usePostProcessorStore } from '../store/postProcessorStore'
-import { useWorkpieceStore, MATERIAL_INFO } from '../store/workpieceStore'
+import { useWorkpieceStore } from '../store/workpieceStore'
 
 const endmill = (over: Partial<Tool> = {}): Tool => ({
   id: 'em', name: 'Endmill 6', type: 'endmill', diameterMM: 6, fluteCount: 2,
@@ -20,7 +20,7 @@ const endmill = (over: Partial<Tool> = {}): Tool => ({
 function toolAtChipLoad(ratio: number, over: Partial<Tool> = {}): Tool {
   const t = endmill(over)
   const { material, machineRigidity } = useWorkpieceStore.getState()
-  const aim = targetChipLoad(t.type, t.diameterMM, MATERIAL_INFO[material].hardness) * rigidityFeedFactor(machineRigidity)
+  const aim = aimChipLoad(t.type, t.diameterMM, material, machineRigidity)
   return { ...t, xyFeedMmMin: Math.round(aim * ratio * t.rpm * t.fluteCount) }
 }
 
@@ -58,6 +58,9 @@ beforeEach(() => {
     units: 'mm', material: 'mdf', safeHeightMM: 5, maxFeedMmMin: 0,
     minSpindleRpm: 8000, maxSpindleRpm: 24000, machineRigidity: 3, autoFeedEnabled: false,
     tableLimitWidthMM: 0, tableLimitHeightMM: 0, tableLimitDepthMM: 0,
+    // Acceleration off, so a fixture's feed is the feed it runs at: the corner warning has
+    // its own tests below, and every other test here is about something else.
+    accelXYMmS2: 0, accelZMmS2: 0, junctionDeviationMM: 0.01, maxRateZMmMin: 0,
   })
   useToolStore.setState({ tools: [toolAtChipLoad(1)] })
   const pp = usePostProcessorStore.getState()
@@ -283,6 +286,49 @@ describe('tools, speeds and feeds', () => {
     expect(has(/^warn: The spindle can't run slow enough for the material's safe surface speed on 1 tool/)).toBe(true)
     useWorkpieceStore.setState({ minSpindleRpm: 5000 })
     expect(has(/can't run slow enough/)).toBe(false)
+  })
+})
+
+describe('chip load lost to the machine slowing down', () => {
+  // 1920 mm/min: the aimed chip at 8000 rpm. At 200 mm/s² the machine needs ~1.4 mm
+  // either side of a square corner to get back above the rubbing band.
+  const slowTool = () => toolAtChipLoad(1, { rpm: 8000 })
+  const accel = () => useWorkpieceStore.setState({ accelXYMmS2: 200, accelZMmS2: 50, junctionDeviationMM: 0.01 })
+
+  it('warns when a small, cornered cut spends much of its length too slow for its chip — and names it', () => {
+    accel()
+    useToolStore.setState({ tools: [slowTool()] })
+    setOps(op({ segments: square(10, 10, 16, 16) }))
+    expect(has(/^warn: The machine slows below a cutting chip on part of 1 operation \(Pocket 1 \d+% of the cut\) — .* That is where it burns\./)).toBe(true)
+  })
+
+  it('says so in melting terms in a plastic', () => {
+    accel()
+    useWorkpieceStore.setState({ material: 'delrin' })
+    useToolStore.setState({ tools: [toolAtChipLoad(1, { rpm: 8000 })] })
+    setOps(op({ segments: square(10, 10, 16, 16) }))
+    expect(has(/In Delrin that is where it melts\./)).toBe(true)
+  })
+
+  it('stays quiet on long sides, where the corners are a small share of the cut', () => {
+    accel()
+    useToolStore.setState({ tools: [slowTool()] })
+    setOps(op({ segments: square(10, 10, 190, 90) }))
+    expect(has(/The machine slows/)).toBe(false)
+  })
+
+  it('stays quiet with acceleration switched off — every move then runs at its feed', () => {
+    useToolStore.setState({ tools: [slowTool()] })
+    setOps(op({ segments: square(10, 10, 16, 16) }))
+    expect(has(/The machine slows/)).toBe(false)
+  })
+
+  it('leaves a feed that is too slow on its own to the plain low-chip warning', () => {
+    accel()
+    useToolStore.setState({ tools: [toolAtChipLoad(0.6, { rpm: 8000 })] })
+    setOps(op({ segments: square(10, 10, 16, 16) }))
+    expect(has(/Chip load is too low/)).toBe(true)
+    expect(has(/The machine slows/)).toBe(false)
   })
 })
 

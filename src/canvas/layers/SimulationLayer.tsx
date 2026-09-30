@@ -1,11 +1,11 @@
 import { memo, useMemo, useRef } from 'react'
-import { SIM_CUT_COLOR, SIM_TOOL_CUTTING_COLOR, SIM_TOOL_RAPID_COLOR } from '../../colors'
+import { SIM_HEAT_COLORS, SIM_TOOL_CUTTING_COLOR, SIM_TOOL_RAPID_COLOR } from '../../colors'
 import { Group, Shape, Image as KonvaImage } from 'react-konva'
 import type { Viewport } from '../CanvasStage'
 import { useSimStore } from '../../store/simStore'
 import { useWorkpieceStore } from '../../store/workpieceStore'
-import { getCurrentSegIdx, interpolatePos, segTool, type SimSegment, type ToolState } from '../../sim/gcodeParser'
-import { CutTrail, effectiveCutWidthAt, type FrustumSeg } from '../../sim/cutTrail'
+import { getCurrentSegIdx, interpolatePos, segTool, segFeedAt, type SimSegment, type ToolState } from '../../sim/gcodeParser'
+import { CutTrail, effectiveCutWidthAt, heatPieces, type FrustumSeg, type HeatSpec } from '../../sim/cutTrail'
 import { TrailRaster, cutBBox, type TrailBBox } from '../../sim/trailRaster'
 import { SPINDLE_VIS_RPS } from '../../sim/spindleVis'
 import { originWorldXY } from '../layers/WorkpieceLayer'
@@ -74,6 +74,8 @@ function makeFrustumSceneFunc(segs: FrustumSeg[]) {
   }
 }
 
+const heatColor = (band: number): string => SIM_HEAT_COLORS[band] ?? SIM_HEAT_COLORS[0]
+
 // Completed trail: ONE Konva node — an image of everything cut so far — however long
 // the program. What each frame does is paint the segments cut during it into that
 // image (see trailRaster.ts); what each REDRAW does, whether from playback, a pan or
@@ -85,17 +87,18 @@ interface CompletedTrailProps {
   ox: number
   oy: number
   toolStates: ToolState[]
+  heat: HeatSpec
   bbox: TrailBBox | null
   scale: number
 }
-const CompletedTrail = memo(function CompletedTrail({ segments, upToIdx, ox, oy, toolStates, bbox, scale }: CompletedTrailProps) {
+const CompletedTrail = memo(function CompletedTrail({ segments, upToIdx, ox, oy, toolStates, heat, bbox, scale }: CompletedTrailProps) {
   const trailRef = useRef<CutTrail | null>(null)
   const rasterRef = useRef<TrailRaster | null>(null)
   const drawnGenRef = useRef(-1)
   const trail = trailRef.current ?? (trailRef.current = new CutTrail())
   const raster = rasterRef.current ?? (rasterRef.current = new TrailRaster())
 
-  trail.sync(segments, upToIdx, ox, oy, toolStates)
+  trail.sync(segments, upToIdx, ox, oy, toolStates, heat)
 
   // Reallocated (first frame, or the user zoomed in past what the image holds) or
   // restarted (rewind, new program) — either way what is on the image is not what the
@@ -104,12 +107,10 @@ const CompletedTrail = memo(function CompletedTrail({ segments, upToIdx, ox, oy,
   if (bbox) {
     if (resized || trail.generation !== drawnGenRef.current) {
       if (!resized) raster.clear()
-      raster.strokePolys(trail.byWidth, SIM_CUT_COLOR)
-      raster.fillFrustums(trail.frustums, SIM_CUT_COLOR)
+      raster.paintBatches(trail.batches, heatColor)
       drawnGenRef.current = trail.generation
     } else {
-      raster.strokePolys(trail.pendingByWidth, SIM_CUT_COLOR)
-      raster.fillFrustums(trail.pendingFrustums, SIM_CUT_COLOR)
+      raster.paintBatches(trail.pendingBatches, heatColor)
     }
   }
   trail.drainPending()
@@ -146,6 +147,11 @@ export const SimulationLayer = memo(function SimulationLayer({ viewport }: Props
   const { scale } = viewport
 
   const { widthMM, heightMM, origin } = useWorkpieceStore()
+  // What the heat map judges a chip against — the chip gauge's own inputs. Memoised so
+  // the trail sees the same object until one of them actually changes.
+  const material = useWorkpieceStore((s) => s.material)
+  const rigidity = useWorkpieceStore((s) => s.machineRigidity)
+  const heat = useMemo<HeatSpec>(() => ({ material, rigidity }), [material, rigidity])
   const org = originWorldXY(origin, widthMM, heightMM)
   const ox = org.x
   const oy = org.y
@@ -176,7 +182,16 @@ export const SimulationLayer = memo(function SimulationLayer({ viewport }: Props
     w0: effectiveCutWidthAt(curSeg, curSeg.prevZ, toolStates),
     x1: tx, y1: ty,
     w1: effectiveCutWidthAt(curSeg, pos.z, toolStates),
+    band: 0,
   } : null
+  // The move being cut right now takes the band of the speed the tool is at this instant
+  // — the colour its finished piece will settle into as the trail catches up.
+  const activeColor = (() => {
+    if (!curSeg || !activeFrustum) return heatColor(0)
+    const v = segFeedAt(curSeg, elapsedTimeS) / 60
+    const pieces = heatPieces({ ...curSeg, acc: undefined, vc: v }, toolStates, heat)
+    return heatColor(Math.abs(activeFrustum.w0 - activeFrustum.w1) >= 0.1 ? 0 : pieces[0][2])
+  })()
 
   const activeCutWidth = activeFrustum ? activeFrustum.w1 : (curSeg ? segTool(curSeg, toolStates).toolDiameterMM : 0)
   const toolRadius = Math.max(activeCutWidth / 2, 1.5 / scale)
@@ -185,7 +200,7 @@ export const SimulationLayer = memo(function SimulationLayer({ viewport }: Props
     <Group listening={false}>
       <CompletedTrail
         segments={segments} upToIdx={curSegIdx - 1}
-        ox={ox} oy={oy} toolStates={toolStates}
+        ox={ox} oy={oy} toolStates={toolStates} heat={heat}
         bbox={trailBBox} scale={scale}
       />
 
@@ -197,7 +212,7 @@ export const SimulationLayer = memo(function SimulationLayer({ viewport }: Props
             {capFn && (
               <Shape
                 sceneFunc={capFn}
-                fill={SIM_CUT_COLOR}
+                fill={activeColor}
                 strokeWidth={0}
                 opacity={0.55}
                 listening={false}
@@ -205,7 +220,7 @@ export const SimulationLayer = memo(function SimulationLayer({ viewport }: Props
             )}
             <Shape
               sceneFunc={makeFrustumSceneFunc([activeFrustum])}
-              fill={SIM_CUT_COLOR}
+              fill={activeColor}
               strokeWidth={0}
               opacity={0.55}
               listening={false}

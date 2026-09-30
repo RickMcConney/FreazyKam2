@@ -1,5 +1,6 @@
-import { flattenPath, ensureWinding, signedArea, rotatePolylineNear, arcFitPolyline, ARC_FIT_MAX_SPAN, splitSelfIntersecting, isOpenSubpath, type Pt2 } from './pathFlattener'
+import { flattenPath, ensureWinding, signedArea, rotatePolylineNear, arcFitPolyline, douglasPeucker, ARC_FIT_MAX_SPAN, splitSelfIntersecting, isOpenSubpath, type Pt2 } from './pathFlattener'
 import { inflatePathsD, JoinType, EndType } from 'clipper2-ts'
+import { roundInsideCorners } from './cornerRounding'
 import { zPasses, arcLengths, interpPt, stripClosingDuplicate, toolRadiusAtHeight, feedDiameterMM, pushAll } from './geom'
 import type { MotionSegment } from '../store/toolpathStore'
 import type { Tool, CuttingDirection } from '../store/toolStore'
@@ -20,6 +21,10 @@ export interface ProfileParams {
    *  cuts a bigger part. Negative cuts past the line. Meaningless for a centerline
    *  cut, which has no side, and ignored there. */
   allowanceMM?: number
+  /** Round the sharp corners of the tool's centre path, moving it at most this far (mm)
+   *  and only ever AWAY from the part — see cam/cornerRounding.ts. 0/absent = off.
+   *  Meaningless for a centerline cut, which has no part side, and ignored there. */
+  cornerToleranceMM?: number
   // Surface the cut starts from (0 = stock top, negative = the floor an earlier op left).
   // depthMM and tab heights are both measured from here.
   startZMM?: number
@@ -34,7 +39,21 @@ function fitCircle(pts: Pt2[]): { cx: number; cy: number; r: number } | null {
   const r = radii.reduce((a, b) => a + b, 0) / radii.length
   if (r < 0.1) return null
   const variance = radii.reduce((acc, ri) => acc + (ri - r) ** 2, 0) / radii.length
-  return Math.sqrt(variance) / r <= 0.01 ? { cx, cy, r } : null
+  if (Math.sqrt(variance) / r > 0.01) return null
+  // The EDGES must lie on the circle too, not just the vertices. Vertex statistics alone
+  // are fooled whenever the vertices bunch up somewhere that happens to be equidistant
+  // from the centre: a square hole with rounded corners is four dense corner arcs, all
+  // ~26 mm from the middle, joined by straight sides that carry just their two endpoints
+  // — and it passed as a circle of r = 26 in a 40 mm square, cutting far into the part.
+  // A chord of a true circle sags inward by its sagitta, which stays under the flattening
+  // tolerance; a straight side of a polygon sags by metres by comparison.
+  const tol = Math.max(0.01 * r, 0.1)
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length]
+    const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2
+    if (Math.abs(Math.hypot(mx - cx, my - cy) - r) > tol) return null
+  }
+  return { cx, cy, r }
 }
 
 // Evaluate XY at arc-length fraction t across all subpaths (matches TabLayer's evalPathAtT convention).
@@ -205,6 +224,9 @@ export function generateProfile(
   // the manual resolveOffsetLoops pass.
   interface OffsetPath { pts: Pt2[]; isOpen: boolean }
   let offsetPaths: OffsetPath[]
+  // Set once the corners are rounded: the passes are then fitted HERE at a fine
+  // tolerance and marked exact (see fitPass).
+  let fineFit = false
   if (delta !== 0) {
     // Inside/outside offset only applies to closed loops; open strokes have no
     // interior, so they're left to centerline cuts.
@@ -240,6 +262,15 @@ export function generateProfile(
         : `${openSubs.length} of ${designSubs.length} subpaths are open and cannot be offset — an ${side} profile needs closed shapes. `
           + 'Use a centerline profile, or split the path and profile the closed parts.')
     }
+    // Round the sharp inside corners so the machine need not stop for them. Before the
+    // passes are built, so every pass, the ramp and the tabs all follow the rounded path.
+    if ((params.cornerToleranceMM ?? 0) > 0 && (params.side === 'inside' || params.side === 'outside')) {
+      const rounded = roundInsideCorners(offsetPaths.map((o) => o.pts), params.side, params.cornerToleranceMM!)
+      if (rounded.rhoMM > 0) {
+        offsetPaths = rounded.rings.map((pts) => ({ pts, isOpen: false }))
+        fineFit = true
+      }
+    }
   } else {
     // Centerline: follow every subpath exactly. Closed loops trace once (drop the
     // duplicate closing point); open strokes cut start → end with no closing line.
@@ -247,6 +278,46 @@ export function generateProfile(
       ...closedSubs.map(sp => ({ pts: stripClosingDuplicate(sp), isOpen: false })),
       ...openSubs.map(sp => ({ pts: sp, isOpen: true })),
     ].filter(({ pts }) => pts.length >= 2)
+  }
+
+  // One constant-Z pass along `pts` (pts[0] is where the tool already is), with
+  // circular runs as G2/G3. Normally fitted at the G-code writer's own 0.1 mm, which
+  // refits it the same way anyway. With rounded corners that is too coarse: a rounding
+  // arc a few tenths of a millimetre across bows by less than the fit's sagitta floor, or
+  // gets swallowed into a fatter arc along with the straight beside it, and the 0.1 mm
+  // thinning then folds it back into the kink it was made to remove. So the pass is
+  // fitted at FINE_FIT_TOL_MM, its straight runs thinned at the same, and every segment
+  // marked `exact` so the writer passes it through as given. 10 µm: a finer fit found
+  // few true circles in real curves and wrote them as long G1 chains (2 µm cost a 2.5×
+  // file with a third of the arcs); a coarser one let the thinning start folding corners
+  // back into kinks (20 µm left 3.8% of an escape wheel's pass rubbing again). The path
+  // may sit up to this much nearer the part than the tool radius — far below what a wood
+  // or plastic job can tell.
+  const FINE_FIT_TOL_MM = 0.01
+  const fitPass = (pts: Pt2[], z: number): MotionSegment[] => {
+    if (!fineFit) {
+      return arcFitPolyline(pts, 0.1, ARC_FIT_MAX_SPAN)
+        .map((s) => ({ x: s.x, y: s.y, z, rapid: false, ...(s.arc ? { arc: s.arc } : {}) }))
+    }
+    const out: MotionSegment[] = []
+    let anchor: Pt2 = pts[0]
+    let run: Pt2[] = []
+    const flush = () => {
+      if (run.length === 0) return
+      const thin = douglasPeucker([anchor, ...run], FINE_FIT_TOL_MM)
+      for (let k = 1; k < thin.length; k++) out.push({ x: thin[k][0], y: thin[k][1], z, rapid: false, exact: true })
+      anchor = run[run.length - 1]
+      run = []
+    }
+    for (const s of arcFitPolyline(pts, FINE_FIT_TOL_MM, ARC_FIT_MAX_SPAN)) {
+      if (s.arc) {
+        flush()
+        out.push({ x: s.x, y: s.y, z, rapid: false, arc: s.arc, exact: true })
+        anchor = [s.x, s.y]
+      } else run.push([s.x, s.y])
+    }
+    flush()
+    return out
   }
 
   // Climb with an M3 (CW) spindle puts the material on the RIGHT of travel:
@@ -541,13 +612,17 @@ export function generateProfile(
           const mainTabRanges = activeRanges
             .map(tr => ({ start: tr.start - rampDist, end: tr.end - rampDist, tabZ: tr.tabZ }))
             .filter(tr => tr.end > 0 && tr.start < mainTotal)
-          pushAll(segs, polylinePassWithTabs(mainPts, zDepth, mainTabRanges, mainLens))
+          pushAll(segs, fineFit && mainTabRanges.length === 0
+            ? fitPass(mainPts, zDepth)
+            : polylinePassWithTabs(mainPts, zDepth, mainTabRanges, mainLens))
 
           // Cleanup pass: only on the final depth pass to clear the ramp entry zone.
           // Intermediate passes skip it — the next ramp descends through the same groove anyway.
           if (pi === passes.length - 1) {
             const cleanTabRanges = activeRanges.filter(tr => tr.end > 0 && tr.start < rampDist)
-            pushAll(segs, polylinePassWithTabs(cleanPts, zDepth, cleanTabRanges, cleanLens))
+            pushAll(segs, fineFit && cleanTabRanges.length === 0
+              ? fitPass(cleanPts, zDepth)
+              : polylinePassWithTabs(cleanPts, zDepth, cleanTabRanges, cleanLens))
           }
         }
         segs.push({ x: rampEndX, y: rampEndY, z: safeZ, rapid: true })
@@ -557,10 +632,7 @@ export function generateProfile(
           segs.push({ x: sx, y: sy, z: zDepth, rapid: false })
           const activeRanges = tabRanges.filter((tr) => zDepth < tr.tabZ)
           if (activeRanges.length === 0) {
-            const arcSegs = arcFitPolyline(closed, 0.1, ARC_FIT_MAX_SPAN)
-            for (const s of arcSegs) {
-              segs.push({ x: s.x, y: s.y, z: zDepth, rapid: false, ...(s.arc ? { arc: s.arc } : {}) })
-            }
+            pushAll(segs, fitPass(closed, zDepth))
           } else {
             const passSegs = polylinePassWithTabs(closed, zDepth, activeRanges, lens)
             pushAll(segs, passSegs)

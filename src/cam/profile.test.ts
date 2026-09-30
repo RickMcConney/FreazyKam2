@@ -326,6 +326,24 @@ describe('generateProfile — the circle fast path', () => {
     expect(Math.hypot(iarc.x - iarc.arc!.cx, iarc.y - iarc.arc!.cy)).toBeCloseTo(27, 1)
   })
 
+  it('never takes a polygon for a circle because its VERTICES lie on one', () => {
+    // A square whose corners are clusters of points on a circle of r = 26 about (30,30),
+    // joined by straight sides that carry only their two ends. Every vertex is 26 from
+    // the centre, so vertex statistics alone call it a circle — and the "circle" runs
+    // 7.6 mm outside the straight sides. A rounded-corner square hole came out exactly so.
+    const pts: [number, number][] = []
+    for (const c of [45, 135, 225, 315]) for (let k = -5; k <= 5; k++) {
+      const a = ((c + k * 0.4) * Math.PI) / 180
+      pts.push([30 + 26 * Math.cos(a), 30 + 26 * Math.sin(a)])
+    }
+    const d = 'M ' + pts.map(([x, y]) => `${x.toFixed(4)} ${y.toFixed(4)}`).join(' L ') + ' Z'
+    const segs = generateProfile(d, EM6, params({ side: 'centerline' }))
+    expect(segs.some((s) => s.arc)).toBe(false)
+    // The cut stays on the polygon — its corner clusters reach x = 49.02 — not on the
+    // false circle, which would reach x = 56.
+    expect(Math.max(...cuts(segs).map((s) => s.x))).toBeLessThan(49.1)
+  })
+
   it('falls back to a polygon when tabs apply — an arc cannot carry a Z lift', () => {
     const segs = generateProfile(CIRCLE, EM6, params({ side: 'outside' }), [tab({ heightMM: 1 })])
     expect(segs.filter((s) => s.arc).length).toBe(0)

@@ -57,6 +57,12 @@ export const TOOL_BAND_HUES = [205, 145, 35, 280, 0, 175, 55, 310, 95, 240]
 // Simulation cut trail — matches the 3D carved-surface color.
 export const SIM_CUT_COLOR       = '#ffcc00'
 
+// The 2D cut trail's chip-load heat map (sim/cutTrail.ts `heatBand`), indexed by band.
+// Band 0 is a cut the chip gauge does not judge — a plunge, a ramp, a drill — in
+// neutral grey; 1–3 are the rubbing side, darkest where the chip is thinnest; 4 is the
+// gauge's sweet spot; 5 is a chip too heavy. No yellow, so nothing reads as halfway.
+export const SIM_HEAT_COLORS = ['#9ca3af', '#7f1d1d', '#dc2626', '#f97316', '#22c55e', '#3b82f6'] as const
+
 // 2D simulation tool indicator states.
 export const SIM_TOOL_CUTTING_COLOR = '#ef4444'  // red   — actively cutting
 export const SIM_TOOL_RAPID_COLOR   = '#9ca3af'  // gray  — rapid move

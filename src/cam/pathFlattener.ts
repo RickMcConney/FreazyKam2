@@ -540,9 +540,63 @@ function arcHugsPolyline(
 // into a handful of G2/G3 moves (bugs.md H4).
 export const ARC_FIT_MAX_SPAN = 256
 
+// Radius of the circle through three points (Infinity when they are collinear, NaN when
+// two coincide) — how tightly the path bends at the middle one.
+function circumRadius(a: Pt2, b: Pt2, c: Pt2): number {
+  const ab = Math.hypot(b[0] - a[0], b[1] - a[1])
+  const bc = Math.hypot(c[0] - b[0], c[1] - b[1])
+  const ca = Math.hypot(a[0] - c[0], a[1] - c[1])
+  if (ab < 1e-9 || bc < 1e-9) return NaN
+  const cross = Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
+  return cross < 1e-12 ? Infinity : (ab * bc * ca) / (2 * cross)
+}
+
+// An arc may only pass over points where the path bends about as tightly as the arc does.
+// Within the fit tolerance, one fat arc can swallow the end of a straight edge and part
+// of a small corner — a 0.96 mm arc laid over a 0.33 mm corner plus the line leading into
+// it. The emitted arc then leaves the corner pointing the wrong way, and the rest of the
+// corner is thinned into a kink the machine must brake for. It also rounded some
+// genuinely sharp corners and not others, depending only on where the points happened to
+// fall — identical escape-wheel roots came out as a smooth arc at one tooth and a hard
+// corner at the next. Three points ON a circle give its radius exactly, so a real arc's
+// interior sits at ratio 1 and the band only has to absorb coordinate rounding.
+const LOCAL_RATIO_MIN = 0.5
+const LOCAL_RATIO_MAX = 2
+// Too LOOSE a bend (a straight inside a small arc) is only judged where the arc's bow over
+// the measuring span is big enough to see: on a gentle arc, three close points bow by
+// less than the coordinates' own precision and their radius is noise.
+const MIN_MEASURABLE_BOW_MM = 1e-3
+
 export function arcFitPolyline(pts: Pt2[], tol: number, maxSpan = Infinity): ArcFitSeg[] {
   const result: ArcFitSeg[] = []
   const n = pts.length
+  // How tightly the path bends at each point, measured to the nearest neighbours at
+  // least `reach` away on each side. Adjacent points are not enough: offsetting leaves
+  // near-duplicates a few microns apart wherever edges meet, and a bend measured over
+  // those is noise — it made a 29 mm flank read as tight and pushed the start of a real
+  // corner arc a few points late. The reach is at least 0.05 mm WHATEVER the tolerance:
+  // tied to the tolerance alone, a fine fit measured inside those clusters again and
+  // refused nearly every arc. 0.05 mm still resolves the corners that matter: a
+  // 0.05 mm-radius root reads as ~0.05 mm.
+  const reach = Math.max(tol / 2, 0.05)
+  const localR = new Float64Array(n).fill(Infinity)
+  const localSpan = new Float64Array(n)
+  for (let k = 1; k < n - 1; k++) {
+    let a = k - 1
+    while (a > 0 && Math.hypot(pts[k][0] - pts[a][0], pts[k][1] - pts[a][1]) < reach) a--
+    let c = k + 1
+    while (c < n - 1 && Math.hypot(pts[c][0] - pts[k][0], pts[c][1] - pts[k][1]) < reach) c++
+    localR[k] = circumRadius(pts[a], pts[k], pts[c])
+    localSpan[k] = Math.hypot(pts[c][0] - pts[a][0], pts[c][1] - pts[a][1])
+  }
+  // Whether the path at interior point k bends like an arc of radius r.
+  const bendsLike = (k: number, r: number): boolean => {
+    const lr = localR[k]
+    if (Number.isNaN(lr)) return true
+    if (lr < LOCAL_RATIO_MIN * r) return false
+    const bow = (localSpan[k] * localSpan[k]) / (8 * r)
+    return bow < MIN_MEASURABLE_BOW_MM || lr <= LOCAL_RATIO_MAX * r
+  }
   let i = 0
   while (i < n - 1) {
     let bestJ = -1
@@ -558,6 +612,17 @@ export function arcFitPolyline(pts: Pt2[], tol: number, maxSpan = Infinity): Arc
           ok = false
           break
         }
+        // Interior points only: the arc may START or END at a corner.
+        if (k < j && !bendsLike(k, c.r)) { ok = false; break }
+        // The arc must stay within tolerance of the SEGMENTS, not just the points: over a
+        // chord of length L it bows sagitta = r − √(r² − L²/4) off the straight line the
+        // polyline takes. Two points far apart on a long straight edge both sit on a
+        // circle that bulges well off that edge between them — on a spoke window that was
+        // 44 µm into the part, with every point "within tolerance". Pinned on that real
+        // geometry by scripts/corner-rounding-check.mts, not by a unit test: no synthetic
+        // shape tried here led the fitter into that arc.
+        const L = Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1])
+        if (L / 2 >= c.r || c.r - Math.sqrt(c.r * c.r - (L * L) / 4) > tol) { ok = false; break }
       }
       if (ok) { bestJ = j; bestCircle = c }
       else break

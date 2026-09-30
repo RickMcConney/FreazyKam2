@@ -20,8 +20,16 @@ interface ProfileFormState {
   direction: CuttingDirection
   rampIn: boolean
   allowanceMM: number
+  roundCorners: boolean
+  cornerToleranceMM: number
   startFrom: StartFrom
 }
+
+// A new profile rounds its inside corners, by at most this much. Large enough that the
+// rounding arcs survive the G-code writer as G2/G3 (it fits arcs to 0.1 mm and needs a
+// radius over 0.1 mm to do it) even at a 60° corner, where the arc's radius equals the
+// deviation; small enough that the bottom of a corner barely changes.
+const DEFAULT_CORNER_TOLERANCE_MM = 0.2
 
 export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?: ProfileOperation }) {
   // Individual selectors, not whole-store destructuring — see DrillForm.
@@ -46,6 +54,9 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
       toolId: editOp.toolId, side: editOp.side, depthMM: editOp.depthMM,
       stepDownMM: editOp.stepDownMM, direction: editOp.direction, rampIn: editOp.rampIn ?? false,
       allowanceMM: editOp.allowanceMM ?? 0,
+      // A profile saved before the option existed has none, and stays unrounded.
+      roundCorners: (editOp.cornerToleranceMM ?? 0) > 0,
+      cornerToleranceMM: (editOp.cornerToleranceMM ?? 0) > 0 ? editOp.cornerToleranceMM! : DEFAULT_CORNER_TOLERANCE_MM,
       // Legacy ops stay on stock top — see PocketForm.
       startFrom: editOp.startFrom ?? { mode: 'stock' },
     } : { ...mergeWithDefaults(load('profile'), {
@@ -58,6 +69,8 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
       direction: 'climb' as CuttingDirection,
       rampIn: false,
       allowanceMM: 0,
+      roundCorners: true,
+      cornerToleranceMM: DEFAULT_CORNER_TOLERANCE_MM,
       // Deliberately not carried over from the saved defaults — see PocketForm.
       startFrom: { mode: 'auto' } as StartFrom,
     }, tools), startFrom: { mode: 'auto' } as StartFrom }
@@ -125,10 +138,11 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
     if (selectedPaths.length === 0 || !selectedTool) return
     const tool = selectedTool
     const { toolId, side, depthMM, stepDownMM, direction, rampIn, allowanceMM, startFrom } = form
+    const cornerToleranceMM = form.roundCorners && side !== 'centerline' ? form.cornerToleranceMM : 0
     const item = (path: ImportedPath, op?: ProfileOperation) =>
       ({ key: path.id, op, name: `Profile: ${path.name} (${tool.name})`, fields: { pathId: path.id } })
     await generate({
-      settings: { toolId, side, depthMM, stepDownMM, direction, rampIn, allowanceMM, startFrom },
+      settings: { toolId, side, depthMM, stepDownMM, direction, rampIn, allowanceMM, cornerToleranceMM, startFrom },
       items: editOp
         ? [...rev.keep.map(({ op, path }) => item(path, op)), ...rev.add.map((path) => item(path))]
         : selectedPaths.map((path) => item(path)),
@@ -159,6 +173,25 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
           <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">
             {allowanceHint}
           </p>
+        </div>
+      )}
+      {/* Also hidden for centerline: there is no part side to pull the path away from. */}
+      {form.side !== 'centerline' && (
+        <div>
+          <CheckRow id="profile-round-corners" checked={form.roundCorners} onChange={(v) => up('roundCorners', v)}
+            label="Round Inside Corners" hint="so the machine need not stop" />
+          {form.roundCorners && (
+            <>
+              <LengthInput id="profile-corner-tolerance" valueMM={form.cornerToleranceMM} minMM={0.01} maxMM={2} stepMM={0.05}
+                onChangeMM={(v) => up('cornerToleranceMM', v)} />
+              <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">
+                The tool is round, so an inside corner already has its radius. Rounding the
+                path lets the machine keep its feed through the corner instead of braking
+                with the spindle running. It can leave up to {fmtLen(form.cornerToleranceMM, units)} in
+                the bottom of a corner, never cut into the part.
+              </p>
+            </>
+          )}
         </div>
       )}
       <CheckRow id="profile-ramp-in" checked={form.rampIn} onChange={(v) => up('rampIn', v)}

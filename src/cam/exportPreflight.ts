@@ -1,11 +1,12 @@
 import { useToolpathStore, nothingToCut } from '../store/toolpathStore'
 import { useToolStore } from '../store/toolStore'
 import { usePostProcessorStore } from '../store/postProcessorStore'
-import { useWorkpieceStore, MATERIAL_INFO, fmtLen } from '../store/workpieceStore'
-import { feedsForTool, targetChipLoad, rigidityFeedFactor } from './feeds'
+import { useWorkpieceStore, fmtLen, zDatumOffsetMM, machineMotionLimits, MATERIAL_INFO, type Material } from '../store/workpieceStore'
+import { feedsForTool, aimChipLoad } from './feeds'
 import { feedDiameterMM } from './geom'
-import { generateGcode, initialToolId } from './gcode'
-import { parseGcode } from '../sim/gcodeParser'
+import { generateGcodeWithOps, initialToolId } from './gcode'
+import { parseGcode, segTool, toolTypeOf, feedDiameterOf, type ParsedGcode } from '../sim/gcodeParser'
+import { lengthBelowSpeed } from '../sim/motionPlanner'
 import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
 
 interface PreflightWarning {
@@ -116,11 +117,11 @@ export function buildExportPreflight(): ExportPreflight {
   const spanY = hasExtents ? maxY - minY : 0
 
   // Run-time estimate: generate the G-code and run it through the same parser the
-  // simulator uses (programmed feeds + a fixed rapid rate). It ignores accel/decel,
-  // so it's a floor — real cuts on a hobby machine run a bit longer.
-  const estimatedTimeS = doneOps.length > 0
-    ? parseGcode(generateGcode(operations, toolsById, 'estimate', profile)).totalTimeS
-    : 0
+  // simulator uses, timed by the machine's planner (acceleration, cornering, max rates).
+  // Tool-change pauses are not in it.
+  const program = doneOps.length > 0 ? generateGcodeWithOps(operations, toolsById, 'estimate', profile) : null
+  const parsed = program ? parseGcode(program.gcode, undefined, machineMotionLimits()) : null
+  const estimatedTimeS = parsed ? parsed.totalTimeS : 0
 
   const warnings: PreflightWarning[] = []
 
@@ -246,7 +247,6 @@ export function buildExportPreflight(): ExportPreflight {
   // are too large can break the bit or stall the spindle; chips that are too small
   // make the edge rub and overheat. (Drills cut by plunging, not feed-per-tooth
   // side load, so they're excluded.)
-  const hardness = MATERIAL_INFO[material].hardness
   const heavyTools: string[] = []
   const rubbingTools: string[] = []
   for (const id of usedToolIds) {
@@ -255,7 +255,7 @@ export function buildExportPreflight(): ExportPreflight {
     const f = feedsForTool(t)
     const flutes = t.fluteCount > 0 ? t.fluteCount : 1
     if (f.rpm <= 0 || f.xyFeedMmMin <= 0) continue
-    const aimFz = targetChipLoad(t.type, feedDiameterMM(t), hardness) * rigidityFeedFactor(machineRigidity)
+    const aimFz = aimChipLoad(t.type, feedDiameterMM(t), material, machineRigidity)
     if (aimFz <= 0) continue
     const ratio = (f.xyFeedMmMin / (f.rpm * flutes)) / aimFz
     if (ratio > 1.4) heavyTools.push(t.name)
@@ -276,6 +276,26 @@ export function buildExportPreflight(): ExportPreflight {
         `the tool will rub instead of cut and run hot. ` +
         `Raise the feed or lower the RPM${autoFeedEnabled ? '' : ' (or turn on auto feeds & speeds)'}.`,
     })
+  }
+
+  // Chip load lost to the machine SLOWING DOWN: the programmed feed is right, but on a
+  // corner-heavy cut the machine never reaches it, and the spindle doesn't slow with it.
+  if (parsed && program) {
+    const slowed = slowedCuts(parsed, program.opStarts, zDatumOffsetMM(zOrigin, thicknessMM), material, machineRigidity)
+    if (slowed.length > 0) {
+      const plastic = MATERIAL_INFO[material].kind === 'plastic'
+      const list = slowed.slice(0, 4).map((o) => {
+        const name = operations.find((op) => op.id === o.opId)?.name ?? 'operation'
+        return `${name} ${Math.round(o.fraction * 100)}%`
+      }).join(', ') + (slowed.length > 4 ? `, +${slowed.length - 4} more` : '')
+      warnings.push({
+        level: 'warn',
+        text: `The machine slows below a cutting chip on part of ${slowed.length} operation${nS(slowed.length)} (${list} of the cut) — ` +
+          `corners and short moves it cannot reach full feed on, with the spindle still at full speed. ` +
+          (plastic ? `In ${MATERIAL_INFO[material].label} that is where it melts. ` : `That is where it burns. `) +
+          `Lower the RPM, raise the controller's acceleration or junction deviation, or blow the chips clear.`,
+      })
+    }
   }
 
   // Inlay male/female overlap: a male plug and its female pocket must be cut at
@@ -345,4 +365,51 @@ export function buildExportPreflight(): ExportPreflight {
     },
     warnings,
   }
+}
+
+// An operation's cut is reported once this share of it runs too slow for its chip.
+const SLOWED_SHARE = 0.15
+
+/**
+ * Operations whose steady side-cutting spends at least SLOWED_SHARE of its length slower
+ * than the chip-load gauge's "rubbing" band, BECAUSE THE MACHINE SLOWS DOWN — moves whose
+ * programmed feed is already too slow are the plain low-chip warning's business, not this.
+ * Judged exactly as the simulator's gauge judges a move: in the material, not descending,
+ * not a drill, against 0.75 × the aimed chip.
+ */
+export function slowedCuts(
+  parsed: ParsedGcode,
+  opStarts: { opId: string; line: number }[],
+  zOffMM: number,
+  material: Material,
+  rigidity: number,
+): { opId: string; fraction: number }[] {
+  if (opStarts.length === 0) return []
+  const judged = new Map<string, number>()
+  const slow = new Map<string, number>()
+  let k = 0
+  for (const seg of parsed.segments) {
+    while (k + 1 < opStarts.length && seg.lineIdx >= opStarts[k + 1].line) k++
+    if (seg.rapid || seg.acc === undefined) continue
+    const z0 = seg.prevZ - zOffMM, z1 = seg.z - zOffMM
+    if (z0 >= -0.001 || z1 >= -0.001 || z1 < z0 - 1e-3) continue
+    const ts = segTool(seg, parsed.toolStates)
+    const type = toolTypeOf(ts)
+    if (type === 'drill' || !(ts.spindleRpm > 0) || !(ts.fluteCount > 0)) continue
+    const perSec = (ts.spindleRpm * ts.fluteCount) / 60
+    const vRub = 0.75 * aimChipLoad(type, feedDiameterOf(ts), material, rigidity) * perSec
+    if (seg.feedRateMmMin / 60 < vRub) continue
+    const L = Math.hypot(seg.x - seg.prevX, seg.y - seg.prevY, seg.z - seg.prevZ)
+    const id = opStarts[k].opId
+    judged.set(id, (judged.get(id) ?? 0) + L)
+    const tr = { v0: seg.v0!, vc: seg.vc!, v1: seg.v1!, acc: seg.acc, durationS: seg.durationS }
+    slow.set(id, (slow.get(id) ?? 0) + lengthBelowSpeed(tr, L, vRub))
+  }
+  const out: { opId: string; fraction: number }[] = []
+  for (const { opId } of opStarts) {
+    const total = judged.get(opId) ?? 0
+    const fraction = total > 0 ? (slow.get(opId) ?? 0) / total : 0
+    if (fraction >= SLOWED_SHARE && !out.some((o) => o.opId === opId)) out.push({ opId, fraction })
+  }
+  return out
 }

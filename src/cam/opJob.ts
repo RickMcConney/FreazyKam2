@@ -108,6 +108,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       side: op.side, depthMM: op.depthMM, stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM), direction: op.direction,
       startNear: op.entryHint, rampIn: op.rampIn, safeHeightMM,
       allowanceMM: op.allowanceMM,
+      cornerToleranceMM: op.cornerToleranceMM,
       startZMM,
     }, tabsForGeneration(op.pathId)), builtWith)
 

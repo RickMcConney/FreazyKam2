@@ -1,52 +1,73 @@
 import type { Tool, ToolType } from '../store/toolStore'
 import { maxCutRadiusMM, feedDiameterMM } from './geom'
-import { useWorkpieceStore, MATERIAL_INFO } from '../store/workpieceStore'
+import { useWorkpieceStore, MATERIAL_INFO, type Material, type MaterialKind } from '../store/workpieceStore'
 import { clamp } from '../util/num'
 
 // ─── Centralized feed, spindle & step-down calculation ─────────────────────────
 //
 // Derives a cutting feed, plunge feed, spindle speed, and step-down from the
-// material hardness, the tool geometry, the machine rigidity, and a hard
-// max-feed ceiling.
+// material, the tool geometry, the machine rigidity, and a hard max-feed ceiling.
 //
 // Chip load (feed per tooth) = feed / (rpm * flutes) and does NOT depend on the
-// axial depth of cut. So when the machine can't feed fast enough to hold the
-// target chip load, the correct fix is to *slow the spindle* — not to change the
-// step-down. Step-down is instead chosen from machine rigidity + material
-// hardness (bounded by tool diameter) and snapped to a whole division of the
-// operation's intended total depth.
+// axial depth of cut. It is the number that decides whether the edge CUTS or RUBS:
+// too thin a chip and the edge skates, the heat stays in the cut, wood burns and
+// plastic melts. So the chip is chosen first, from the material, and everything
+// else bends around it:
+//   • a light machine is protected by a lower FEED — reached by slowing the
+//     spindle, which keeps the chip — and by a shallower step-down;
+//   • the chip itself is trimmed for rigidity only as far as the material allows
+//     (MIN_CHIP_FRACTION), which for a plastic is hardly at all.
+// Step-down is chosen from machine rigidity + material hardness (bounded by tool
+// diameter) and snapped to a whole division of the operation's intended total
+// depth.
 //
 // All heuristic constants live here so they're easy to tune. The model produces
 // sane starting numbers, not shop-certified values.
 
-// Base chip load (mm per tooth) at the reference diameter, per tool type.
+// The chip a tool type takes relative to a square end mill of the same diameter.
 const REFERENCE_DIAMETER_MM = 6
-const CHIP_LOAD_TABLE: Record<ToolType, number> = {
-  endmill: 0.05,
-  ballnose: 0.04,
-  vbit: 0.03,
+const CHIP_LOAD_FACTOR: Record<ToolType, number> = {
+  endmill: 1,
+  ballnose: 0.8,
+  // The knife edge of a V-bit is the most fragile cutter here.
+  vbit: 0.6,
   // A taper is a small, well-supported cutter whose flute is backed by the cone — it
   // takes a lighter chip than a straight end mill of its mean diameter but is not as
   // fragile as the knife edge of a V-bit.
-  taper: 0.035,
-  drill: 0.05,
+  taper: 0.7,
+  drill: 1,
 }
 
 // Bits at or above this diameter may step down a full diameter; smaller bits are
 // limited to half their diameter (they're far more fragile).
 const SMALL_BIT_THRESHOLD_MM = 3.175 // 1/8"
 
+// How far below the intrinsic chip each machine rigidity would like to run — a
+// lighter chip is a lighter cutting force on a flexible gantry. Indexed by
+// rigidity 1..5. Never applied past the material's floor (MIN_CHIP_FRACTION).
+const RIGIDITY_CHIP_FACTOR = [0.6, 0.7, 0.8, 0.95, 1.05]
+export function rigidityChipFactor(rigidity: number): number {
+  return RIGIDITY_CHIP_FACTOR[clamp(Math.round(rigidity), 1, 5) - 1]
+}
 
-// How hard we drive the chip relative to the intrinsic ideal, by machine rigidity.
-// Softer machines aim for a lighter chip (gentler), stiffer ones a bit heavier.
-// Used to scale the feed in computeFeeds and to set the chip-load gauge's color
-// band (so a hobby machine running its lighter feed still reads "in the sweet
-// spot" against this adjusted aim, while the displayed target stays intrinsic).
-// Tuned per level (R1–R3 softened so hobby machines don't slam the feed cap);
-// indexed by rigidity 1..5.
-const RIGIDITY_FEED_FACTOR = [0.35, 0.5, 0.65, 0.95, 1.1]
-export function rigidityFeedFactor(rigidity: number): number {
-  return RIGIDITY_FEED_FACTOR[clamp(Math.round(rigidity), 1, 5) - 1]
+// The thinnest chip, as a fraction of the intrinsic one, a material tolerates
+// before the edge rubs. Plastics melt and weld back into the slot, so they barely
+// give any of their chip up; a metal work-hardens and builds up an edge; a wood
+// just burns a little. This floor — not the rigidity factor — is what the old
+// hardness-only model lacked: it thinned a 3 mm single-flute bit in Delrin to
+// 0.01 mm/tooth at 19,000 rpm, and the Delrin melted.
+const MIN_CHIP_FRACTION: Record<MaterialKind, number> = {
+  wood: 0.5,
+  plastic: 0.85,
+  metal: 0.7,
+}
+
+// The fastest a machine of each rigidity should cut at, mm/min — a soft ceiling on
+// the feed, below the machine's own hard `maxFeedMmMin`. When it binds, the SPINDLE
+// slows so the chip is kept. Indexed by rigidity 1..5.
+const RIGIDITY_FEED_CEILING_MM_MIN = [1200, 1800, 3000, 5000, 8000]
+export function rigidityFeedCeilingMmMin(rigidity: number): number {
+  return RIGIDITY_FEED_CEILING_MM_MIN[clamp(Math.round(rigidity), 1, 5) - 1]
 }
 
 // Axial depth-of-cut aggressiveness by machine rigidity (before the material and
@@ -56,22 +77,38 @@ const RIGIDITY_DEPTH_FACTOR = [0.3, 0.45, 0.6, 0.85, 1.0]
 
 // Intrinsic recommended chip load (mm per tooth) for a tool in a given material —
 // a property of the tool type + diameter + material only (this is what manufacturer
-// chip-load charts give). Machine rigidity does NOT enter here; it instead scales
-// the feed in computeFeeds. Shared by the feed calc and the simulator's gauge.
-export function targetChipLoad(toolType: ToolType, diameterMM: number, hardness: number): number {
-  const h = hardness > 0 ? hardness : 1
+// chip-load charts give). Machine rigidity does NOT enter here.
+export function targetChipLoad(toolType: ToolType, diameterMM: number, material: Material): number {
   const diaScale = clamp(diameterMM / REFERENCE_DIAMETER_MM, 0.3, 2)
-  return (CHIP_LOAD_TABLE[toolType] ?? 0.05) * diaScale / h
+  return MATERIAL_INFO[material].chipLoadMM * (CHIP_LOAD_FACTOR[toolType] ?? 1) * diaScale
 }
+
+// The chip auto feeds actually aims for on this machine: the intrinsic chip trimmed
+// for rigidity, but never below the material's floor. Shared by the feed calc, the
+// simulator's gauge and the export preflight, so all three judge against one aim.
+export function aimChipLoad(toolType: ToolType, diameterMM: number, material: Material, rigidity: number): number {
+  return Math.max(
+    targetChipLoad(toolType, diameterMM, material) * rigidityChipFactor(rigidity),
+    minChipLoad(toolType, diameterMM, material),
+  )
+}
+
+// The thinnest chip this tool should ever run in this material before it rubs.
+export function minChipLoad(toolType: ToolType, diameterMM: number, material: Material): number {
+  return targetChipLoad(toolType, diameterMM, material) * MIN_CHIP_FRACTION[MATERIAL_INFO[material].kind]
+}
+
+// The simulator and the export preflight call a chip under 0.75× the aim "rubbing".
+// Auto feeds never thins below 0.8× the aim, so its own output never trips them.
+const RUBBING_MARGIN = 0.8
 
 interface FeedCalcInput {
   tool: Tool
-  materialHardness: number
+  material: Material
   rigidity: number       // 1..5
   maxFeedMmMin: number
   minSpindleRpm: number  // machine's lowest usable spindle speed (clamp floor)
   maxSpindleRpm: number  // machine's top spindle speed — auto may raise rpm up to this
-  maxSurfaceSpeedMMin?: number  // material Vc ceiling (m/min) — caps rpm for metals; omit for wood
   userStepDownMM: number
   totalDepthMM: number   // operation's intended total depth — for whole-division of step-down
   enabled: boolean
@@ -95,7 +132,7 @@ interface FeedCalcResult {
 const MIN_STEP_DOWN_MM = 0.01
 
 function computeFeeds(input: FeedCalcInput): FeedCalcResult {
-  const { tool, materialHardness, rigidity, maxFeedMmMin, minSpindleRpm, maxSpindleRpm, maxSurfaceSpeedMMin, userStepDownMM, totalDepthMM, enabled, radialEngagementFraction } = input
+  const { tool, material, rigidity, maxFeedMmMin, minSpindleRpm, maxSpindleRpm, userStepDownMM, totalDepthMM, enabled, radialEngagementFraction } = input
   const maxFeed = maxFeedMmMin > 0 ? maxFeedMmMin : Infinity
 
   // When auto-feed is off we keep the tool's own feeds/speed and the user's
@@ -117,44 +154,51 @@ function computeFeeds(input: FeedCalcInput): FeedCalcResult {
   }
 
   const R = clamp(rigidity, 1, 5)
-  const hardness = materialHardness > 0 ? materialHardness : 1
+  const info = MATERIAL_INFO[material]
+  const hardness = info.hardness > 0 ? info.hardness : 1
   const flutes = tool.fluteCount > 0 ? tool.fluteCount : 1
 
-  // Intrinsic chip load for this tool + material (independent of the machine).
-  const fz = targetChipLoad(tool.type, feedDiameterMM(tool), hardness)
-
-  // On softer machines we deliberately aim for a lighter chip so the gantry isn't
-  // overloaded. This scales the *feed*, not the displayed target.
-  const fzAim = fz * rigidityFeedFactor(R)
+  // The chip comes first: the material's own, trimmed for rigidity no further than
+  // the material tolerates.
+  const fzAim = aimChipLoad(tool.type, feedDiameterMM(tool), material, R)
 
   // Spindle speed is a computed output, not taken from the tool: pick the rpm that
-  // lets the feed reach the machine's max (shortest job), bounded by the machine's
-  // spindle range. Feed then follows from holding the aimed chip load. If the user
-  // set the tool rpm too low, this raises it; if too high for the chip load at max
-  // feed, it lowers it.
+  // lets the feed reach the target feed at the aimed chip, bounded by the machine's
+  // spindle range. The target is the machine's hard max feed, lowered to what this
+  // rigidity should cut at — so a light machine gets a slower SPINDLE and the same
+  // chip, not a thinner chip at full rpm.
   const denom = fzAim * flutes
   const loRpm = minSpindleRpm > 0 ? minSpindleRpm : 1
   let hiRpm = Math.max(maxSpindleRpm, loRpm)
+  const targetFeed = Math.min(maxFeed, rigidityFeedCeilingMmMin(R))
 
-  // Metals get a surface-speed (Vc) ceiling so the edge doesn't overheat at the
-  // high RPMs wood prefers: rpm = Vc / (π·d). This tightens the top of the rpm
-  // range (never below the machine's own floor). If even the machine's minimum
-  // rpm spins faster than the safe Vc — common on trim routers that idle high —
-  // we can't honor it, so flag it so the UI can warn (use a smaller bit / VFD).
+  // A surface-speed (Vc) ceiling keeps the edge from overheating at the high RPMs
+  // wood prefers: rpm = Vc / (π·d). This tightens the top of the rpm range (never
+  // below the machine's own floor). If even the machine's minimum rpm spins faster
+  // than the safe Vc — common on trim routers that idle high — we can't honor it,
+  // so flag it so the UI can warn (use a smaller bit / VFD).
   let spindleTooFast = false
   // Surface speed peaks at the WIDEST diameter that cuts — a taper's, not its tip's.
   const vcDiaMM = 2 * maxCutRadiusMM(tool)
-  if (maxSurfaceSpeedMMin && maxSurfaceSpeedMMin > 0 && vcDiaMM > 0) {
+  const vcMax = info.maxSurfaceSpeedMMin
+  if (vcMax && vcMax > 0 && vcDiaMM > 0) {
     // Floor so the whole-rpm result never rounds *above* the surface-speed ceiling
     // (Math.round on a fractional ceiling rpm would nudge Vc a hair over the limit).
-    const vcRpm = Math.floor((maxSurfaceSpeedMMin * 1000) / (Math.PI * vcDiaMM))
+    const vcRpm = Math.floor((vcMax * 1000) / (Math.PI * vcDiaMM))
     if (vcRpm < loRpm) spindleTooFast = true
     hiRpm = clamp(vcRpm, loRpm, hiRpm)
   }
 
-  const idealRpm = denom > 0 ? maxFeed / denom : hiRpm
+  const idealRpm = denom > 0 ? targetFeed / denom : hiRpm
   const rpm = Math.round(clamp(idealRpm, loRpm, hiRpm))
-  const xyFeed = Math.min(fzAim * flutes * rpm, maxFeed)
+  // When the spindle cannot go slow enough to meet the rigidity target, the chip may
+  // thin toward the material's floor (never past the gauge's "rubbing" band), and
+  // beyond that the feed runs over the target to keep it — the rigidity figure is
+  // soft, a thin chip melts plastic. Only the machine's own max feed is hard, and
+  // only it may thin the chip further.
+  const fzFloor = Math.max(minChipLoad(tool.type, feedDiameterMM(tool), material), RUBBING_MARGIN * fzAim)
+  const fzRun = clamp(targetFeed / (flutes * rpm), fzFloor, fzAim)
+  const xyFeed = Math.min(fzRun * flutes * rpm, maxFeed)
   const rpmAdjusted = rpm !== tool.rpm
   const plunge = clamp(0.4 * xyFeed, 50, maxFeed)
 
@@ -200,12 +244,11 @@ function calcForTool(tool: Tool, userStepDownMM: number, totalDepthMM: number, r
   const { material, machineRigidity, maxFeedMmMin, minSpindleRpm, maxSpindleRpm, autoFeedEnabled } = useWorkpieceStore.getState()
   return computeFeeds({
     tool,
-    materialHardness: MATERIAL_INFO[material].hardness,
+    material,
     rigidity: machineRigidity,
     maxFeedMmMin,
     minSpindleRpm,
     maxSpindleRpm,
-    maxSurfaceSpeedMMin: MATERIAL_INFO[material].maxSurfaceSpeedMMin,
     userStepDownMM,
     totalDepthMM,
     enabled: autoFeedEnabled,

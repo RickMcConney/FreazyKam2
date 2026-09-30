@@ -187,8 +187,8 @@ function OpChip({ op, dragging, compact, noCut, timeS, share, onGrab }: {
           : null,
         op.name,
         gcodeDetail(op),
-        // A floor, like the export dialog's total it adds up to: programmed feeds, no
-        // acceleration, no time for tool changes.
+        // Timed like the export dialog's total it adds up to — by the machine's planner
+        // (Machine Motion settings) — with no time for tool changes.
         timeS !== undefined && timeS > 0
           ? `${fmtDuration(timeS)} to run — ${Math.round(share * 100)}% of the program`
           : null,

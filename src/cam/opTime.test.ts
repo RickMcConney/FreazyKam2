@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { opRunTimesS, fmtDurationShort } from './opTime'
 import { generateGcode, generateGcodeWithOps } from './gcode'
 import { parseGcode } from '../sim/gcodeParser'
-import { useWorkpieceStore } from '../store/workpieceStore'
+import { useWorkpieceStore, machineMotionLimits } from '../store/workpieceStore'
 import type { PostProcessorProfile } from '../store/postProcessorStore'
 import type { Tool } from '../store/toolStore'
 import type { AnyOperation, MotionSegment, ProfileOperation } from '../store/toolpathStore'
@@ -47,7 +47,7 @@ describe('opRunTimesS — how long each operation runs', () => {
   it('adds up to the whole program\'s estimate, move for move', () => {
     const ops = [op('a', groove(10, 10, 100)), op('b', groove(10, 50, 20)), op('c', groove(150, 80, 5))]
     const times = opRunTimesS(ops, TOOLS, POST)
-    const whole = parseGcode(generateGcode(ops, TOOLS, 'x', POST)).totalTimeS
+    const whole = parseGcode(generateGcode(ops, TOOLS, 'x', POST), undefined, machineMotionLimits()).totalTimeS
     expect([...times.keys()]).toEqual(['a', 'b', 'c'])
     expect([...times.values()].reduce((s, t) => s + t, 0)).toBeCloseTo(whole, 9)
   })
@@ -56,7 +56,7 @@ describe('opRunTimesS — how long each operation runs', () => {
     const post = { ...POST, startGcode: 'G21\nG90\nG0 Z40', endGcode: 'M5\nG0 X0 Y0 Z40\nM30' }
     const ops = [op('a', groove(10, 10, 50)), op('b', groove(120, 60, 20))]
     const times = opRunTimesS(ops, TOOLS, post)
-    const whole = parseGcode(generateGcode(ops, TOOLS, 'x', post)).totalTimeS
+    const whole = parseGcode(generateGcode(ops, TOOLS, 'x', post), undefined, machineMotionLimits()).totalTimeS
     expect([...times.values()].reduce((s, t) => s + t, 0)).toBeCloseTo(whole, 9)
   })
 

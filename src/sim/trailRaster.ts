@@ -23,7 +23,7 @@
 // going slightly fuzzy at extreme zoom, not a loss of information: the toolpath layer
 // draws the same geometry as crisp vectors.
 
-import type { FrustumSeg } from './cutTrail'
+import { heatOnTop, type FrustumSeg, type TrailBatch } from './cutTrail'
 
 // Pixels per mm. The floor keeps a whole-board view from going blocky; the ceiling
 // stops a zoomed-in view from allocating a canvas nobody needs.
@@ -95,6 +95,25 @@ export class TrailRaster {
     this._ctx.setTransform(1, 0, 0, 1, 0, 0)
     this._ctx.clearRect(0, 0, this._canvas.width, this._canvas.height)
     this._ctx.restore()
+  }
+
+  /**
+   * Paint trail batches IN ORDER — each one colour, stroked one path per width. A band
+   * worth seeing (`heatOnTop`) goes over what is there; the rest goes UNDER it
+   * ('destination-over' fills only where nothing is painted yet), so a hot spot survives
+   * whatever cooler cut crosses it later. Playback and a from-scratch repaint paint the
+   * same batches in the same order under the same rule, so they end on the same picture.
+   */
+  paintBatches(batches: TrailBatch[], colorOf: (band: number) => string): void {
+    const ctx = this._ctx
+    if (!ctx) return
+    for (const b of batches) {
+      ctx.globalCompositeOperation = heatOnTop(b.band) ? 'source-over' : 'destination-over'
+      const color = colorOf(b.band)
+      this.strokePolys(b.byWidth, color)
+      this.fillFrustums(b.frustums, color)
+    }
+    ctx.globalCompositeOperation = 'source-over'
   }
 
   /** Stroke polylines grouped by cut width (mm) — one path per width. */

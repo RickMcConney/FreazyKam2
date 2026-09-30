@@ -8,6 +8,7 @@ import {
   type OriginPosition,
   type Units,
   type Material,
+  type MaterialKind,
   fromMM,
   toMM,
 } from '../store/workpieceStore'
@@ -49,6 +50,42 @@ function DimInput({
     </div>
   )
 }
+
+// A machine-motion number: stored in mm (mm/s², mm/min, mm), shown in the display units.
+function MotionInput({ label, valueMM, units, unit, stepMM, stepIn, onChange }: {
+  label: string
+  valueMM: number
+  units: Units
+  unit: string
+  stepMM: number
+  stepIn: number
+  onChange: (mm: number) => void
+}) {
+  const rowId = useId()
+  return (
+    <div className="flex items-center gap-2 mb-1.5">
+      <label htmlFor={rowId} className="text-gray-500 dark:text-neutral-400 text-body w-24 shrink-0">{label}</label>
+      <NumericInput
+        id={rowId}
+        value={fromMM(valueMM, units)}
+        min={0}
+        step={units === 'in' ? stepIn : stepMM}
+        title={NUMERIC_HINT}
+        unit={unit}
+        onChange={(v) => onChange(toMM(v, units))}
+        className="w-full bg-gray-50 dark:bg-neutral-900 border border-gray-400 dark:border-neutral-600 rounded px-2 py-1 text-body text-gray-900 dark:text-neutral-100 focus:border-blue-500 focus:outline-none font-mono"
+      />
+    </div>
+  )
+}
+
+const MOTION_HELP =
+  "How your controller accelerates and takes corners. Copy them from its settings — FluidNC: " +
+  "acceleration_mm_per_sec2 (X and Z), max_rate_mm_per_min (Z), junction_deviation_mm; " +
+  "Grbl: $120 / $122, $112, $11. The simulator uses them to move at the speed the machine " +
+  "really reaches — slower on short moves and into corners — so its clock, its chip-load " +
+  "gauge and every run-time estimate match the real job. Set an acceleration to 0 to ignore " +
+  "acceleration and time every move at its programmed feed."
 
 const ORIGIN_GRID: OriginPosition[][] = [
   ['top-left', 'top-center', 'top-right'],
@@ -123,13 +160,16 @@ function Section({
   )
 }
 
-// Ordered softest → hardest by relative machining hardness.
-const MATERIALS = (Object.keys(MATERIAL_INFO) as Material[])
-  .sort((a, b) => MATERIAL_INFO[a].hardness - MATERIAL_INFO[b].hardness)
-  .map((value) => ({
-    value,
-    label: MATERIAL_INFO[value].label,
-  }))
+// Grouped wood → plastic → metal (the kind decides how thin a chip the material
+// tolerates), then ordered softest → hardest within each group.
+const KIND_ORDER: MaterialKind[] = ['wood', 'plastic', 'metal']
+const KIND_LABELS: Record<MaterialKind, string> = { wood: 'Wood', plastic: 'Plastic', metal: 'Metal' }
+const MATERIAL_GROUPS = KIND_ORDER.map((kind) => ({
+  kind,
+  materials: (Object.keys(MATERIAL_INFO) as Material[])
+    .filter((m) => MATERIAL_INFO[m].kind === kind)
+    .sort((a, b) => MATERIAL_INFO[a].hardness - MATERIAL_INFO[b].hardness),
+}))
 
 const RIGIDITY_LABELS: Record<number, string> = {
   1: 'Hobby (light gantry)',
@@ -161,6 +201,8 @@ export default function WorkpiecePanel() {
     widthMM, heightMM, thicknessMM, units, origin, zOrigin, material,
     tableLimitWidthMM, tableLimitHeightMM, tableLimitDepthMM, safeHeightMM,
     machineRigidity, maxFeedMmMin, minSpindleRpm, maxSpindleRpm, spindleType, autoFeedEnabled,
+    accelXYMmS2, accelZMmS2, maxRateZMmMin, junctionDeviationMM,
+    setAccelXY, setAccelZ, setMaxRateZ, setJunctionDeviation,
     setWidth, setHeight, setThickness, setOrigin, setZOrigin, setMaterial,
     setTableLimitWidth, setTableLimitHeight, setTableLimitDepth, setSafeHeight,
     setMachineRigidity, setMaxFeed, setMinSpindleRpm, setMaxSpindleRpm, setSpindleType, setAutoFeedEnabled,
@@ -213,14 +255,18 @@ export default function WorkpiecePanel() {
           onChange={(e) => setMaterial(e.target.value as Material)}
           className="w-full bg-gray-50 dark:bg-neutral-900 border border-gray-400 dark:border-neutral-600 rounded px-2 py-1.5 text-body text-gray-900 dark:text-neutral-100 focus:border-blue-500 focus:outline-none"
         >
-          {MATERIALS.map((m) => (
-            <option key={m.value} value={m.value}>
-              {m.label} (hardness {MATERIAL_INFO[m.value].hardness.toFixed(1)})
-            </option>
+          {MATERIAL_GROUPS.map((g) => (
+            <optgroup key={g.kind} label={KIND_LABELS[g.kind]}>
+              {g.materials.map((m) => (
+                <option key={m} value={m}>
+                  {MATERIAL_INFO[m].label} (hardness {MATERIAL_INFO[m].hardness.toFixed(1)})
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
         <p className="text-body text-gray-600 dark:text-neutral-400 mt-1.5">
-          Hardness factor: {MATERIAL_INFO[material].hardness.toFixed(1)}
+          {KIND_LABELS[MATERIAL_INFO[material].kind]} · hardness {MATERIAL_INFO[material].hardness.toFixed(1)}
           <span className="text-gray-600 dark:text-neutral-400"> (used for auto feeds &amp; speeds)</span>
         </p>
       </Section>
@@ -267,22 +313,6 @@ export default function WorkpiecePanel() {
             ))}
           </select>
         </div>
-
-        <div className="flex items-center gap-2">
-          <label htmlFor="stock-max-feed" className="text-gray-500 dark:text-neutral-400 text-body w-24 shrink-0">Max Feed Rate</label>
-          <NumericInput
-            id="stock-max-feed"
-            value={fromMM(maxFeedMmMin, units)}
-            min={1}
-            step={units === 'in' ? 1 : 50}
-            unit={`${units}/min`}
-            onChange={(v) => setMaxFeed(toMM(v, units))}
-            className="w-full bg-gray-50 dark:bg-neutral-900 border border-gray-400 dark:border-neutral-600 rounded px-2 py-1 text-body text-gray-900 dark:text-neutral-100 focus:border-blue-500 focus:outline-none font-mono"
-          />
-        </div>
-        <p className="text-body text-gray-600 dark:text-neutral-400 mt-1">
-          Hard ceiling — generated feeds never exceed this, even when auto is off.
-        </p>
 
         <div className="mt-3 mb-1">
           <label htmlFor="stock-spindle" className="block text-gray-500 dark:text-neutral-400 text-body mb-1">Spindle / Router</label>
@@ -352,6 +382,29 @@ export default function WorkpiecePanel() {
           onChange={setSafeHeight}
           min={0.1}
         />
+      </Section>
+
+      <Section title="Machine Motion">
+        <div className="flex items-center gap-2 mb-2">
+          <p className="text-body text-gray-600 dark:text-neutral-400">
+            From your controller's config — how fast it really moves.
+          </p>
+          <InfoPopover text={MOTION_HELP} />
+        </div>
+        <MotionInput label="Max Feed Rate" valueMM={maxFeedMmMin} units={units} unit={`${units}/min`}
+          stepMM={50} stepIn={1} onChange={setMaxFeed} />
+        <MotionInput label="Accel X/Y" valueMM={accelXYMmS2} units={units} unit={`${units}/s²`}
+          stepMM={10} stepIn={0.5} onChange={setAccelXY} />
+        <MotionInput label="Accel Z" valueMM={accelZMmS2} units={units} unit={`${units}/s²`}
+          stepMM={5} stepIn={0.25} onChange={setAccelZ} />
+        <MotionInput label="Z Max Rate" valueMM={maxRateZMmMin} units={units} unit={`${units}/min`}
+          stepMM={50} stepIn={2} onChange={setMaxRateZ} />
+        <MotionInput label="Junction Dev." valueMM={junctionDeviationMM} units={units} unit={units}
+          stepMM={0.005} stepIn={0.0002} onChange={setJunctionDeviation} />
+        <p className="text-body text-gray-600 dark:text-neutral-400 mt-1">
+          Max Feed Rate is the X/Y max rate: a hard ceiling generated feeds never exceed, even
+          with auto feeds off, and the speed rapids run at.
+        </p>
       </Section>
     </div>
   )

@@ -21,6 +21,9 @@ export interface MotionSegment {
   arc?: { cx: number; cy: number; cw: boolean }  // absolute arc center + direction; G2=cw, G3=ccw
   toolChange?: string  // toolId: emit tool-change gcode at this point, no movement
   feedScale?: number   // multiplier applied to computed feed rate (default 1.0)
+  // Already simplified by the generator at a tolerance finer than the G-code writer's:
+  // emit exactly as given, never re-fit into arcs or thinned (cam/gcode.ts reconstructArcs).
+  exact?: boolean
 }
 
 /** The inputs a set of segments was generated from — see BaseOperation.generatedWith. */
@@ -70,6 +73,10 @@ export interface ProfileOperation extends BaseOperation {
   rampIn: boolean
   /** Stock left on the wall (negative cuts past the line). Ignored for centerline. */
   allowanceMM?: number
+  /** Round the centre path's sharp corners, moving it at most this far (mm), always away
+   *  from the part (cam/cornerRounding.ts). Absent/0 = off — which is what every profile
+   *  saved before the option existed reads as, so reopening one never moves its path. */
+  cornerToleranceMM?: number
 }
 
 export interface PocketOperation extends BaseOperation {

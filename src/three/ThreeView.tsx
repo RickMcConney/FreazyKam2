@@ -7,7 +7,7 @@ import { useToolpathStore, type MotionSegment } from '../store/toolpathStore'
 import { useWorkpieceStore, zDatumOffsetMM } from '../store/workpieceStore'
 import { useToolStore } from '../store/toolStore'
 import { usePathsStore } from '../store/pathsStore'
-import { getCurrentSegIdx, interpolatePos, segTool, type SimSegment } from '../sim/gcodeParser'
+import { getCurrentSegIdx, interpolatePos, segFraction, segTool, type SimSegment } from '../sim/gcodeParser'
 import { flattenPath } from '../cam/pathFlattener'
 import { includedAngleDeg, isVCutter, maxCutRadiusMM } from '../cam/geom'
 import { getBBox } from '../canvas/selectionUtils'
@@ -561,9 +561,9 @@ export default function ThreeView() {
 
         if (refs.heightfield) {
           const seg = sim.segments[segIdx]
-          const t = seg && seg.durationS > 1e-9
-            ? Math.max(0, Math.min(1, (sim.elapsedTimeS - seg.startTimeS) / seg.durationS))
-            : 1
+          // Along the move by DISTANCE, not time: with acceleration the two differ, and the
+          // carve must end where the tool is drawn.
+          const t = seg && seg.durationS > 1e-9 ? segFraction(seg, sim.elapsedTimeS) : 1
           refs.heightfield.applyUpTo(refs.simSegments, segIdx, t)
         }
       } else {

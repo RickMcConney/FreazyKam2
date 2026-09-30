@@ -1,4 +1,7 @@
 
+import type { ToolType } from '../store/toolStore'
+import { planMotion, trapezoidAt, FALLBACK_RAPID_MM_MIN, type MotionLimits, type PlanBlock, type Trapezoid } from './motionPlanner'
+
 export interface SimSegment {
   x: number
   y: number
@@ -12,6 +15,13 @@ export interface SimSegment {
   durationS: number     // seconds to traverse this segment
   startTimeS: number    // cumulative elapsed time at the start of this segment
   toolStateIdx: number  // index into ParsedGcode.toolStates (flyweight; see ToolState)
+  // The planned speed profile (sim/motionPlanner.ts), set when the program was parsed
+  // with machine motion limits: entry, cruise and exit speed in mm/s at acceleration
+  // `acc` mm/s². Absent = the move runs at `feedRateMmMin` throughout.
+  v0?: number
+  vc?: number
+  v1?: number
+  acc?: number
 }
 
 // Tool/spindle parameters change only at tool changes, so rather than repeat them
@@ -46,7 +56,7 @@ export interface ParsedGcode {
   units: 'mm' | 'in'
 }
 
-const RAPID_MM_PER_MIN = 5000
+const RAPID_MM_PER_MIN = FALLBACK_RAPID_MM_MIN
 const MM_PER_INCH = 25.4
 
 const FALLBACK_TOOL_STATE: ToolState = { toolDiameterMM: 3.0, spindleRpm: 0, fluteCount: 2 }
@@ -54,6 +64,23 @@ const FALLBACK_TOOL_STATE: ToolState = { toolDiameterMM: 3.0, spindleRpm: 0, flu
 // Resolve a segment's tool parameters from the flyweight table.
 export function segTool(seg: SimSegment, toolStates: ToolState[]): ToolState {
   return toolStates[seg.toolStateIdx] ?? FALLBACK_TOOL_STATE
+}
+
+/** The tool type a program's tool comments describe, as the feed calculation names it. */
+export function toolTypeOf(ts: ToolState): ToolType {
+  return ts.toolDrill ? 'drill'
+    : ts.toolBallNose ? 'ballnose'
+    : ts.toolTipRadiusMM ? 'taper'
+    : ts.toolVbitHalfAngleTan !== undefined ? 'vbit' : 'endmill'
+}
+
+/**
+ * The diameter the feed calculation sized this tool's chip by — a taper's MEAN cutting
+ * diameter, the same figure `geom.feedDiameterMM` uses. Its parsed `dia` is the widest it
+ * opens out to and its tip is far narrower, so either end alone would misjudge the chip.
+ */
+export function feedDiameterOf(ts: ToolState): number {
+  return ts.toolTipRadiusMM ? ts.toolTipRadiusMM + ts.toolDiameterMM / 2 : ts.toolDiameterMM
 }
 
 // One G-code word: a letter and its number. Global, so `lastIndex` is reset per line.
@@ -127,7 +154,13 @@ function arcToSegments(
   return segs
 }
 
-export function parseGcode(text: string, initialZMM = 5): ParsedGcode {
+/**
+ * Parse a program into timed moves. With `limits`, the timing is what the machine's own
+ * planner produces (acceleration, junction deviation, axis max rates — see
+ * sim/motionPlanner.ts); without, every move runs at its programmed feed and rapids at a
+ * fixed rate, which is a floor on the real time.
+ */
+export function parseGcode(text: string, initialZMM = 5, limits?: MotionLimits): ParsedGcode {
   // CRLF too: a line left ending in '\r' defeats the ';' comment strip below ('.' does not
   // match '\r', and '$' is end of string), so a Windows-saved program's comments were
   // parsed as words — "; retract to Z 20" simulated a move. The line count is unchanged,
@@ -151,6 +184,22 @@ export function parseGcode(text: string, initialZMM = 5): ParsedGcode {
   let spindleRpm = 0
   let fluteCount = 2
   let cumT = 0
+  // Per-segment planner input, filled alongside `segs` (see sim/motionPlanner.ts).
+  const arcRadius: number[] = []
+  const arcIdOf: number[] = []
+  const stopBefore: boolean[] = []
+  let arcSeq = 0
+  // Something on a line made the controller finish its moves before going on (a spindle
+  // or tool change, a pause, a dwell). The next move starts from rest.
+  let syncPending = false
+  const markNewSegs = (from: number, radius: number, arcId: number) => {
+    for (let k = from; k < segs.length; k++) {
+      arcRadius.push(radius)
+      arcIdOf.push(arcId)
+      stopBefore.push(k === from && syncPending)
+    }
+    if (segs.length > from) syncPending = false
+  }
 
   // Deduplicated flyweight table of tool/spindle states. Segments store an index
   // into this (toolStateIdx). syncToolState() finds-or-creates the entry matching
@@ -226,7 +275,7 @@ export function parseGcode(text: string, initialZMM = 5): ParsedGcode {
     let wI: number | undefined, wJ: number | undefined, wR: number | undefined
     let gm: number | undefined
     let g20 = false, g21 = false, g90 = false, g91 = false
-    let g18or19 = false, g90dot1 = false, g41or42 = false
+    let g18or19 = false, g90dot1 = false, g41or42 = false, g4 = false, hasM = false
     WORD_RE.lastIndex = 0
     let m: RegExpExecArray | null
     while ((m = WORD_RE.exec(clean)) !== null) {
@@ -243,10 +292,12 @@ export function parseGcode(text: string, initialZMM = 5): ParsedGcode {
           if (Math.abs(v - 18) < 0.001 || Math.abs(v - 19) < 0.001) g18or19 = true
           if (Math.abs(v - 90.1) < 0.001) g90dot1 = true
           if (Math.abs(v - 41) < 0.001 || Math.abs(v - 42) < 0.001) g41or42 = true
+          if (Math.abs(v - 4) < 0.001) g4 = true
           // G0-G3 motion mode
           if (gm === undefined && v >= 0 && v <= 3) gm = v
           break
         }
+        case 0x6d: /* m */ hasM = true; break
         case 0x66: /* f */ if (wF === undefined) wF = v; break
         case 0x73: /* s */ if (wS === undefined) wS = v; break
         case 0x78: /* x */ if (wX === undefined) wX = v; break
@@ -280,6 +331,10 @@ export function parseGcode(text: string, initialZMM = 5): ParsedGcode {
     if (wF !== undefined) feedRate = wF * unitScale
 
     if (wS !== undefined) { spindleRpm = wS; syncToolState() }
+    // Every M word this app emits (spindle, coolant, tool change, pause, end) and a dwell
+    // make the controller drain its buffer; so does an S word. The bare-G4 test is safe
+    // because G4 never takes an axis word.
+    if (hasM || g4 || wS !== undefined) syncPending = true
 
     if (wX === undefined && wY === undefined && wZ === undefined) continue
 
@@ -313,6 +368,7 @@ export function parseGcode(text: string, initialZMM = 5): ParsedGcode {
       jj = 0.5 * (dy + dx * h)
     }
 
+    const segsBefore = segs.length
     if (motionMode === 0) {
       const dist = Math.hypot(nx - cx, ny - cy, nz - cz)
       if (dist > 0.0001) {
@@ -356,11 +412,61 @@ export function parseGcode(text: string, initialZMM = 5): ParsedGcode {
         cumT = last.startTimeS + last.durationS
       }
     }
+    if (motionMode === 2 || motionMode === 3) markNewSegs(segsBefore, Math.hypot(ii, jj), arcSeq++)
+    else markNewSegs(segsBefore, 0, -1)
 
     cx = nx; cy = ny; cz = nz
   }
 
+  if (limits) cumT = applyPlan(segs, arcRadius, arcIdOf, stopBefore, limits)
+
   return { lines: rawLines, segments: segs, totalTimeS: cumT, toolStates, warnings: [...warnings], units: programUnits }
+}
+
+// Re-time every move by the machine's planner, stamping its speed profile on it.
+// Returns the program's total time.
+function applyPlan(
+  segs: SimSegment[], arcRadius: number[], arcIdOf: number[], stopBefore: boolean[], limits: MotionLimits,
+): number {
+  const blocks: PlanBlock[] = segs.map((sg, i) => ({
+    dx: sg.x - sg.prevX, dy: sg.y - sg.prevY, dz: sg.z - sg.prevZ,
+    feedMmMin: sg.feedRateMmMin, rapid: sg.rapid,
+    arcRadiusMM: arcRadius[i], arcId: arcIdOf[i], stopBefore: stopBefore[i],
+  }))
+  const plan = planMotion(blocks, limits)
+  let t = 0
+  for (let i = 0; i < segs.length; i++) {
+    const sg = segs[i], tr = plan[i]
+    sg.startTimeS = t
+    sg.durationS = tr.durationS
+    sg.v0 = tr.v0; sg.vc = tr.vc; sg.v1 = tr.v1; sg.acc = tr.acc
+    // A rapid's feed is the speed it is planned to reach, not the old fixed figure.
+    if (sg.rapid) sg.feedRateMmMin = tr.vc * 60
+    t += tr.durationS
+  }
+  return t
+}
+
+const segLength = (seg: SimSegment) => Math.hypot(seg.x - seg.prevX, seg.y - seg.prevY, seg.z - seg.prevZ)
+const segTrap = (seg: SimSegment): Trapezoid | null =>
+  seg.acc === undefined ? null : { v0: seg.v0!, vc: seg.vc!, v1: seg.v1!, acc: seg.acc, durationS: seg.durationS }
+
+/** How far along `seg` (0–1) the tool is at program time `elapsedTimeS`. */
+export function segFraction(seg: SimSegment, elapsedTimeS: number): number {
+  if (seg.durationS <= 0) return 1
+  const t = Math.max(0, Math.min(seg.durationS, elapsedTimeS - seg.startTimeS))
+  const tr = segTrap(seg)
+  if (!tr) return t / seg.durationS
+  const L = segLength(seg)
+  return L > 0 ? Math.max(0, Math.min(1, trapezoidAt(tr, L, t).dist / L)) : 1
+}
+
+/** The tool's actual speed (mm/min) on `seg` at program time `elapsedTimeS`. */
+export function segFeedAt(seg: SimSegment, elapsedTimeS: number): number {
+  const tr = segTrap(seg)
+  if (!tr) return seg.feedRateMmMin
+  const t = Math.max(0, Math.min(seg.durationS, elapsedTimeS - seg.startTimeS))
+  return trapezoidAt(tr, segLength(seg), t).speed * 60
 }
 
 /**
@@ -409,7 +515,7 @@ export function interpolatePos(
   if (idx < 0) return null
   const seg = segments[idx]
   if (seg.durationS <= 0) return { x: seg.x, y: seg.y, z: seg.z }
-  const t = Math.max(0, Math.min(1, (elapsedTimeS - seg.startTimeS) / seg.durationS))
+  const t = segFraction(seg, elapsedTimeS)
   return {
     x: seg.prevX + (seg.x - seg.prevX) * t,
     y: seg.prevY + (seg.y - seg.prevY) * t,

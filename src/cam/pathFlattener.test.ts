@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { flattenPath, pathExtents } from './pathFlattener'
+import { flattenPath, pathExtents, arcFitPolyline, type Pt2 } from './pathFlattener'
 
 const allFinite = (rings: [number, number][][]) => rings.every((r) => r.every(([x, y]) => Number.isFinite(x) && Number.isFinite(y)))
 
@@ -161,3 +161,48 @@ describe('the shared walker resolves S and T to the curve they stand for', () =>
     expect(new Set(shapes).size).toBe(shapes.length)
   })
 })
+
+describe('arcFitPolyline — an arc never swallows a tighter bend', () => {
+  // A straight edge, then a 90° corner rounded at r = 0.3 (0.07 mm chords, as a round
+  // offset join leaves them), then another straight edge. Within the 0.1 mm tolerance a
+  // single fat arc fits the end of the first edge plus half the corner; emitted, it left
+  // the corner pointing the wrong way and the rest of the corner became a kink.
+  const corner = (): Pt2[] => {
+    const pts: Pt2[] = []
+    for (let x = -3; x < 0; x += 0.5) pts.push([x, 0])
+    for (let k = 0; k <= 12; k++) {
+      const a = -Math.PI / 2 + (k / 12) * (Math.PI / 2)
+      pts.push([0.3 * Math.cos(a), 0.3 + 0.3 * Math.sin(a)])
+    }
+    for (let y = 0.8; y <= 3.3; y += 0.5) pts.push([0.3, y])
+    return pts
+  }
+
+  it('fits the corner as an arc of ITS OWN radius', () => {
+    const arcs = arcFitPolyline(corner(), 0.1).filter((s) => s.arc)
+    expect(arcs.length).toBeGreaterThan(0)
+    for (const a of arcs) {
+      // Every arc emitted is the 0.3 corner — none is a fat arc over edge + corner.
+      expect(Math.hypot(a.arc!.cx - 0, a.arc!.cy - 0.3)).toBeLessThan(0.02)
+    }
+  })
+
+  it('leaves a genuinely sharp corner a corner, wherever its points happen to fall', () => {
+    // A corner of r = 0.05 made of 0.006 mm chords — far tighter than any arc the fitter
+    // may emit — shifted by fractions of a chord. Every phase must come out the same way:
+    // no arc spanning it. (Identical escape-wheel roots came out as an arc at one tooth and
+    // a corner at the next, decided by exactly this.)
+    for (const phase of [0, 0.25, 0.5, 0.75]) {
+      const pts: Pt2[] = []
+      for (let x = -3 + phase * 0.5; x < 0; x += 0.5) pts.push([x, 0])
+      for (let k = 0; k <= 26; k++) {
+        const a = -Math.PI / 2 + (k / 26) * (Math.PI / 2)
+        pts.push([0.05 * Math.cos(a), 0.05 + 0.05 * Math.sin(a)])
+      }
+      for (let y = 0.5 + phase * 0.5; y <= 3; y += 0.5) pts.push([0.05, y])
+      const spanning = arcFitPolyline(pts, 0.1).filter((s) => s.arc)
+      expect(spanning, `phase ${phase}`).toEqual([])
+    }
+  })
+})
+

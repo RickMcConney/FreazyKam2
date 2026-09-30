@@ -2,6 +2,7 @@ import { generateGcode } from '../cam/gcode'
 import { buildGcodeInputs } from '../io/gcodeExport'
 import { useProjectStore } from '../store/projectStore'
 import { useSimStore } from '../store/simStore'
+import { useWorkpieceStore } from '../store/workpieceStore'
 import { useToolpathStore, type AnyOperation } from '../store/toolpathStore'
 
 /**
@@ -111,9 +112,26 @@ export function installSimAutoReload(): () => void {
       lastKey = programKey(useToolpathStore.getState().operations)
     }
   })
+  // The machine's motion settings time the program (sim/motionPlanner.ts), so a change to
+  // them re-times whatever is loaded — imported G-code too, since only the timing moves.
+  // Debounced: they are typed into a field one keystroke at a time.
+  let retimer: ReturnType<typeof setTimeout> | null = null
+  const unsubMotion = useWorkpieceStore.subscribe((w, p) => {
+    if (w.accelXYMmS2 === p.accelXYMmS2 && w.accelZMmS2 === p.accelZMmS2 &&
+        w.maxRateZMmMin === p.maxRateZMmMin && w.junctionDeviationMM === p.junctionDeviationMM &&
+        w.maxFeedMmMin === p.maxFeedMmMin) return
+    if (retimer) clearTimeout(retimer)
+    retimer = setTimeout(() => {
+      retimer = null
+      const sim = useSimStore.getState()
+      if (sim.gcode) sim.loadGcode(sim.gcode, { autoReload: sim.autoReload })
+    }, SETTLE_MS)
+  })
   return () => {
     unsubOps()
     unsubSim()
+    unsubMotion()
+    if (retimer) clearTimeout(retimer)
     if (timer) { clearTimeout(timer); timer = null }
   }
 }

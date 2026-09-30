@@ -133,10 +133,12 @@ const TRAVEL_FEED_FACTOR = 2.5
 // a reduced feedScale (e.g. adaptive2 engagement control) is left untouched to
 // preserve its protective feed override. Rapids, travels, plunges/lifts (pure Z
 // moves), tool changes, and segments that already carry an arc pass through
-// verbatim.
+// verbatim — as do segments a generator marked `exact`, which it has already fitted at a
+// finer tolerance than this one: re-thinning them at 0.1 mm undid a profile's rounded
+// corners, merging a small corner arc back into the kink it was made to remove.
 function reconstructArcs(segments: MotionSegment[]): MotionSegment[] {
   const eligible = (s: MotionSegment) =>
-    !s.rapid && !s.travel && !s.arc && !s.toolChange && (s.feedScale ?? 1) === 1
+    !s.rapid && !s.travel && !s.arc && !s.exact && !s.toolChange && (s.feedScale ?? 1) === 1
   const out: MotionSegment[] = []
   const n = segments.length
   let i = 0

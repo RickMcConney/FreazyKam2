@@ -3,13 +3,15 @@ import { parseGcode } from '../sim/gcodeParser'
 import type { AnyOperation } from '../store/toolpathStore'
 import type { Tool } from '../store/toolStore'
 import type { PostProcessorProfile } from '../store/postProcessorStore'
+import { machineMotionLimits } from '../store/workpieceStore'
+import type { MotionLimits } from '../sim/motionPlanner'
 
 /**
  * How long each operation runs, in seconds, keyed by op id (review2 F9).
  *
  * The export dialog's total says how long the JOB takes; this says WHICH operation it is
  * spending it on. Same estimate — the program the export writes, through the parser the
- * simulator uses (programmed feeds and a fixed rapid rate, no acceleration, so a floor) —
+ * simulator uses, timed by the machine's planner (acceleration, cornering, max rates) —
  * cut up by where each operation's section of the program starts. That is what makes the
  * parts add up to the whole: every move is charged to exactly one op, including the
  * transit into it from wherever the previous one finished. Timing each op as a program of
@@ -24,11 +26,12 @@ export function opRunTimesS(
   operations: AnyOperation[],
   toolsById: Record<string, Tool>,
   profile: PostProcessorProfile,
+  limits: MotionLimits = machineMotionLimits(),
 ): Map<string, number> {
   const out = new Map<string, number>()
   const { gcode, opStarts } = generateGcodeWithOps(operations, toolsById, 'estimate', profile)
   if (opStarts.length === 0) return out
-  const { segments } = parseGcode(gcode)
+  const { segments } = parseGcode(gcode, undefined, limits)
   // Segments come in line order, as do the sections, so one walk assigns every move. A
   // move in the post's start block (a retract some posts open with) goes to the first op
   // and one in its end block to the last, as the transit between ops goes to the op it
