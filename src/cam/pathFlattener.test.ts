@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { flattenPath, pathExtents, arcFitPolyline, type Pt2 } from './pathFlattener'
+import { flattenPath, pathExtents, arcFitPolyline, splitSelfIntersecting, signedArea, type Pt2 } from './pathFlattener'
 
 const allFinite = (rings: [number, number][][]) => rings.every((r) => r.every(([x, y]) => Number.isFinite(x) && Number.isFinite(y)))
 
@@ -206,3 +206,13 @@ describe('arcFitPolyline — an arc never swallows a tighter bend', () => {
   })
 })
 
+describe('splitSelfIntersecting — never hands back a loop that encloses nothing', () => {
+  it('drops the "loop" a repeated point splits off', () => {
+    // An out-and-back spike a micron long reads as the path touching itself; splitting
+    // there cut off a three-point loop of zero area — but still a loop downstream.
+    const ring: Pt2[] = [[0, 0], [20, 0], [20, 20], [12, 20], [12.0005, 19.9997], [12, 20], [0, 20]]
+    const out = splitSelfIntersecting([ring])
+    expect(out.length).toBe(1)
+    expect(Math.abs(signedArea(out[0]))).toBeCloseTo(400, 9)
+  })
+})

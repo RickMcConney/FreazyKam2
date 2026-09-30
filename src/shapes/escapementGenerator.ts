@@ -87,7 +87,7 @@
 
 import {
   type Pt, clamp, arcInto, ellipseRing, roundRectRing,
-  boolRings, roundConcave, ringToD,
+  boolRings, roundConcave, repeatSector, ringToD,
 } from './polyOps'
 import { seatHub, spokeWindows, pinRing, pinRingHoles, type HubFit, type PinRing } from './spokedWheel'
 import { getTreatableCorners, applyCornerTreatments } from '../tools/cornerTreatment'
@@ -2228,6 +2228,28 @@ function toothedRing(spec: EscapementSpec): Pt[] {
 }
 
 /**
+ * The wheel outline with its gullets filleted — built as ONE tooth rotated N times.
+ *
+ * The gullet fillet is a Clipper closing over the whole toothed ring, and Clipper snaps
+ * to its own grid, so each tooth came back with a slightly different point list: an
+ * escape wheel's teeth differed in point-edit mode, and a step downstream that decides on
+ * a difference of microns decided differently at each tooth (the roots came out as a
+ * smooth arc at one tooth and a hard corner at the next). The filleted ring is cut in
+ * the middle of two neighbouring root lands — a plain arc on the root circle, well clear
+ * of any tooth — and that one tooth is repeated round the wheel.
+ */
+function filletedWheel(spec: EscapementSpec): Pt[][] {
+  const rings = roundConcave([toothedRing(spec)], gulletFillet(spec))
+  if (rings.length !== 1) return rings
+  const { N, pitch, beta } = frame(spec)
+  const { backSpan, u, bowAng, corner } = toothGeom(spec)
+  const a0 = Math.PI / 2 + beta / 2 - corner.dA          // tooth 0, as `toothedRing` phases it
+  // The root land before tooth 0 runs from a0 − pitch + backSpan + bowAng to a0 + u.
+  const midLand = a0 + (backSpan + bowAng + u - pitch) / 2
+  return [repeatSector(rings[0], N, midLand)]
+}
+
+/**
  * The top of one tooth: what is left of the tip land, then the round itself.
  *
  * The round is emitted with its CROWN as a sample on purpose — the outermost
@@ -2643,18 +2665,19 @@ export interface ToothClearance {
  * `filletToes`, whose rounds all sit well away from the wheel — checked against
  * the emitted outline, which gives the same figure to the micron.
  *
- * BOTH WAYS ROUND: the wheel's points against the anchor's edges AND the anchor's
- * points against the wheel's. The pallet's tip is one sharp vertex and a tooth's
- * back is sampled half a millimetre apart, so measuring from the wheel's points
- * alone misses the tip coming at the middle of a flank — which is how the first
- * harness read 0.13 mm where there are 0.08.
+ * BOTH WAYS ROUND: the wheel against the anchor's edges AND the anchor's points
+ * against the wheel's edges. The pallet's tip is one sharp vertex, so measuring from
+ * the wheel alone misses the tip coming at the middle of a flank — which is how the
+ * first harness read 0.13 mm where there are 0.08. The wheel is taken as its edges cut
+ * into short pieces, each judged contact or not on its own (see `measureToothClearance`),
+ * so the answer does not depend on how finely the outline happens to be drawn.
  *
  * Unmirrored, in the construction's own frame: a clockwise wheel is the
  * anticlockwise one's reflection, anchor and all, so the clearance is the same.
  *
  * Its own function rather than a field of `escapementDims`, which the preview
  * and the clock layers call every frame: this builds both parts and sweeps a
- * whole period — some 70 ms on the default wheel — and only the readouts want
+ * whole period — some 150 ms on the default wheel — and only the readouts want
  * it. They call it on every render, so the answer is kept for the last few
  * specs; position and hand are no part of it, so moving the shape is free.
  */
@@ -2679,10 +2702,16 @@ function measureToothClearance(spec: EscapementSpec): ToothClearance {
   const f = Math.hypot(corner.p1[0] - corner.c[0], corner.p1[1] - corner.c[1])
 
   // The wheel, split into what a pallet may touch and what it may not.
-  const wheel = roundConcave([toothedRing(S)], gulletFillet(S))
+  const wheel = filletedWheel(S)
     .reduce((a, b) => (b.length > a.length ? b : a), [] as Pt[])
   const TOL = 0.02
   const acting = (p: Pt) => {
+    // The top of the tooth — what is left of the tip land on the tip circle — is where it
+    // LANDS on the pallet, so it is contact like the round. It used to be skipped only by
+    // accident: the tip circle is drawn in chords ~4.5 mm long, so the land had no point
+    // of its own and its one edge began on the round and was set aside with it. Measured
+    // piece by piece, it has to be named.
+    if (Math.hypot(p[0], p[1]) >= R - TOL) return true
     const k0 = Math.round((Math.atan2(p[1], p[0]) - a00) / pitch)
     for (let k = k0 - 1; k <= k0 + 1; k++) {
       const a0 = a00 + k * pitch
@@ -2693,13 +2722,28 @@ function measureToothClearance(spec: EscapementSpec): ToothClearance {
     }
     return false
   }
-  const free = wheel.map((p) => !acting(p))
+  // Measured on the wheel's EDGES, cut into pieces no longer than PIECE_MM, not on its
+  // points. It used to count an edge only when both its end points were off the contact
+  // stretches — fine while the wheel was sampled every half millimetre, wrong once the
+  // outline is simplified: a tooth's back is then a few long edges, the first of which
+  // starts ON the tip round, so it was set aside whole with the round and part of the
+  // back went unmeasured (0.13 mm read for 0.10). The pieces exist only here; the drawn
+  // wheel keeps its own points.
+  const PIECE_MM = 0.25
+  const pieces: { a: Pt; b: Pt }[] = []
+  for (let i = 0; i < wheel.length; i++) {
+    const a = wheel[i], b = wheel[(i + 1) % wheel.length]
+    const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / PIECE_MM))
+    for (let k = 0; k < n; k++) {
+      const pa: Pt = [a[0] + ((b[0] - a[0]) * k) / n, a[1] + ((b[1] - a[1]) * k) / n]
+      const pb: Pt = [a[0] + ((b[0] - a[0]) * (k + 1)) / n, a[1] + ((b[1] - a[1]) * (k + 1)) / n]
+      const mid: Pt = [(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2]
+      if (!acting(pa) && !acting(pb) && !acting(mid)) pieces.push({ a: pa, b: pb })
+    }
+  }
   // Nothing on the wheel reaches past its material circle, so the anchor is only
   // asked about the stretch of it that comes within reach.
   const reach = R + tipR + 1
-  const wIdx: number[] = []
-  for (let i = 0; i < wheel.length; i++) if (free[i]) wIdx.push(i)
-
   // The anchor, in its own frame: arbor at the origin, wheel centre at (0, −L).
   const near: { pts: Pt[]; side: Side }[] = []
   for (const ring of anchorRings(S)) {
@@ -2728,9 +2772,8 @@ function measureToothClearance(spec: EscapementSpec): ToothClearance {
       let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity
       for (const p of q) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]) }
       const box = (p: Pt) => p[0] > x0 - 2 && p[0] < x1 + 2 && p[1] > y0 - 2 && p[1] < y1 + 2
-      for (const i of wIdx) {
-        const w = wheel[i]
-        if (!box(w)) continue
+      for (const { a: w, b: w2 } of pieces) {
+        if (!box(w) && !box(w2)) continue
         const note = (d: number) => {
           if (d < best.clearance) best = { clearance: d, side: run.side, depth: R - Math.hypot(w[0], w[1]) }
         }
@@ -2738,8 +2781,7 @@ function measureToothClearance(spec: EscapementSpec): ToothClearance {
         for (let k = 1; k < q.length; k++) note(segDist(w, q[k - 1], q[k]))
         // …and the anchor's points against the wheel's edge, which is what finds
         // a sharp pallet tip coming at the middle of a straight flank.
-        const j = (i + 1) % wheel.length
-        if (free[j]) for (const p of q) note(segDist(p, w, wheel[j]))
+        for (const p of q) note(segDist(p, w, w2))
       }
     }
   }
@@ -2917,7 +2959,7 @@ export function generateEscapementParts(spec: EscapementSpec): EscapementPart[] 
 
   const out: EscapementPart[] = [{
     key: 'wheel',
-    d: roundConcave([toothedRing(spec)], gulletFillet(spec)).map((r) => ringToD(place(r), true)).join(' '),
+    d: filletedWheel(spec).map((r) => ringToD(place(r), true)).join(' '),
   }]
 
   const boreR = clamp(spec.bore / 2, 0, rRoot - 1)

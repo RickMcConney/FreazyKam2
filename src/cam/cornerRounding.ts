@@ -38,7 +38,7 @@
 // corner sets it.
 
 import { inflatePathsD, JoinType, EndType } from 'clipper2-ts'
-import type { Pt2 } from './pathFlattener'
+import { mergeClosePoints, type Pt2 } from './pathFlattener'
 import { stripClosingDuplicate } from './geom'
 
 // Largest rounding radius tried, mm. Past this the arcs are long enough to change a part
@@ -59,8 +59,10 @@ function offsetRings(rings: Ring[], delta: number, join: JoinType): Ring[] {
     rings.map((r) => r.map(([x, y]) => ({ x, y }))),
     delta, join, EndType.Polygon, 1000, 6, ARC_TOLERANCE_MM,
   )
+  // Merged, as polyOps.inflateRings does: a round offset turns each gently bending vertex
+  // into a pair of points a micron apart (see pathFlattener MERGE_POINTS_MM).
   return out
-    .map((p) => stripClosingDuplicate(p.map(({ x, y }) => [x, y] as Pt2)))
+    .map((p) => mergeClosePoints(stripClosingDuplicate(p.map(({ x, y }) => [x, y] as Pt2)), undefined, true))
     .filter((p) => p.length >= 3)
 }
 

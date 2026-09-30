@@ -321,6 +321,39 @@ export function walkPath(d: string, v: PathVisitor): void {
   }
 }
 
+// Points closer than this (mm) are one point. A ROUND Clipper offset makes such pairs
+// wherever an outline bends by a fraction of a degree: it ends the edges either side of
+// the vertex separately and joins them with a round join a micron long, so one point
+// comes back as two. Used where CAM code runs its own round offsets (cam/cornerRounding).
+// The shape generators do not need it — they avoid giving symmetric copies different
+// points in the first place, by rotating one filleted copy (polyOps `repeatSector`,
+// spokedWheel `spokeWindows`).
+export const MERGE_POINTS_MM = 1e-3
+
+/**
+ * Merge runs of points closer than `eps` into one. The FIRST point is kept as it is, and
+ * within a run the LAST one survives, so a subpath that closes on its start still closes
+ * exactly. `closed` rings (no repeated closing point, as Clipper returns them) also merge
+ * across the wrap from last to first.
+ */
+export function mergeClosePoints(pts: Pt2[], eps = MERGE_POINTS_MM, closed = false): Pt2[] {
+  if (pts.length < 2) return pts
+  const out: Pt2[] = [pts[0]]
+  for (let i = 1; i < pts.length; i++) {
+    const q = pts[i], last = out[out.length - 1]
+    if (Math.hypot(q[0] - last[0], q[1] - last[1]) >= eps) out.push(q)
+    else if (out.length > 1) out[out.length - 1] = q   // keep the later point of the pair
+  }
+  if (closed) {
+    while (out.length > 1) {
+      const a = out[out.length - 1], b = out[0]
+      if (Math.hypot(a[0] - b[0], a[1] - b[1]) >= eps) break
+      out.pop()
+    }
+  }
+  return out
+}
+
 export function flattenPath(d: string, tolerance = 0.1): Pt2[][] {
   const subpaths: Pt2[][] = []
   let current: Pt2[] = []
@@ -967,12 +1000,19 @@ export function requireClosedSubpaths(
       + `shapes, and an open one is closed off as though its ends were joined. ${opts.remedy}`)
 }
 
+// A loop enclosing less than this (mm²) encloses nothing: splitting a path where it
+// touches itself can cut off a "loop" of repeated points — three copies of one point on a
+// gear's spoke window. Handed to an offset, that zero-area loop is not ignored: Clipper
+// grows it into a square about a tool radius across, which it carves out of the real
+// loop's toolpath — a 0.6 mm notch with two 90° turns in an otherwise clean window.
+const MIN_LOOP_AREA_MM2 = 1e-6
+
 export function splitSelfIntersecting(subpaths: Pt2[][]): Pt2[][] {
   return subpaths
     .filter(s => s.length >= 3)
     .flatMap(s => splitSelfTouching(s))
     .filter(s => s.length >= 3)
     .flatMap(s => splitAtIntersections(s))
-    .filter(s => s.length >= 3)
+    .filter(s => s.length >= 3 && Math.abs(signedArea(s)) >= MIN_LOOP_AREA_MM2)
 }
 

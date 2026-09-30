@@ -139,27 +139,97 @@ export function spokeWindows(n: number, rimInner: number, hubOuter: number, spok
   if (step - 2 * halfAt(hubOuter) < SPOKE_GAP * 0.5) return []   // belt and braces
   const fillet = Math.min(WEB * spokeW, (rimInner - hubOuter) * 0.25, hw * 0.9)
 
+  // ONE window, drawn exactly and mirrored about its own centre line, then rotated round.
+  // It used to be sampled (24 points up each straight side) and filleted with Clipper
+  // (`roundConvex`), which gave each window — and each SIDE of each window — a different
+  // point list: Clipper snaps to its own grid, so a symmetric gear came back with different
+  // point counts per window, pairs of near-duplicate points along the rim, a dozen
+  // leftover points on one straight side and none on the other, and one window of five
+  // with a stray spike that notched its toolpath. Each fillet is only a circle tangent to
+  // a straight side and to the rim or hub circle, so it is computed, not offset.
+  // `exactWindow` is drawn about +X, so it is turned by half a step to sit between spoke
+  // 0 and spoke 1; the fallback is already drawn there.
+  const exact = exactWindow(step / 2, rimInner, hubOuter, hw, fillet)
+  const first: Pt[][] = exact ? [exact] : roundConvex([sampledWindow(step, rimInner, hubOuter, halfAt)], fillet)
+  const offset = exact ? step / 2 : 0
+
   const out: Pt[][] = []
   for (let i = 0; i < n; i++) {
-    const a0 = i * step, a1 = a0 + step
-    const ring: Pt[] = []
-    const radial = (from: number, to: number, side: 1 | -1, centre: number) => {
-      const steps = 24
-      for (let k = 0; k <= steps; k++) {
-        const r = from + ((to - from) * k) / steps
-        const a = centre + side * halfAt(r)
-        ring.push([r * Math.cos(a), r * Math.sin(a)])
-      }
-    }
-    radial(hubOuter, rimInner, 1, a0)                     // up this spoke's + side
-    arcInto(ring, 0, 0, rimInner, rimInner, a0 + halfAt(rimInner), a1 - halfAt(rimInner))
-    radial(rimInner, hubOuter, -1, a1)                    // down the next spoke's − side
-    arcInto(ring, 0, 0, hubOuter, hubOuter, a1 - halfAt(hubOuter), a0 + halfAt(hubOuter))
-    // The window's convex corners are the WEB's concave ones — the stress
-    // risers where a spoke meets the hub and the rim.
-    for (const r of roundConvex([ring], fillet)) out.push(r)
+    const turn = i * step + offset
+    const c = Math.cos(turn), sn = Math.sin(turn)
+    for (const r of first) out.push(turn === 0 ? r : r.map(([x, y]) => [x * c - y * sn, x * sn + y * c] as Pt))
   }
   return out
+}
+
+/**
+ * One window centred on +X, between a spoke at +h and a spoke at −h: the rim arc, a
+ * fillet, the straight side of the spoke (two points), a fillet, the hub arc — drawn for
+ * the upper half and mirrored, so it is symmetric by construction.
+ *
+ * The upper spoke's side is the line t·u + hw·v, u = (cos h, sin h) along the spoke and
+ * v = (sin h, −cos h) its normal into the window. A fillet of radius f tangent to it has
+ * its centre on t·u + (hw + f)·v; tangent to the rim from inside, that centre is R − f from
+ * the middle, and tangent to the hub from outside, r + f. Null if the geometry has no room
+ * for it — the caller then falls back to the sampled, offset window.
+ */
+function exactWindow(h: number, rim: number, hub: number, hw: number, f: number): Pt[] | null {
+  const ux = Math.cos(h), uy = Math.sin(h), vx = Math.sin(h), vy = -Math.cos(h)
+  const along = (t: number, off: number): Pt => [t * ux + off * vx, t * uy + off * vy]
+  const reachR = (rim - f) ** 2 - (hw + f) ** 2
+  const reachH = (hub + f) ** 2 - (hw + f) ** 2
+  if (!(reachR > 0) || !(reachH > 0)) return null
+  const tR = Math.sqrt(reachR), tH = Math.sqrt(reachH)
+  if (!(tR > tH)) return null                                  // the fillets would overlap
+  const cR = along(tR, hw + f), cH = along(tH, hw + f)
+  const rimT: Pt = [(cR[0] * rim) / (rim - f), (cR[1] * rim) / (rim - f)]   // fillet meets the rim
+  const hubT: Pt = [(cH[0] * hub) / (hub + f), (cH[1] * hub) / (hub + f)]   // fillet meets the hub
+  const sideR = along(tR, hw), sideH = along(tH, hw)           // fillets meet the spoke side
+  const aRim = Math.atan2(rimT[1], rimT[0]), aHub = Math.atan2(hubT[1], hubT[0])
+  if (!(aRim > 0)) return null                                 // rim tangency past the centre line
+
+  const upper: Pt[] = [[rim, 0]]
+  arcInto(upper, 0, 0, rim, rim, 0, aRim)                      // rim, up to the fillet
+  if (f > 1e-9) arcInto(upper, cR[0], cR[1], f, f, aRim, h + Math.PI / 2)   // round onto the side
+  else upper.push(sideR)
+  if (aHub > 0) {
+    upper.push(sideH)                                          // down the straight side
+    if (f > 1e-9) arcInto(upper, cH[0], cH[1], f, f, h + Math.PI / 2, aHub + Math.PI)   // round onto the hub
+    arcInto(upper, 0, 0, hub, hub, aHub, 0)                    // hub, back to the centre line
+  } else {
+    // A narrow window: its two hub fillets would cross the centre line before they reached
+    // the hub, so its inner end is ONE round, a circle of radius f touching both spoke
+    // sides — centred on the centre line at s, where s·sin h − hw = f. It stands clear of
+    // the hub (that is why the hub fillets could not reach it).
+    if (!(f > 1e-9)) return null
+    const sc = (hw + f) / Math.sin(h)
+    if (!(sc - f >= hub - 1e-9) || !(tR > sc * Math.cos(h))) return null
+    upper.push(along(sc * Math.cos(h), hw))                    // down the straight side
+    arcInto(upper, sc, 0, f, f, h + Math.PI / 2, Math.PI)       // round to the centre line
+  }
+  // The lower half is the mirror image, walked back: skip the two points ON the line.
+  const lower = upper.slice(1, -1).reverse().map(([x, y]) => [x, -y] as Pt)
+  return [...upper, ...lower]
+}
+
+/** The window as it used to be built: sampled, for `roundConvex` to fillet. The fallback
+ *  when `exactWindow` finds no room. */
+function sampledWindow(step: number, rimInner: number, hubOuter: number, halfAt: (r: number) => number): Pt[] {
+  const a0 = 0, a1 = step
+  const ring: Pt[] = []
+  const radial = (from: number, to: number, side: 1 | -1, centre: number) => {
+    const steps = 24
+    for (let k = 0; k <= steps; k++) {
+      const r = from + ((to - from) * k) / steps
+      const a = centre + side * halfAt(r)
+      ring.push([r * Math.cos(a), r * Math.sin(a)])
+    }
+  }
+  radial(hubOuter, rimInner, 1, a0)                     // up this spoke's + side
+  arcInto(ring, 0, 0, rimInner, rimInner, a0 + halfAt(rimInner), a1 - halfAt(rimInner))
+  radial(rimInner, hubOuter, -1, a1)                    // down the next spoke's − side
+  arcInto(ring, 0, 0, hubOuter, hubOuter, a1 - halfAt(hubOuter), a0 + halfAt(hubOuter))
+  return ring
 }
 
 // ─── The pinion a wheel CARRIES ───────────────────────────────────────────────

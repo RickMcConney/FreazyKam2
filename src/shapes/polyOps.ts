@@ -15,7 +15,7 @@
 
 import polygonClipping from 'polygon-clipping'
 import { inflatePathsD, JoinType, EndType } from 'clipper2-ts'
-import { signedArea } from '../cam/pathFlattener'
+import { signedArea, douglasPeucker } from '../cam/pathFlattener'
 import { stripClosingDuplicate } from '../cam/geom'
 import { clamp, fmt4 as fmt } from '../util/num'
 
@@ -129,6 +129,100 @@ export function roundConvex(rings: Pt[][], f: number): Pt[][] {
   if (eroded.length === 0) return rings
   return inflateRings(eroded, f)
 }
+
+/**
+ * An n-fold symmetric ring (centred on the origin) rebuilt from ONE of its n repeats: the
+ * ring is cut on the rays at `cutAngle` and `cutAngle + 2π/n`, and that sector is rotated
+ * round n times. The cut must fall where the outline is a plain curve crossed once — the
+ * space between a gear's teeth (the default, ±π/n about a tooth on +X), the root land of
+ * an escape wheel's gullet — never through a feature.
+ *
+ * Anything a Clipper offset has touched is only NEARLY symmetric: Clipper snaps to its
+ * own grid, and a feature at a different angle lands on it differently, so a wheel
+ * filleted as a whole ring came back with a different point list at every tooth. Repeating
+ * one sector makes every copy the same points, rotated.
+ *
+ * The sector is also SIMPLIFIED (points within SECTOR_SIMPLIFY_MM of the line through
+ * their neighbours are dropped): a fillet made by a Clipper offset carries near-duplicate
+ * pairs and leftover points along straight runs. `simplify: false` keeps every point, for
+ * an outline something downstream measures by its SAMPLES (the escape wheel's clearance). With `mirror`, only the first HALF of
+ * the sector is kept — cut again on the ray at its middle — and the other half is its
+ * mirror image, for a feature that is symmetric about its own centre line (an involute
+ * tooth), so that one feature is symmetric by construction too.
+ *
+ * Returns the ring unchanged if a cut ray does not cross it exactly once, or the sector
+ * strays outside its wedge — it is then not the shape this assumes, and a wrong cut
+ * would be worse than no cut.
+ */
+export function repeatSector(ring: Pt[], n: number, cutAngle = -Math.PI / n, mirror = false, simplify = true): Pt[] {
+  if (n < 2 || ring.length < 3) return ring
+  const wedge = (2 * Math.PI) / n
+  const crossing = (theta: number): { k: number; p: Pt } | null => {
+    const dx = Math.cos(theta), dy = Math.sin(theta)
+    let found: { k: number; p: Pt } | null = null
+    for (let k = 0; k < ring.length; k++) {
+      const a = ring[k], b = ring[(k + 1) % ring.length]
+      const ex = b[0] - a[0], ey = b[1] - a[1]
+      const den = dx * ey - dy * ex
+      if (Math.abs(den) < 1e-15) continue
+      const t = -(dx * a[1] - dy * a[0]) / den
+      if (t < 0 || t >= 1) continue
+      const p: Pt = [a[0] + t * ex, a[1] + t * ey]
+      if (p[0] * dx + p[1] * dy <= 0) continue   // the opposite ray
+      if (found) return null                      // crossed twice: not a plain curve here
+      found = { k, p }
+    }
+    return found
+  }
+  const span = mirror ? wedge / 2 : wedge
+  const lo = crossing(cutAngle), hi = crossing(cutAngle + span)
+  if (!lo || !hi) return ring
+  // Walk from the first cut to the second in ring order. If that walk goes the long way
+  // round, the ring runs clockwise: walk from the second instead, and turn it round.
+  const walk = (from: { k: number; p: Pt }, to: { k: number; p: Pt }): Pt[] => {
+    const out: Pt[] = [from.p]
+    for (let k = (from.k + 1) % ring.length; ; k = (k + 1) % ring.length) {
+      out.push(ring[k])
+      if (k === to.k) break
+    }
+    return out
+  }
+  const inWedge = (pts: Pt[]) => pts.every(([x, y]) => {
+    const rel = (((Math.atan2(y, x) - cutAngle) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)
+    return rel <= span + 1e-9 || rel >= 2 * Math.PI - 1e-9
+  })
+  let part = walk(lo, hi)
+  let dir = 1
+  if (!inWedge(part)) {
+    part = walk(hi, lo)
+    dir = -1
+    if (!inWedge(part)) return ring
+  }
+  // Walked from `cutAngle` towards `cutAngle + span` either way round; make it so.
+  if (dir === -1) part.reverse()
+  part.push(hi.p)
+  if (simplify) part = douglasPeucker(part, SECTOR_SIMPLIFY_MM) as Pt[]
+  let sector: Pt[] = part.slice(0, -1)
+  if (mirror) {
+    // Reflect in the centre-line ray at cutAngle + span, walked back from it: the far half.
+    const m = 2 * (cutAngle + span), cm = Math.cos(m), sm = Math.sin(m)
+    const far = part.slice(0, -1).reverse().map(([x, y]) => [x * cm + y * sm, x * sm - y * cm] as Pt)
+    sector = [...part, ...far.slice(0, -1)]
+  }
+  // The sector now runs from `cutAngle` anticlockwise, so the copies go anticlockwise too
+  // and the ring comes back CCW whichever way it went in (emitters set their own winding).
+  const out: Pt[] = []
+  for (let i = 0; i < n; i++) {
+    const c = Math.cos(i * wedge), sn = Math.sin(i * wedge)
+    for (const [x, y] of sector) out.push([x * c - y * sn, x * sn + y * c])
+  }
+  return out
+}
+
+// A repeated sector keeps a point only if dropping it would move the outline more than
+// this — a tenth of TOL, so it never coarsens a curve, and plenty to clear the micron
+// pairs and collinear leftovers a Clipper fillet leaves.
+const SECTOR_SIMPLIFY_MM = 0.005
 
 // ─── Emission ─────────────────────────────────────────────────────────────────
 

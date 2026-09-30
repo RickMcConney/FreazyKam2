@@ -45,7 +45,7 @@
 
 import {
   type Pt, clamp, arcInto, ellipseRing,
-  roundConcave, ringToD,
+  roundConcave, repeatSector, ringToD,
 } from './polyOps'
 import { seatHub, spokeWindows, pinRing, pinRingHoles, type HubFit, type PinRing } from './spokedWheel'
 import { generateTextD, isFontLoaded, SINGLE_LINE_FONT_FAMILY } from './textGenerator'
@@ -1105,7 +1105,13 @@ function toothedOutline(
   const fillet = cyc
     ? Math.min(ROOT_FILLET * m, 0.45 * (Math.max(0.1, cyc.pinDia) + Math.max(0, backlash)))
     : ROOT_FILLET * m
-  const rings = roundConcave([ring], fillet)
+  // Filleted as a whole ring, then rebuilt from ONE tooth rotated z times: Clipper's
+  // fillet gives each tooth a slightly different point list (see `repeatSector`), and
+  // every tooth of a gear should be the same points, rotated.
+  const filleted = roundConcave([ring], fillet)
+  // An involute tooth is symmetric about its own centre line, so only half of it is
+  // kept and mirrored; a cycloidal one is not (one face acts, the other is relieved).
+  const rings = filleted.length === 1 ? [repeatSector(filleted[0], z, undefined, !cyc)] : filleted
   if (TOOTH_CACHE.size >= TOOTH_CACHE_MAX) TOOTH_CACHE.delete(TOOTH_CACHE.keys().next().value!)
   TOOTH_CACHE.set(key, rings)
   return rings

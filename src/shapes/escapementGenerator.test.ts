@@ -1301,36 +1301,42 @@ describe('escapement — the pallet tip against the backs of the teeth', () => {
   // The clearance the embrace spends: the drop lock turns both pallets deeper,
   // and the exit pallet's tip is what comes at the back of the next tooth.
   // Nothing else here measures it — see `escapementToothClearance`.
-  it('keeps the tip well clear at the default 1.5° of lock', () => {
+  it('keeps the tip well clear at the default 1.5° of lock, measured on the tooth\'s back', () => {
     const c = escapementToothClearance(BASE)
     expect(c.clearance).toBeGreaterThan(TOOTH_CLEAR)
-    // And it is the tooth's BACK being measured, not the tip round or the
-    // leading face a tooth rests on — those sit within microns of the pallets.
-    expect(c.depth).toBeGreaterThan(0.3)
+    // And it is the tooth's BACK being measured — below the top of the tooth, where it
+    // lands on the pallet, and so off the tip round and the land beside it, which sit
+    // within microns of the pallets by design. (This used to ask for 0.3 mm below the tip,
+    // a stand-in for "not the round" that held only while a strip of back just past the
+    // round went unmeasured; the closest pass is in that strip, 0.15 mm down.)
+    expect(c.depth).toBeGreaterThan(0.05)
+    expect(c.depth).toBeLessThan(BASE.toothDepth)
   })
 
   it('reads 0.10 mm at 1.5° of drop, measured from the pallet\'s sharp tip as well as the wheel\'s points', () => {
-    // From the wheel's points alone this reads 0.131: the tip is one vertex and
-    // the back is sampled half a millimetre apart, so the tip coming at the
-    // middle of a flank goes unseen.
+    // From the wheel's points alone this reads 0.131: the tip is one vertex, so it has
+    // to be measured against the wheel's EDGES too, or the tip coming at the middle of
+    // a flank goes unseen.
     const c = escapementToothClearance({ ...BASE, drop: 1.5 })
     expect(c.clearance).toBeGreaterThan(0.085)
     expect(c.clearance).toBeLessThan(0.11)
     expect(c.side).toBe('exit')
   })
 
-  it('closes as the embrace seats the landing, stops once it is seated, and opens again with more drop', () => {
+  it('barely moves with lock, and is bought with drop — up to about 2°, where it levels off', () => {
     const tip = (o: Partial<EscapementSpec>) => escapementToothClearance({ ...BASE, ...o }).clearance
-    // The embrace turns the pallets deeper to seat the landing: 0.25 mm of it at
-    // 1.25° of lock, 0.46 at 1.5°, and the tip loses a tenth of a millimetre.
-    expect(tip({ lock: 1.5 })).toBeLessThan(tip({ lock: 1.25 }) - 0.05)
-    // Past the target the embrace stops growing, so more lock lengthens the run
-    // and leaves the tip where it was. Under the old 1 mm target it kept closing,
-    // to 0.08 mm at 2° — the reason the target came down.
-    expect(Math.abs(tip({ lock: 2 }) - tip({ lock: 1.75 }))).toBeLessThan(0.02)
-    expect(tip({ lock: 2 })).toBeGreaterThan(TOOTH_CLEAR)
-    // Drop is the free travel that carries the tooth's back clear.
-    expect(tip({ drop: 2.5 })).toBeGreaterThan(tip({}) + 0.05)
+    // Lock turns the pallets deeper to seat the landing, but the closest pass is on the
+    // back just past the tip round, and that hardly moves: 0.36–0.39 mm from 1° to 2°.
+    // (A check that could not see that strip read 0.50 at 1°–1.25° and a tenth less at
+    // 1.5°, and the design notes said lock cost the tip that tenth. It does not.)
+    const locks = [1, 1.25, 1.5, 1.75, 2].map((lock) => tip({ lock }))
+    expect(Math.max(...locks) - Math.min(...locks)).toBeLessThan(0.05)
+    for (const c of locks) expect(c).toBeGreaterThan(TOOTH_CLEAR)
+    // Drop is the free travel that carries the tooth's back clear: under the warning
+    // line at 1.5°, well clear at 2° — and past that, level.
+    expect(tip({ drop: 1.5 })).toBeLessThan(TOOTH_CLEAR)
+    expect(tip({ drop: 2 })).toBeGreaterThan(tip({ drop: 1.5 }) + 0.2)
+    expect(Math.abs(tip({ drop: 2.5 }) - tip({ drop: 2 }))).toBeLessThan(0.03)
   })
 
   it('reads zero when the tip runs into a tooth', () => {

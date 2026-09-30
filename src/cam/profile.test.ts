@@ -351,6 +351,21 @@ describe('generateProfile — the circle fast path', () => {
   })
 })
 
+describe('generateProfile — a window whose path repeats a point', () => {
+  it('cuts the window clean, with no notch where the point repeats', () => {
+    // A gear's spoke window has one point written three times, 0.1 µm apart, on a
+    // slanted edge. Split there, the repeat became a zero-area loop; offset alongside the
+    // window, Clipper grew it into a square a tool radius across and carved it out of the
+    // window's path — a 0.6 mm notch with two extra corners, material left standing and a
+    // stop in the corner. (On a square's straight edge the grown square lines up with the
+    // edge and hides; it takes a slanted one.)
+    const clean = generateProfile('M 0 0 L 0 20 L 20 0 Z', EM6, params({ side: 'inside' }))
+    const repeat = generateProfile('M 0 0 L 0 20 L 7.5 12.5 L 7.5001 12.4999 L 7.5001 12.4999 L 20 0 Z', EM6, params({ side: 'inside' }))
+    const xy = (segs: MotionSegment[]) => cuts(segs).map((s) => [+s.x.toFixed(6), +s.y.toFixed(6), s.z])
+    expect(xy(repeat)).toEqual(xy(clean))
+  })
+})
+
 describe('generateProfile — open strokes', () => {
   const STROKE = 'M 0 0 L 10 0 L 10 10'
 
