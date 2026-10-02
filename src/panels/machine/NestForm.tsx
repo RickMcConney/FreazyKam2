@@ -326,7 +326,7 @@ export function NestForm({ onClose }: { onClose: () => void }) {
             <p className="text-label text-gray-600 dark:text-neutral-400 normal-case">
               Parts are packed and then slid together until their straight edges stand exactly
               {sharedTool ? ` ${fmtLen(sharedTool.diameterMM, units)}` : ' one cutter'} apart — the
-              cutter's width. Profile them outside with the same tool and Shared Lines on, and the
+              cutter's width. Profile them outside with the same tool and Optimize Path on, and the
               line between two neighbours is cut once. Curved edges never share a line.
             </p>
           </div>
