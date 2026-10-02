@@ -22,8 +22,17 @@ interface ProfileFormState {
   allowanceMM: number
   roundCorners: boolean
   cornerToleranceMM: number
+  /** OPTIMIZE PATH — outside profiles of several paths only. Stored on the op as `sharedLines`. */
+  sharedLines: boolean
+  /** With it on: whether the routing may cut through waste to join toolpaths, and how far. */
+  bridgeGaps: boolean
+  bridgeMaxMM: number
   startFrom: StartFrom
 }
+
+// A bridge long enough to join parts packed a few cutters apart, short enough that a
+// stray one across a big gap of good stock is not on offer.
+const DEFAULT_BRIDGE_MAX_MM = 20
 
 // A new profile rounds its inside corners, by at most this much. Large enough that the
 // rounding arcs survive the G-code writer as G2/G3 (it fits arcs to 0.1 mm and needs a
@@ -57,6 +66,9 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
       // A profile saved before the option existed has none, and stays unrounded.
       roundCorners: (editOp.cornerToleranceMM ?? 0) > 0,
       cornerToleranceMM: (editOp.cornerToleranceMM ?? 0) > 0 ? editOp.cornerToleranceMM! : DEFAULT_CORNER_TOLERANCE_MM,
+      sharedLines: editOp.sharedLines ?? false,
+      bridgeGaps: (editOp.bridgeMaxMM ?? 0) > 0,
+      bridgeMaxMM: (editOp.bridgeMaxMM ?? 0) > 0 ? editOp.bridgeMaxMM! : DEFAULT_BRIDGE_MAX_MM,
       // Legacy ops stay on stock top — see PocketForm.
       startFrom: editOp.startFrom ?? { mode: 'stock' },
     } : { ...mergeWithDefaults(load('profile'), {
@@ -71,6 +83,9 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
       allowanceMM: 0,
       roundCorners: true,
       cornerToleranceMM: DEFAULT_CORNER_TOLERANCE_MM,
+      sharedLines: false,
+      bridgeGaps: false,
+      bridgeMaxMM: DEFAULT_BRIDGE_MAX_MM,
       // Deliberately not carried over from the saved defaults — see PocketForm.
       startFrom: { mode: 'auto' } as StartFrom,
     }, tools), startFrom: { mode: 'auto' } as StartFrom }
@@ -91,8 +106,22 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
   // acts on it; an empty selection means the user clicked away, not that the batch
   // should be emptied. See reviseBatch.
   const rev = reviseBatch(editPairs, (e) => e.path, editOp ? selPaths : [])
-  const selectedPaths = editOp ? [...rev.keep.map((e) => e.path), ...rev.add] : selPaths
-  const addedIds = new Set(rev.add.map((p) => p.id))
+  // A SHARED-LINE profile is one operation over a whole sheet (`pathId` + `pathIds`), so
+  // editing it revises that list rather than a batch: the selection is the sheet, and an
+  // empty selection — a click on blank canvas — leaves the sheet alone.
+  const sharedEdit = !!editOp?.sharedLines && !!editOp.pathIds
+  const sheetPaths = sharedEdit
+    ? [editOp!.pathId, ...editOp!.pathIds!].flatMap((id) => paths.find((p) => p.id === id) ?? [])
+    : []
+  const selectedPaths = sharedEdit
+    ? (selPaths.length > 0 ? selPaths : sheetPaths)
+    : editOp ? [...rev.keep.map((e) => e.path), ...rev.add] : selPaths
+  const sheetIds = new Set(sheetPaths.map((p) => p.id))
+  const selectedIds = new Set(selectedPaths.map((p) => p.id))
+  const addedIds = sharedEdit
+    ? new Set(selectedPaths.filter((p) => !sheetIds.has(p.id)).map((p) => p.id))
+    : new Set(rev.add.map((p) => p.id))
+  const removedPaths = sharedEdit ? sheetPaths.filter((p) => !selectedIds.has(p.id)) : rev.drop.map((e) => e.path)
   const selectedTool = tools.find((t) => t.id === form.toolId)
   // How far the tool reaches past the path — the same definition the stamp and the
   // staleness check use, so the start height previewed here is the one generated.
@@ -124,6 +153,15 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
       ? `${fmtLen(a, units)} on the wall — the ${opening ? 'opening' : 'part'} cuts ${fmtLen(2 * a, units)} ${opening ? 'under' : 'over'}size until a second pass at 0 cleans it.`
       : `Cuts ${fmtLen(-a, units)} past the line — the ${opening ? 'opening' : 'part'} comes out ${fmtLen(-2 * a, units)} ${opening ? 'over' : 'under'}size.`
   const updating = !editOp && selectedPaths.length > 0 && selectedPaths.every((p) => session.liveOpId(p.id))
+  // Optimize Path routes the outside cuts of several parts as one network. Corner rounding
+  // is off and hidden while it is on: it moves a corner of one part's cut path off the line
+  // its neighbour shares. Stock allowance stays — it moves every cut path alike.
+  const canShare = form.side === 'outside' && selectedPaths.length > 1
+  const sharing = canShare && form.sharedLines
+  // Ticking or unticking it on an existing profile changes what KIND of operation it is —
+  // one per part, or one for the whole sheet — so a Regenerate then replaces the batch with
+  // the other kind, in the same program slot and as one step (reviseBatchPaths).
+  const converting = !!editOp && sharing !== sharedEdit
 
   function handleToolChange(toolId: string) {
     const t = tools.find((x) => x.id === toolId)
@@ -138,15 +176,35 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
     if (selectedPaths.length === 0 || !selectedTool) return
     const tool = selectedTool
     const { toolId, side, depthMM, stepDownMM, direction, rampIn, allowanceMM, startFrom } = form
-    const cornerToleranceMM = form.roundCorners && side !== 'centerline' ? form.cornerToleranceMM : 0
+    const cornerToleranceMM = form.roundCorners && side !== 'centerline' && !sharing ? form.cornerToleranceMM : 0
+    if (sharing) {
+      const [first, ...rest] = selectedPaths
+      const bridgeMaxMM = form.bridgeGaps ? form.bridgeMaxMM : 0
+      await generate({
+        settings: { toolId, side: 'outside', depthMM, stepDownMM, direction, rampIn, allowanceMM, cornerToleranceMM: 0, sharedLines: true, bridgeMaxMM, startFrom },
+        items: [{
+          key: sharedEdit ? editOp!.id : `shared:${selectedPaths.map((p) => p.id).sort().join(',')}`,
+          op: sharedEdit ? editOp : undefined,
+          name: `Profile: ${selectedPaths.length} parts, optimized (${tool.name})`,
+          fields: { pathId: first.id, pathIds: rest.map((p) => p.id) },
+        }],
+        session, editOp,
+        // One op per part becoming one for the sheet: every member of the batch goes.
+        dropIds: converting ? editBatch.map((o) => o.id) : [],
+      }, form)
+      return
+    }
     const item = (path: ImportedPath, op?: ProfileOperation) =>
       ({ key: path.id, op, name: `Profile: ${path.name} (${tool.name})`, fields: { pathId: path.id } })
     await generate({
-      settings: { toolId, side, depthMM, stepDownMM, direction, rampIn, allowanceMM, cornerToleranceMM, startFrom },
-      items: editOp
-        ? [...rev.keep.map(({ op, path }) => item(path, op)), ...rev.add.map((path) => item(path))]
-        : selectedPaths.map((path) => item(path)),
-      session, editOp, dropIds: rev.drop.map((e) => e.op.id),
+      settings: { toolId, side, depthMM, stepDownMM, direction, rampIn, allowanceMM, cornerToleranceMM, sharedLines: false, bridgeMaxMM: 0, startFrom },
+      items: converting
+        // The sheet becoming one op per part: every part is a new op, and the sheet goes.
+        ? selectedPaths.map((path) => item(path))
+        : editOp
+          ? [...rev.keep.map(({ op, path }) => item(path, op)), ...rev.add.map((path) => item(path))]
+          : selectedPaths.map((path) => item(path)),
+      session, editOp, dropIds: converting ? [editOp!.id] : rev.drop.map((e) => e.op.id),
     }, form)
   }
 
@@ -165,6 +223,39 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
       <ToggleRow label="Direction" options={['climb', 'conventional'] as CuttingDirection[]} value={form.direction} onChange={(v) => up('direction', v)} />
       {/* Hidden for centerline: there is no side for stock to be left on, and a field that
           silently does nothing is worse than an absent one. */}
+      {canShare && (
+        <div>
+          <CheckRow id="profile-shared-lines" checked={form.sharedLines} onChange={(v) => up('sharedLines', v)}
+            label="Optimize Path" hint="one routed cut for all parts" />
+          {form.sharedLines && (
+            <>
+              <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">
+                One operation for the whole sheet. The cuts are joined into as few continuous
+                toolpaths as possible, carrying straight on through junctions so the machine need
+                not slow for a corner, and the tool stays down in kerf already cut instead of
+                lifting. Where two parts stand exactly one cutter apart (Nest with Shared Lines)
+                the line between them is cut once. Corner rounding is off.
+              </p>
+              <div className="mt-1.5">
+                <CheckRow id="profile-bridge-gaps" checked={form.bridgeGaps} onChange={(v) => up('bridgeGaps', v)}
+                  label="Bridge Gaps Through Waste" hint="joins toolpaths" />
+                {form.bridgeGaps && (
+                  <>
+                    <LengthInput id="profile-bridge-max" valueMM={form.bridgeMaxMM} minMM={1} maxMM={500} stepMM={1}
+                      onChangeMM={(v) => up('bridgeMaxMM', v)} />
+                    <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">
+                      May cut straight across a gap between two parts, up to {fmtLen(form.bridgeMaxMM, units)},
+                      when that joins two toolpaths and saves time. Never closer to a part than its own
+                      cut, never through a tab, never out into free stock. Waste a bridge cuts free is
+                      not held — use tape or clamps. Bridges show orange in the preview.
+                    </p>
+                  </>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
       {form.side !== 'centerline' && (
         <div>
           <label htmlFor="profile-stock-allowance" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">Stock Allowance</label>
@@ -176,7 +267,7 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
         </div>
       )}
       {/* Also hidden for centerline: there is no part side to pull the path away from. */}
-      {form.side !== 'centerline' && (
+      {form.side !== 'centerline' && !sharing && (
         <div>
           <CheckRow id="profile-round-corners" checked={form.roundCorners} onChange={(v) => up('roundCorners', v)}
             label="Round Inside Corners" hint="so the machine need not stop" />
@@ -204,7 +295,7 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
         label={generateLabel(!!editOp, updating)}
       />
       <BatchPathList groups={selectedPaths.map((boundary) => ({ boundary, islands: [] }))}
-        addedIds={addedIds} removed={rev.drop.map((e) => e.path)} editing={!!editOp} />
+        addedIds={addedIds} removed={removedPaths} editing={!!editOp} />
     </FormShell>
   )
 }

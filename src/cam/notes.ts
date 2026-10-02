@@ -18,7 +18,7 @@
  * user-facing names of things.
  */
 export interface GenNote {
-  kind: 'strategy-fallback' | 'region-skipped' | 'subcut-skipped'
+  kind: 'strategy-fallback' | 'region-skipped' | 'subcut-skipped' | 'shared-lines'
   short: string
 }
 

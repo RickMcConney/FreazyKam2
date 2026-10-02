@@ -7,6 +7,7 @@
 // return value the duplicate did not have, so every audited pocket failed with
 // "pocket.notes is not iterable". One table, two consumers.
 import { generateProfile } from '../cam/profile'
+import { generateSharedLineProfile } from '../cam/sharedLineProfile'
 import { generatePocket } from '../cam/pocket'
 import { takeNotes, type GenNote } from '../cam/notes'
 import { generateVCarve } from '../cam/vcarve'
@@ -29,6 +30,9 @@ async function withNotes<R extends object>(run: () => R | Promise<R>): Promise<R
 
 export const handlers = {
   generateProfile,
+  // A sheet of parts profiled as one network of shared lines (cam/sharedLineProfile).
+  generateSharedLineProfile: (...args: Parameters<typeof generateSharedLineProfile>) =>
+    withNotes(() => generateSharedLineProfile(...args)),
   generatePocket: (...args: Parameters<typeof generatePocket>) =>
     withNotes(() => ({ segments: generatePocket(...args) })),
   generateVCarve: (...args: Parameters<typeof generateVCarve>) =>

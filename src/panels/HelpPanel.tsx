@@ -62,7 +62,7 @@ const FEATURES = [
   },
   {
     title: 'Copying between projects',
-    desc: 'Ctrl+C copies the selected paths and Ctrl+V pastes them — into the same project, or into another one open in a second tab or window. The copy carries the OBJECTS, not just their outlines: a gear arrives with its module and tooth count still editable, a clock as one clock, a group as one group, and holding tabs come with the path. Provenance (an offset, a pattern, a boolean) survives only when the paths it was generated from are copied too, since a form has nothing to re-run without them. Pasting back into the project it came from nudges the copy 5 mm clear; into another project it lands where it was drawn. Operations are not copied — they name a tool and a floor the other project need not have.',
+    desc: 'Ctrl+C copies the selected paths and Ctrl+V pastes them — into the same project, or into another one open in a second tab or window. The copy carries the OBJECTS, not just their outlines: a gear arrives with its module and tooth count still editable, a clock as one clock, a group as one group, and holding tabs come with the path. Provenance (an offset, a pattern, a boolean) survives only when the paths it was generated from are copied too, since a form has nothing to re-run without them. Pasting back into the project it came from nudges the copy 5 mm clear; into another project it lands where it was drawn. If that spot is off screen it lands in the middle of the view instead, and pasting the same thing again steps each copy a further 5 mm so they do not stack. Operations are not copied — they name a tool and a floor the other project need not have.',
   },
   {
     title: 'Groups',
@@ -98,7 +98,7 @@ const FEATURES = [
   },
   {
     title: 'Path tools',
-    desc: 'Under CAM Operations, the Path Tools row reshapes geometry rather than cutting it: Boolean (union, intersect, subtract), Offset, Pattern (linear or circular array), Tabs (holding tabs) and Corners (round, chamfer, dogbone).',
+    desc: 'Under CAM Operations, the Path Tools row reshapes geometry rather than cutting it: Boolean (union, intersect, subtract), Offset (a rectangle, rounded rect, sign, circle, ellipse, polygon, star, heart, slot or shield stays that shape with new parameters; any other outline is offset exactly, or with Keep shape scaled to an average gap), Pattern (linear or circular array), Tabs (holding tabs) and Corners (round, chamfer, dogbone).',
   },
   {
     title: 'Objects strip',

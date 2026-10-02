@@ -651,7 +651,11 @@ export function startInputForOp(
   const cutMarginMM = op.type === 'profile'
     ? profileCutMarginMM(op.side, tools.find((t) => t.id === op.toolId), op.allowanceMM ?? 0)
     : 0
-  return { startFrom: op.startFrom, footprintD: path.d, cutMarginMM, opId: op.id }
+  // A shared-line profile cuts round every part of its sheet.
+  const footprintD = op.type === 'profile' && op.pathIds?.length
+    ? [path.d, ...op.pathIds.flatMap((id) => { const p = paths.find((x) => x.id === id); return p ? [p.d] : [] })].join(' ')
+    : path.d
+  return { startFrom: op.startFrom, footprintD, cutMarginMM, opId: op.id }
 }
 
 /** Resolved start Z for an existing operation; 0 for types with no start-height support. */

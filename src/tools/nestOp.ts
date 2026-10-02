@@ -45,6 +45,7 @@
 
 import { flattenPath, type Pt2 } from '../cam/pathFlattener'
 import { interiorPoint, ringsBBox } from '../cam/geom'
+import { snapToGap } from './nestSnap'
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -99,6 +100,13 @@ export interface NestParams {
   fill?: boolean
   /** Cell size. Defaults to a size that keeps the grid near a million cells. */
   resolutionMM?: number
+  /**
+   * SHARED LINES: after the raster, slide every part until its cut path — the outline
+   * grown by half this gap — touches its neighbours', so facing edges end up exactly this
+   * far apart. Set it to the cutter's diameter and give `spacingMM` the same value. See
+   * tools/nestSnap.ts.
+   */
+  snapGapMM?: number
 }
 
 /**
@@ -866,6 +874,28 @@ export function nest(items: NestItem[], params: NestParams): NestResult {
     ? { ...p, angleDeg: -p.angleDeg || 0, pivotX: p.pivotY, pivotY: p.pivotX, dx: p.dy, dy: p.dx }
     : p)
 
+  // ── Shared lines ───────────────────────────────────────────────────────────
+  // In real coordinates, so it slides toward the real edge the nest grew from.
+  let usedW = flip ? usedRows * res : usedCols * res
+  let usedH = flip ? usedCols * res : usedRows * res
+  if (params.snapGapMM && params.snapGapMM > 0 && out.length > 0) {
+    const placedRings = (p: NestPlacement) => {
+      const base = realRings.get(p.id.includes('#') ? p.id.slice(0, p.id.indexOf('#')) : p.id) ?? []
+      return translateRings(rotateRings(usableRings(base), p.pivotX, p.pivotY, p.angleDeg), p.dx, p.dy)
+    }
+    const shifts = snapToGap(
+      out.map((p) => ({ id: p.id, rings: placedRings(p) })),
+      params.obstacles ?? [],
+      { gapMM: params.snapGapMM, sheetWidthMM: params.sheetWidthMM, sheetHeightMM: params.sheetHeightMM, marginMM: params.marginMM, packFrom: params.packFrom ?? 'left' },
+    )
+    for (const p of out) {
+      const d = shifts.get(p.id)
+      if (d) { p.dx += d.dx; p.dy += d.dy }
+    }
+    const bb = ringsBBox(out.flatMap(placedRings))
+    if (bb) { usedW = bb.maxX; usedH = bb.maxY }
+  }
+
   // ── Parking ────────────────────────────────────────────────────────────────
   // Whatever would not fit goes in rows off the right-hand END of the stock, in
   // the order it was tried. Off the stock rather than tucked into a corner of it,
@@ -907,8 +937,8 @@ export function nest(items: NestItem[], params: NestParams): NestResult {
     unplacedIds: unplaced.map((u) => u.item.id),
     resolutionMM: res,
     utilization: (placedCells * res * res) / (W * H),  // on-stock parts only
-    usedWidthMM: flip ? usedRows * res : usedCols * res,
-    usedHeightMM: flip ? usedCols * res : usedRows * res,
+    usedWidthMM: usedW,
+    usedHeightMM: usedH,
     ...(fillLimited ? { fillLimited: true } : {}),
   }
 }

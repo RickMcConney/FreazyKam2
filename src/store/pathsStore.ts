@@ -186,6 +186,9 @@ function annotationSwitchOff(
  * lost an island — the caller regenerates them once the paths are written, since
  * generation reads the boundary back from the store.
  *
+ * The parts of a shared-line profile are the same case: deleting one takes it out of
+ * the sheet and the rest is cut without it.
+ *
  * An inlay still goes whole: its halves are built as a matched pair, and taking
  * an island out of one half without its plug in the other would cut a socket
  * the plug no longer fits.
@@ -200,6 +203,15 @@ function dropDependentsOf(deleteIds: string[]): string[] {
     if ((op.type === 'pocket' || op.type === 'vcarve') && !gone.has(op.pathId)) {
       reshaped.push(op.id)
       return [{ ...op, islandIds: op.islandIds.filter((id) => !gone.has(id)) }]
+    }
+    // A shared-line profile of a sheet loses the deleted parts and cuts the rest; it goes
+    // only with its last part.
+    if (op.type === 'profile' && op.pathIds) {
+      const left = [op.pathId, ...op.pathIds].filter((id) => !gone.has(id))
+      if (left.length > 0) {
+        reshaped.push(op.id)
+        return [{ ...op, pathId: left[0], pathIds: left.slice(1) }]
+      }
     }
     return []
   })

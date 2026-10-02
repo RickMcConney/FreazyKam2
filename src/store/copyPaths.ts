@@ -74,8 +74,10 @@ export function constraintsWithin(constraints: readonly Constraint[], ids: Reado
 }
 
 export interface CopyPathsOptions {
-  /** How far every copy is nudged, in mm on both axes. 0 leaves the geometry untouched. */
-  offsetMM: number
+  /** How far every copy is nudged, in mm — one number for the same step on both axes, or a
+   *  vector (Paste moving a copy that would land off screen into view). 0 leaves the
+   *  geometry untouched. */
+  offsetMM: number | { dx: number; dy: number }
   /** Id prefix for the new paths: `path-dup`, `path-paste`. */
   pathIdPrefix: string
   /** Name for a copy; unchanged when omitted. */
@@ -127,7 +129,9 @@ export function copyPaths(
   // Every recipe-less copy of one Copy/Duplicate records the same "copied from" definition
   // id — they were one gesture.
   const copiedFromDefId = uid('def')
-  const shift = opts.offsetMM
+  const { dx, dy } = typeof opts.offsetMM === 'number'
+    ? { dx: opts.offsetMM, dy: opts.offsetMM }
+    : opts.offsetMM
 
   const out = paths.map((p) => {
     const copy: ImportedPath = {
@@ -157,13 +161,13 @@ export function copyPaths(
           : { sourceId: newIdOf.get((def as { sourceId: string }).sourceId)! }),
       } as PathDefinition
     } else if (opts.lostRecipe === 'copied-from') {
-      copy.definition = { id: copiedFromDefId, kind: 'duplicate', sourceId: p.id, offsetMM: shift }
+      copy.definition = { id: copiedFromDefId, kind: 'duplicate', sourceId: p.id, offsetMM: dx }
     } else if (def?.kind === 'duplicate' && newIdOf.has(def.sourceId)) {
       copy.definition = { ...def, id: reissue(def.id, 'def')!, sourceId: newIdOf.get(def.sourceId)! }
     }
 
-    if (shift !== 0) {
-      copy.d = translateD(p.d, shift, shift)
+    if (dx !== 0 || dy !== 0) {
+      copy.d = translateD(p.d, dx, dy)
       // WHERE THE NUDGE GOES DEPENDS ON WHAT DRAWS `d`. A shape with a PLACEMENT has `d` =
       // its definition put through that recipe, so the nudge belongs at the END of the
       // recipe; moving the definition instead comes back out through a rotation as a shift
@@ -171,13 +175,13 @@ export function copyPaths(
       // position, and they have to move or the copy's next spinner step puts it back on top
       // of the original.
       if (p.placement?.length) {
-        copy.placement = [...p.placement, { kind: 'translate', dx: shift, dy: shift }]
+        copy.placement = [...p.placement, { kind: 'translate', dx, dy }]
       } else if (p.shapeParams) {
-        copy.shapeParams = translateShapeParams(p.shapeParams, shift, shift)
+        copy.shapeParams = translateShapeParams(p.shapeParams, dx, dy)
       }
       // The corner recipe is stated against its own base outline, so that moves with the
       // path too, or reopening the form re-cuts the corners where the original stands.
-      if (p.corners) copy.corners = { ...p.corners, baseD: translateD(p.corners.baseD, shift, shift) }
+      if (p.corners) copy.corners = { ...p.corners, baseD: translateD(p.corners.baseD, dx, dy) }
     }
     return copy
   })

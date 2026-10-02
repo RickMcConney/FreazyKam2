@@ -111,7 +111,11 @@ export interface ImportedPath {
 // A generated path's provenance. A parametric SHAPE carries `shapeParams`
 // instead — same idea, older field.
 export type PathDefinition = { id: string } & (
-  | { kind: 'offset'; sourceId: string; distanceMM: number; cornerStyle: OffsetCornerStyle }
+  // `keepShape`: scaled until the MEAN gap is the distance (tools/scaleOffset) rather
+  // than offset exactly; absent on offsets made before it, which are exact.
+  // `keepGenerated`: a generated source came out as the same shape with new parameters
+  // (tools/shapeOffset); absent on offsets made before it, which are outlines.
+  | { kind: 'offset'; sourceId: string; distanceMM: number; cornerStyle: OffsetCornerStyle; keepShape?: boolean; keepGenerated?: boolean }
   | { kind: 'pattern'; sourceIds: string[]; params: PatternParams }
   | { kind: 'duplicate'; sourceId: string; offsetMM: number }
   | { kind: 'boolean'; op: BooleanOpType; sourceIds: string[] }

@@ -12,6 +12,8 @@ import { decodeStlMesh } from '../importers/stlImporter'
 import { effectiveStepDownMM, trochoidalEngagementFraction } from './feeds'
 import { resolveStartZForOp } from './startHeight'
 import type { GenNote } from './notes'
+import type { MachineRates } from './sharedLineProfile'
+import { FALLBACK_RAPID_MM_MIN } from '../sim/motionPlanner'
 import { useUIStore } from '../store/uiStore'
 
 // ONE PLACE THAT TURNS A STORED OPERATION INTO ITS GENERATOR CALL.
@@ -41,6 +43,17 @@ import { useUIStore } from '../store/uiStore'
  */
 export function inlayJobKey(op: { id: string; linkedOpId?: string }): string {
   return op.linkedOpId ? `inlay-pair:${[op.id, op.linkedOpId].sort()[0]}` : op.id
+}
+
+/** The machine as a shared-line profile prices it: rapid rate, acceleration and junction
+ *  deviation, with the simulator's fallbacks where the profile leaves them unset. */
+export function machineRates(): MachineRates {
+  const { maxFeedMmMin, accelXYMmS2, junctionDeviationMM } = useWorkpieceStore.getState()
+  return {
+    rapidMmMin: maxFeedMmMin > 0 ? maxFeedMmMin : FALLBACK_RAPID_MM_MIN,
+    accelMmS2: accelXYMmS2 > 0 ? accelXYMmS2 : 200,
+    junctionDeviationMM: junctionDeviationMM > 0 ? junctionDeviationMM : 0.01,
+  }
 }
 
 /**
@@ -101,7 +114,21 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
 
   const _t0 = performance.now()
 
-  if (op.type === 'profile') {
+  if (op.type === 'profile' && op.sharedLines && op.pathIds?.length) {
+    // OPTIMIZE PATH: one operation over every part, cut as one routed network (cam/sharedLineProfile).
+    const parts = [op.pathId, ...op.pathIds].map((id) => {
+      const path = paths.find((p) => p.id === id)
+      if (!path) throw new Error('Source path not found')
+      return { d: path.d, tabs: tabsForGeneration(id) }
+    })
+    const result = await runInWorkerFor(opId, 'generateSharedLineProfile', parts, tool, {
+      side: op.side, depthMM: op.depthMM, stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM), direction: op.direction,
+      startNear: op.entryHint, rampIn: op.rampIn, safeHeightMM, allowanceMM: op.allowanceMM, startZMM,
+    }, machineRates(), { bridgeMaxMM: op.bridgeMaxMM ?? 0 })
+    setSegments(opId, result.segments, builtWith)
+    notes.push(...result.notes)
+
+  } else if (op.type === 'profile') {
     const path = paths.find((p) => p.id === op.pathId)
     if (!path) throw new Error('Source path not found')
     setSegments(opId, await runInWorkerFor(opId, 'generateProfile', path.d, tool, {

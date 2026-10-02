@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { parsePaths, remapForPaste, serializePaths, type ClipboardPayload } from './pathClipboard'
 import type { ImportedPath } from '../importers/svgImporter'
+import { getBBox } from '../canvas/selectionUtils'
 import type { Tab } from '../store/tabStore'
 
 const path = (p: Partial<ImportedPath> & { id: string }): ImportedPath => ({
@@ -96,6 +97,45 @@ describe('the path clipboard', () => {
     expect(elsewhere.d).toBe(p.d)
     if (elsewhere.shapeParams?.type !== 'circle') throw new Error('lost the params')
     expect(elsewhere.shapeParams.cx).toBe(10)
+  })
+
+  // A paste that lands off screen looks exactly like a paste that failed. So it keeps its
+  // own position while that is in view, and is centred in the view when it is not.
+  it('keeps its position when that is on screen, and is centred in view when it is not', () => {
+    const p = path({ id: 'a', d: 'M5,5 L15,5 L15,15 L5,15 Z', shapeParams: { type: 'circle', cx: 10, cy: 10, radius: 5 } })
+    const showing = { minX: 0, minY: 0, maxX: 100, maxY: 50 }
+    const inView = remapForPaste(payloadOf([p]), new Set(['other']), showing).paths[0]
+    expect(inView.d).toBe(p.d)
+
+    const elsewhere = { minX: 200, minY: -40, maxX: 300, maxY: 60 }
+    const moved = remapForPaste(payloadOf([p]), new Set(['other']), elsewhere).paths[0]
+    if (moved.shapeParams?.type !== 'circle') throw new Error('lost the params')
+    expect(moved.shapeParams.cx).toBeCloseTo(250)
+    expect(moved.shapeParams.cy).toBeCloseTo(10)
+
+    // Back into its own project the 5 mm nudge is what decides it: a copy whose nudged
+    // position is still in view stays nudged, not recentred.
+    const same = remapForPaste(payloadOf([p]), new Set(['a']), showing).paths[0]
+    if (same.shapeParams?.type !== 'circle') throw new Error('lost the params')
+    expect(same.shapeParams.cx).toBe(15)
+    expect(same.shapeParams.cy).toBe(15)
+  })
+
+  // Pasting the same thing again would land exactly on the last paste and look like one
+  // shape, so each repeat steps a further 5 mm clear of the copies already standing there.
+  it('steps a repeated paste clear of the copies it already made', () => {
+    const p = path({ id: 'a', d: 'M5,5 L15,5 L15,15 L5,15 Z' })
+    const elsewhere = { minX: 200, minY: -40, maxX: 300, maxY: 60 }
+    const ds: string[] = []
+    const centres: number[] = []
+    for (let i = 0; i < 3; i++) {
+      const pasted = remapForPaste(payloadOf([p]), new Set(['other']), elsewhere, ds).paths[0]
+      ds.push(pasted.d)
+      centres.push(getBBox(pasted.d)!.cx)
+    }
+    expect(centres[0]).toBeCloseTo(250)
+    expect(centres[1]).toBeCloseTo(255)
+    expect(centres[2]).toBeCloseTo(260)
   })
 
   // A corner treatment is a recipe over an untreated outline, so BOTH have to

@@ -18,6 +18,7 @@ export interface MotionSegment {
   z: number
   rapid: boolean
   travel?: boolean      // stay-down micro-lift transition (not cutting, not full safe-height rapid)
+  bridge?: boolean      // an optimized profile's cut through waste between two parts — drawn apart in the preview
   arc?: { cx: number; cy: number; cw: boolean }  // absolute arc center + direction; G2=cw, G3=ccw
   toolChange?: string  // toolId: emit tool-change gcode at this point, no movement
   feedScale?: number   // multiplier applied to computed feed rate (default 1.0)
@@ -77,6 +78,15 @@ export interface ProfileOperation extends BaseOperation {
    *  from the part (cam/cornerRounding.ts). Absent/0 = off — which is what every profile
    *  saved before the option existed reads as, so reopening one never moves its path. */
   cornerToleranceMM?: number
+  /** OPTIMIZE PATH (stored under its first name): an outside profile of a whole sheet —
+   *  `pathId` and every path in `pathIds` — cut as one routed network, each line two parts
+   *  share cut once (cam/sharedLineProfile.ts). Absent = an ordinary profile of `pathId`. */
+  sharedLines?: boolean
+  /** The sheet's other parts, when `sharedLines`. */
+  pathIds?: string[]
+  /** With `sharedLines`: the longest straight cut through waste the routing may add to join
+   *  two toolpaths (cam/sharedLineProfile.ts). Absent/0 = never cut outside the lines. */
+  bridgeMaxMM?: number
 }
 
 export interface PocketOperation extends BaseOperation {
@@ -310,7 +320,7 @@ export function nothingToCut(op: AnyOperation, operations: AnyOperation[]): bool
 }
 
 export function refsPathId(op: AnyOperation, pathId: string): boolean {
-  if (op.type === 'profile') return op.pathId === pathId
+  if (op.type === 'profile') return op.pathId === pathId || !!op.pathIds?.includes(pathId)
   if (op.type === 'trochoidal') return op.pathId === pathId
   if (op.type === 'pocket') return op.pathId === pathId || op.islandIds.includes(pathId)
   if (op.type === 'drill') return op.pathId === pathId
@@ -374,6 +384,8 @@ export function pathIdsOf(op: AnyOperation | SerializedOperation): string[] {
   const ids: string[] = []
   if ('pathId' in op && op.pathId) ids.push(op.pathId)
   if ('islandIds' in op && op.islandIds) ids.push(...op.islandIds)
+  // A shared-line profile: the sheet's other parts.
+  if ('pathIds' in op && op.pathIds) ids.push(...op.pathIds)
   // Inlay male: the background outline it clears, and the sibling plugs standing in it.
   if ('fieldId' in op && op.fieldId) ids.push(op.fieldId)
   if ('fieldPlugIds' in op && op.fieldPlugIds) ids.push(...op.fieldPlugIds)

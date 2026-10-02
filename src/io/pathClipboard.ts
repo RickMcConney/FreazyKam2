@@ -26,6 +26,8 @@ import { useTabStore, type Tab } from '../store/tabStore'
 import { useConstraintsStore } from '../store/constraintsStore'
 import type { Constraint } from '../store/constraints'
 import { useUIStore } from '../store/uiStore'
+import { visibleRectMM, type ViewRectMM } from '../store/canvasStore'
+import { getBBox, getMultiBBox } from '../canvas/selectionUtils'
 import type { ImportedPath } from '../importers/svgImporter'
 
 /** Marks the text as ours. Anything else on the clipboard is left to the browser. */
@@ -101,12 +103,52 @@ export function parsePaths(text: string): ClipboardPayload | null {
  * nudged clear rather than landing exactly on the original), and nothing else —
  * ids are reissued either way, because a paste is a new object even when it is a
  * copy of one that is still there.
+ *
+ * `view` is what the canvas is showing. A paste keeps its own position when that is on
+ * screen, and is centred in the view when it is not — a paste that lands off screen
+ * looks exactly like a paste that failed.
+ *
+ * `existingDs` are the outlines already in the document. Wherever the paste lands, if an
+ * identical copy is already sitting there — the same paste made again — it steps another
+ * nudge until it is clear, or repeated pastes pile up on one spot and look like one.
  */
 export function remapForPaste(
   payload: ClipboardPayload,
   existingIds: Set<string>,
+  view: ViewRectMM | null = null,
+  existingDs: readonly string[] = [],
 ): { paths: ImportedPath[]; tabs: Tab[]; constraints: Constraint[] } {
   const sameDoc = payload.paths.some((p) => existingIds.has(p.id))
+  const nudge = sameDoc ? SAME_DOC_OFFSET_MM : 0
+  let offset = { dx: nudge, dy: nudge }
+  // Judged on what the user copied, not the hidden operands riding along with it.
+  const shown = payload.paths.filter((p) => !p.hidden)
+  const judged = shown.length > 0 ? shown : payload.paths
+  if (view) {
+    const box = getMultiBBox(judged.map((p) => p.d))
+    if (box) {
+      const cx = box.cx + nudge, cy = box.cy + nudge
+      const onScreen = cx >= view.minX && cx <= view.maxX && cy >= view.minY && cy <= view.maxY
+      if (!onScreen) offset = { dx: (view.minX + view.maxX) / 2 - box.cx, dy: (view.minY + view.maxY) / 2 - box.cy }
+    }
+  }
+  // An earlier paste of the same thing is recognised by its first path's bbox: an existing
+  // outline with exactly that box, moved by the offset, is a copy already standing there.
+  const first = getBBox(judged[0].d)
+  if (first && existingDs.length > 0) {
+    const key = (x0: number, y0: number, x1: number, y1: number) =>
+      [x0, y0, x1, y1].map((v) => Math.round(v * 1000)).join(',')
+    const taken = new Set<string>()
+    for (const d of existingDs) {
+      const b = getBBox(d)
+      if (b) taken.add(key(b.minX, b.minY, b.maxX, b.maxY))
+    }
+    for (let i = 0; i < 100; i++) {
+      const { dx, dy } = offset
+      if (!taken.has(key(first.minX + dx, first.minY + dy, first.maxX + dx, first.maxY + dy))) break
+      offset = { dx: dx + SAME_DOC_OFFSET_MM, dy: dy + SAME_DOC_OFFSET_MM }
+    }
+  }
   // The one copy Duplicate makes too (store/copyPaths). What is Paste's own: the nudge only
   // when the copy recognises its own project, and a recipe that could not come is DROPPED
   // rather than recorded as "copied from" — the path it would name may be in another
@@ -114,7 +156,7 @@ export function remapForPaste(
   // payload is text off the system clipboard and may say anything.
   const { paths, tabs, constraints } = copyPaths(
     payload.paths, payload.tabs, payload.constraints ?? [],
-    { offsetMM: sameDoc ? SAME_DOC_OFFSET_MM : 0, pathIdPrefix: 'path-paste', lostRecipe: 'drop' },
+    { offsetMM: offset, pathIdPrefix: 'path-paste', lostRecipe: 'drop' },
   )
   return { paths, tabs, constraints }
 }
@@ -140,7 +182,8 @@ export function pastePathsFromText(text: string): number {
   const payload = parsePaths(text)
   if (!payload) return 0
   const store = usePathsStore.getState()
-  const { paths, tabs, constraints } = remapForPaste(payload, new Set(store.paths.map((p) => p.id)))
+  const { paths, tabs, constraints } = remapForPaste(
+    payload, new Set(store.paths.map((p) => p.id)), visibleRectMM(), store.paths.map((p) => p.d))
   if (paths.length === 0) return 0
   // Selected: what was COPIED, never the hidden operands that rode along with it — the
   // same rule Duplicate follows, since selecting something invisible leaves the panel

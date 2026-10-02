@@ -1,7 +1,8 @@
 // ─── Nest form ────────────────────────────────────────────────────────────────
 import { useMemo, useState } from 'react'
 import { AlertCircle } from 'lucide-react'
-import { FormShell, PathChip, ToggleRow, LengthInput, FormNotice, GenerateBtn } from './shared'
+import { FormShell, PathChip, ToggleRow, LengthInput, FormNotice, GenerateBtn, ToolSelector, toolsOfType, pickToolId } from './shared'
+import { useToolStore } from '../../store/toolStore'
 import { ICON } from '../../theme'
 import { useFormDefaultsStore } from '../../store/formDefaultsStore'
 import { usePathsStore, useSelectedPaths, type ImportedPath } from '../../store/pathsStore'
@@ -33,11 +34,15 @@ interface NestFormState {
   avoidOthers: boolean
   /** Repeat the one selected part until the stock is full — see canFill. */
   fillStock: boolean
+  /** Place parts exactly one cutter apart so their outside profiles share lines. */
+  sharedLines: boolean
+  /** The cutter whose diameter is the gap when `sharedLines` is on. */
+  sharedToolId: string
 }
 
 const FALLBACK: NestFormState = {
   spacingMM: 3, marginMM: 3, rotation: '90', packFrom: 'left', useHoles: false,
-  avoidOthers: true, fillStock: false,
+  avoidOthers: true, fillStock: false, sharedLines: false, sharedToolId: '',
 }
 
 interface NestReport {
@@ -74,6 +79,13 @@ export function NestForm({ onClose }: { onClose: () => void }) {
   const heightMM = useWorkpieceStore((s) => s.heightMM)
 
   const [form, setForm] = useState<NestFormState>(() => ({ ...FALLBACK, ...(load('nest') as Partial<NestFormState> | null) }))
+  // SHARED LINES: the gap IS the cutter. Two parts exactly one diameter apart have outside
+  // cut paths that coincide along facing edges, which is what lets a shared-line profile
+  // cut that line once. End mills only — a V-bit's or ball nose's cut width depends on depth.
+  const cutters = toolsOfType(useToolStore((s) => s.tools), ['endmill'])
+  const sharedTool = cutters.find((t) => t.id === pickToolId(form.sharedToolId, cutters))
+  const sharing = form.sharedLines && !!sharedTool
+  const gapMM = sharing ? sharedTool!.diameterMM : form.spacingMM
   const [error, setError] = useState<string | null>(null)
   const [report, setReport] = useState<NestReport | null>(null)
   const [running, setRunning] = useState(false)
@@ -146,8 +158,9 @@ export function NestForm({ onClose }: { onClose: () => void }) {
     const result = await runInWorkerFor(undefined, 'nest', items, {
       sheetWidthMM: widthMM,
       sheetHeightMM: heightMM,
-      spacingMM: form.spacingMM,
+      spacingMM: gapMM,
       marginMM: form.marginMM,
+      ...(sharing ? { snapGapMM: gapMM } : {}),
       rotationStepDeg: ROT_STEP[form.rotation],
       packFrom: form.packFrom,
       useHoles: form.useHoles,
@@ -296,11 +309,37 @@ export function NestForm({ onClose }: { onClose: () => void }) {
         )}
       </div>
 
+      <div>
+        <div className="flex items-center gap-2">
+          <input type="checkbox" id="nest-shared" checked={form.sharedLines}
+            onChange={(e) => up('sharedLines', e.target.checked)} className="accent-blue-500" />
+          <label htmlFor="nest-shared" className="text-body text-gray-700 dark:text-neutral-300 cursor-pointer"
+            title="Place parts one cutter apart so neighbours share a cut">
+            Shared lines
+          </label>
+        </div>
+        {form.sharedLines && (
+          <div className="mt-1 space-y-1">
+            {cutters.length > 0
+              ? <ToolSelector tools={cutters} value={sharedTool?.id ?? ''} onChange={(id) => up('sharedToolId', id)} />
+              : <p className="text-body text-amber-600 dark:text-amber-400">Add an end mill to the tool library first.</p>}
+            <p className="text-label text-gray-600 dark:text-neutral-400 normal-case">
+              Parts are packed and then slid together until their straight edges stand exactly
+              {sharedTool ? ` ${fmtLen(sharedTool.diameterMM, units)}` : ' one cutter'} apart — the
+              cutter's width. Profile them outside with the same tool and Shared Lines on, and the
+              line between two neighbours is cut once. Curved edges never share a line.
+            </p>
+          </div>
+        )}
+      </div>
+
       <div className="grid grid-cols-2 gap-2">
         <div>
           <label htmlFor="nest-spacing" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">Part Gap</label>
-          <LengthInput id="nest-spacing" valueMM={form.spacingMM} minMM={0} stepMM={0.5}
-            onChangeMM={(mm) => up('spacingMM', mm)} />
+          {sharing
+            ? <p id="nest-spacing" className="text-body text-gray-700 dark:text-neutral-300 py-1">{fmtLen(gapMM, units)} (cutter)</p>
+            : <LengthInput id="nest-spacing" valueMM={form.spacingMM} minMM={0} stepMM={0.5}
+                onChangeMM={(mm) => up('spacingMM', mm)} />}
         </div>
         <div>
           <label htmlFor="nest-margin" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">Edge Margin</label>

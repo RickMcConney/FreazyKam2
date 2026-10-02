@@ -11,10 +11,11 @@ import type { PathDefinition } from '../../importers/svgImporter'
 import { useUIStore } from '../../store/uiStore'
 import { regenerateAffectedMany } from '../../cam/regenerate'
 import { useWorkpieceStore, fromMM, toMM } from '../../store/workpieceStore'
-import { computePatternInstances, patternCopies, type PatternParams } from '../../tools/patternOp'
+import { computePatternInstances, isLegacyLinear, patternCopies, type PatternParams } from '../../tools/patternOp'
+import { getMultiBBox } from '../../canvas/selectionUtils'
 import { uid } from '../../uid'
 
-interface PatternLinParams { rows: number; cols: number; xSpacingMM: number; ySpacingMM: number }
+interface PatternLinParams { rows: number; cols: number; xGapMM: number; yGapMM: number }
 interface PatternCirParams { count: number; radiusMM: number; startAngleDeg: number; endAngleDeg: number; rotateItems: boolean }
 interface PatternFormState {
   mode: 'linear' | 'circular'
@@ -44,17 +45,28 @@ export function PatternForm({ onClose, editCtx }: { onClose: () => void; editCtx
   const def0 = defPaths.find((p) => p.definition?.kind === 'pattern')?.definition
   const defParams = def0?.kind === 'pattern' ? def0 : null
 
+  const sourcePaths = defParams
+    ? defParams.sourceIds.flatMap((id) => { const p = paths.find((x) => x.id === id); return p ? [p] : [] })
+    : editCtx ? [] : selPaths
+
   const [form, setForm] = useState<PatternFormState>(() => {
     const saved = load('pattern') as Partial<PatternFormState> | null
+    // Defaults saved before gaps hold a pitch under other names; a pitch is no gap, so
+    // they fall back to the default rather than being misread.
+    const savedLin = saved?.linParams && typeof saved.linParams.xGapMM === 'number' ? saved.linParams : null
     const base: PatternFormState = {
       mode: saved?.mode ?? 'linear',
-      linParams: saved?.linParams ?? { rows: 2, cols: 3, xSpacingMM: 20, ySpacingMM: 20 },
+      linParams: savedLin ?? { rows: 2, cols: 3, xGapMM: 5, yGapMM: 5 },
       cirParams: saved?.cirParams ?? { count: 6, radiusMM: 30, startAngleDeg: 0, endAngleDeg: 360, rotateItems: true },
     }
     if (defParams) {
       const p = defParams.params
       if (p.type === 'linear') {
-        return { ...base, mode: 'linear', linParams: { rows: p.rows, cols: p.cols, xSpacingMM: p.xSpacingMM, ySpacingMM: p.ySpacingMM } }
+        // A pattern saved as a pitch reopens as the gap that pitch left between boxes.
+        const box = isLegacyLinear(p) ? getMultiBBox(sourcePaths.map((s) => s.d)) : null
+        const xGapMM = isLegacyLinear(p) ? p.xSpacingMM! - (box?.width ?? 0) : p.xGapMM ?? 0
+        const yGapMM = isLegacyLinear(p) ? Math.abs(p.ySpacingMM ?? 0) - (box?.height ?? 0) : p.yGapMM ?? 0
+        return { ...base, mode: 'linear', linParams: { rows: p.rows, cols: p.cols, xGapMM, yGapMM } }
       }
       return { ...base, mode: 'circular', cirParams: { count: p.count, radiusMM: p.radiusMM, startAngleDeg: p.startAngleDeg, endAngleDeg: p.endAngleDeg, rotateItems: p.rotateItems } }
     }
@@ -62,9 +74,7 @@ export function PatternForm({ onClose, editCtx }: { onClose: () => void; editCtx
   })
   const [error, setError] = useState<string | null>(null)
 
-  const selectedPaths = defParams
-    ? defParams.sourceIds.flatMap((id) => { const p = paths.find((x) => x.id === id); return p ? [p] : [] })
-    : editCtx ? [] : selPaths
+  const selectedPaths = sourcePaths
   const canApply = selectedPaths.length >= 1
 
   function upLin<K extends keyof PatternLinParams>(k: K, v: PatternLinParams[K]) {
@@ -79,9 +89,11 @@ export function PatternForm({ onClose, editCtx }: { onClose: () => void; editCtx
     const params: PatternParams = form.mode === 'linear'
       ? { type: 'linear' as const, ...form.linParams }
       : { type: 'circular' as const, ...form.cirParams }
-    const instances = computePatternInstances(params)
+    const instances = computePatternInstances(params, getMultiBBox(selectedPaths.map((p) => p.d)))
     if (instances.length === 0) { setError('Pattern produced no instances'); return }
-    const instancesToCreate = form.mode === 'linear' ? instances.slice(1) : instances
+    // [0] is the original itself, for both kinds — a circular pattern's count includes it.
+    const instancesToCreate = instances.slice(1)
+    if (instancesToCreate.length === 0) { setError('A pattern of one is just the original'); return }
     // A COPY IS THE SHAPE IT WAS COPIED FROM. patternCopies carries the whole
     // identity across — parameters, placement, the shared groupId that makes a
     // train track's body, grooves and treads ONE part — with a fresh group per
@@ -159,8 +171,8 @@ export function PatternForm({ onClose, editCtx }: { onClose: () => void; editCtx
           {([
             ['Rows', form.linParams.rows, (v: number) => upLin('rows', Math.max(1, Math.round(v))), 1, 1, ''],
             ['Cols', form.linParams.cols, (v: number) => upLin('cols', Math.max(1, Math.round(v))), 1, 1, ''],
-            ['X Gap', fromMM(form.linParams.xSpacingMM, u as 'mm' | 'in'), (v: number) => upLin('xSpacingMM', toMM(v, u as 'mm' | 'in')), 0, u === 'in' ? 0.0625 : 1, u],
-            ['Y Gap', fromMM(form.linParams.ySpacingMM, u as 'mm' | 'in'), (v: number) => upLin('ySpacingMM', toMM(v, u as 'mm' | 'in')), 0, u === 'in' ? 0.0625 : 1, u],
+            ['X Gap', fromMM(form.linParams.xGapMM, u as 'mm' | 'in'), (v: number) => upLin('xGapMM', toMM(v, u as 'mm' | 'in')), -Infinity, u === 'in' ? 0.0625 : 1, u],
+            ['Y Gap', fromMM(form.linParams.yGapMM, u as 'mm' | 'in'), (v: number) => upLin('yGapMM', toMM(v, u as 'mm' | 'in')), -Infinity, u === 'in' ? 0.0625 : 1, u],
           ] as [string, number, (v: number) => void, number, number, string][]).map(([lbl, val, fn, min, step, suffix]) => (
             <div key={lbl}>
               <label htmlFor="pattern-f2" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">{lbl}</label>
@@ -175,7 +187,7 @@ export function PatternForm({ onClose, editCtx }: { onClose: () => void; editCtx
           <div className="grid grid-cols-2 gap-2">
             {([
               ['Count', form.cirParams.count, (v: number) => upCir('count', Math.max(2, Math.round(v))), 2, 1, ''],
-              ['Radius', fromMM(form.cirParams.radiusMM, u as 'mm' | 'in'), (v: number) => upCir('radiusMM', toMM(v, u as 'mm' | 'in')), 0.1, u === 'in' ? 0.0625 : 1, u],
+              ['Radius', fromMM(form.cirParams.radiusMM, u as 'mm' | 'in'), (v: number) => upCir('radiusMM', toMM(v, u as 'mm' | 'in')), -Infinity, u === 'in' ? 0.0625 : 1, u],
               ['Start°', form.cirParams.startAngleDeg, (v: number) => upCir('startAngleDeg', v), -360, 5, '°'],
               ['End°',   form.cirParams.endAngleDeg,   (v: number) => upCir('endAngleDeg', v),   -360, 5, '°'],
             ] as [string, number, (v: number) => void, number, number, string][]).map(([lbl, val, fn, min, step, suffix]) => (
@@ -190,7 +202,7 @@ export function PatternForm({ onClose, editCtx }: { onClose: () => void; editCtx
           <div className="flex items-center gap-2">
             <input type="checkbox" id="pattern-rotate" checked={form.cirParams.rotateItems}
               onChange={(e) => upCir('rotateItems', e.target.checked)} className="accent-blue-500" />
-            <label htmlFor="pattern-rotate" className="text-body text-gray-700 dark:text-neutral-300 cursor-pointer">Items face outward</label>
+            <label htmlFor="pattern-rotate" className="text-body text-gray-700 dark:text-neutral-300 cursor-pointer">Rotate items</label>
           </div>
         </div>
       )}

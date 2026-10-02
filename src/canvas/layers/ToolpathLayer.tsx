@@ -13,14 +13,17 @@ interface SegmentGroups {
   cutting: number[][]
   rapid: number[][]
   travel: number[][]
+  /** Cuts through waste an optimized profile added to join toolpaths (cam/sharedLineProfile). */
+  bridge: number[][]
   firstCut: [number, number] | null
 }
 
-type SegType = 'cutting' | 'rapid' | 'travel'
+type SegType = 'cutting' | 'rapid' | 'travel' | 'bridge'
 
 function segType(seg: MotionSegment): SegType {
   if (seg.rapid) return 'rapid'
   if (seg.travel) return 'travel'
+  if (seg.bridge) return 'bridge'
   return 'cutting'
 }
 
@@ -48,6 +51,7 @@ function groupSegments(segments: MotionSegment[]): SegmentGroups {
   const cutting: number[][] = []
   const rapid: number[][] = []
   const travel: number[][] = []
+  const bridge: number[][] = []
   let cur: number[] = []
   let curType: SegType = segType(segments[0] ?? { rapid: true, x: 0, y: 0, z: 0 })
   let firstCut: [number, number] | null = null
@@ -58,6 +62,7 @@ function groupSegments(segments: MotionSegment[]): SegmentGroups {
     if (cur.length >= 4) {
       if (t === 'rapid') rapid.push(cur)
       else if (t === 'travel') travel.push(cur)
+      else if (t === 'bridge') bridge.push(cur)
       else cutting.push(cur)
     }
   }
@@ -73,12 +78,12 @@ function groupSegments(segments: MotionSegment[]): SegmentGroups {
     } else {
       cur.push(...pts)
     }
-    if (st === 'cutting' && firstCut === null) firstCut = [pts[0], pts[1]]
+    if ((st === 'cutting' || st === 'bridge') && firstCut === null) firstCut = [pts[0], pts[1]]
     prevX = seg.x; prevY = seg.y
   }
   pushCur(curType)
 
-  return { cutting, rapid, travel, firstCut }
+  return { cutting, rapid, travel, bridge, firstCut }
 }
 
 // GROUPED ONCE PER TOOLPATH, NOT ONCE PER RENDER. The layer re-renders on every pan and
@@ -143,7 +148,7 @@ export const ToolpathLayer = memo(function ToolpathLayer({ viewport }: Props) {
   return (
     <Group>
       {visible.map((op) => {
-        const { cutting, rapid, travel, firstCut } = groupsFor(op.segments)
+        const { cutting, rapid, travel, bridge, firstCut } = groupsFor(op.segments)
 
         return (
           <Fragment key={op.id}>
@@ -163,6 +168,16 @@ export const ToolpathLayer = memo(function ToolpathLayer({ viewport }: Props) {
                 strokeWidth={1.2 / scale}
                 opacity={0.75}
                 dash={[5 * dashScale, 4 * dashScale]}
+              />
+            )}
+
+            {bridge.length > 0 && (
+              <RunStroke
+                key={`${op.id}-b`}
+                runs={bridge}
+                stroke="#f97316"
+                strokeWidth={2.2 / scale}
+                opacity={0.95}
               />
             )}
 
