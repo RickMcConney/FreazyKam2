@@ -1,6 +1,6 @@
 // ─── 3D Profile form ──────────────────────────────────────────────────────────
 import { FormShell, AutoStepField, GenerateBtn, useSessionOps, toolsOfType, pickToolId, LengthInput, FormError, useGenerateError, discardFailedOps } from './shared'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { NumericInput } from '../../components/NumericInput'
 import { NUMERIC_HINT } from '../../components/parseNumeric'
 import { ICON } from '../../theme'
@@ -13,10 +13,16 @@ import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 import { isWorkCancelled } from '../../workers/workerClient'
 import { generateOperation } from '../../cam/opJob'
 import { effectiveStepDownMM } from '../../cam/feeds'
+import { profile3dDepthMM, STOCK_SKIN_MM } from '../../cam/profile3d'
+import { enclosingBoundaries } from '../../cam/boundaryCandidates'
 
 interface Profile3dFormState {
   toolId: string
   stepoverPercent: number
+  finishStrategy: 'raster' | 'waterline'
+  boundary: 'model' | 'stock' | 'path'
+  boundaryPathId: string
+  modelTopMM: number
   rasterAngleDeg: number
   maxDepthMM: number
   pathId: string
@@ -42,11 +48,11 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
   // Finishing: a ball nose or a taper — profile3d dilates the height map by the tool's
   // own profile, and a taper is a tip ball blended into a cone, so both are gouge-free
   // by the same construction. No fall-back to the whole library; `canGenerate` gates it.
-  // The ROUGHING bit stays ball-only by construction, since profile3d models the rougher
-  // as a sphere (`roughingBallRadius`) and skips the entire roughing pass when that is
-  // undefined — a flat rougher would silently become a single-pass finish, not an error.
+  // The ROUGHING bit is a ball nose or a flat end mill — the two shapes profile3d models
+  // a rougher as. Any other type (a V-bit, a drill) would silently become no roughing pass
+  // at all, so it is not offered.
   const finishTools = toolsOfType(tools, ['ballnose', 'taper'])
-  const ballNoseTools = toolsOfType(tools, ['ballnose'])
+  const roughTools = toolsOfType(tools, ['ballnose', 'endmill'])
   const defaultTool = finishTools[0]
   const stlPaths = paths.filter((p) => !!p.stlSrc)
 
@@ -54,6 +60,10 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
     const base: Profile3dFormState = editOp ? {
       toolId: editOp.toolId,
     stepoverPercent: editOp.stepoverPercent,
+    finishStrategy: editOp.finishStrategy === 'raster' || !editOp.finishStrategy ? 'raster' : 'waterline',
+    boundary: editOp.boundary ?? 'model',
+    boundaryPathId: editOp.boundaryPathId ?? '',
+    modelTopMM: editOp.modelTopMM ?? 0,
     rasterAngleDeg: editOp.rasterAngleDeg,
     maxDepthMM: editOp.maxDepthMM,
     pathId: editOp.pathId,
@@ -65,6 +75,10 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
   } : mergeWithDefaults(load('profile3d'), {
     toolId: defaultTool?.id ?? '',
     stepoverPercent: 20,
+    finishStrategy: 'raster' as 'raster' | 'waterline',
+    boundary: 'model' as 'model' | 'stock' | 'path',
+    boundaryPathId: '',
+    modelTopMM: 0,
     rasterAngleDeg: 0,
     // Default to the full stock thickness; the tool's max Z is only a warning.
     maxDepthMM: thicknessMM > 0 ? thicknessMM : (defaultTool?.maxDepthMM ?? 10),
@@ -78,7 +92,7 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
     return { ...base,
       toolId: pickToolId(base.toolId, finishTools),
       // '' is "no roughing pass" — an explicit choice, not a stale id.
-      roughingToolId: base.roughingToolId === '' ? '' : pickToolId(base.roughingToolId, ballNoseTools) }
+      roughingToolId: base.roughingToolId === '' ? '' : pickToolId(base.roughingToolId, roughTools) }
   })
   const [generating, setGenerating] = useState(false)
   const [errorMsg, reportError, clearError] = useGenerateError()
@@ -95,6 +109,14 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
 
   const selectedTool = tools.find((t) => t.id === form.toolId)
   const selectedPath = paths.find((p) => p.id === form.pathId)
+  // Offered as a boundary: the (up to three) closed paths that completely enclose the
+  // model, tightest first. The one this op already uses stays on the list whatever it has
+  // since become, so opening an op never quietly swaps its boundary.
+  const boundaryPaths = useMemo(() => {
+    const fits = selectedPath ? enclosingBoundaries(paths, selectedPath) : []
+    const current = form.boundary === 'path' ? paths.find((p) => p.id === form.boundaryPathId) : undefined
+    return current && !fits.includes(current) ? [...fits, current] : fits
+  }, [paths, selectedPath, form.boundary, form.boundaryPathId])
   const roughingTool = form.roughingToolId ? tools.find((t) => t.id === form.roughingToolId) : undefined
   const hasRoughing = !!form.roughingToolId
 
@@ -128,6 +150,10 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
         toolId: form.toolId,
         pathId: form.pathId,
         stepoverPercent: form.stepoverPercent,
+        finishStrategy: form.finishStrategy,
+        boundary: form.boundary,
+        boundaryPathId: form.boundary === 'path' ? form.boundaryPathId : undefined,
+        modelTopMM: form.modelTopMM > 0 ? form.modelTopMM : undefined,
         rasterAngleDeg: form.rasterAngleDeg, maxDepthMM: form.maxDepthMM,
         roughingToolId: hasRoughing ? form.roughingToolId : undefined,
         roughingStepoverPercent: hasRoughing ? form.roughingStepoverPercent : undefined,
@@ -144,6 +170,10 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
         toolId: form.toolId,
         pathId: form.pathId,
         stepoverPercent: form.stepoverPercent,
+        finishStrategy: form.finishStrategy,
+        boundary: form.boundary,
+        boundaryPathId: form.boundary === 'path' ? form.boundaryPathId : undefined,
+        modelTopMM: form.modelTopMM > 0 ? form.modelTopMM : undefined,
         rasterAngleDeg: form.rasterAngleDeg,
         maxDepthMM: form.maxDepthMM,
         roughingToolId: hasRoughing ? form.roughingToolId : undefined,
@@ -177,6 +207,7 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
   }
 
   const canGenerate = !!selectedTool && (selectedTool.type === 'ballnose' || selectedTool.type === 'taper') && !!selectedPath?.stlSrc && !generating && form.maxDepthMM > 0
+    && (form.boundary !== 'path' || boundaryPaths.some((p) => p.id === form.boundaryPathId))
 
   return (
     <FormShell title={editOp ? 'Edit 3D Profile' : 'New 3D Profile'} onClose={onClose}>
@@ -200,7 +231,48 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
         )}
       </div>
 
-      {/* Strategy */}
+      {/* Where the cut may go */}
+      <div>
+        <label htmlFor="p3d-boundary" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">Boundary</label>
+        <select id="p3d-boundary"
+          value={form.boundary === 'path' ? `path:${form.boundaryPathId}` : form.boundary}
+          onChange={(e) => {
+            const v = e.target.value
+            if (v.startsWith('path:')) setForm((f) => ({ ...f, boundary: 'path', boundaryPathId: v.slice(5) }))
+            else setForm((f) => ({ ...f, boundary: v as 'model' | 'stock' }))
+          }}
+          className="w-full bg-gray-50 dark:bg-neutral-900 border border-gray-400 dark:border-neutral-700 rounded px-2 py-1 text-body text-gray-900 dark:text-neutral-100 focus:outline-none focus:border-blue-500"
+        >
+          <option value="model">Model box</option>
+          <option value="stock">Stock</option>
+          {boundaryPaths.map((p) => (
+            <option key={p.id} value={`path:${p.id}`}>{p.name}</option>
+          ))}
+        </select>
+        {boundaryPaths.length === 0 && (
+          <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">
+            Draw a closed shape around the model to clear to it.
+          </p>
+        )}
+        {form.boundary !== 'model' && (
+          <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">
+            The tool stays inside; around the model it cuts down to the model's base.
+          </p>
+        )}
+        {form.boundary === 'path' && !boundaryPaths.some((p) => p.id === form.boundaryPathId) && (
+          <p className="text-label text-amber-600 dark:text-amber-500 flex items-center gap-1 mt-0.5">
+            <AlertCircle size={10} className="shrink-0" /> Pick a path
+          </p>
+        )}
+      </div>
+
+      {/* How far below the stock top the model sits */}
+      <div>
+        <label htmlFor="p3d-model-top" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">Model Top Below Stock</label>
+        <LengthInput id="p3d-model-top" valueMM={form.modelTopMM} minMM={0} stepMM={0.5}
+          onChangeMM={(v) => up('modelTopMM', v)} />
+      </div>
+
       {/* ── Roughing pass (optional) ─────────────────────────────────────────── */}
       <div className="border border-gray-400 dark:border-neutral-700 rounded p-2 space-y-2">
         <div>
@@ -213,7 +285,7 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
             className="w-full bg-gray-50 dark:bg-neutral-900 border border-gray-400 dark:border-neutral-700 rounded px-2 py-1 text-body text-gray-900 dark:text-neutral-100 focus:outline-none focus:border-blue-500"
           >
             <option value="">— None (single-pass) —</option>
-            {ballNoseTools.map((t) => (
+            {roughTools.map((t) => (
               <option key={t.id} value={t.id}>{t.name} (Ø{fmtLen(t.diameterMM, units)})</option>
             ))}
           </select>
@@ -241,7 +313,7 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
               </div>
             </div>
             {autoFeedEnabled && roughingTool ? (
-              <AutoStepField label="Roughing Step Down" valueMM={effectiveStepDownMM(roughingTool, form.roughingStepDownMM, form.maxDepthMM)} />
+              <AutoStepField label="Roughing Step Down" valueMM={effectiveStepDownMM(roughingTool, form.roughingStepDownMM, profile3dDepthMM(form.maxDepthMM, thicknessMM))} />
             ) : (
               <div>
                 <label htmlFor="p3d-roughing-step-down" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">
@@ -338,8 +410,23 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
         </div>
       </div>
 
-      {/* Raster angle */}
+      {/* Finishing strategy */}
       <div>
+        <label htmlFor="p3d-finish-strategy" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">
+          {hasRoughing ? 'Finishing Strategy' : 'Strategy'}
+        </label>
+        <select id="p3d-finish-strategy"
+          value={form.finishStrategy}
+          onChange={(e) => up('finishStrategy', e.target.value as 'raster' | 'waterline')}
+          className="w-full bg-gray-50 dark:bg-neutral-900 border border-gray-400 dark:border-neutral-700 rounded px-2 py-1 text-body text-gray-900 dark:text-neutral-100 focus:outline-none focus:border-blue-500"
+        >
+          <option value="raster">Raster</option>
+          <option value="waterline">Waterline</option>
+        </select>
+      </div>
+
+      {/* Raster angle */}
+      {form.finishStrategy === 'raster' && <div>
         <label htmlFor="p3d-angle" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">Angle</label>
         <div className="flex items-center gap-1">
           <NumericInput id="p3d-angle"
@@ -350,13 +437,19 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
           />
           <span className="text-label text-gray-600 dark:text-neutral-400">°</span>
         </div>
-      </div>
+      </div>}
 
       {/* Max depth */}
       <div>
         <label htmlFor="p3d-max-depth" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">Max Depth</label>
         <LengthInput id="p3d-max-depth" valueMM={form.maxDepthMM} minMM={0.1} stepMM={0.5}
           onChangeMM={(v) => up('maxDepthMM', v)} />
+        {profile3dDepthMM(form.maxDepthMM, thicknessMM) < form.maxDepthMM && (
+          <p className="text-label text-amber-600 dark:text-amber-500 flex items-center gap-1 mt-0.5">
+            <AlertCircle size={10} className="shrink-0" />
+            Deeper than the stock — cuts to {fmtLen(profile3dDepthMM(form.maxDepthMM, thicknessMM), units)}, leaving a {fmtLen(STOCK_SKIN_MM, units)} skin
+          </p>
+        )}
         {selectedTool && form.maxDepthMM > selectedTool.maxDepthMM && (
           <p className="text-label text-amber-600 dark:text-amber-500 flex items-center gap-1 mt-0.5">
             <AlertCircle size={10} className="shrink-0" />

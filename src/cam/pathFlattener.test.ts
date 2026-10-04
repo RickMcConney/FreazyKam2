@@ -216,3 +216,31 @@ describe('splitSelfIntersecting — never hands back a loop that encloses nothin
     expect(Math.abs(signedArea(out[0]))).toBeCloseTo(400, 9)
   })
 })
+
+describe('arcFitPolyline — a circle that wobbles a few microns, as a waterline ring off a faceted STL does', () => {
+  // A 10 mm circle in 0.25 mm steps, each point pushed up to ±8 µm off it (deterministic).
+  // Fitting a circle through three of its points swung with every wobble, and the bend
+  // check compared each point's own bend against the arc's: such a ring came out as 34
+  // straight chords and one arc, 0.094 mm off the circle.
+  const wobble = (k: number) => { const s = Math.sin(k * 12.9898) * 43758.5453; return (s - Math.floor(s)) * 2 - 1 }
+  const ring = (): Pt2[] => {
+    const pts: Pt2[] = []
+    const n = Math.ceil(2 * Math.PI * 10 / 0.25)
+    for (let k = 0; k <= n; k++) {
+      const a = -2 * Math.PI * k / n, r = 10 + 0.008 * wobble(k)
+      pts.push([r * Math.cos(a), r * Math.sin(a)])
+    }
+    return pts
+  }
+
+  it('fits it as a handful of arcs on the true circle when told how much it wobbles', () => {
+    const out = arcFitPolyline(ring(), 0.05, 256, 0.02)
+    const arcs = out.filter((s) => s.arc)
+    expect(arcs.length).toBeGreaterThan(0)
+    expect(out.length).toBeLessThan(ring().length / 10)
+    for (const a of arcs) {
+      expect(Math.hypot(a.arc!.cx, a.arc!.cy)).toBeLessThan(0.05)
+      expect(a.arc!.cw).toBe(true)
+    }
+  })
+})

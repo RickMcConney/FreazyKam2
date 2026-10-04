@@ -5,6 +5,8 @@ import { useToolpathStore } from '../store/toolpathStore'
 import { usePathsStore } from '../store/pathsStore'
 import { useToolStore, type Tool } from '../store/toolStore'
 import { useWorkpieceStore } from '../store/workpieceStore'
+import { profile3dDepthMM } from './profile3d'
+import { flattenPath, requireClosedSubpaths, type Pt2 } from './pathFlattener'
 import { tabsForGeneration } from '../store/tabStore'
 import { getBBox, extractCircles, extractRectInfo } from '../canvas/selectionUtils'
 import { loadImageLuminance } from '../io/imageLuminance'
@@ -251,26 +253,46 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
     const { positions, indices } = decodeStlMesh(stlPath.stlSrc)
     const cncBbox = getBBox(stlPath.d)
     if (!cncBbox) throw new Error('Could not read the STL outline — the model may be empty')
-    // Roughing runs only with a ball nose (the generator models the rougher as a sphere).
-    // A rough tool since deleted or retyped in the library is simply no roughing pass —
+    // Roughing runs with a ball nose or a flat end mill — the two shapes the generator
+    // models. A rough tool since deleted or retyped in the library is simply no roughing pass —
     // and then no roughing id either, so nothing downstream announces a tool that never
     // cuts. The G-code reads the handover from the segments anyway (initialToolId).
     const roughCandidate = op.roughingToolId ? tools.find((t) => t.id === op.roughingToolId) : undefined
-    const roughingTool = roughCandidate?.type === 'ballnose' ? roughCandidate : undefined
+    const roughingTool = roughCandidate?.type === 'ballnose' || roughCandidate?.type === 'endmill' ? roughCandidate : undefined
+    // A model sunk below the stock top still stops above the stock's bottom.
+    const depthMM = profile3dDepthMM(op.maxDepthMM, useWorkpieceStore.getState().thicknessMM)
+    let boundaryRings: Pt2[][] | undefined
+    if (op.boundary === 'stock') {
+      boundaryRings = [[[0, 0], [stockW, 0], [stockW, stockH], [0, stockH]]]
+    } else if (op.boundary === 'path') {
+      const bPath = paths.find((p) => p.id === op.boundaryPathId)
+      if (!bPath) throw new Error('Boundary path not found')
+      boundaryRings = flattenPath(bPath.d, 0.05).filter((r) => r.length >= 2)
+      requireClosedSubpaths(boundaryRings, { cut: 'a 3D boundary', remedy: 'Close the path, or pick another boundary.', noun: 'Boundary' })
+    }
     setSegments(opId, await runInWorkerFor(opId, 'generateProfile3d', positions, indices, stlPath.stlModelBounds, cncBbox, tool, {
       stepoverPercent: op.stepoverPercent,
+      // A 'waterline-sliced' op (an experiment, since removed) is cut as a waterline.
+      finishStrategy: op.finishStrategy && op.finishStrategy !== 'raster' ? 'waterline' : op.finishStrategy,
       rasterAngleDeg: op.rasterAngleDeg,
-      maxDepthMM: op.maxDepthMM,
+      maxDepthMM: depthMM,
       roughingBallRadius: roughingTool ? roughingTool.diameterMM / 2 : undefined,
+      roughingFlat: roughingTool?.type === 'endmill',
       roughingStepoverPercent: op.roughingStepoverPercent,
       roughingStepDownMM: roughingTool != null && op.roughingStepDownMM != null
-        ? effectiveStepDownMM(roughingTool, op.roughingStepDownMM, op.maxDepthMM)
+        ? effectiveStepDownMM(roughingTool, op.roughingStepDownMM, depthMM)
         : op.roughingStepDownMM,
       roughingStockAllowanceMM: op.roughingStockAllowanceMM,
       roughingRasterAngleDeg: op.roughingRasterAngleDeg,
       roughingToolId: roughingTool?.id,
       finishingToolId: op.toolId,
       safeHeightMM,
+      rapidMmMin: machineRates().rapidMmMin,
+      roughingXyFeedMmMin: roughingTool?.xyFeedMmMin,
+      roughingZFeedMmMin: roughingTool?.zFeedMmMin,
+      modelTopMM: op.modelTopMM,
+      boundaryRings,
+      boundaryOpen: op.boundary === 'stock',
     }), builtWith)
 
   } else if (op.type === 'trochoidal') {

@@ -593,3 +593,45 @@ describe('generateGcode — a 3D profile whose roughing never ran', () => {
     expect(g.indexOf('M3 S18000')).toBeLessThan(g.indexOf('M3 S24000'))
   })
 })
+
+describe('a 3D Profile ring is exported as arcs that stay on it', () => {
+  // A waterline ring off a faceted STL wobbles a few microns about a true circle. Fitted
+  // like any other op's moves — at 0.1 mm, and with no allowance for the wobble — it came
+  // out as straight chords up to 0.1 mm off the ring, which on a 70° wall is a quarter of a
+  // millimetre of height: a fish-scale pattern all over a dome in the simulator.
+  const wobble = (k: number) => { const s = Math.sin(k * 12.9898) * 43758.5453; return (s - Math.floor(s)) * 2 - 1 }
+  const R = 10, CX = 50, CY = 40
+  const ringSegs = (): MotionSegment[] => {
+    const n = Math.ceil(2 * Math.PI * R / 0.25)
+    const segs: MotionSegment[] = [rapid(CX + R, CY, 5), cut(CX + R, CY, -5)]
+    for (let k = 1; k <= n; k++) {
+      const a = -2 * Math.PI * k / n, r = R + 0.008 * wobble(k)
+      segs.push(cut(CX + r * Math.cos(a), CY + r * Math.sin(a), -5))
+    }
+    segs.push(rapid(CX + R, CY, 5))
+    return segs
+  }
+  const op3d = (): AnyOperation => ({
+    id: 'p3', name: '3D', type: 'profile3d', toolId: 't2', pathId: 'p', stepoverPercent: 20,
+    rasterAngleDeg: 0, maxDepthMM: 10, status: 'done', color: '#fff', visible: true, segments: ringSegs(),
+  } as AnyOperation)
+
+  it('fits it as a few arcs, not hundreds of short lines', () => {
+    const g = gen([op3d()])
+    expect((g.match(/^G[23] /gm) ?? []).length).toBeGreaterThan(0)
+    expect((g.match(/^G1 /gm) ?? []).length).toBeLessThan(30)
+  })
+
+  it('keeps every exported move within 0.05 mm of the ring', () => {
+    // Through the simulator's parser, which draws an arc as chords up to 0.01 mm inside it.
+    const moves = parseGcode(gen([op3d()])).segments.filter((s) => !s.rapid && s.z < -4.9)
+    let worst = 0
+    for (const s of moves) {
+      for (let t = 0; t <= 1; t += 0.1) {
+        const x = s.prevX + (s.x - s.prevX) * t, y = s.prevY + (s.y - s.prevY) * t
+        worst = Math.max(worst, Math.abs(Math.hypot(x - CX, y - CY) - R))
+      }
+    }
+    expect(worst).toBeLessThan(0.05 + 0.01)
+  })
+})

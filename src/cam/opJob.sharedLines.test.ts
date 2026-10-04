@@ -19,7 +19,16 @@ vi.mock('../workers/workerClient', async () => {
     isWorkCancelled: () => false,
   }
 })
-vi.mock('./regenerate')
+// Every function the stores reach for after an edit, as the other store tests list them. A
+// bare automock left `regenerateAffectedMany` undefined when pathsStore loaded the module
+// dynamically after a path edit, and the rejected promise surfaced as an unhandled error.
+vi.mock('./regenerate', () => ({
+  regenerateOperation: vi.fn(async () => {}),
+  regenerateAffectedMany: vi.fn(),
+  regenerateAffected: vi.fn(),
+  regenerateAll: vi.fn(),
+  regenerateMany: vi.fn(),
+}))
 
 const { generateOperation } = await import('./opJob')
 

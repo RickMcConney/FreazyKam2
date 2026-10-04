@@ -600,7 +600,63 @@ const LOCAL_RATIO_MAX = 2
 // less than the coordinates' own precision and their radius is noise.
 const MIN_MEASURABLE_BOW_MM = 1e-3
 
-export function arcFitPolyline(pts: Pt2[], tol: number, maxSpan = Infinity): ArcFitSeg[] {
+/**
+ * The circle through `s` and `e` that best fits pts[lo..hi] (least squares on the algebraic
+ * distance, centre on the perpendicular bisector of s–e), or through `s` alone when s and
+ * e nearly coincide (a closed ring). Every point counts, so a few microns of wobble in each
+ * barely move it — where a circle through three of the points swings with every one.
+ */
+function circleThroughEnds(pts: Pt2[], lo: number, hi: number): { cx: number; cy: number; r: number } | null {
+  const s = pts[lo], e = pts[hi]
+  const ex = e[0] - s[0], ey = e[1] - s[1]
+  const L = Math.hypot(ex, ey)
+  // |p − c|² = |s − c|²  ⇔  |p|² − |s|² − 2c·(p − s) = 0, linear in c.
+  const ss = s[0] * s[0] + s[1] * s[1]
+  if (L > 1e-3) {
+    const mx = (s[0] + e[0]) / 2, my = (s[1] + e[1]) / 2, nx = -ey / L, ny = ex / L
+    let num = 0, den = 0
+    for (let k = lo + 1; k < hi; k++) {
+      const px = pts[k][0] - s[0], py = pts[k][1] - s[1]
+      const a = pts[k][0] * pts[k][0] + pts[k][1] * pts[k][1] - ss - 2 * (mx * px + my * py)
+      const b = 2 * (nx * px + ny * py)
+      num += a * b; den += b * b
+    }
+    if (den < 1e-18) return null
+    const t = num / den
+    const cx = mx + nx * t, cy = my + ny * t
+    const r = Math.hypot(s[0] - cx, s[1] - cy)
+    return r < 0.1 ? null : { cx, cy, r }
+  }
+  let sxx = 0, sxy = 0, syy = 0, sxa = 0, sya = 0
+  for (let k = lo + 1; k < hi; k++) {
+    const px = pts[k][0] - s[0], py = pts[k][1] - s[1]
+    const a = pts[k][0] * pts[k][0] + pts[k][1] * pts[k][1] - ss
+    sxx += px * px; sxy += px * py; syy += py * py; sxa += px * a; sya += py * a
+  }
+  const det = sxx * syy - sxy * sxy
+  if (Math.abs(det) < 1e-18) return null
+  const cx = (sxa * syy - sya * sxy) / det / 2, cy = (sya * sxx - sxa * sxy) / det / 2
+  const r = Math.hypot(s[0] - cx, s[1] - cy)
+  return r < 0.1 ? null : { cx, cy, r }
+}
+
+/** Below this many points an arc that fails a check may still grow into one that passes —
+ *  on wobbly input a short span's circle is mostly the wobble. */
+const NOISY_MIN_SPAN = 16
+
+/**
+ * `noiseMM` (unset for every caller but the 3D Profile) says the points wobble by up to
+ * that much about the curve they sample — a waterline ring traced off a faceted STL sits a
+ * few microns either side of a true circle. Without it the fit takes its circle through
+ * three of the points and judges each point's own bend against the arc's, and 5 µm of
+ * wobble swamps both: a 10 mm ring came out as one arc and 34 straight chords, 0.094 mm
+ * off the circle — on a 70° wall a quarter of a millimetre of height, which the simulator
+ * shows as a fish-scale pattern all over a dome. With it, the circle is a least-squares fit
+ * through the span's two ends, a span keeps growing past a few early failures, and a bend
+ * only counts as wrong by more than the wobble.
+ */
+export function arcFitPolyline(pts: Pt2[], tol: number, maxSpan = Infinity, noiseMM = 0): ArcFitSeg[] {
+  const noisy = noiseMM > 0
   const result: ArcFitSeg[] = []
   const n = pts.length
   // How tightly the path bends at each point, measured to the nearest neighbours at
@@ -626,6 +682,13 @@ export function arcFitPolyline(pts: Pt2[], tol: number, maxSpan = Infinity): Arc
   const bendsLike = (k: number, r: number): boolean => {
     const lr = localR[k]
     if (Number.isNaN(lr)) return true
+    if (noisy) {
+      // Compared as BOWS over the measuring span, so the wobble can be allowed for.
+      const L2 = localSpan[k] * localSpan[k]
+      const lb = Number.isFinite(lr) ? L2 / (8 * lr) : 0, eb = L2 / (8 * r)
+      if (lr < LOCAL_RATIO_MIN * r && lb - eb > 2 * noiseMM) return false
+      return eb < MIN_MEASURABLE_BOW_MM || lr <= LOCAL_RATIO_MAX * r || eb - lb <= 2 * noiseMM
+    }
     if (lr < LOCAL_RATIO_MIN * r) return false
     const bow = (localSpan[k] * localSpan[k]) / (8 * r)
     return bow < MIN_MEASURABLE_BOW_MM || lr <= LOCAL_RATIO_MAX * r
@@ -637,8 +700,8 @@ export function arcFitPolyline(pts: Pt2[], tol: number, maxSpan = Infinity): Arc
     const jCap = Math.min(n - 1, i + maxSpan)
     for (let j = Math.min(i + 2, n - 1); j <= jCap; j++) {
       const mid = (i + j) >> 1
-      const c = circleFrom3Pts(pts[i], pts[mid], pts[j])
-      if (!c) break
+      const c = noisy ? circleThroughEnds(pts, i, j) : circleFrom3Pts(pts[i], pts[mid], pts[j])
+      if (!c) { if (noisy && j - i < NOISY_MIN_SPAN) continue; break }
       let ok = true
       for (let k = i + 1; k <= j; k++) {
         if (Math.abs(Math.hypot(pts[k][0] - c.cx, pts[k][1] - c.cy) - c.r) > tol) {
@@ -658,7 +721,7 @@ export function arcFitPolyline(pts: Pt2[], tol: number, maxSpan = Infinity): Arc
         if (L / 2 >= c.r || c.r - Math.sqrt(c.r * c.r - (L * L) / 4) > tol) { ok = false; break }
       }
       if (ok) { bestJ = j; bestCircle = c }
-      else break
+      else if (!noisy || j - i >= NOISY_MIN_SPAN) break
     }
     if (bestJ >= i + 3 && bestCircle) {
       const s = pts[i], e = pts[bestJ], m = pts[(i + bestJ) >> 1]
@@ -668,8 +731,10 @@ export function arcFitPolyline(pts: Pt2[], tol: number, maxSpan = Infinity): Arc
       // pts[i] must also lie on this circle; if it doesn't, pts[i] is a line endpoint
       // adjacent to the arc start (arc tangent point), not the arc start itself.
       const localC = circleFrom3Pts(pts[i + 1], pts[i + 2], pts[i + 3])
-      const startOnArc = localC !== null &&
-        Math.abs(Math.hypot(s[0] - localC.cx, s[1] - localC.cy) - localC.r) <= tol
+      // (A fitted circle passes through pts[i] by construction, and three wobbly points
+      // say nothing about where an arc starts.)
+      const startOnArc = noisy || (localC !== null &&
+        Math.abs(Math.hypot(s[0] - localC.cx, s[1] - localC.cy) - localC.r) <= tol)
       // Reject spans containing sharp corners (polygon vertices lying on circumscribed circle).
       // Real flattened arcs have tiny per-segment direction changes; polygon corners are ≥60°.
       let hasSharpCorner = false

@@ -110,6 +110,19 @@ function fmtFeed(feedMm: number, profile: PostProcessorProfile): string {
 // and polygon corners.
 const ARC_FIT_TOLERANCE_MM = 0.1
 
+/** How `reconstructArcs` fits a run: its tolerance, and how much its points wobble. */
+interface ArcFit { tolMM: number; noiseMM: number }
+const DEFAULT_ARC_FIT: ArcFit = { tolMM: ARC_FIT_TOLERANCE_MM, noiseMM: 0 }
+// A 3D Profile's constant-Z runs (a waterline ring, a raster across a flat) are traced off
+// a faceted STL, so they wobble about the true curve — ±0.006–0.009 mm round the steep-walls
+// test's dome at 20% stepover — and the fit is told so. Without that it fitted almost no
+// arcs: the rings came out as thousands of straight moves a fraction of a millimetre long,
+// which in wood cut rougher and made the machine pause between them. The tolerance is the
+// one that gave the fewest moves on that job (0.03: 921 arcs + 2529 lines, 0.05: 827 + 1685,
+// 0.1: 627 + 3475); fitted through the wobble, an arc follows the true circle rather than
+// the facets.
+const SURFACE_ARC_FIT: ArcFit = { tolMM: 0.05, noiseMM: 0.02 }
+
 // Feed multiplier for `travel` moves — stay-down repositioning over already-cleared
 // floor. Capped rather than uncapped because these run a fraction of a millimetre above
 // the floor: fast enough to stop dominating cycle time on link-heavy adaptive paths,
@@ -136,7 +149,7 @@ const TRAVEL_FEED_FACTOR = 2.5
 // verbatim — as do segments a generator marked `exact`, which it has already fitted at a
 // finer tolerance than this one: re-thinning them at 0.1 mm undid a profile's rounded
 // corners, merging a small corner arc back into the kink it was made to remove.
-function reconstructArcs(segments: MotionSegment[]): MotionSegment[] {
+function reconstructArcs(segments: MotionSegment[], fit: ArcFit = DEFAULT_ARC_FIT): MotionSegment[] {
   const eligible = (s: MotionSegment) =>
     !s.rapid && !s.travel && !s.arc && !s.exact && !s.toolChange && (s.feedScale ?? 1) === 1
   const out: MotionSegment[] = []
@@ -185,14 +198,14 @@ function reconstructArcs(segments: MotionSegment[]): MotionSegment[] {
     let lineRun: Pt2[] = []
     const flushLine = () => {
       if (lineRun.length === 0) return
-      const simplified = douglasPeucker([anchor, ...lineRun], ARC_FIT_TOLERANCE_MM)
+      const simplified = douglasPeucker([anchor, ...lineRun], fit.tolMM)
       for (let k = 1; k < simplified.length; k++) {
         out.push({ x: simplified[k][0], y: simplified[k][1], z: z0, rapid: false })
       }
       anchor = lineRun[lineRun.length - 1]
       lineRun = []
     }
-    for (const seg of arcFitPolyline(pts, ARC_FIT_TOLERANCE_MM, ARC_FIT_MAX_SPAN)) {
+    for (const seg of arcFitPolyline(pts, fit.tolMM, ARC_FIT_MAX_SPAN, fit.noiseMM)) {
       if (seg.arc) {
         flushLine()
         out.push({ x: seg.x, y: seg.y, z: z0, rapid: false, arc: seg.arc })
@@ -361,7 +374,9 @@ export function generateGcodeWithOps(
     // Collapse dense straight-line cut runs into G2/G3 arcs (skipped if the post
     // can't output arcs — they'd just be expanded straight back to lines).
     const _ta = performance.now()
-    const segs = profile.outputArcs ? reconstructArcs(op.segments) : op.segments
+    const segs = profile.outputArcs
+      ? reconstructArcs(op.segments, op.type === 'profile3d' ? SURFACE_ARC_FIT : DEFAULT_ARC_FIT)
+      : op.segments
     _arcMs += performance.now() - _ta
     _segIn += op.segments.length
     _segOut += segs.length

@@ -201,6 +201,14 @@ export interface Profile3dOperation extends BaseOperation {
   type: 'profile3d'
   pathId: string
   stepoverPercent: number
+  /** Unset: raster (every op saved before waterline existed). */
+  finishStrategy?: 'raster' | 'waterline'
+  /** Where the cut may go — the tool's edge stays inside. Unset or 'model': the model's own
+   *  box, as before boundaries existed. 'path': the closed path `boundaryPathId`. */
+  boundary?: 'model' | 'stock' | 'path'
+  boundaryPathId?: string
+  /** How far below the stock top the model's highest point sits. Unset: at the top. */
+  modelTopMM?: number
   rasterAngleDeg: number
   maxDepthMM: number
   roughingToolId?: string
@@ -330,7 +338,9 @@ export function refsPathId(op: AnyOperation, pathId: string): boolean {
   // source path like any island: edit it and the op is stale, delete it and the op goes.
   if (op.type === 'inlay') return op.pathId === pathId || op.islandIds.includes(pathId) ||
     op.fieldId === pathId || !!op.fieldPlugIds?.includes(pathId)
-  if (op.type === 'profile3d') return op.pathId === pathId
+  // A boundary path is geometry the op machines to, like an inlay's field: edit it and the
+  // op is stale, delete it and the op goes.
+  if (op.type === 'profile3d') return op.pathId === pathId || (op.boundary === 'path' && op.boundaryPathId === pathId)
   return false
 }
 
