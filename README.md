@@ -195,3 +195,9 @@ npm run test:run   # unit tests (Vitest)
 ```
 
 No backend required. All data stays in your browser.
+
+---
+
+## Acknowledgements
+
+Thanks to **Daniel Moura** and his [WoodCAM](https://github.com/danielma89/WoodCam) project (MIT licence). The 3D Profile improvements — the waterline finishing strategy and the work around it — were taken from WoodCAM, as was the common-line cut planning, and nesting improvements, which was ported along with its tests.
