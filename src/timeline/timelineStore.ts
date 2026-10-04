@@ -401,9 +401,9 @@ function restoreStateAt(seq: number, events: TimelineEvent[]): boolean {
 
   // Restore workpiece fields when the snapshot carries them (timelines from
   // before Phase 6 don't — leave the workpiece as-is then). setState bypasses
-  // the recording setters; the surface-op auto-regen subscription
-  // (App.useSurfaceWorkpieceSync) fires only on actual width/height/origin
-  // changes, which is exactly when surface toolpaths need a rebuild.
+  // the recording setters; the stock auto-regen subscription
+  // (App.useStockDependentSync, `opsAffectedByStockChange`) fires only on actual
+  // width/height/thickness/origin changes, and rebuilds only the ops they move.
   const wp = state.workpiece
   if (wp) {
     const cur = useWorkpieceStore.getState()

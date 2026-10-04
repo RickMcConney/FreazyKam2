@@ -13,7 +13,7 @@ import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 import { isWorkCancelled } from '../../workers/workerClient'
 import { generateOperation } from '../../cam/opJob'
 import { effectiveStepDownMM } from '../../cam/feeds'
-import { profile3dDepthMM, STOCK_SKIN_MM } from '../../cam/profile3d'
+import { profile3dDepthMM, STOCK_SKIN_MM, modelBelowCut, MODEL_BELOW_CUT_MSG } from '../../cam/profile3d'
 import { enclosingBoundaries } from '../../cam/boundaryCandidates'
 
 interface Profile3dFormState {
@@ -89,7 +89,12 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
     roughingStockAllowanceMM: 0.3,
     roughingRasterAngleDeg: '' as number | '',
   }, tools)
+    // A saved default's boundary path is an id from the session it was saved in. Kept, it
+    // showed "Model box" in the select (no option matched) while the form still said
+    // 'path', and Generate was disabled with nothing visible to say why.
+    const staleBoundary = base.boundary === 'path' && !paths.some((p) => p.id === base.boundaryPathId)
     return { ...base,
+      ...(staleBoundary ? { boundary: 'model' as const, boundaryPathId: '' } : {}),
       toolId: pickToolId(base.toolId, finishTools),
       // '' is "no roughing pass" — an explicit choice, not a stale id.
       roughingToolId: base.roughingToolId === '' ? '' : pickToolId(base.roughingToolId, roughTools) }
@@ -139,49 +144,35 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
     const opName = hasRoughing
       ? `3D Profile: ${selectedPath.name} (rough: ${roughingTool?.name ?? ''} / finish: ${selectedTool.name})`
       : `3D Profile: ${selectedPath.name} (${selectedTool.name})`
-    const roughingRasterAngle = hasRoughing && form.roughingRasterAngleDeg !== '' ? form.roughingRasterAngleDeg : undefined
 
     // WRITE THE SETTINGS, THEN GENERATE FROM THE OPERATION — see PhotoVCarveForm. This
     // form generated first and stored afterwards, so an edit that picked a different model
     // cut it onto an operation still naming the old one.
+    // The op's settings, written the same way whether it is new or edited: an unused
+    // roughing or boundary field is cleared, not left behind from an earlier setting.
+    const settings = {
+      name: opName,
+      toolId: form.toolId,
+      pathId: form.pathId,
+      stepoverPercent: form.stepoverPercent,
+      finishStrategy: form.finishStrategy,
+      boundary: form.boundary,
+      boundaryPathId: form.boundary === 'path' ? form.boundaryPathId : undefined,
+      modelTopMM: form.modelTopMM > 0 ? form.modelTopMM : undefined,
+      rasterAngleDeg: form.rasterAngleDeg,
+      maxDepthMM: form.maxDepthMM,
+      roughingToolId: hasRoughing ? form.roughingToolId : undefined,
+      roughingStepoverPercent: hasRoughing ? form.roughingStepoverPercent : undefined,
+      roughingStepDownMM: hasRoughing ? form.roughingStepDownMM : undefined,
+      roughingStockAllowanceMM: hasRoughing ? form.roughingStockAllowanceMM : undefined,
+      roughingRasterAngleDeg: hasRoughing && form.roughingRasterAngleDeg !== '' ? form.roughingRasterAngleDeg : undefined,
+    } satisfies Partial<Profile3dOperation>
     let opId: string
     if (updateId) {
-      updateOperation(updateId, {
-        toolId: form.toolId,
-        pathId: form.pathId,
-        stepoverPercent: form.stepoverPercent,
-        finishStrategy: form.finishStrategy,
-        boundary: form.boundary,
-        boundaryPathId: form.boundary === 'path' ? form.boundaryPathId : undefined,
-        modelTopMM: form.modelTopMM > 0 ? form.modelTopMM : undefined,
-        rasterAngleDeg: form.rasterAngleDeg, maxDepthMM: form.maxDepthMM,
-        roughingToolId: hasRoughing ? form.roughingToolId : undefined,
-        roughingStepoverPercent: hasRoughing ? form.roughingStepoverPercent : undefined,
-        roughingStepDownMM: hasRoughing ? form.roughingStepDownMM : undefined,
-        roughingStockAllowanceMM: hasRoughing ? form.roughingStockAllowanceMM : undefined,
-        roughingRasterAngleDeg: roughingRasterAngle,
-        name: opName, status: 'generating',
-      } as Partial<AnyOperation>)
+      updateOperation(updateId, { ...settings, status: 'generating' } as Partial<AnyOperation>)
       opId = updateId
     } else {
-      opId = addOperation({
-        name: opName,
-        type: 'profile3d',
-        toolId: form.toolId,
-        pathId: form.pathId,
-        stepoverPercent: form.stepoverPercent,
-        finishStrategy: form.finishStrategy,
-        boundary: form.boundary,
-        boundaryPathId: form.boundary === 'path' ? form.boundaryPathId : undefined,
-        modelTopMM: form.modelTopMM > 0 ? form.modelTopMM : undefined,
-        rasterAngleDeg: form.rasterAngleDeg,
-        maxDepthMM: form.maxDepthMM,
-        roughingToolId: hasRoughing ? form.roughingToolId : undefined,
-        roughingStepoverPercent: hasRoughing ? form.roughingStepoverPercent : undefined,
-        roughingStepDownMM: hasRoughing ? form.roughingStepDownMM : undefined,
-        roughingStockAllowanceMM: hasRoughing ? form.roughingStockAllowanceMM : undefined,
-        roughingRasterAngleDeg: roughingRasterAngle,
-      })
+      opId = addOperation({ ...settings, type: 'profile3d' })
       // Remembered before generating, so a re-Generate after a cancel updates this op
       // rather than adding a second one.
       session.remember(form.pathId, opId)
@@ -206,7 +197,9 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
     }, 0)
   }
 
-  const canGenerate = !!selectedTool && (selectedTool.type === 'ballnose' || selectedTool.type === 'taper') && !!selectedPath?.stlSrc && !generating && form.maxDepthMM > 0
+  const depthCutMM = profile3dDepthMM(form.maxDepthMM, thicknessMM)
+  const nothingReached = modelBelowCut(form.modelTopMM, depthCutMM)
+  const canGenerate = !nothingReached && !!selectedTool && (selectedTool.type === 'ballnose' || selectedTool.type === 'taper') && !!selectedPath?.stlSrc && !generating && form.maxDepthMM > 0
     && (form.boundary !== 'path' || boundaryPaths.some((p) => p.id === form.boundaryPathId))
 
   return (
@@ -444,10 +437,15 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
         <label htmlFor="p3d-max-depth" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">Max Depth</label>
         <LengthInput id="p3d-max-depth" valueMM={form.maxDepthMM} minMM={0.1} stepMM={0.5}
           onChangeMM={(v) => up('maxDepthMM', v)} />
-        {profile3dDepthMM(form.maxDepthMM, thicknessMM) < form.maxDepthMM && (
+        {nothingReached && (
+          <p className="text-label text-amber-600 dark:text-amber-500 flex items-center gap-1 mt-0.5">
+            <AlertCircle size={10} className="shrink-0" /> {MODEL_BELOW_CUT_MSG}
+          </p>
+        )}
+        {depthCutMM < form.maxDepthMM && (
           <p className="text-label text-amber-600 dark:text-amber-500 flex items-center gap-1 mt-0.5">
             <AlertCircle size={10} className="shrink-0" />
-            Deeper than the stock — cuts to {fmtLen(profile3dDepthMM(form.maxDepthMM, thicknessMM), units)}, leaving a {fmtLen(STOCK_SKIN_MM, units)} skin
+            Deeper than the stock — cuts to {fmtLen(depthCutMM, units)}, leaving a {fmtLen(STOCK_SKIN_MM, units)} skin
           </p>
         )}
         {selectedTool && form.maxDepthMM > selectedTool.maxDepthMM && (

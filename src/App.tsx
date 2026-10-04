@@ -16,6 +16,7 @@ import { useWorkpieceStore } from './store/workpieceStore'
 import { useToolpathStore } from './store/toolpathStore'
 import { useTimelineStore } from './timeline/timelineStore'
 import { regenerateOperation } from './cam/regenerate'
+import { opsAffectedByStockChange } from './cam/stockDependents'
 import { useSimStore } from './store/simStore'
 import { installSimAutoReload } from './sim/simAutoReload'
 import { installPathClipboard } from './io/pathClipboard'
@@ -165,16 +166,17 @@ function useKeyboardShortcuts() {
   }, [])
 }
 
-function useSurfaceWorkpieceSync() {
+function useStockDependentSync() {
   useEffect(() => {
     return useWorkpieceStore.subscribe((state, prev) => {
       if (
         state.widthMM === prev.widthMM &&
         state.heightMM === prev.heightMM &&
+        state.thicknessMM === prev.thicknessMM &&
         state.origin === prev.origin
       ) return
-      for (const op of useToolpathStore.getState().operations) {
-        if (op.type === 'surface') regenerateOperation(op.id)
+      for (const op of opsAffectedByStockChange(useToolpathStore.getState().operations, prev, state)) {
+        regenerateOperation(op.id)
       }
     })
   }, [])
@@ -251,7 +253,7 @@ function useDarkMode() {
 
 export default function App() {
   useKeyboardShortcuts()
-  useSurfaceWorkpieceSync()
+  useStockDependentSync()
   useSimAutoReload()
   usePathClipboard()
   useAutosave()

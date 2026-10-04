@@ -5,7 +5,7 @@ import { useToolpathStore } from '../store/toolpathStore'
 import { usePathsStore } from '../store/pathsStore'
 import { useToolStore, type Tool } from '../store/toolStore'
 import { useWorkpieceStore } from '../store/workpieceStore'
-import { profile3dDepthMM } from './profile3d'
+import { profile3dDepthMM, modelBelowCut, MODEL_BELOW_CUT_MSG } from './profile3d'
 import { flattenPath, requireClosedSubpaths, type Pt2 } from './pathFlattener'
 import { tabsForGeneration } from '../store/tabStore'
 import { getBBox, extractCircles, extractRectInfo } from '../canvas/selectionUtils'
@@ -261,6 +261,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
     const roughingTool = roughCandidate?.type === 'ballnose' || roughCandidate?.type === 'endmill' ? roughCandidate : undefined
     // A model sunk below the stock top still stops above the stock's bottom.
     const depthMM = profile3dDepthMM(op.maxDepthMM, useWorkpieceStore.getState().thicknessMM)
+    if (modelBelowCut(op.modelTopMM, depthMM)) throw new Error(MODEL_BELOW_CUT_MSG)
     let boundaryRings: Pt2[][] | undefined
     if (op.boundary === 'stock') {
       boundaryRings = [[[0, 0], [stockW, 0], [stockW, stockH], [0, stockH]]]
@@ -276,7 +277,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       finishStrategy: op.finishStrategy && op.finishStrategy !== 'raster' ? 'waterline' : op.finishStrategy,
       rasterAngleDeg: op.rasterAngleDeg,
       maxDepthMM: depthMM,
-      roughingBallRadius: roughingTool ? roughingTool.diameterMM / 2 : undefined,
+      roughingRadiusMM: roughingTool ? roughingTool.diameterMM / 2 : undefined,
       roughingFlat: roughingTool?.type === 'endmill',
       roughingStepoverPercent: op.roughingStepoverPercent,
       roughingStepDownMM: roughingTool != null && op.roughingStepDownMM != null

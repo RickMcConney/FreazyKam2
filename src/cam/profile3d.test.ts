@@ -5,7 +5,7 @@
 // at every point, so a test can ask where the tool is against the SURFACE rather than
 // against the code's own height map.
 import { describe, it, expect } from 'vitest'
-import { buildHeightMap, generateProfile3d, StockModel, ballKernel, flatKernel, profile3dDepthMM, STOCK_SKIN_MM, type Profile3dParams } from './profile3d'
+import { buildHeightMap, generateProfile3d, StockModel, ballKernel, flatKernel, profile3dDepthMM, STOCK_SKIN_MM, modelBelowCut, type Profile3dParams } from './profile3d'
 import { maxCutRadiusMM, toolProfileHeightMM } from './geom'
 import type { Tool } from '../store/toolStore'
 import type { MotionSegment } from '../store/toolpathStore'
@@ -135,7 +135,7 @@ describe('the stock model that entries rapid down onto', () => {
 
   it('never reads the stock between two passes lower than the scallop they leave', () => {
     const stock = new StockModel(box(0, -10, 20, 20), 4)
-    stock.carveBall(passes(), R)
+    stock.carve(passes(), ballKernel(R))
     for (const x of [5, 10, 15]) {
       const tip = stock.clearTipZ(x, 2.7, ballKernel(R))
       expect(tip).toBeGreaterThanOrEqual(crest)
@@ -148,7 +148,7 @@ describe('the stock model that entries rapid down onto', () => {
     // On the middle pass the tool stood at −5.7; the bound may lean high by a cell's
     // slope, but it must not stop the entry up at the crests either side.
     const stock = new StockModel(box(0, -10, 20, 20), 4)
-    stock.carveBall(passes(), R)
+    stock.carve(passes(), ballKernel(R))
     expect(stock.clearTipZ(10, 0, ballKernel(R))).toBeGreaterThanOrEqual(-5.7)
     expect(stock.clearTipZ(10, 0, ballKernel(R))).toBeLessThan(crest)
   })
@@ -161,7 +161,7 @@ describe('the stock model that entries rapid down onto', () => {
     const stock = new StockModel(box(0, -10, 20, 20), 4)
     const segs: MotionSegment[] = []
     for (let x = 0; x <= 20 + 1e-9; x += 0.1) segs.push({ x, y: 0, z: -5.7, rapid: false })
-    stock.carveBall(segs, R)
+    stock.carve(segs, ballKernel(R))
     const M = (y: number) => (Math.abs(y) < R ? -5.7 + R - Math.sqrt(R * R - y * y) : 0)
     for (let py = 0; py <= 2.5 + 1e-9; py += 0.05) {
       let need = -Infinity
@@ -258,7 +258,7 @@ describe('the finishing raster', () => {
     expect(entries.length).toBe(1)
     // The roughing reads the height map, not the triangles: it clears the gap too.
     const rough = generateProfile3d(positions, null, bounds, box(0, 0, 40, 40), BALL, params({
-      stepoverPercent: 50, roughingBallRadius: 3, roughingStepoverPercent: 50, roughingStepDownMM: 3, roughingStockAllowanceMM: 0.3,
+      stepoverPercent: 50, roughingRadiusMM: 3, roughingStepoverPercent: 50, roughingStepDownMM: 3, roughingStockAllowanceMM: 0.3,
     }))
     const roughGap = cuts(rough.slice(0, rough.findIndex((s) => s.toolChange))).filter((s) => s.x > 17 && s.x < 23)
     expect(roughGap.length).toBeGreaterThan(20)
@@ -388,7 +388,7 @@ describe('the finish never cuts into the model', () => {
 
 describe('roughing then rest-machining', () => {
   const rough = (over: Partial<Profile3dParams> = {}) => run(BALL, {
-    roughingBallRadius: 3, roughingStepoverPercent: 40, roughingStepDownMM: 3,
+    roughingRadiusMM: 3, roughingStepoverPercent: 40, roughingStepDownMM: 3,
     roughingStockAllowanceMM: 0.3, finishingToolId: 'fin', ...over,
   })
   const split = (segs: MotionSegment[]) => {
@@ -453,7 +453,7 @@ describe('roughing then rest-machining', () => {
     const TWO: Height = (x) => -Math.max(0, 6 - Math.abs(x - 10), 6 - Math.abs(x - 30))
     const m = mesh(TWO, W, W, 40)
     const segs = generateProfile3d(m.positions, null, m.bounds, box(0, 0, W, W), BALL, params({
-      roughingBallRadius: 3, roughingStepoverPercent: 40, roughingStepDownMM: 2,
+      roughingRadiusMM: 3, roughingStepoverPercent: 40, roughingStepDownMM: 2,
       roughingStockAllowanceMM: 0.3, roughingRasterAngleDeg: 0,
     }))
     const { roughing } = split(segs)
@@ -487,7 +487,7 @@ describe('roughing then rest-machining', () => {
       positions: new Float32Array([...strip(0), ...strip(28)]),
       bounds: { minX: 0, maxX: 40, minY: 0, maxY: 40, minZ: -6, maxZ: 0 },
     }
-    const roughAt = { roughingBallRadius: 3, roughingStepoverPercent: 50, roughingStepDownMM: 3, roughingStockAllowanceMM: 0.3 }
+    const roughAt = { roughingRadiusMM: 3, roughingStepoverPercent: 50, roughingStepDownMM: 3, roughingStockAllowanceMM: 0.3 }
     for (const [name, m, over] of [
       ['dome', mesh(DOME, W, W, 40), roughAt],
       ['groove', mesh(GROOVE, W, W, 40), roughAt],
@@ -552,6 +552,19 @@ describe('a 3D Profile never cuts through the stock', () => {
   })
 })
 
+describe('a model sunk below the cut is refused', () => {
+  // Then nothing of the model is reached: the raster cut one flat at the depth and the
+  // waterline cut nothing, and neither said why.
+  it('refuses a model whose top is at or below the depth cut', () => {
+    expect(modelBelowCut(10, 10)).toBe(true)
+    expect(modelBelowCut(12, 10)).toBe(true)
+  })
+  it('accepts a model whose top is above the depth cut, or not sunk at all', () => {
+    expect(modelBelowCut(9.5, 10)).toBe(false)
+    expect(modelBelowCut(undefined, 10)).toBe(false)
+  })
+})
+
 describe('a machining boundary', () => {
   // A dome on a floor filling the 40 mm model box, inside a boundary 8 mm out from it all
   // round. Inside the boundary and outside the model is ground the model does not cover:
@@ -562,7 +575,7 @@ describe('a machining boundary', () => {
   const ROUGH_R = 4
   const gen = (over: Partial<Profile3dParams> = {}) =>
     generateProfile3d(dome.positions, null, dome.bounds, box(0, 0, W, W), BALL, params({
-      roughingBallRadius: ROUGH_R, roughingStepoverPercent: 40, roughingStepDownMM: 6, roughingStockAllowanceMM: 0.3,
+      roughingRadiusMM: ROUGH_R, roughingStepoverPercent: 40, roughingStepDownMM: 6, roughingStockAllowanceMM: 0.3,
       boundaryRings: [OUT], ...over,
     }))
   const withBoundary = gen()
@@ -690,7 +703,7 @@ describe('roughing with a flat end mill', () => {
   const R = 3, ALLOW = 0.3
   const gen = (over: Partial<Profile3dParams> = {}) =>
     generateProfile3d(dome.positions, null, dome.bounds, box(0, 0, W, W), BALL, params({
-      roughingBallRadius: R, roughingFlat: true, roughingStepoverPercent: 50, roughingStepDownMM: 3,
+      roughingRadiusMM: R, roughingFlat: true, roughingStepoverPercent: 50, roughingStepDownMM: 3,
       roughingStockAllowanceMM: ALLOW, ...over,
     }))
   const parts = (segs: MotionSegment[]) => {
@@ -722,7 +735,7 @@ describe('roughing with a flat end mill', () => {
     const BOSS: Height = (x, y) => (Math.hypot(x - 20, y - 20) < 8.3 ? 0 : -6)
     const m = mesh(BOSS, W, W, 200)
     const segs = generateProfile3d(m.positions, null, m.bounds, box(0, 0, W, W), BALL, params({
-      roughingBallRadius: R, roughingFlat: true, roughingStepoverPercent: 50, roughingStepDownMM: 3, roughingStockAllowanceMM: 0,
+      roughingRadiusMM: R, roughingFlat: true, roughingStepoverPercent: 50, roughingStepDownMM: 3, roughingStockAllowanceMM: 0,
     }))
     let worst = 0
     for (const s of parts(segs).roughing) {

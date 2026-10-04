@@ -1,10 +1,11 @@
 import type { MotionSegment } from '../store/toolpathStore'
-import { pushAll, maxCutRadiusMM, toolProfileHeightMM } from './geom'
+import { pushAll, maxCutRadiusMM, toolProfileHeightMM, ringsBBox } from './geom'
 import type { Pt2 } from './pathFlattener'
 import { inflatePathsD, unionD, FillRule, JoinType, EndType } from 'clipper2-ts'
 import { perfLog } from '../debug'
 import { ballDropCutter } from './dropCutter'
 import { generateWaterline } from './waterline'
+import { stlToCnc } from './stlMapping'
 import type { Tool } from '../store/toolStore'
 import type { StlModelBounds } from '../importers/svgImporter'
 import type { BBox } from '../canvas/selectionUtils'
@@ -24,13 +25,24 @@ export function profile3dDepthMM(maxDepthMM: number, stockThicknessMM: number): 
   return stockThicknessMM > STOCK_SKIN_MM ? Math.min(maxDepthMM, stockThicknessMM - STOCK_SKIN_MM) : maxDepthMM
 }
 
+/**
+ * Whether a model sunk `modelTopMM` below the stock top lies wholly below a cut `depthMM`
+ * deep. Then nothing of it is reached: the raster cuts one flat at the depth and the
+ * waterline cuts nothing, so the job is refused rather than run.
+ */
+export function modelBelowCut(modelTopMM: number | undefined, depthMM: number): boolean {
+  return (modelTopMM ?? 0) >= depthMM
+}
+
+export const MODEL_BELOW_CUT_MSG = 'Model Top Below Stock is at or below the depth cut — nothing of the model would be cut'
+
 export interface Profile3dParams {
   stepoverPercent: number   // % of finishing tool diameter — spacing between passes
   /** How the finish is cut: scanlines, or constant-Z rings round the model. Unset: raster. */
   finishStrategy?: 'raster' | 'waterline'
   rasterAngleDeg: number    // scan direction (raster only)
   maxDepthMM: number        // max cut depth below workpiece surface (positive value)
-  roughingBallRadius?: number        // set → generate roughing pass then rest-machining finish (the rougher's radius, ball or flat)
+  roughingRadiusMM?: number        // set → generate roughing pass then rest-machining finish (the rougher's radius, ball or flat)
   roughingFlat?: boolean             // the rougher is a flat end mill, not a ball nose
   roughingStepoverPercent?: number   // stepover % for roughing pass (XY spacing)
   roughingStepDownMM?: number        // axial depth per roughing pass
@@ -69,10 +81,7 @@ export interface Profile3dParams {
 // 0.1 mm into a 45° wall. Reading high instead can only lift the tool — it leaves at most
 // about slope × half a cell of stock on a slope, and none on a flat.
 //
-// STL model space → CNC space:
-//   cncX = (stlX - modelCX) * scaleX + cncBbox.cx
-//   cncY = (stlY - modelCY) * scaleY + cncBbox.cy
-//   cncZ = (stlZ - bounds.maxZ) * scaleZ   (≤ 0)
+// STL model space → CNC space: `stlToCnc` (stlMapping.ts), shared with the drop-cutter.
 
 type P3 = [number, number, number]
 
@@ -105,12 +114,7 @@ export function buildHeightMap(
   opts: { gridBox?: BBox; zOffsetMM?: number; fill?: number } = {},
 ): Float32Array {
   const G = opts.gridBox ?? bbox
-  const zOff = opts.zOffsetMM ?? 0
-  const modelCX = (bounds.minX + bounds.maxX) / 2
-  const modelCY = (bounds.minY + bounds.maxY) / 2
-  const scaleX = bbox.width  / (bounds.maxX - bounds.minX)
-  const scaleY = bbox.height / (bounds.maxY - bounds.minY)
-  const scaleZ = (scaleX + scaleY) / 2
+  const map = stlToCnc(bounds, bbox, opts.zOffsetMM ?? 0)
 
   const cellX = G.width  / (nx - 1)
   const cellY = G.height / (ny - 1)
@@ -119,12 +123,7 @@ export function buildHeightMap(
   const grid = new Float32Array(nx * ny).fill(-Infinity)
 
   function vertXYZ(idx: number): P3 {
-    const sx = positions[idx * 3], sy = positions[idx * 3 + 1], sz = positions[idx * 3 + 2]
-    return [
-      (sx - modelCX) * scaleX + bbox.cx,
-      (sy - modelCY) * scaleY + bbox.cy,
-      (sz - bounds.maxZ) * scaleZ - zOff,
-    ]
+    return [map.x(positions[idx * 3]), map.y(positions[idx * 3 + 1]), map.z(positions[idx * 3 + 2])]
   }
 
   const triCount = indices ? indices.length / 3 : positions.length / 9
@@ -174,7 +173,8 @@ function clampNear(f: number, max: number): number {
   return f < 0 && f > -1e-9 ? 0 : f > max && f < max + 1e-9 ? max : f
 }
 
-// Bilinear interpolation. Returns null when outside the grid or fully uncovered.
+// Bilinear interpolation. Returns null when outside the grid. The grids it reads are built
+// with a `fill` (see generateProfile3d), so every node holds a height.
 function sampleGrid(
   x: number, y: number,
   grid: Float32Array, nx: number, ny: number,
@@ -194,11 +194,6 @@ function sampleGrid(
   const h10 = grid[iy * nx + (ix + 1)]
   const h01 = grid[(iy + 1) * nx + ix]
   const h11 = grid[(iy + 1) * nx + (ix + 1)]
-
-  if (h00 === -Infinity || h10 === -Infinity || h01 === -Infinity || h11 === -Infinity) {
-    const valid = [h00, h10, h01, h11].filter((h) => h !== -Infinity)
-    return valid.length ? Math.max(...valid) : null
-  }
 
   return h00 * (1 - tx) * (1 - ty) + h10 * tx * (1 - ty) +
          h01 * (1 - tx) * ty       + h11 * tx * ty
@@ -284,52 +279,70 @@ function leanKernel(kernel: ToolKernel, lean: number): ToolKernel {
   }
 }
 
+/** `srcGrid` must hold a height at every node — a `buildHeightMap` built with `fill`. */
 function computeToolSurface(
   srcGrid: Float32Array, srcNX: number, srcNY: number,
   bbox: BBox, kernel: ToolKernel,
   maxCells = 750,  // cap grid resolution for speed; roughing uses 350, finishing uses 750
 ): ToolSurface {
-  const radius = kernel.reachMM
   const scale = Math.max(1, Math.ceil(Math.max(srcNX, srcNY) / maxCells))
   const nx    = Math.ceil(srcNX / scale)
   const ny    = Math.ceil(srcNY / scale)
   const cellX = bbox.width  / Math.max(1, nx - 1)
   const cellY = bbox.height / Math.max(1, ny - 1)
-
-  // Downsample using max so no surface peak is missed. Each source node goes to the coarse
-  // node nearest its POSITION: the two grids both span the box edge to edge, so their
-  // spacings differ unless (srcN − 1) happens to divide by `scale`, and `round(ix / scale)`
-  // then drifts — up to half a source cell by the far edge, which moved a steep wall under
-  // the tool and gouged a dome's foot 0.1 mm.
   const srcCellX = bbox.width  / Math.max(1, srcNX - 1)
   const srcCellY = bbox.height / Math.max(1, srcNY - 1)
+  const src = downsampleMax(srcGrid, srcNX, srcNY, srcCellX, srcCellY, nx, ny, cellX, cellY)
+
+  // How far a coarse node's highest point can be from it: half its own cell, plus half a
+  // source cell for the source node it came from.
+  const lean = Math.hypot((cellX + (scale > 1 ? srcCellX : 0)) / 2, (cellY + (scale > 1 ? srcCellY : 0)) / 2)
+  const table = kernelTable(kernel, lean, cellX, cellY)
+  const grid = dilate(src, nx, ny, table, kernel.reachMM)
+  if (!kernel.flat) return { grid, nx, ny, cellX, cellY }
+  return { grid, nx, ny, cellX, cellY, low: lowUnderTool(src, nx, ny, table) }
+}
+
+/**
+ * The source grid downsampled to nx × ny, keeping each coarse node's MAX so no surface
+ * peak is missed. Each source node goes to the coarse node nearest its POSITION: the two
+ * grids both span the box edge to edge, so their spacings differ unless (srcN − 1) happens
+ * to divide by the scale, and `round(ix / scale)` then drifts — up to half a source cell by
+ * the far edge, which moved a steep wall under the tool and gouged a dome's foot 0.1 mm.
+ */
+function downsampleMax(
+  srcGrid: Float32Array, srcNX: number, srcNY: number, srcCellX: number, srcCellY: number,
+  nx: number, ny: number, cellX: number, cellY: number,
+): Float32Array {
   const src = new Float32Array(nx * ny).fill(-Infinity)
   for (let iy = 0; iy < srcNY; iy++) {
     for (let ix = 0; ix < srcNX; ix++) {
       const v = srcGrid[iy * srcNX + ix]
-      if (v === -Infinity) continue
       const di = Math.min(Math.round((ix * srcCellX) / cellX), nx - 1)
       const dj = Math.min(Math.round((iy * srcCellY) / cellY), ny - 1)
       const idx = dj * nx + di
       if (v > src[idx]) src[idx] = v
     }
   }
+  return src
+}
 
-  // Dilation: for each surface cell, push its minimum-required tool-Z into neighbors
-  const result = new Float32Array(nx * ny).fill(-Infinity)
-  // How far a coarse node's highest point can be from it: half its own cell, plus half a
-  // source cell for the source node it came from.
-  const lean = Math.hypot((cellX + (scale > 1 ? srcCellX : 0)) / 2, (cellY + (scale > 1 ? srcCellY : 0)) / 2)
-  // A flat end mill's rim is a vertical wall: a high point just outside the rim's reach of
-  // its node, but inside the rim of the cutter, would hit its side. So it reaches that much
-  // further — the flat-tool form of `leanKernel`, which tilts nothing on a level profile.
-  const reachCut = kernel.flat ? radius + lean : radius
+/** The tool's profile at every grid offset within its reach (NaN beyond), `kw` wide and
+ *  centred on (rcX, rcY). */
+interface KernelTable { kern: Float64Array; kw: number; rcX: number; rcY: number }
+
+/**
+ * The kernel depends only on the offset, so evaluate the profile ONCE per offset rather
+ * than once per (cell, offset) pair — and the dilation's inner loop loses its sqrt. A flat
+ * end mill's rim is a vertical wall: a high point just outside the rim's reach of its node,
+ * but inside the rim of the cutter, would hit its side. So it reaches `lean` further — the
+ * flat-tool form of `leanKernel`, which tilts nothing on a level profile.
+ */
+function kernelTable(kernel: ToolKernel, lean: number, cellX: number, cellY: number): KernelTable {
+  const reachCut = kernel.flat ? kernel.reachMM + lean : kernel.reachMM
   const r2  = reachCut * reachCut
   const rcX = Math.ceil(reachCut / cellX) + 1
   const rcY = Math.ceil(reachCut / cellY) + 1
-
-  // The kernel depends only on the offset, so evaluate the profile ONCE per offset
-  // rather than once per (cell, offset) pair — and the inner loop loses its sqrt.
   const leaned = leanKernel(kernel, lean)
   const kw = 2 * rcX + 1
   const kern = new Float64Array(kw * (2 * rcY + 1))
@@ -341,11 +354,16 @@ function computeToolSurface(
       kern[(dj + rcY) * kw + (di + rcX)] = d2 > r2 ? NaN : leaned.termAtDistSq(d2)
     }
   }
+  return { kern, kw, rcX, rcY }
+}
 
+/** The dilation: for each surface node, push its minimum-required tip Z into the nodes
+ *  within the tool's reach. */
+function dilate(src: Float32Array, nx: number, ny: number, { kern, kw, rcX, rcY }: KernelTable, radius: number): Float32Array {
+  const result = new Float32Array(nx * ny).fill(-Infinity)
   for (let iy = 0; iy < ny; iy++) {
     for (let ix = 0; ix < nx; ix++) {
       const h = src[iy * nx + ix]
-      if (h === -Infinity) continue
       const jxMin = Math.max(0, ix - rcX), jxMax = Math.min(nx - 1, ix + rcX)
       const jyMin = Math.max(0, iy - rcY), jyMax = Math.min(ny - 1, iy + rcY)
       for (let jy = jyMin; jy <= jyMax; jy++) {
@@ -361,34 +379,31 @@ function computeToolSurface(
       }
     }
   }
+  return result
+}
 
-  if (!kernel.flat) return { grid: result, nx, ny, cellX, cellY }
-
-  // A flat end mill also needs the LOWEST surface under its bottom: where that is level
-  // with the highest, the tool stands on a flat and its bottom finishes it.
+/** The LOWEST surface under a flat end mill's bottom at each node: where that is level with
+ *  the highest, the tool stands on a flat and its bottom finishes it. */
+function lowUnderTool(src: Float32Array, nx: number, ny: number, { kern, kw, rcX, rcY }: KernelTable): Float32Array {
   const low = new Float32Array(nx * ny)
   for (let iy = 0; iy < ny; iy++) {
     for (let ix = 0; ix < nx; ix++) {
       let m = Infinity
       const jxMin = Math.max(0, ix - rcX), jxMax = Math.min(nx - 1, ix + rcX)
       const jyMin = Math.max(0, iy - rcY), jyMax = Math.min(ny - 1, iy + rcY)
-      for (let jy = jyMin; jy <= jyMax && m > NO_SURFACE; jy++) {
+      for (let jy = jyMin; jy <= jyMax; jy++) {
         const kRow = (jy - iy + rcY) * kw + rcX - ix
         for (let jx = jxMin; jx <= jxMax; jx++) {
           if (Number.isNaN(kern[kRow + jx])) continue
           const h = src[jy * nx + jx]
-          if (h === -Infinity) { m = NO_SURFACE; break }   // off the model: not a flat
           if (h < m) m = h
         }
       }
-      low[iy * nx + ix] = m === Infinity ? NO_SURFACE : m
+      low[iy * nx + ix] = m
     }
   }
-  return { grid: result, nx, ny, cellX, cellY, low }
+  return low
 }
-
-/** `ToolSurface.low` where the tool stands partly off the model — never level with anything. */
-const NO_SURFACE = -1e9
 
 // ─── The stock that is left ───────────────────────────────────────────────────
 //
@@ -430,39 +445,15 @@ export class StockModel {
     this.e = this.cell * Math.SQRT1_2
   }
 
-  /** Lower the stock by every cutting point of `segs`, cut with `tool`. */
+  /**
+   * Lower the stock by every cutting point of `segs`, cut with `tool`: at each node the
+   * tool's surface over it, `tip + reach − term(d²)` — narrowed by `e`, so the carve stays
+   * an upper bound between the nodes. A flat end mill takes everything under its bottom
+   * down to its tip exactly (its term is its reach, and `z + R − R` need not be `z`).
+   */
   carve(segs: MotionSegment[], tool: ToolKernel): void {
-    if (tool.flat) this.carveFlat(segs, tool.reachMM)
-    else this.carveBall(segs, tool.reachMM)
-  }
-
-  /** A flat end mill takes everything under its bottom down to its tip — narrowed by `e`,
-   *  as the ball is, so the carve stays an upper bound between the nodes. */
-  private carveFlat(segs: MotionSegment[], R: number): void {
     const { z, nx, ny, minX, minY, cell, e } = this
-    const reach = R - e
-    if (reach <= 0) return
-    const rc = Math.ceil(reach / cell)
-    for (const s of segs) {
-      if (s.rapid) continue
-      const cx = (s.x - minX) / cell, cy = (s.y - minY) / cell
-      const i0 = Math.max(0, Math.ceil(cx - rc)), i1 = Math.min(nx - 1, Math.floor(cx + rc))
-      const j0 = Math.max(0, Math.ceil(cy - rc)), j1 = Math.min(ny - 1, Math.floor(cy + rc))
-      for (let j = j0; j <= j1; j++) {
-        const dy = (j - cy) * cell
-        for (let i = i0; i <= i1; i++) {
-          const dx = (i - cx) * cell
-          if (Math.sqrt(dx * dx + dy * dy) + e >= R) continue
-          const k = j * nx + i
-          if (s.z < z[k]) z[k] = s.z
-        }
-      }
-    }
-  }
-
-  /** Lower the stock by every cutting point of `segs`, cut with a ball of radius `R`. */
-  carveBall(segs: MotionSegment[], R: number): void {
-    const { z, nx, ny, minX, minY, cell, e } = this
+    const R = tool.reachMM
     const reach = R - e
     if (reach <= 0) return
     const rc = Math.ceil(reach / cell)
@@ -477,7 +468,7 @@ export class StockModel {
           const dx = (i - cx) * cell
           const d = Math.sqrt(dx * dx + dy * dy) + e
           if (d >= R) continue
-          const top = s.z + R - Math.sqrt(R * R - d * d)
+          const top = tool.flat ? s.z : s.z + R - tool.termAtDistSq(d * d)
           const k = j * nx + i
           if (top < z[k]) z[k] = top
         }
@@ -485,8 +476,20 @@ export class StockModel {
     }
   }
 
+  /** Whether `tool` at (x, y) with its tip at `level` would touch stock left — that is,
+   *  `clearTipZ(x, y, tool) > level` — answered at the first node that says so. */
+  stockAbove(x: number, y: number, tool: ToolKernel, level: number): boolean {
+    return this.highestNeed(x, y, tool, level) > level
+  }
+
   /** The lowest tip height at (x, y) that `tool` is clear of every bit of stock left. */
   clearTipZ(x: number, y: number, tool: ToolKernel): number {
+    return this.highestNeed(x, y, tool, Infinity)
+  }
+
+  /** The highest tip height any stock node under `tool` at (x, y) asks for — or the first
+   *  one found above `stopAbove`, which settles a yes/no question as soon as it can. */
+  private highestNeed(x: number, y: number, tool: ToolKernel, stopAbove: number): number {
     const { z, nx, ny, minX, minY, cell, e } = this
     const reach = tool.reachMM
     const rc = Math.ceil((reach + e) / cell)
@@ -502,7 +505,7 @@ export class StockModel {
         if (d > reach) continue
         // The tool's surface sits `reach − term` above its tip at distance d.
         const v = z[j * nx + i] - (reach - tool.termAtDistSq(d * d))
-        if (v > need) need = v
+        if (v > need) { need = v; if (need > stopAbove) return need }
       }
     }
     return need
@@ -522,25 +525,16 @@ function generateStepDownPasses(
   maxDepthMM: number,
   stockAllowanceMM: number,
   rasterAngleDeg: number,
-  rawMaxDepthMM: number | undefined,  // raw surface max depth — avoids inflated pass count from dilation
+  /** The model's depth read off the raw height map, not the dilated surface — dilation
+   *  artefacts would count as extra passes. */
+  rawMaxDepthMM: number,
   roughKernel: ToolKernel,
   stock: StockModel,
   motion: Omit<RasterMotion, 'stock' | 'enter'>,
   area: CutArea | undefined,
   wall: Pt2[][],
 ): MotionSegment[] {
-  // Use raw surface depth when provided (avoids counting dilation artefacts as extra passes).
-  // Fall back to scanning the effective grid only if the raw depth isn't available.
-  let surfaceMaxDepth: number
-  if (rawMaxDepthMM !== undefined) {
-    surfaceMaxDepth = rawMaxDepthMM
-  } else {
-    surfaceMaxDepth = 0
-    for (let i = 0; i < surf.grid.length; i++) {
-      if (surf.grid[i] !== -Infinity && -surf.grid[i] > surfaceMaxDepth) surfaceMaxDepth = -surf.grid[i]
-    }
-  }
-  const effectiveMaxDepth = Math.min(surfaceMaxDepth, maxDepthMM)
+  const effectiveMaxDepth = Math.min(rawMaxDepthMM, maxDepthMM)
   // Floored like `zPasses`: a step of 0 made this Infinity and the loop below unbounded.
   if (!(stepDownMM >= 0.01)) stepDownMM = 0.01
   const numPasses = Math.ceil(effectiveMaxDepth / stepDownMM)
@@ -577,8 +571,9 @@ function generateStepDownPasses(
 // riding the surface whenever that is quicker than lifting to safe height, crossing, and
 // coming back down; the comparison is in seconds, like `travelBeatsLift` in the 2D
 // router. A ride over ground an earlier roughing level cleared is marked `travel` — the
-// tool runs in the groove that level cut. It never rides over a point with no surface
-// under it: that is a hole in the model, and is lifted over.
+// tool runs in the groove that level cut. It never rides out of the boundary: that is
+// lifted over. (Ground the model does not cover, holes through it included, is a floor at
+// its lowest point, ridden like any other surface.)
 //
 // ENTRIES rapid down to just above the stock earlier passes left (`StockModel`) and feed
 // only the rest of the way.
@@ -650,24 +645,42 @@ class PassEmitter {
     this.sampleStep = Math.min(surf.cellX, surf.cellY) * 0.5
   }
 
-  /** The surface height under (x, y) — null where there is none. */
-  surfaceZ(x: number, y: number): number | null {
-    if (!this.inside(x, y)) return null
+  // How the surface is read. Two sources — the gouge-free grid, and the exact surface where
+  // the pass has one — each either inside the boundary only or anywhere, all turned into a
+  // tip height by the one rule in `tip`.
+
+  /** The grid's surface height at (x, y), boundary or not; null off the grid. */
+  private gridZ(x: number, y: number): number | null {
     const { grid, nx, ny, cellX, cellY } = this.surf
     return sampleGrid(x, y, grid, nx, ny, this.bbox.minX, this.bbox.minY, cellX, cellY)
   }
 
-  /** The tip height a cut at (x, y) follows; null where there is no surface. */
-  tipZ(x: number, y: number): number | null {
-    const h = this.surfaceZ(x, y)
+  /** The best surface height the pass has at (x, y): exact where given, else the grid. */
+  private bestZ(x: number, y: number): number | null {
+    return this.exact ? this.exact(x, y) : this.gridZ(x, y)
+  }
+
+  /** The tip height over surface `h`: no deeper than the max depth, plus the allowance. */
+  private tip(x: number, y: number, h: number | null): number | null {
     return h === null ? null : Math.max(h, -this.maxDepthMM) + this.allowanceAt(x, y, h)
+  }
+
+  /** The grid's surface height under (x, y) — null outside the boundary. */
+  surfaceZ(x: number, y: number): number | null {
+    return this.inside(x, y) ? this.gridZ(x, y) : null
+  }
+
+  /** The tip height a cut at (x, y) follows, read off the grid; null outside the boundary. */
+  tipZ(x: number, y: number): number | null {
+    return this.tip(x, y, this.surfaceZ(x, y))
   }
 
   /** The model's final depth — set for a flat end mill's roughing, which then leaves no
    *  allowance on a flat: its bottom is the best finish a level surface can have. */
   flatFloorDepthMM: number | null = null
 
-  /** The stock allowance at (x, y), where the surface under the tool is `h`. */
+  /** The stock allowance at (x, y), where the surface under the tool is `h`. (A pass with
+   *  an exact surface is a finish, which has no `low`: its allowance is the plain one.) */
   private allowanceAt(x: number, y: number, h: number): number {
     const low = this.surf.low
     if (!low || this.flatFloorDepthMM === null) return this.stockAllowanceMM
@@ -684,26 +697,19 @@ class PassEmitter {
   /** Whether a cut at (x, y, z) takes anything — false where the roughing already left the
    *  stock there within REST_TOL_MM of it (a flat an end mill finished). */
   needsCut(x: number, y: number, z: number): boolean {
-    return !this.rest || this.rest.stock.clearTipZ(x, y, this.rest.tool) > z + REST_TOL_MM
+    return !this.rest || this.rest.stock.stockAbove(x, y, this.rest.tool, z + REST_TOL_MM)
   }
 
   /** `tipZ`, read exactly where the pass was given an exact surface. */
   exactTipZ(x: number, y: number): number | null {
-    if (!this.exact) return this.tipZ(x, y)
-    if (!this.inside(x, y)) return null
-    const h = this.exact(x, y)
-    return h === null ? null : Math.max(h, -this.maxDepthMM) + this.stockAllowanceMM
+    return this.inside(x, y) ? this.tip(x, y, this.bestZ(x, y)) : null
   }
 
   get allowanceMM(): number { return this.stockAllowanceMM }
 
   /** `exactTipZ` on the limit itself, which a containment test may read either way. */
   edgeTipZ(x: number, y: number): number | null {
-    const h = this.exact ? this.exact(x, y) : (() => {
-      const { grid, nx, ny, cellX, cellY } = this.surf
-      return sampleGrid(x, y, grid, nx, ny, this.bbox.minX, this.bbox.minY, cellX, cellY)
-    })()
-    return h === null ? null : Math.max(h, -this.maxDepthMM) + (this.exact ? this.stockAllowanceMM : this.allowanceAt(x, y, h))
+    return this.tip(x, y, this.bestZ(x, y))
   }
 
   // How low an entry at (x, y, z) may rapid before it feeds.
@@ -727,30 +733,52 @@ class PassEmitter {
   private link(x: number, y: number, z: number, overCleared: boolean, maxClimbMM = Infinity): boolean {
     const at = this.at
     if (!at) return false
+    const ride = this.ridePath(at, x, y, z, maxClimbMM)
+    if (!ride) return false
+    // A ride over ground the roughing already finished takes nothing either: travel. (Its
+    // last point is where the next cut starts, which of course has stock to take.)
+    if (!overCleared && this.rest && ride.pts.slice(0, -1).every(([qx, qy, qz]) => !this.needsCut(qx, qy, qz))) overCleared = true
     const { motion } = this
+    const rideS = ride.len / (motion.xyFeedMmMin * (overCleared ? TRAVEL_FEED_FACTOR : 1))
+    if (!(rideS < this.liftSeconds(at, x, y, z))) return false
+    for (const [qx, qy, qz] of ride.pts) {
+      this.segs.push(overCleared ? { x: qx, y: qy, z: qz, rapid: false, travel: true } : { x: qx, y: qy, z: qz, rapid: false })
+    }
+    this.at = { x, y, z }
+    return true
+  }
+
+  /**
+   * The points of a ride along the surface from `at` to (x, y, z), sampled every
+   * `sampleStep`, and its 3D length — or null where there is no such ride: it leaves the
+   * boundary, crosses a gap too wide to bridge, or climbs more than `maxClimbMM` above
+   * both ends.
+   */
+  private ridePath(
+    at: { x: number; y: number; z: number }, x: number, y: number, z: number, maxClimbMM: number,
+  ): { pts: [number, number, number][]; len: number } | null {
     const dx = x - at.x, dy = y - at.y
     const hop = Math.hypot(dx, dy)
     const n = Math.max(1, Math.ceil(hop / this.sampleStep))
+    // Outside the boundary is not a gap to bridge: the tool's edge would leave it. Checked
+    // before the surface is read (`exactTipZ` is a drop-cutter query per point).
+    for (let i = 1; i < n; i++) if (!this.inside(at.x + dx * i / n, at.y + dy * i / n)) return null
     const zs: (number | null)[] = []
     for (let i = 1; i <= n; i++) {
       const t = i / n
       zs.push(i === n ? z : this.exactTipZ(at.x + dx * t, at.y + dy * t))
     }
-    // A stretch with no surface under it: a link between two line ends on the rim of a
-    // model clips the corners of the grid's staircase edge, and refusing that lifted the
-    // tool between half the scanlines of a round relief. Over a stretch no longer than
-    // MAX_LINK_GAP_CELLS it rides at the higher of the heights either side — the line ends'
-    // own cuts have taken the waste there. Anything wider is a hole in the model, full of
-    // uncut stock, and is lifted over.
+    // A stretch with no surface under it. Every surface is filled to a floor wherever the
+    // model does not reach, so this is only the grid's edge read a hair outside — bridged
+    // at the higher of the heights either side when no longer than MAX_LINK_GAP_CELLS,
+    // lifted over otherwise.
     const step = hop / n
-    // Outside the boundary is not a gap to bridge: the tool's edge would leave it.
-    for (let i = 1; i < n; i++) if (!this.inside(at.x + dx * i / n, at.y + dy * i / n)) return false
     const maxGap = MAX_LINK_GAP_CELLS * Math.max(this.surf.cellX, this.surf.cellY)
     for (let i = 0; i < n; i++) {
       if (zs[i] !== null) continue
       let j = i
       while (zs[j] === null) j++   // zs[n − 1] is the endpoint, never null
-      if ((j - i) * step > maxGap) return false
+      if ((j - i) * step > maxGap) return null
       const fill = Math.max(i > 0 ? zs[i - 1]! : at.z, zs[j]!)
       for (let k = i; k < j; k++) zs[k] = fill
       i = j
@@ -760,7 +788,7 @@ class PassEmitter {
     // jerk up and down the machine has no reason to make.
     if (maxClimbMM < Infinity) {
       const top = Math.max(at.z, z) + maxClimbMM
-      for (const q of zs) if (q! > top) return false
+      for (const q of zs) if (q! > top) return null
     }
     const pts: [number, number, number][] = []
     let len = 0, px = at.x, py = at.y, pz = at.z
@@ -770,18 +798,16 @@ class PassEmitter {
       len += Math.hypot(qx - px, qy - py, qz - pz)
       pts.push([qx, qy, qz]); px = qx; py = qy; pz = qz
     }
-    // A ride over ground the roughing already finished takes nothing either: travel. (Its
-    // last point is where the next cut starts, which of course has stock to take.)
-    if (!overCleared && this.rest && pts.slice(0, -1).every(([qx, qy, qz]) => !this.needsCut(qx, qy, qz))) overCleared = true
-    const ride = len / (motion.xyFeedMmMin * (overCleared ? TRAVEL_FEED_FACTOR : 1))
+    return { pts, len }
+  }
+
+  /** Seconds to lift from `at` to safe height, rapid across, rapid down to the entry
+   *  height above (x, y) and feed the rest of the way to z. */
+  private liftSeconds(at: { x: number; y: number; z: number }, x: number, y: number, z: number): number {
+    const { motion } = this
+    const hop = Math.hypot(x - at.x, y - at.y)
     const e = this.entryZ(x, y, z)
-    const lift = (2 * motion.safeZ - at.z - e + hop) / motion.rapidMmMin + (e - z) / motion.zFeedMmMin
-    if (!(ride < lift)) return false
-    for (const [qx, qy, qz] of pts) {
-      this.segs.push(overCleared ? { x: qx, y: qy, z: qz, rapid: false, travel: true } : { x: qx, y: qy, z: qz, rapid: false })
-    }
-    this.at = { x, y, z }
-    return true
+    return (2 * motion.safeZ - at.z - e + hop) / motion.rapidMmMin + (e - z) / motion.zFeedMmMin
   }
 
   /** Get to (x, y, z) to start a run: along the surface if that pays, else over the top. */
@@ -860,7 +886,8 @@ function rasterInto(
           cncY < bbox.minY - 1e-3 || cncY > bbox.maxY + 1e-3) continue
 
       const h = em.surfaceZ(cncX, cncY)
-      // Outside the model there is nothing to follow: a hole in the run, lifted over.
+      // Outside the boundary the tool may not go: a gap in the run, lifted over. (Ground the
+      // model does not cover — round it, or a hole through it — is a floor, not a gap.)
       if (h === null) { gapCleared = false; inRun = false; continue }
       // Already cleared by a previous roughing level: a gap the link may ride along.
       if (prevPassDepthMM > 0 && h >= -prevPassDepthMM + 1e-6) { inRun = false; continue }
@@ -869,7 +896,7 @@ function rasterInto(
       // Already finished by the roughing: cleared ground, ridden over like a cleared level.
       if (!em.needsCut(cncX, cncY, toolZ)) { inRun = false; continue }
       if (inRun) { em.cut(cncX, cncY, toolZ); continue }
-      // A gap within this line is cleared ground only if no hole interrupted it.
+      // A gap within this line is cleared ground only if the boundary did not interrupt it.
       em.arrive(cncX, cncY, toolZ, lineCut && gapCleared)
       inRun = true; lineCut = true; gapCleared = true
     }
@@ -927,8 +954,7 @@ function cutArea(rings: Pt2[][], insetMM: number, open = false): CutArea {
   const limit = inflatePathsD(region, open ? insetMM : -(insetMM + ARC_TOL), JoinType.Round, EndType.Polygon, 2, 4, ARC_TOL)
     .map((r) => r.map((p) => [p.x, p.y] as Pt2))
   if (!limit.length) throw new Error('The boundary is too small for the tool — no room for its edge to stay inside')
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-  for (const r of limit) for (const [x, y] of r) { minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y) }
+  const { minX, minY, maxX, maxY } = ringsBBox(limit)!
   const box: BBox = { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY, cx: (minX + maxX) / 2, cy: (minY + maxY) / 2 }
   return { box, inside: ringContainment(limit, 0.5), wall: open ? undefined : limit, limit }
 }
@@ -1006,9 +1032,7 @@ export function generateProfile3d(
   // that for either type (a taper stores its tip), so this needs no per-type branch.
   const stepoverMM = Math.max(0.01, tool.diameterMM * params.stepoverPercent / 100)
 
-  const hasRoughing = params.roughingBallRadius !== undefined &&
-                      params.roughingBallRadius > 0 &&
-                      params.roughingStepoverPercent !== undefined
+  const rough = roughPlan(params, tool)
 
   // The model sits `zOff` below the stock top. With a boundary, the surfaces span the
   // boundary's area plus the reach of the larger tool, and the floor fills what the model
@@ -1017,15 +1041,15 @@ export function generateProfile3d(
   // Each tool's centre is kept in by its OWN radius, so both reach the boundary line: kept
   // in by the larger one, the finishing ball stopped short of the roughing and left its
   // scallops standing in a band all along the boundary.
-  const reachMM = Math.max(hasRoughing ? params.roughingBallRadius! : 0, finishKernel.reachMM)
+  const reachMM = Math.max(rough ? rough.radius : 0, finishKernel.reachMM)
   const open = !!params.boundaryOpen
   const area = params.boundaryRings?.length ? cutArea(params.boundaryRings, finishKernel.reachMM, open) : undefined
-  const roughArea = params.boundaryRings?.length && hasRoughing ? cutArea(params.boundaryRings, params.roughingBallRadius!, open) : undefined
+  const roughArea = params.boundaryRings?.length && rough ? cutArea(params.boundaryRings, rough.radius, open) : undefined
   // The walls each pass finishes on: the limit, or the model's own box without a boundary.
   const finishWall = area ? area.wall ?? [] : [boxRing(bbox)]
   const roughWall = roughArea ? roughArea.wall ?? [] : [boxRing(bbox)]
   const G = area ? grow(area.box, reachMM + 1) : bbox
-  const floorZ = (bounds.minZ - bounds.maxZ) * ((bbox.width / (bounds.maxX - bounds.minX) + bbox.height / (bounds.maxY - bounds.minY)) / 2) - zOff
+  const floorZ = stlToCnc(bounds, bbox, zOff).z(bounds.minZ)
 
   // Height map resolution: ≈ stepover / 3 (oversampled), capped at 1500×1500
   const cellSize = Math.max(0.05, stepoverMM / 3)
@@ -1035,7 +1059,8 @@ export function generateProfile3d(
   const grid = buildHeightMap(positions, indices, bounds, bbox, nx, ny,
     // Inside the box (or the boundary), ground the model does not cover is a floor at its
     // lowest point — a round relief in its square box has nothing in the corners, and was
-    // left standing there, lifted over as if it were a hole.
+    // left standing there, lifted over as if it were a hole. A hole THROUGH the model is
+    // floor too, and is cut down to it.
     area ? { gridBox: G, zOffsetMM: zOff, fill: floorZ } : { zOffsetMM: zOff, fill: floorZ })
 
   // Compute gouge-free effective surface for the finishing ball (used by both paths)
@@ -1059,7 +1084,8 @@ export function generateProfile3d(
     if (params.finishStrategy === 'waterline') {
       generateWaterline(em, em.scanBox, {
         stepoverMM, maxDepthMM: params.maxDepthMM, toolDiameterMM: tool.diameterMM,
-        cl: (x, y) => em.exactTipZ(x, y),
+        cl: (x, y) => em.edgeTipZ(x, y),
+        inside: area ? em.inside : undefined,
         limit: area?.limit,
         needsCut: stock ? (x, y, z) => em.needsCut(x, y, z) : undefined,
       })
@@ -1070,59 +1096,69 @@ export function generateProfile3d(
     return em.done()
   }
 
-  if (!hasRoughing) return finish(null)
+  if (!rough) return finish(null)
 
   // ── Two-pass: roughing + rest-machining finish ────────────────────────────
-
-  const roughRadius = params.roughingBallRadius!
-  const roughStepMM = Math.max(0.01, roughRadius * 2 * params.roughingStepoverPercent! / 100)
-  const roughStepDownMM = params.roughingStepDownMM && params.roughingStepDownMM > 0
-    ? params.roughingStepDownMM
-    : roughRadius * 0.75
-  const roughStockMM = params.roughingStockAllowanceMM ?? 0.3
-
-  // Compute raw surface max depth before dilation so pass count is based on actual model depth.
-  let rawMaxDepth = 0
-  for (let i = 0; i < grid.length; i++) {
-    const v = grid[i]
-    if (v !== -Infinity && -v > rawMaxDepth) rawMaxDepth = -v
-  }
-
-  // A ball or a flat end mill: the surface its tip may follow, and the stock it leaves.
-  const roughKernel = params.roughingFlat ? flatKernel(roughRadius) : ballKernel(roughRadius)
-  const roughSurface = computeToolSurface(grid, nx, ny, G, roughKernel, 350)
-  perfLog(`[profile3d] roughSurface ${roughSurface.nx}×${roughSurface.ny} R=${roughRadius}mm stock=${roughStockMM}mm | finishSurface ${finishSurface.nx}×${finishSurface.ny} R=${finishKernel.reachMM.toFixed(3)}mm`)
-
-  const roughAngleDeg = params.roughingRasterAngleDeg ?? (params.rasterAngleDeg + 90)
-
   // The stock the roughing leaves, for the entries of its later levels and of the finish.
   // Its margin takes in the stock just outside the model that either tool can touch.
-  const stock = new StockModel(G, Math.max(roughRadius, finishKernel.reachMM) + 1)
+  const stock = new StockModel(G, Math.max(rough.radius, finishKernel.reachMM) + 1)
+  const roughingSegs = roughPasses(rough, grid, nx, ny, G, params.maxDepthMM, stock, { safeZ, rapidMmMin }, roughArea, roughWall,
+    `finishSurface ${finishSurface.nx}×${finishSurface.ny} R=${finishKernel.reachMM.toFixed(3)}mm`)
+  return withToolChange(roughingSegs, finish(stock), safeZ, params.finishingToolId ?? tool.id)
+}
 
-  const roughingSegs = generateStepDownPasses(
-    roughSurface, G,
-    roughStepMM, roughStepDownMM, params.maxDepthMM,
-    roughStockMM, roughAngleDeg,
-    rawMaxDepth, roughKernel, stock, {
-      safeZ, rapidMmMin,
-      xyFeedMmMin: params.roughingXyFeedMmMin ?? tool.xyFeedMmMin,
-      zFeedMmMin: params.roughingZFeedMmMin ?? tool.zFeedMmMin,
-    }, roughArea, roughWall,
-  )
+/** A roughing pass's settings, resolved once from the params: its tool's radius and shape
+ *  (a ball, or a flat end mill), its stepover, step down, allowance, angle and feeds. */
+interface RoughPlan {
+  radius: number
+  kernel: ToolKernel
+  stepMM: number
+  stepDownMM: number
+  stockMM: number
+  angleDeg: number
+  xyFeedMmMin: number
+  zFeedMmMin: number
+}
 
-  const finishingSegs = finish(stock)
-
-  // Stitch together: roughing → tool-change marker → finishing
-  const lastRough = roughingSegs[roughingSegs.length - 1]
-  const finishingToolId = params.finishingToolId ?? tool.id
-
-  const toolChangeSeg: MotionSegment = {
-    x:    lastRough?.x ?? 0,
-    y:    lastRough?.y ?? 0,
-    z:    safeZ,
-    rapid: true,
-    toolChange: finishingToolId,
+/** The roughing pass the params ask for — null when they ask for none. */
+function roughPlan(params: Profile3dParams, tool: Tool): RoughPlan | null {
+  const radius = params.roughingRadiusMM
+  if (radius === undefined || !(radius > 0) || params.roughingStepoverPercent === undefined) return null
+  return {
+    radius,
+    kernel: params.roughingFlat ? flatKernel(radius) : ballKernel(radius),
+    stepMM: Math.max(0.01, radius * 2 * params.roughingStepoverPercent / 100),
+    stepDownMM: params.roughingStepDownMM && params.roughingStepDownMM > 0 ? params.roughingStepDownMM : radius * 0.75,
+    stockMM: params.roughingStockAllowanceMM ?? 0.3,
+    angleDeg: params.roughingRasterAngleDeg ?? (params.rasterAngleDeg + 90),
+    xyFeedMmMin: params.roughingXyFeedMmMin ?? tool.xyFeedMmMin,
+    zFeedMmMin: params.roughingZFeedMmMin ?? tool.zFeedMmMin,
   }
+}
 
-  return [...roughingSegs, toolChangeSeg, ...finishingSegs]
+/** Every roughing level, carving `stock` as it goes. `grid` is the raw height map over `G`. */
+function roughPasses(
+  rough: RoughPlan, grid: Float32Array, nx: number, ny: number, G: BBox, maxDepthMM: number,
+  stock: StockModel, motion: { safeZ: number; rapidMmMin: number }, area: CutArea | undefined, wall: Pt2[][],
+  finishLog: string,
+): MotionSegment[] {
+  // The model's depth off the raw height map, so the pass count is the model's, not the
+  // dilated surface's.
+  let rawMaxDepth = 0
+  for (let i = 0; i < grid.length; i++) if (-grid[i] > rawMaxDepth) rawMaxDepth = -grid[i]
+  // The surface the rougher's tip may follow.
+  const surface = computeToolSurface(grid, nx, ny, G, rough.kernel, 350)
+  perfLog(`[profile3d] roughSurface ${surface.nx}×${surface.ny} R=${rough.radius}mm stock=${rough.stockMM}mm | ${finishLog}`)
+  return generateStepDownPasses(
+    surface, G, rough.stepMM, rough.stepDownMM, maxDepthMM, rough.stockMM, rough.angleDeg,
+    rawMaxDepth, rough.kernel, stock,
+    { ...motion, xyFeedMmMin: rough.xyFeedMmMin, zFeedMmMin: rough.zFeedMmMin }, area, wall,
+  )
+}
+
+/** Roughing, then a tool-change marker where it ended, then the finish. */
+function withToolChange(rough: MotionSegment[], finish: MotionSegment[], safeZ: number, finishingToolId: string): MotionSegment[] {
+  const last = rough[rough.length - 1]
+  const change: MotionSegment = { x: last?.x ?? 0, y: last?.y ?? 0, z: safeZ, rapid: true, toolChange: finishingToolId }
+  return [...rough, change, ...finish]
 }

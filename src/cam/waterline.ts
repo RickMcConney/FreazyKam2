@@ -46,8 +46,12 @@ export interface WaterlineParams {
   stepoverMM: number
   maxDepthMM: number
   toolDiameterMM: number
-  /** The gouge-free tip height at (x, y); null where there is no surface under the tool. */
+  /** The gouge-free tip height at (x, y), anywhere in the box — boundary or not; null where
+   *  there is no surface under the tool. */
   cl: (x: number, y: number) => number | null
+  /** Where the tool centre may go. Unset: anywhere in the box. Rings are cut only inside;
+   *  the surface beyond is still read, to find where a flat's edge is. */
+  inside?: (x: number, y: number) => boolean
   /** Whether a cut at (x, y, z) takes anything. Unset: always. A ring that takes nothing
    *  anywhere — a floor ring on a flat the roughing end mill already finished — is skipped. */
   needsCut?: (x: number, y: number, z: number) => boolean
@@ -62,10 +66,12 @@ const MIN_DZ_MM = 0.002
 const END_EPS_MM = 0.001
 /** How far above the lowest point of the surface the lowest level stands. */
 const BOTTOM_LIFT_MM = 0.02
+/** Cells a side in the blocks `trace` skips when a level does not cross them. */
+const BLOCK = 8
 /** Grid nodes the tip surface is sampled at, at most. */
 const MAX_NODES = 800_000
 
-interface Chain {
+export interface Chain {
   /** x, y, z per point. */
   pts: number[]
   closed: boolean
@@ -79,13 +85,20 @@ class TipGrid {
   readonly ny: number
   readonly cx: number
   readonly cy: number
+  /** The tip surface at every node, inside the limit or not. */
+  readonly all: Float64Array
+  /** `all`, NaN where the tool centre may not go: what the cut rings are traced on. */
   readonly v: Float64Array
   readonly zMin: number
   readonly zMax: number
   private readonly nextEdge: Int32Array
   private readonly isTo: Uint8Array
 
-  constructor(readonly bbox: BBox, cell: number, private readonly cl: (x: number, y: number) => number) {
+  constructor(
+    readonly bbox: BBox, cell: number,
+    private readonly cl: (x: number, y: number) => number,
+    inside?: (x: number, y: number) => boolean,
+  ) {
     if ((bbox.width / cell + 1) * (bbox.height / cell + 1) > MAX_NODES) {
       cell = Math.sqrt((bbox.width * bbox.height) / MAX_NODES) * 1.01
     }
@@ -94,12 +107,18 @@ class TipGrid {
     this.cx = bbox.width / (this.nx - 1)
     this.cy = bbox.height / (this.ny - 1)
     const { nx, ny } = this
-    this.v = new Float64Array(nx * ny)
+    this.all = new Float64Array(nx * ny)
+    this.v = inside ? new Float64Array(nx * ny) : this.all
     let lo = Infinity, hi = -Infinity
     for (let j = 0; j < ny; j++) {
       for (let i = 0; i < nx; i++) {
-        const z = cl(bbox.minX + i * this.cx, bbox.minY + j * this.cy)
-        this.v[j * nx + i] = z
+        const x = bbox.minX + i * this.cx, y = bbox.minY + j * this.cy
+        const z = cl(x, y)
+        this.all[j * nx + i] = z
+        if (inside) {
+          if (!inside(x, y)) { this.v[j * nx + i] = NaN; continue }
+          this.v[j * nx + i] = z
+        }
         if (z === z) { if (z < lo) lo = z; if (z > hi) hi = z }
       }
     }
@@ -107,6 +126,36 @@ class TipGrid {
     this.zMax = hi
     this.nextEdge = new Int32Array(2 * nx * ny).fill(-1)
     this.isTo = new Uint8Array(2 * nx * ny)
+  }
+
+  /** Per values array, the lowest and highest node of each BLOCK × BLOCK block of cells
+   *  (NaN nodes left out; a block of nothing but NaN never straddles a level). */
+  private readonly blockCache = new Map<Float64Array, { min: Float64Array; max: Float64Array }>()
+  private blocksOf(vals: Float64Array): { min: Float64Array; max: Float64Array } {
+    let b = this.blockCache.get(vals)
+    if (b) return b
+    const { nx, ny } = this
+    const bw = Math.ceil((nx - 1) / BLOCK), bh = Math.ceil((ny - 1) / BLOCK)
+    b = { min: new Float64Array(bw * bh).fill(Infinity), max: new Float64Array(bw * bh).fill(-Infinity) }
+    for (let j = 0; j < ny; j++) {
+      // A node is a corner of the cells either side of it, so it counts for both blocks a
+      // block boundary passes through.
+      const bj0 = Math.min(bh - 1, Math.floor(j / BLOCK)), bj1 = j > 0 && j % BLOCK === 0 ? bj0 - 1 : bj0
+      for (let i = 0; i < nx; i++) {
+        const z = vals[j * nx + i]
+        if (!(z === z)) continue
+        const bi0 = Math.min(bw - 1, Math.floor(i / BLOCK)), bi1 = i > 0 && i % BLOCK === 0 ? bi0 - 1 : bi0
+        for (let bj = Math.min(bj0, bj1); bj <= Math.max(bj0, bj1); bj++) {
+          for (let bi = Math.min(bi0, bi1); bi <= Math.max(bi0, bi1); bi++) {
+            const k = bj * bw + bi
+            if (z < b.min[k]) b.min[k] = z
+            if (z > b.max[k]) b.max[k] = z
+          }
+        }
+      }
+    }
+    this.blockCache.set(vals, b)
+    return b
   }
 
   // The two nodes of an edge. Horizontal edges are numbered j·nx + i (node (i, j) to
@@ -121,7 +170,8 @@ class TipGrid {
     return [this.bbox.minX + i * this.cx, this.bbox.minY + j * this.cy]
   }
 
-  /** Where level z crosses edge e — read off the grid, or refined against the surface. */
+  /** Where level z crosses edge e — read off the grid, or refined against the surface
+   *  (which `cl` reads anywhere in the box, so either grid's contours can be refined). */
   private crossing(e: number, z: number, refine: boolean, out: number[], vals: Float64Array): void {
     const [a, b] = this.edgeNodes(e)
     const va = vals[a], vb = vals[b]
@@ -163,16 +213,23 @@ class TipGrid {
   trace(z: number, refine: boolean, vals: Float64Array = this.v): Chain[] {
     const { nx, ny, nextEdge, isTo } = this
     const v = vals
-    // Refinement reads the tip surface, so only its own contours can be refined.
-    refine = refine && vals === this.v
     const n = nx * ny
     const froms: number[] = []
     const tos: number[] = []
     const add = (from: number, to: number) => { nextEdge[from] = to; isTo[to] = 1; froms.push(from); tos.push(to) }
     const ins = [false, false, false, false]
     const eid = [0, 0, 0, 0]
+    const blocks = this.blocksOf(vals)
+    const bw = Math.ceil((nx - 1) / BLOCK)
     for (let j = 0; j < ny - 1; j++) {
+      const bRow = Math.floor(j / BLOCK) * bw
       for (let i = 0; i < nx - 1; i++) {
+        // A block of cells level z does not cross holds no contour: skip it, still in row
+        // order, so the contours come out exactly as a full scan finds them.
+        if (i % BLOCK === 0) {
+          const b = bRow + i / BLOCK
+          if (blocks.max[b] < z || blocks.min[b] >= z) { i += BLOCK - 1; continue }
+        }
         const k = j * nx + i
         const v0 = v[k], v1 = v[k + 1], v2 = v[k + nx + 1], v3 = v[k + nx]
         if (!(v0 === v0 && v1 === v1 && v2 === v2 && v3 === v3)) continue
@@ -240,9 +297,10 @@ function tighten(c: Chain, z: number, cl: (x: number, y: number) => number, reac
   const p = c.pts, m = p.length / 3
   const out: number[] = []
   const bend = (ax: number, ay: number, bx: number, by: number, depth: number) => {
+    if (depth > 3) return
     const mx = (ax + bx) / 2, my = (ay + by) / 2
     const cm = cl(mx, my)
-    if (!(cm > z + CHORD_TOL_MM) || depth > 3) return
+    if (!(cm > z + CHORD_TOL_MM)) return
     const L = Math.hypot(bx - ax, by - ay)
     if (L < 1e-6) return
     const lx = -(by - ay) / L, ly = (bx - ax) / L   // the left: away from the material
@@ -294,17 +352,19 @@ function smoothRing(c: Chain, z: number, cl: (x: number, y: number) => number): 
   if (m < 5) return c
   const x0 = new Float64Array(m), y0 = new Float64Array(m)
   for (let k = 0; k < m; k++) { x0[k] = p[k * 3]; y0[k] = p[k * 3 + 1] }
+  // Two buffers each, swapped every pass.
   let x = Float64Array.from(x0), y = Float64Array.from(y0)
-  const nx = new Float64Array(m), ny = new Float64Array(m)
+  let x2 = new Float64Array(m), y2 = new Float64Array(m)
   for (let it = 0; it < 2 * SMOOTH_PASSES; it++) {
     const f = it % 2 === 0 ? SMOOTH_LAMBDA : SMOOTH_MU
     for (let k = 0; k < m; k++) {
-      if (!c.closed && (k === 0 || k === m - 1)) { nx[k] = x[k]; ny[k] = y[k]; continue }   // an open contour's ends stay on the box
+      if (!c.closed && (k === 0 || k === m - 1)) { x2[k] = x[k]; y2[k] = y[k]; continue }   // an open contour's ends stay on the box
       const a = (k + m - 1) % m, b = (k + 1) % m
-      nx[k] = x[k] + f * ((x[a] + x[b]) / 2 - x[k])
-      ny[k] = y[k] + f * ((y[a] + y[b]) / 2 - y[k])
+      x2[k] = x[k] + f * ((x[a] + x[b]) / 2 - x[k])
+      y2[k] = y[k] + f * ((y[a] + y[b]) / 2 - y[k])
     }
-    x = Float64Array.from(nx); y = Float64Array.from(ny)
+    const tx = x; x = x2; x2 = tx
+    const ty = y; y = y2; y2 = ty
   }
   const out: number[] = []
   for (let k = 0; k < m; k++) {
@@ -364,18 +424,44 @@ class SegIndex {
     let best = r * r, chain = -1
     const i0 = Math.floor((x - r) / bin), i1 = Math.floor((x + r) / bin)
     const j0 = Math.floor((y - r) / bin), j1 = Math.floor((y + r) / bin)
+    for (let j = j0; j <= j1; j++) {
+      const dy = Math.max(j * bin - y, 0, y - (j + 1) * bin)
+      for (let i = i0; i <= i1; i++) {
+        const list = this.bins.get(i * 1_000_003 + j)
+        if (!list) continue
+        // A bin farther than the best so far holds nothing nearer: every segment in it that
+        // could be is listed, too, in the bin holding its nearest point.
+        const dx = Math.max(i * bin - x, 0, x - (i + 1) * bin)
+        if (dx * dx + dy * dy > best) continue
+        for (let q = 0; q < list.length; q += 2) {
+          const c = this.chains[list[q]], s = list[q + 1]
+          const p = c.pts, m = p.length / 3
+          const a = s * 3, b = ((s + 1) % m) * 3
+          const d2 = ptSegDistSq(x, y, p[a], p[a + 1], p[b], p[b + 1])
+          if (d2 <= best) { best = d2; chain = list[q] }
+        }
+      }
+    }
+    return { chain, d2: best }
+  }
+
+  /** Whether any contour comes within `r` of (x, y) — `nearest(…).chain >= 0`, answered at
+   *  the first segment that does. */
+  anyWithin(x: number, y: number, r: number): boolean {
+    const { bin } = this
+    const r2 = r * r
+    const i0 = Math.floor((x - r) / bin), i1 = Math.floor((x + r) / bin)
+    const j0 = Math.floor((y - r) / bin), j1 = Math.floor((y + r) / bin)
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
       const list = this.bins.get(i * 1_000_003 + j)
       if (!list) continue
       for (let q = 0; q < list.length; q += 2) {
-        const c = this.chains[list[q]], s = list[q + 1]
-        const p = c.pts, m = p.length / 3
+        const p = this.chains[list[q]].pts, s = list[q + 1], m = p.length / 3
         const a = s * 3, b = ((s + 1) % m) * 3
-        const d2 = ptSegDistSq(x, y, p[a], p[a + 1], p[b], p[b + 1])
-        if (d2 <= best) { best = d2; chain = list[q] }
+        if (ptSegDistSq(x, y, p[a], p[a + 1], p[b], p[b + 1]) <= r2) return true
       }
     }
-    return { chain, d2: best }
+    return false
   }
 }
 
@@ -386,7 +472,7 @@ function covered(from: Chain[], to: SegIndex, h: number, stepover: number): bool
     const small = Math.hypot(c.maxX - c.minX, c.maxY - c.minY) <= stepover
     let hit = 0, miss = 0
     for (let i = 0; i < c.pts.length; i += 3) {
-      if (to.nearest(c.pts[i], c.pts[i + 1], h).chain >= 0) hit++
+      if (to.anyWithin(c.pts[i], c.pts[i + 1], h)) hit++
       else miss++
       if (miss && (hit || !small)) return false
     }
@@ -453,9 +539,10 @@ function onSurface(c: Chain, cl: (x: number, y: number) => number): Chain {
   const zAt = (x: number, y: number, fallback: number) => { const z = cl(x, y); return z === z ? z : fallback }
   const out: number[] = []
   const bend = (ax: number, ay: number, az: number, bx: number, by: number, bz: number, depth: number) => {
+    if (depth > 3) return
     const mx = (ax + bx) / 2, my = (ay + by) / 2
     const mz = zAt(mx, my, Math.max(az, bz))
-    if (!(mz > (az + bz) / 2 + CHORD_TOL_MM) || depth > 3) return
+    if (!(mz > (az + bz) / 2 + CHORD_TOL_MM)) return
     bend(ax, ay, az, mx, my, mz, depth + 1)
     out.push(mx, my, mz)
     bend(mx, my, mz, bx, by, bz, depth + 1)
@@ -491,7 +578,7 @@ function chainOf(pts: { x: number; y: number }[], cl: (x: number, y: number) => 
  * closed along the box's edge, walking it clockwise (the box's inside on the right) from
  * where the contour leaves to where the next one comes back in.
  */
-function regionOf(chains: Chain[], box: BBox, edgeIn: boolean): PathsD {
+export function regionOf(chains: Chain[], box: BBox, edgeIn: boolean): PathsD {
   const W = box.width, H = box.height, L = 2 * (W + H)
   // Position along the edge, clockwise from the bottom-left corner.
   const param = (x: number, y: number) => {
@@ -577,10 +664,15 @@ function addFlats(
     : [[{ x: box.minX, y: box.minY }, { x: box.maxX, y: box.minY }, { x: box.maxX, y: box.maxY }, { x: box.minX, y: box.maxY }]]
   const within = (region: PathsD) => limit?.length ? intersectD(region, boxPath, FillRule.NonZero) : region
   const regular = rings.length
-  const chainsAt = (z: number) => rings.filter((r) => r.z === z).map((r) => r.chain)
+  // A level's region is traced on the WHOLE box's surface, not on the rings that are cut:
+  // those stop at the limit, and `regionOf` closes a contour along the box's edge — so a
+  // ring ending on a curved limit was closed by a straight chord across it, and a heart's
+  // lobes lost the flat between the chord and the curve. Traced over the whole box, every
+  // contour that is not a loop really does end on the box's edge; `within` then cuts the
+  // region back to the limit.
   // Whether the box's edge stands at or above level z (read where the grid meets it).
-  const edgeAt = (z: number) => { const v0 = grid.v[0]; return v0 === v0 && v0 >= z }
-  const regionAt = (z: number) => regionOf(chainsAt(z), box, edgeAt(z))
+  const edgeAt = (z: number) => { const v0 = grid.all[0]; return v0 === v0 && v0 >= z }
+  const regionAt = (z: number) => regionOf(grid.trace(z, true, grid.all), box, edgeAt(z))
   const zTop = levels[0], zLowest = levels[levels.length - 1]
 
   // The regions to cut, each with the height it is cut at.
@@ -607,23 +699,17 @@ function addFlats(
       if (!chains.length) break
       const first = rings.length
       for (const chain of chains) rings.push({ z: flat.z, chain, up: [], down: [], done: false, waiting: 0, flat: true })
-      for (let r = first; r < rings.length; r++) {
-        const p = rings[r].chain.pts
-        const seen = new Set<number>()
-        for (let i = 0; i < p.length; i += 3) {
-          if (prev) {
-            const hit = prev.index.nearest(p[i], p[i + 1], reach)
-            if (hit.chain >= 0) seen.add(prev.first + hit.chain)
-          } else {
-            const hit = all.nearest(p[i], p[i + 1], reach)
-            if (hit.chain >= 0 && hit.chain < regular && rings[hit.chain].z >= flat.z) seen.add(hit.chain)
-          }
-        }
-        // A first ring with no wall beside it — the one along the box's edge, offset in from
+      if (prev) linkUp(rings, first, prev.index, prev.first, reach)
+      else {
+        // The first ring waits on the walls round the flat's edge: the regular rings at or
+        // above it. One with no wall beside it — the one along the box's edge, offset in from
         // the box rather than from a wall — still waits on every ring at the flat's edge, or
         // it was cut first, before the walls standing on the floor it clears.
-        if (!prev && !seen.size) for (let u = 0; u < regular; u++) if (rings[u].z === edgeZ(flat.z)) seen.add(u)
-        for (const u of seen) { rings[r].up.push(u); rings[u].down.push(r) }
+        linkUp(rings, first, all, 0, reach, (u) => u < regular && rings[u].z >= flat.z, () => {
+          const edge: number[] = []
+          for (let u = 0; u < regular; u++) if (rings[u].z === edgeZ(flat.z)) edge.push(u)
+          return edge
+        })
       }
       prev = { index: new SegIndex(chains, Math.max(stepover, grid.cx * 2)), first }
     }
@@ -635,6 +721,28 @@ function addFlats(
 // ─── Cutting the rings ────────────────────────────────────────────────────────
 
 interface Ring { z: number; chain: Chain; up: number[]; down: number[]; done: boolean; waiting: number; flat?: boolean }
+
+/**
+ * Make each ring from `first` on wait on the rings it comes within `reach` of: for every
+ * point, the nearest chain of `index` (whose chain i is ring `base + i`), if `accept`s it.
+ * A ring that found none takes `fallback()` instead. Order is kept — `up`/`down` in the
+ * order first met — since the cutting order breaks ties by it.
+ */
+function linkUp(
+  rings: Ring[], first: number, index: SegIndex, base: number, reach: number,
+  accept: (u: number) => boolean = () => true, fallback?: () => number[],
+): void {
+  for (let r = first; r < rings.length; r++) {
+    const p = rings[r].chain.pts
+    const seen = new Set<number>()
+    for (let i = 0; i < p.length; i += 3) {
+      const hit = index.nearest(p[i], p[i + 1], reach)
+      if (hit.chain >= 0 && accept(base + hit.chain)) seen.add(base + hit.chain)
+    }
+    if (!seen.size && fallback) for (const u of fallback()) seen.add(u)
+    for (const u of seen) { rings[r].up.push(u); rings[u].down.push(r) }
+  }
+}
 
 function bboxDist(c: Chain, x: number, y: number): number {
   const dx = Math.max(c.minX - x, 0, x - c.maxX), dy = Math.max(c.minY - y, 0, y - c.maxY)
@@ -657,30 +765,130 @@ function nearestOnChain(c: Chain, x: number, y: number): { seg: number; t: numbe
   return { seg, t: bt, d2: best }
 }
 
-/** A closed chain as a point list starting at the given place on it, and ending there. */
+/**
+ * A closed chain as a point list starting at the vertex nearest the given place on it, and
+ * ending there. A VERTEX, never a point part-way along a chord: the ring's points are the
+ * ones checked against the surface (`smoothRing`, `tighten`), and a point interpolated
+ * between two of them is not — on a coarse ring it stood 0.023 mm under the surface.
+ */
 function rotateTo(c: Chain, seg: number, t: number): number[] {
   const p = c.pts, m = p.length / 3
-  const a = seg * 3, b = ((seg + 1) % m) * 3
-  const sx = p[a] + (p[b] - p[a]) * t, sy = p[a + 1] + (p[b + 1] - p[a + 1]) * t
-  const sz = Math.max(p[a + 2], p[b + 2])
-  const out = [sx, sy, sz]
-  for (let k = 1; k <= m; k++) {
-    const q = ((seg + k) % m) * 3
+  const v = t < 0.5 ? seg : (seg + 1) % m
+  const out: number[] = []
+  for (let k = 0; k <= m; k++) {
+    const q = ((v + k) % m) * 3
     out.push(p[q], p[q + 1], p[q + 2])
   }
-  out.push(sx, sy, sz)
   return out
+}
+
+/**
+ * The ring to cut next from (x, y): one just below the ring last cut, if any is ready
+ * (`chainStep` — the tool steps down to it), else the nearest ready ring anywhere. Ready:
+ * not done, and every ring touching it from above is. Nearest by bounding box; ties go to
+ * the first in order.
+ */
+function pickNextRing(rings: Ring[], last: Ring | null, x: number, y: number): { ring: Ring | null; chainStep: boolean } {
+  let next: Ring | null = null, bestD = Infinity
+  if (last) {
+    for (const d of last.down) {
+      const r = rings[d]
+      if (r.done || r.waiting > 0) continue
+      const dd = bboxDist(r.chain, x, y)
+      if (dd < bestD) { bestD = dd; next = r }
+    }
+  }
+  if (next) return { ring: next, chainStep: true }
+  for (const r of rings) {
+    if (r.done || r.waiting > 0) continue
+    const dd = bboxDist(r.chain, x, y)
+    if (dd < bestD) { bestD = dd; next = r }
+  }
+  return { ring: next, chainStep: false }
+}
+
+/** Whether a cut along `c` takes anything anywhere. A ring that takes nothing is skipped;
+ *  one that takes something anywhere is cut all the way round. */
+function takesAnything(c: Chain, needsCut: (x: number, y: number, z: number) => boolean): boolean {
+  const p = c.pts, m = p.length / 3
+  for (let k = 0; k < m; k++) if (needsCut(p[k * 3], p[k * 3 + 1], p[k * 3 + 2])) return true
+  return false
+}
+
+/**
+ * Cut an open chain from whichever end is nearer (x, y) — so about half of them cut
+ * conventional rather than climb. Chosen: an open chain ends at the box or the boundary,
+ * and always starting at its climb end would add a link or a lift back to the far end for
+ * every one of them; a light finishing pass takes the mixed hand.
+ */
+function cutOpenChain(em: WaterlineEmitter, c: Chain, x: number, y: number, stepoverMM: number): void {
+  const p = c.pts, m = p.length / 3
+  const dHead = Math.hypot(p[0] - x, p[1] - y), dTail = Math.hypot(p[(m - 1) * 3] - x, p[(m - 1) * 3 + 1] - y)
+  const at = (k: number) => (dTail < dHead ? m - 1 - k : k) * 3
+  em.arrive(p[at(0)], p[at(0) + 1], p[at(0) + 2], false, stepoverMM)
+  for (let k = 1; k < m; k++) em.cut(p[at(k)], p[at(k) + 1], p[at(k) + 2])
+}
+
+interface RingCut { reach: number; stepoverMM: number; toolDiameterMM: number; cl: (x: number, y: number) => number }
+
+/** How far along the ring a step down of `dz` ramps: 10°, at least a tool diameter, at
+ *  most half the ring. */
+function rampLength(dz: number, perim: number, toolDiameterMM: number): number {
+  return Math.min(perim / 2, Math.max(toolDiameterMM, dz / Math.tan(10 * Math.PI / 180)))
+}
+
+/**
+ * Cut a closed ring, starting at its vertex nearest (x, y). Stepping down from the ring
+ * just cut (`chainStep`, close by and higher), the tool goes across at the height of the
+ * last ring — or over whatever rises between them — then RAMPS down along this one, and
+ * cuts on past where it started over the stretch the ramp cut high. Otherwise it arrives
+ * as any cut does.
+ */
+function cutClosedRing(em: WaterlineEmitter, ring: Ring, chainStep: boolean, x: number, y: number, o: RingCut): void {
+  const c = ring.chain, z = ring.z
+  const near = nearestOnChain(c, x, y)
+  const loop = rotateTo(c, near.seg, near.t)
+  const at = em.at
+  if (chainStep && at && Math.sqrt(near.d2) <= o.reach && at.z > z) {
+    const n = Math.max(1, Math.ceil(Math.sqrt(near.d2) / (o.stepoverMM / 4)))
+    for (let k = 1; k <= n; k++) {
+      const qx = at.x + (loop[0] - at.x) * k / n, qy = at.y + (loop[1] - at.y) * k / n
+      const h = o.cl(qx, qy)
+      em.cut(qx, qy, Math.max(at.z, h === h ? h : at.z))
+    }
+  } else {
+    em.arrive(loop[0], loop[1], loop[2], false, o.stepoverMM)
+  }
+  // The ring's arc length, for the ramp and the overlap.
+  const m = loop.length / 3
+  const cum = new Float64Array(m)
+  for (let k = 1; k < m; k++) cum[k] = cum[k - 1] + Math.hypot(loop[k * 3] - loop[k * 3 - 3], loop[k * 3 + 1] - loop[k * 3 - 2])
+  const zFrom = em.at!.z
+  const ramp = zFrom > loop[2] + 1e-6 ? rampLength(zFrom - z, cum[m - 1], o.toolDiameterMM) : 0
+  for (let k = 1; k < m; k++) {
+    const zk = loop[k * 3 + 2]
+    const zr = ramp > 0 && cum[k] < ramp ? zk + (zFrom - zk) * (1 - cum[k] / ramp) : zk
+    em.cut(loop[k * 3], loop[k * 3 + 1], zr)
+  }
+  // On past the start, over the stretch the ramp cut high — to the first ring point at or
+  // past its end, not to a point part-way along a chord (see `rotateTo`).
+  if (ramp > 0) {
+    for (let k = 1; k < m && cum[k - 1] < ramp; k++) em.cut(loop[k * 3], loop[k * 3 + 1], loop[k * 3 + 2])
+  }
 }
 
 export function generateWaterline(em: WaterlineEmitter, bbox: BBox, params: WaterlineParams): { levels: number; rings: number; flats: number } {
   const { stepoverMM, maxDepthMM } = params
   const floor = -maxDepthMM
-  const cl = (x: number, y: number) => {
+  // The surface anywhere in the box, and as the cut sees it: NaN where the tool may not go.
+  const clAll = (x: number, y: number) => {
     const z = params.cl(x, y)
     return z === null ? NaN : Math.max(z, floor)
   }
+  const inside = params.inside
+  const cl = inside ? (x: number, y: number) => inside(x, y) ? clAll(x, y) : NaN : clAll
   const t0 = performance.now()
-  const grid = new TipGrid(bbox, Math.min(stepoverMM, 0.5), cl)
+  const grid = new TipGrid(bbox, Math.min(stepoverMM, 0.5), clAll, inside)
   const t1 = performance.now()
   if (!(grid.zMax - grid.zMin > 2 * END_EPS_MM)) return { levels: 0, rings: 0, flats: 0 }
 
@@ -707,17 +915,7 @@ export function generateWaterline(em: WaterlineEmitter, bbox: BBox, params: Wate
     const chains = grid.trace(levels[li], true).map((c) => tighten(smoothRing(c, levels[li], cl), levels[li], cl, stepoverMM))
     const first = rings.length
     for (const chain of chains) rings.push({ z: levels[li], chain, up: [], down: [], done: false, waiting: 0 })
-    if (prev) {
-      for (let r = first; r < rings.length; r++) {
-        const p = rings[r].chain.pts
-        const seen = new Set<number>()
-        for (let i = 0; i < p.length; i += 3) {
-          const hit = prev.index.nearest(p[i], p[i + 1], reach)
-          if (hit.chain >= 0) seen.add(prev.first + hit.chain)
-        }
-        for (const u of seen) { rings[r].up.push(u); rings[u].down.push(r) }
-      }
-    }
+    if (prev) linkUp(rings, first, prev.index, prev.first, reach)
     prev = { index: new SegIndex(chains, Math.max(stepoverMM, grid.cx * 2)), first }
   }
   const flatCount = addFlats(grid, rings, levels, flats, stepoverMM, reach, cl, params.limit)
@@ -726,88 +924,17 @@ export function generateWaterline(em: WaterlineEmitter, bbox: BBox, params: Wate
 
   // Cut them: down the ring just finished when it is ready, else the nearest ring whose
   // neighbours above are all done.
-  const rampLen = (dz: number, perim: number) => Math.min(perim / 2, Math.max(params.toolDiameterMM, dz / Math.tan(10 * Math.PI / 180)))
+  const cutOpts: RingCut = { reach, stepoverMM, toolDiameterMM: params.toolDiameterMM, cl }
   let last: Ring | null = null
   for (let cut = 0; cut < rings.length; cut++) {
     const x = em.at?.x ?? bbox.minX, y = em.at?.y ?? bbox.minY
-    let next: Ring | null = null, bestD = Infinity
-    if (last) {
-      for (const d of last.down as number[]) {
-        const r: Ring = rings[d]
-        if (r.done || r.waiting > 0) continue
-        const dd = bboxDist(r.chain, x, y)
-        if (dd < bestD) { bestD = dd; next = r }
-      }
-    }
-    const chainStep = next !== null
-    if (!next) {
-      for (const r of rings) {
-        if (r.done || r.waiting > 0) continue
-        const dd = bboxDist(r.chain, x, y)
-        if (dd < bestD) { bestD = dd; next = r }
-      }
-    }
+    const { ring: next, chainStep } = pickNextRing(rings, last, x, y)
     if (!next) break
     next.done = true
     for (const d of next.down) rings[d].waiting--
-    const c = next.chain
-    const z = next.z
-    if (params.needsCut) {
-      const p = c.pts, m = p.length / 3
-      const need = new Uint8Array(m)
-      let any = false
-      for (let k = 0; k < m; k++) if (params.needsCut(p[k * 3], p[k * 3 + 1], p[k * 3 + 2])) { need[k] = 1; any = true }
-      if (!any) continue
-    }
-
-    if (!c.closed) {
-      // An open chain is cut from whichever end is nearer.
-      const p = c.pts, m = p.length / 3
-      const dHead = Math.hypot(p[0] - x, p[1] - y), dTail = Math.hypot(p[(m - 1) * 3] - x, p[(m - 1) * 3 + 1] - y)
-      const order = dTail < dHead ? Array.from({ length: m }, (_, k) => m - 1 - k) : Array.from({ length: m }, (_, k) => k)
-      em.arrive(p[order[0] * 3], p[order[0] * 3 + 1], p[order[0] * 3 + 2], false, stepoverMM)
-      for (let k = 1; k < m; k++) em.cut(p[order[k] * 3], p[order[k] * 3 + 1], p[order[k] * 3 + 2])
-      last = next
-      continue
-    }
-
-    const near = nearestOnChain(c, x, y)
-    const loop = rotateTo(c, near.seg, near.t)
-    const at = em.at
-    const stepDown = chainStep && at && Math.sqrt(near.d2) <= reach && at.z > z
-    if (!stepDown) {
-      em.arrive(loop[0], loop[1], loop[2], false, stepoverMM)
-    } else {
-      // Across to the next ring at the height of the last — or over whatever rises
-      // between them — then down along it.
-      const n = Math.max(1, Math.ceil(Math.sqrt(near.d2) / (stepoverMM / 4)))
-      for (let k = 1; k <= n; k++) {
-        const qx = at!.x + (loop[0] - at!.x) * k / n, qy = at!.y + (loop[1] - at!.y) * k / n
-        const h = cl(qx, qy)
-        em.cut(qx, qy, Math.max(at!.z, h === h ? h : at!.z))
-      }
-    }
-    // The ring's arc length, for the ramp and the overlap.
-    const m = loop.length / 3
-    const cum = new Float64Array(m)
-    for (let k = 1; k < m; k++) cum[k] = cum[k - 1] + Math.hypot(loop[k * 3] - loop[k * 3 - 3], loop[k * 3 + 1] - loop[k * 3 - 2])
-    const perim = cum[m - 1]
-    const zFrom = em.at!.z
-    const ramp = zFrom > loop[2] + 1e-6 ? rampLen(zFrom - z, perim) : 0
-    for (let k = 1; k < m; k++) {
-      const zk = loop[k * 3 + 2]
-      const zr = ramp > 0 && cum[k] < ramp ? zk + (zFrom - zk) * (1 - cum[k] / ramp) : zk
-      em.cut(loop[k * 3], loop[k * 3 + 1], zr)
-    }
-    // On past the start, over the stretch the ramp cut high.
-    if (ramp > 0) {
-      for (let k = 1; k < m && cum[k - 1] < ramp; k++) {
-        if (cum[k] <= ramp) { em.cut(loop[k * 3], loop[k * 3 + 1], loop[k * 3 + 2]); continue }
-        const f = (ramp - cum[k - 1]) / (cum[k] - cum[k - 1])
-        const ax = loop[k * 3 - 3], ay = loop[k * 3 - 2]
-        em.cut(ax + (loop[k * 3] - ax) * f, ay + (loop[k * 3 + 1] - ay) * f, Math.max(loop[k * 3 - 1], loop[k * 3 + 2]))
-      }
-    }
+    if (params.needsCut && !takesAnything(next.chain, params.needsCut)) continue
+    if (next.chain.closed) cutClosedRing(em, next, chainStep, x, y, cutOpts)
+    else cutOpenChain(em, next.chain, x, y, stepoverMM)
     last = next
   }
   const t4 = performance.now()

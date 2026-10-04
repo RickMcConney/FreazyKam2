@@ -3,7 +3,8 @@
 // generator computes along the way is trusted.
 import { describe, it, expect } from 'vitest'
 import { generateProfile3d, type Profile3dParams } from './profile3d'
-import { maxCutRadiusMM, toolProfileHeightMM } from './geom'
+import { ballDropCutter } from './dropCutter'
+import { maxCutRadiusMM, toolProfileHeightMM, pointInPolygon } from './geom'
 import type { Tool } from '../store/toolStore'
 import type { MotionSegment } from '../store/toolpathStore'
 import type { BBox } from '../canvas/selectionUtils'
@@ -154,6 +155,24 @@ describe('the waterline never cuts into the model', () => {
   }
 })
 
+describe('every point a waterline emits is on or above the surface', () => {
+  // EVERY point, against the exact drop-cutter the rings are traced on — sampling every Nth
+  // point hid this. A closed ring started at the nearest point ANYWHERE on it, so its first
+  // and last points were new, part-way along a chord, and never checked: on a coarse ring
+  // that stood 0.023 mm under the surface (the rosette), and the ramp's overlap ended the
+  // same way. Rings now start and the overlap ends at a ring point. The rings themselves
+  // are smoothed to within 0.003 mm (SMOOTH_TOL_MM). These domes trace dense rings, so the
+  // old start point stood only ~0.004–0.005 under at 24 and 40 cells; on a real model with
+  // small rings it was the 0.023 above — `scripts/rosette-check.mts --waterline --all`.
+  it.each([10, 16, 24, 32, 40])('a dome faceted %i cells to a side', (n) => {
+    const { m, cuts } = waterline(DOME, n)
+    const cl = ballDropCutter(m.positions, null, m.bounds, box(W, W), BALL.diameterMM / 2)
+    let worst = -Infinity
+    for (const s of cuts) worst = Math.max(worst, (cl(s.x, s.y) ?? -Infinity) - s.z)
+    expect(worst).toBeLessThan(0.0035)
+  })
+})
+
 describe('where the waterline puts its rings', () => {
   it('cuts the crown of a dome, not just the ring a level below it', () => {
     // Levels used to start a whole Z step below the top, leaving the crown standing. (Sunk
@@ -302,5 +321,39 @@ describe('the flats a waterline cannot cross', () => {
     const { cuts } = waterline(BOSS, 40, BALL_EIGHTH, { stepoverPercent: 10 })
     const onTop = cuts.filter((s) => Math.hypot(s.x - 20, s.y - 20) < 8 - BALL_EIGHTH.diameterMM / 2 - 0.5)
     expect(onTop).toEqual([])
+  })
+})
+
+describe('the flats a waterline cannot cross, inside a curved boundary', () => {
+  // A plateau sunk 2 mm below the stock top, a square pit in it, inside a heart whose
+  // lobes curve across the plateau. Each level's region was closed along the BOX's edge,
+  // so a ring ending on the curved limit was joined to the next by a straight chord, and
+  // the flat between the chord and the curve got no rings (scripts/waterline-flats-check).
+  const TRAY = (x: number, y: number) => -Math.min(6, Math.max(0, 10 - Math.max(Math.abs(x - 20), Math.abs(y - 20))))
+  const HEART: [number, number][] = Array.from({ length: 200 }, (_, k) => {
+    const t = 2 * Math.PI * k / 200
+    return [20 + 1.7 * 16 * Math.sin(t) ** 3, 17 + 1.7 * (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t))]
+  })
+  const tool = BALL_EIGHTH, R = tool.diameterMM / 2, step = tool.diameterMM * 0.3
+
+  it('cuts the sunk plateau right up to the curve of the boundary, not to a chord across it', () => {
+    const { cuts } = waterline(TRAY, 80, tool, { stepoverPercent: 30, modelTopMM: 2, boundaryRings: [HEART] })
+    const onPlateau = cuts.filter((s) => Math.abs(s.z + 2) < 0.03)
+    // Every point where the whole tool stands on the plateau and inside the heart.
+    const clear = R + 0.3
+    const toolInHeart = (x: number, y: number) => Array.from({ length: 16 }, (_, k) => 2 * Math.PI * k / 16)
+      .every((a) => pointInPolygon(x + clear * Math.cos(a), y + clear * Math.sin(a), HEART))
+    let worst = 0, checked = 0
+    for (let x = clear; x <= W - clear; x += 0.5) {
+      for (let y = clear; y <= W - clear; y += 0.5) {
+        if (Math.max(Math.abs(x - 20), Math.abs(y - 20)) < 10 + clear || !toolInHeart(x, y)) continue
+        checked++
+        let best = Infinity
+        for (const s of onPlateau) best = Math.min(best, Math.hypot(s.x - x, s.y - y))
+        worst = Math.max(worst, best)
+      }
+    }
+    expect(checked).toBeGreaterThan(1000)
+    expect(worst).toBeLessThan(step)
   })
 })

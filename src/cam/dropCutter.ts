@@ -16,7 +16,7 @@
 // coming down onto it from above is still a constraint, and a closed model's undersides
 // are always below its top.
 //
-// Same STL → CNC mapping as `buildHeightMap`.
+// The STL → CNC mapping is `stlToCnc`, the one `buildHeightMap` uses.
 //
 // SPEED. Every finishing point is one query, so this is the cost of a 3D finish. The
 // vertices and edges are DEDUPED (a closed mesh shares each vertex among ~6 triangles and
@@ -27,6 +27,10 @@
 
 import type { StlModelBounds } from '../importers/svgImporter'
 import type { BBox } from '../canvas/selectionUtils'
+import { stlToCnc } from './stlMapping'
+
+/** The most buckets the features are filed in. */
+const MAX_BUCKETS = 1_000_000
 
 export function ballDropCutter(
   positions: Float32Array,
@@ -38,30 +42,40 @@ export function ballDropCutter(
   zOffsetMM = 0,
 ): (x: number, y: number) => number | null {
   const R = radiusMM, R2 = R * R
-  const modelCX = (bounds.minX + bounds.maxX) / 2
-  const modelCY = (bounds.minY + bounds.maxY) / 2
-  const scaleX = bbox.width / (bounds.maxX - bounds.minX)
-  const scaleY = bbox.height / (bounds.maxY - bounds.minY)
-  const scaleZ = (scaleX + scaleY) / 2
+  const map = stlToCnc(bounds, bbox, zOffsetMM)
 
   // ── Unique vertices ──
   const triCount = indices ? indices.length / 3 : positions.length / 9
   const vertId = new Int32Array(triCount * 3)
   const VX: number[] = [], VY: number[] = [], VZ: number[] = []
   {
-    const byKey = new Map<string, number>()
+    // Equal coordinates are one vertex (−0 and 0 included). Hashed on the float bits, not on
+    // a string of them — a string per corner was most of the setup on a large mesh — with
+    // ids handed out in first-seen order, so every edge keeps the same endpoint order.
+    const bits = new Uint32Array(positions.buffer, positions.byteOffset, positions.length)
+    const b = (k: number) => bits[k] === 0x80000000 ? 0 : bits[k]
+    const byHash = new Map<number, number>()      // hash → first vertex id with it
+    const chain: number[] = []                    // vertex id → next id with the same hash
+    const srcOf: number[] = []                    // vertex id → its position index
     for (let t = 0; t < triCount; t++) {
       for (let v = 0; v < 3; v++) {
         const i = indices ? indices[t * 3 + v] : t * 3 + v
         const px = positions[i * 3], py = positions[i * 3 + 1], pz = positions[i * 3 + 2]
-        const key = px + ',' + py + ',' + pz
-        let id = byKey.get(key)
-        if (id === undefined) {
+        const h = (Math.imul(b(i * 3), 73856093) ^ Math.imul(b(i * 3 + 1), 19349663) ^ Math.imul(b(i * 3 + 2), 83492791)) >>> 0
+        let id = byHash.get(h) ?? -1
+        while (id >= 0) {
+          const q = srcOf[id] * 3
+          if (positions[q] === px && positions[q + 1] === py && positions[q + 2] === pz) break
+          id = chain[id]
+        }
+        if (id < 0) {
           id = VX.length
-          byKey.set(key, id)
-          VX.push((px - modelCX) * scaleX + bbox.cx)
-          VY.push((py - modelCY) * scaleY + bbox.cy)
-          VZ.push((pz - bounds.maxZ) * scaleZ - zOffsetMM)
+          chain.push(byHash.get(h) ?? -1)
+          byHash.set(h, id)
+          srcOf.push(i)
+          VX.push(map.x(px))
+          VY.push(map.y(py))
+          VZ.push(map.z(pz))
         }
         vertId[t * 3 + v] = id
       }
@@ -130,7 +144,22 @@ export function ballDropCutter(
   const BX = Float64Array.from(box)
 
   // Bucket the features by their XY footprint, in CSR form, each bucket highest first.
-  const B = Math.max(0.25, R / 2)
+  //
+  // A bucket no smaller than the typical facet: a facet is listed in every bucket it
+  // covers, and buckets sized off the ball alone (R/2) put a coarse mesh's facets in ~76
+  // buckets each — 89% of a query's visits were to features it had already tested. The
+  // bucket size cannot change the answer (every prune is exact), only how fast it comes.
+  const facetExtents: number[] = []
+  for (let f = 0; f < F; f++) {
+    if (K[f] !== 2) continue
+    const o = f * 5
+    facetExtents.push(Math.max(BX[o + 1] - BX[o], BX[o + 3] - BX[o + 2]))
+  }
+  facetExtents.sort((a, b) => a - b)
+  const medianFacet = facetExtents.length ? facetExtents[facetExtents.length >> 1] : 0
+  // And never so many buckets that building them dominates: a 600 mm relief at R/2 = 0.25
+  // was 5.8 M of them, each sorted.
+  const B = Math.max(0.25, R / 2, medianFacet, Math.sqrt((bbox.width * bbox.height) / MAX_BUCKETS))
   const bw = Math.max(1, Math.ceil(bbox.width / B) + 1)
   const bh = Math.max(1, Math.ceil(bbox.height / B) + 1)
   const span = (f: number) => {
@@ -153,6 +182,7 @@ export function ballDropCutter(
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) ids[fill[j * bw + i]++] = f
   }
   for (let b = 0; b < bw * bh; b++) {
+    if (counts[b + 1] - counts[b] < 2) continue
     const slice = Array.from(ids.subarray(counts[b], counts[b + 1]))
     slice.sort((p, q) => BX[q * 5 + 4] - BX[p * 5 + 4])
     ids.set(slice, counts[b])
@@ -161,7 +191,12 @@ export function ballDropCutter(
   const seen = new Int32Array(F)
   let stamp = 0
 
+  // Every feature lies in the model's box (to rounding): a ball that cannot reach the box
+  // rests on nothing — the floor of a boundary drawn round the model, most of it.
+  const reachMinX = bbox.minX - R - 1e-6, reachMaxX = bbox.maxX + R + 1e-6
+  const reachMinY = bbox.minY - R - 1e-6, reachMaxY = bbox.maxY + R + 1e-6
   return (x, y) => {
+    if (x < reachMinX || x > reachMaxX || y < reachMinY || y > reachMaxY) return null
     stamp++
     if (stamp === 0x7fffffff) { seen.fill(0); stamp = 1 }
     const i0 = Math.max(0, Math.floor((x - R - bbox.minX) / B)), i1 = Math.min(bw - 1, Math.floor((x + R - bbox.minX) / B))
@@ -175,11 +210,22 @@ export function ballDropCutter(
       for (let i = pass ? i0 : ic; i <= (pass ? i1 : ic); i++) {
         if (pass && i === ic && j === jc) continue
         const b = j * bw + i
+        if (counts[b] === counts[b + 1]) continue
+        // The bucket's own distance from the tool bounds what its features can give HERE: a
+        // feature's nearest point to the tool lies in some bucket of this window, and in
+        // THAT bucket it is no nearer than the bucket. Pruned elsewhere, it is still tested
+        // there, so the answer is the same — only the visits are fewer. (The edge buckets
+        // also hold whatever rounds off the box, so they reach outward without limit.)
+        const bdx = Math.max(i === 0 ? 0 : bbox.minX + i * B - x, 0, i === bw - 1 ? 0 : x - (bbox.minX + (i + 1) * B))
+        const bdy = Math.max(j === 0 ? 0 : bbox.minY + j * B - y, 0, j === bh - 1 ? 0 : y - (bbox.minY + (j + 1) * B))
+        const bd2 = bdx * bdx + bdy * bdy
+        if (bd2 > R2) continue
+        const rise = R - Math.sqrt(R2 - bd2)
         for (let q = counts[b]; q < counts[b + 1]; q++) {
           const f = ids[q]
           const bo = f * 5
           // Highest first: nothing further down this bucket can beat the best so far.
-          if (BX[bo + 4] <= best) break
+          if (BX[bo + 4] - rise <= best) break
           if (seen[f] === stamp) continue
           seen[f] = stamp
           // Out of reach in XY, or too far off to the side to beat the best: the most a
