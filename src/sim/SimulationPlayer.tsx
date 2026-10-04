@@ -42,16 +42,15 @@ const W_DIAL = 11        // ' · dial 5.5' (dial tables top out at 6, rounded to
 const W_UNIT = 6         // 'mm/min' / 'in/min'
 const W_CHIP_LABEL = 17  // 'rubbing · too hot'
 
-// Read-outs are formatted in the units the PROGRAM declares, not the design-side mm/in
-// toggle: this bar sits above the G-code viewer and highlights a line in it, so a Z of
-// -0.1969 beside a line reading Z-5.000 would be its own kind of wrong. simStore holds
-// everything in mm (the parser converts an inch program on the way in — the heightfield
-// and cut trail depend on that), so the conversion belongs here, at the last step.
+// Read-outs follow the toolbar mm/in toggle, like every other length in the app — not
+// the units the program declares. simStore holds everything in mm (the parser converts an
+// inch program on the way in — the heightfield and cut trail depend on that), so the
+// conversion belongs here, at the last step.
 const progLen = (mm: number, inch: boolean) => (inch ? (mm / MM_PER_IN).toFixed(4) : mm.toFixed(3))
 const progFeed = (mmMin: number, inch: boolean) => (inch ? (mmMin / MM_PER_IN).toFixed(1) : String(Math.round(mmMin)))
 const progFz = (mm: number, inch: boolean) => (inch ? (mm / MM_PER_IN).toFixed(4) : mm.toFixed(3))
-// Surface speed is quoted in the idiom of the program's units: SFM for an inch program,
-// m/min for a metric one. Same number, the name a machinist would reach for.
+// Surface speed is quoted in the idiom of the display units: SFM in inch mode,
+// m/min in metric. Same number, the name a machinist would reach for.
 const FT_PER_M = 3.28084
 const progSurf = (mMin: number, inch: boolean) =>
   inch ? `${Math.round(mMin * FT_PER_M)} ft/min` : `${Math.round(mMin)} m/min`
@@ -89,7 +88,7 @@ export default function SimulationPlayer() {
   const toolStates = useSimStore((s) => s.toolStates)
   const gcode = useSimStore((s) => s.gcode)
   const gcodeViewerOpen = useSimStore((s) => s.gcodeViewerOpen)
-  const programUnits = useSimStore((s) => s.programUnits)
+  const units = useWorkpieceStore((s) => s.units)
   const material = useWorkpieceStore((s) => s.material)
   const machineRigidity = useWorkpieceStore((s) => s.machineRigidity)
   const minSpindleRpm = useWorkpieceStore((s) => s.minSpindleRpm)
@@ -120,7 +119,7 @@ export default function SimulationPlayer() {
 
   if (!gcode) return null
 
-  const inch = programUnits === 'in'
+  const inch = units === 'in'
   // Feed values are one char wider in inch (3937.0 vs 99999); 'rapid' fits either way.
   const wFeed = inch ? 6 : 5
   const wFz = inch ? 6 : 5
@@ -167,8 +166,8 @@ export default function SimulationPlayer() {
   const slowingDown = status === 'rubbing' && chipStatus(programmedFz, aimFz) !== 'rubbing'
   const suggestion =
     slowingDown ? '' :
-    status === 'rubbing' && sweetFeed > 0 ? `raise feed to ~${progFeed(sweetFeed, inch)} ${programUnits}/min (or lower RPM / fewer flutes)` :
-    status === 'heavy'   && sweetFeed > 0 ? `lower feed to ~${progFeed(sweetFeed, inch)} ${programUnits}/min (or raise RPM / more flutes)` : ''
+    status === 'rubbing' && sweetFeed > 0 ? `raise feed to ~${progFeed(sweetFeed, inch)} ${units}/min (or lower RPM / fewer flutes)` :
+    status === 'heavy'   && sweetFeed > 0 ? `lower feed to ~${progFeed(sweetFeed, inch)} ${units}/min (or raise RPM / more flutes)` : ''
 
   // Surface-speed (Vc) check: metals carry a safe cutting-speed ceiling. If the
   // programmed spindle drives the edge past it — typically because the machine's
@@ -189,8 +188,8 @@ export default function SimulationPlayer() {
   const maxBitMM = vcCeilingMMin && minSpindleRpm > 0 ? (vcCeilingMMin * 1000) / (Math.PI * minSpindleRpm) : 0
   const machineConstrained = spindleTooFast && safeRpm > 0 && safeRpm < minSpindleRpm
   const spindleHint = !spindleTooFast ? '' : machineConstrained
-    ? `${MATERIAL_INFO[material].label} should stay under ${progSurf(vcCeilingMMin!, inch)}, but a Ø${progLen(dia, inch)} ${programUnits} tool reaches that at ${safeRpm} RPM — below your machine's ${minSpindleRpm} RPM minimum. The spindle can't slow down enough, so lowering RPM won't help: use a tool ≤ ${progLen(maxBitMM, inch)} ${programUnits}, or fit a spindle that runs slower.`
-    : `${MATERIAL_INFO[material].label} should stay under ${progSurf(vcCeilingMMin!, inch)}. Lower the spindle to ≤ ${safeRpm} RPM for this Ø${progLen(dia, inch)} ${programUnits} tool (or turn on auto feeds & speeds to set it automatically).`
+    ? `${MATERIAL_INFO[material].label} should stay under ${progSurf(vcCeilingMMin!, inch)}, but a Ø${progLen(dia, inch)} ${units} tool reaches that at ${safeRpm} RPM — below your machine's ${minSpindleRpm} RPM minimum. The spindle can't slow down enough, so lowering RPM won't help: use a tool ≤ ${progLen(maxBitMM, inch)} ${units}, or fit a spindle that runs slower.`
+    : `${MATERIAL_INFO[material].label} should stay under ${progSurf(vcCeilingMMin!, inch)}. Lower the spindle to ≤ ${safeRpm} RPM for this Ø${progLen(dia, inch)} ${units} tool (or turn on auto feeds & speeds to set it automatically).`
 
   // The elapsed clock never runs longer than the total, so the total's width sizes both.
   const totalTimeStr = formatSimTime(totalTimeS)
@@ -220,7 +219,7 @@ export default function SimulationPlayer() {
       {/* Stats bar */}
       <div className="bg-gray-50/95 dark:bg-neutral-900/95 border border-gray-300 dark:border-neutral-700 rounded-md px-3 py-1 text-body font-mono text-gray-700 dark:text-neutral-300 flex gap-3 whitespace-nowrap pointer-events-none">
         <span>Line: <Slot ch={wLine}>{currentLineNum || '—'}</Slot></span>
-        <span>Z: <Slot ch={W_Z}>{pos ? progLen(pos.z + genZOff, inch) : '—'}</Slot> {programUnits}</span>
+        <span>Z: <Slot ch={W_Z}>{pos ? progLen(pos.z + genZOff, inch) : '—'}</Slot> {units}</span>
         {/* 'rapid' is the feed's VALUE, not a replacement label — swapping the label out
             was half the flicker, and it moved the clock beside it. */}
         <span className={curSeg?.rapid ? 'text-gray-600 dark:text-neutral-400' : ''}>
@@ -234,7 +233,7 @@ export default function SimulationPlayer() {
           </Slot>
           {/* Held in a fixed slot rather than dropped on a rapid — vanishing would move
               the clock beside it, which is the flicker this bar is built to avoid. */}
-          <Slot ch={W_UNIT} align="left">{curSeg && !curSeg.rapid ? ` ${programUnits}/min` : ''}</Slot>
+          <Slot ch={W_UNIT} align="left">{curSeg && !curSeg.rapid ? ` ${units}/min` : ''}</Slot>
         </span>
         <span className="text-gray-500 dark:text-neutral-400">
           <Slot ch={totalTimeStr.length}>{formatSimTime(elapsedTimeS)}</Slot> / {totalTimeStr}
@@ -331,7 +330,7 @@ export default function SimulationPlayer() {
           <Slot ch={wFz}>{actualFz !== null ? progFz(actualFz, inch) : '—'}</Slot>
           /
           <Slot ch={wFz}>{targetFz > 0 ? progFz(targetFz, inch) : '—'}</Slot>
-          {programUnits}
+          {units}
         </span>
         {/* Holds its width whatever the band, and prints '—' rather than vanishing when
             the move isn't steady side-cutting and there is nothing to judge. */}
