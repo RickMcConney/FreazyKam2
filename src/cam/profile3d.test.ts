@@ -645,11 +645,27 @@ describe('a machining boundary', () => {
     expect(() => gen({ boundaryRings: [[[10, 10], [14, 10], [14, 14], [10, 14]]] })).toThrow(/too small/)
   })
 
-  it('runs past an OPEN boundary — the stock\'s own edge — by the tool radius, leaving no wall', () => {
+  it('finishes right to an OPEN boundary — the stock\'s own edge — leaving no wall, and runs no more than its radius past it', () => {
+    // Measured as what the ball leaves AT the edge, not by how far its centre goes: it once
+    // ran a full radius past on every row, because the stock model held stock outside the
+    // stock that no carve ever reached, and that is no part of leaving no wall.
     const { finishing } = parts(gen({ boundaryOpen: true }))
     const outMost = Math.min(...finishing.map((s) => depthIn(s.x, s.y, -8, -8, 48, 48)))
-    expect(outMost).toBeLessThan(-3 + 0.05)
     expect(outMost).toBeGreaterThanOrEqual(-3 - 0.01)
+    const R = BALL.diameterMM / 2
+    // No higher than a scallop between two rows a stepover apart: that much stands between
+    // any two passes, at the edge or anywhere else.
+    const half = BALL.diameterMM * 0.3 / 2
+    const scallop = R - Math.sqrt(R * R - half * half)
+    // Along the left edge, beside the model's box: the lowest the ball's surface came.
+    for (let y = -6; y <= 46; y += 0.5) {
+      let low = Infinity
+      for (const s of finishing) {
+        const d2 = (s.x + 8) ** 2 + (s.y - y) ** 2
+        if (d2 < R * R) low = Math.min(low, s.z + R - Math.sqrt(R * R - d2))
+      }
+      expect(low, `edge at y=${y}`).toBeLessThan(-15 + scallop + 1e-6)
+    }
   })
 
   it('finishes with one pass round the model\'s box, so line ends leave no cusps on its wall', () => {

@@ -314,6 +314,8 @@ export default function ThreeView() {
   const [showTool, setShowTool] = useState(true)
   const [showShapes, setShowShapes] = useState(true)
   const [followTool, setFollowTool] = useState(false)
+  // The simulator's readout and controls, hidden for a clean screenshot of the carve.
+  const [showReadout, setShowReadout] = useState(true)
 
   const showAxesRef      = useRef(showAxes)
   const showToolpathsRef = useRef(showToolpaths)
@@ -671,8 +673,12 @@ export default function ThreeView() {
 
   return (
     <div ref={containerRef} className="w-full h-full relative overflow-hidden">
-      <SimulationPlayer />
-      <span ref={fpsRef} className="absolute top-2 left-2 text-xs text-neutral-500 pointer-events-none select-none" />
+      {/* Hidden, not unmounted: the player owns the playback loop, so a carve keeps
+          running (and Space still plays and pauses) while its readout is out of the shot. */}
+      <div className={showReadout ? undefined : 'hidden'}>
+        <SimulationPlayer />
+        <span ref={fpsRef} className="absolute top-2 left-2 text-xs text-neutral-500 pointer-events-none select-none" />
+      </div>
 
       <div className="absolute top-2 right-2 z-10 flex flex-col gap-1">
         {([
@@ -682,6 +688,7 @@ export default function ThreeView() {
           ['Tool',        showTool,      setShowTool],
           ['Shapes',      showShapes,    setShowShapes],
           ['Follow Tool', followTool,    setFollowTool],
+          ['Readout',     showReadout,   setShowReadout],
         ] as [string, boolean, (v: boolean) => void][]).map(([label, val, set]) => (
           <button
             key={label}

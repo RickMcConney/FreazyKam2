@@ -167,5 +167,5 @@ row.
 
 ## Next
 
-- **[7. 3D work](07-3d.md)** — machining an STL surface
+- **[7. 3D work](07-3d.md)** — carving a relief from an STL or a depth-map image
 - **[10. Simulating and exporting](10-export.md)** — checking a job before you cut it

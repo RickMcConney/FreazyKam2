@@ -323,8 +323,9 @@ The stats bar above shows the current **line number**, the tool's **Z**, and the
 current **feed** — with the elapsed and total cycle time on the right. That time
 estimate is worth a look before you commit an hour of spindle time.
 
-In the 3D view, the buttons top-right toggle **Axes, Toolpaths, Stock, Tool, Shapes**
-and **Follow Tool**.
+In the 3D view, the buttons top-right toggle **Axes, Toolpaths, Stock, Tool, Shapes**,
+**Follow Tool** and **Readout** — the last hides the simulator's status bars and controls
+for a clean screenshot of the carve, while the simulation keeps running.
 
 ![The 3D view part-way through the run: the recess already cut, the outline half way round](images/01-sim-3d.png)
 

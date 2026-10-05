@@ -5,7 +5,8 @@ import { useToolpathStore } from '../store/toolpathStore'
 import { usePathsStore } from '../store/pathsStore'
 import { useToolStore, type Tool } from '../store/toolStore'
 import { useWorkpieceStore } from '../store/workpieceStore'
-import { profile3dDepthMM, modelBelowCut, MODEL_BELOW_CUT_MSG } from './profile3d'
+import { profile3dDepthMM, modelBelowCut, MODEL_BELOW_CUT_MSG, type Profile3dParams } from './profile3d'
+import { DEFAULT_RELIEF_MM } from './depthMapMesh'
 import { flattenPath, requireClosedSubpaths, type Pt2 } from './pathFlattener'
 import { tabsForGeneration } from '../store/tabStore'
 import { getBBox, extractCircles, extractRectInfo } from '../canvas/selectionUtils'
@@ -247,12 +248,14 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
 
   } else if (op.type === 'profile3d') {
     const stlPath = paths.find((p) => p.id === op.pathId)
-    if (!stlPath) throw new Error('STL path not found')
-    if (!stlPath.stlSrc || !stlPath.stlModelBounds) throw new Error('Path is not an STL import')
-    // Decoded once per model and shared (see decodeStlMesh); the worker call clones them.
-    const { positions, indices } = decodeStlMesh(stlPath.stlSrc)
+    if (!stlPath) throw new Error('Model path not found')
+    // The model is an STL, or a picture read as a depth map (cam/depthMapMesh), which the
+    // worker turns into a mesh and then carves by exactly the same code.
+    const imageRect = stlPath.imageSrc ? extractRectInfo(stlPath.d) : null
+    if (stlPath.imageSrc && !imageRect) throw new Error('This image is no longer a rectangle — undo the edit that reshaped it, or re-import the image')
+    if (!stlPath.imageSrc && (!stlPath.stlSrc || !stlPath.stlModelBounds)) throw new Error('Path is not an STL or image import')
     const cncBbox = getBBox(stlPath.d)
-    if (!cncBbox) throw new Error('Could not read the STL outline — the model may be empty')
+    if (!cncBbox) throw new Error('Could not read the model outline — the model may be empty')
     // Roughing runs with a ball nose or a flat end mill — the two shapes the generator
     // models. A rough tool since deleted or retyped in the library is simply no roughing pass —
     // and then no roughing id either, so nothing downstream announces a tool that never
@@ -270,11 +273,17 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       if (!bPath) throw new Error('Boundary path not found')
       boundaryRings = flattenPath(bPath.d, 0.05).filter((r) => r.length >= 2)
       requireClosedSubpaths(boundaryRings, { cut: 'a 3D boundary', remedy: 'Close the path, or pick another boundary.', noun: 'Boundary' })
+    } else if (imageRect && Math.abs(Math.sin(2 * imageRect.rotationDeg * Math.PI / 180)) > 1e-6) {
+      // A turned picture's box holds four corners it does not cover; bounded by the box they
+      // would be cut down to the floor. The picture itself is the boundary instead.
+      boundaryRings = [flattenPath(stlPath.d, 0.05)[0]]
     }
-    setSegments(opId, await runInWorkerFor(opId, 'generateProfile3d', positions, indices, stlPath.stlModelBounds, cncBbox, tool, {
+    const p3dParams: Profile3dParams = {
       stepoverPercent: op.stepoverPercent,
       // A 'waterline-sliced' op (an experiment, since removed) is cut as a waterline.
-      finishStrategy: op.finishStrategy && op.finishStrategy !== 'raster' ? 'waterline' : op.finishStrategy,
+      // A depth map is raster only (waterline ran out of memory on one) — whatever was saved.
+      finishStrategy: stlPath.imageSrc ? 'raster'
+        : op.finishStrategy && op.finishStrategy !== 'raster' ? 'waterline' : op.finishStrategy,
       rasterAngleDeg: op.rasterAngleDeg,
       maxDepthMM: depthMM,
       roughingRadiusMM: roughingTool ? roughingTool.diameterMM / 2 : undefined,
@@ -294,7 +303,17 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       modelTopMM: op.modelTopMM,
       boundaryRings,
       boundaryOpen: op.boundary === 'stock',
-    }), builtWith)
+    }
+    if (stlPath.imageSrc && imageRect) {
+      // Decoded on the main thread (it needs a canvas), cached by data URL.
+      const image = await loadImageLuminance(stlPath.imageSrc)
+      setSegments(opId, await runInWorkerFor(opId, 'generateProfile3dImage', image, imageRect,
+        op.reliefDepthMM ?? DEFAULT_RELIEF_MM, !!op.invertDepth, tool, p3dParams), builtWith)
+    } else {
+      // Decoded once per model and shared (see decodeStlMesh); the worker call clones them.
+      const { positions, indices } = decodeStlMesh(stlPath.stlSrc!)
+      setSegments(opId, await runInWorkerFor(opId, 'generateProfile3d', positions, indices, stlPath.stlModelBounds!, cncBbox, tool, p3dParams), builtWith)
+    }
 
   } else if (op.type === 'trochoidal') {
     const path = paths.find((p) => p.id === op.pathId)

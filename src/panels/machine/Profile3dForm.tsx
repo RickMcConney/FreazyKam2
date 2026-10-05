@@ -15,6 +15,8 @@ import { generateOperation } from '../../cam/opJob'
 import { effectiveStepDownMM } from '../../cam/feeds'
 import { profile3dDepthMM, STOCK_SKIN_MM, modelBelowCut, MODEL_BELOW_CUT_MSG } from '../../cam/profile3d'
 import { enclosingBoundaries } from '../../cam/boundaryCandidates'
+import { DEFAULT_RELIEF_MM, depthMapFloorLevel } from '../../cam/depthMapMesh'
+import { loadImageLuminance } from '../../io/imageLuminance'
 
 interface Profile3dFormState {
   toolId: string
@@ -26,6 +28,8 @@ interface Profile3dFormState {
   rasterAngleDeg: number
   maxDepthMM: number
   pathId: string
+  reliefDepthMM: number         // depth map only
+  invertDepth: boolean          // depth map only: dark is high
   roughingToolId: string        // '' = no roughing pass
   roughingStepoverPercent: number
   roughingStepDownMM: number
@@ -54,7 +58,10 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
   const finishTools = toolsOfType(tools, ['ballnose', 'taper'])
   const roughTools = toolsOfType(tools, ['ballnose', 'endmill'])
   const defaultTool = finishTools[0]
+  // The model: an STL, or an imported picture read as a depth map (cam/depthMapMesh).
   const stlPaths = paths.filter((p) => !!p.stlSrc)
+  const imagePaths = paths.filter((p) => !!p.imageSrc)
+  const modelPaths = [...stlPaths, ...imagePaths]
 
   const [form, setForm] = useState<Profile3dFormState>(() => {
     const base: Profile3dFormState = editOp ? {
@@ -67,6 +74,8 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
     rasterAngleDeg: editOp.rasterAngleDeg,
     maxDepthMM: editOp.maxDepthMM,
     pathId: editOp.pathId,
+    reliefDepthMM: editOp.reliefDepthMM ?? DEFAULT_RELIEF_MM,
+    invertDepth: !!editOp.invertDepth,
     roughingToolId: editOp.roughingToolId ?? '',
     roughingStepoverPercent: editOp.roughingStepoverPercent ?? 60,
     roughingStepDownMM: editOp.roughingStepDownMM ?? 2,
@@ -82,7 +91,9 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
     rasterAngleDeg: 0,
     // Default to the full stock thickness; the tool's max Z is only a warning.
     maxDepthMM: thicknessMM > 0 ? thicknessMM : (defaultTool?.maxDepthMM ?? 10),
-    pathId: stlPaths[0]?.id ?? '',
+    pathId: modelPaths[0]?.id ?? '',
+    reliefDepthMM: DEFAULT_RELIEF_MM,
+    invertDepth: false,
     roughingToolId: '',
     roughingStepoverPercent: 60,
     roughingStepDownMM: 2,
@@ -104,16 +115,32 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
   const session = useSessionOps()
 
   // Sync pathId: saved defaults use session-specific path IDs that become stale on reload.
-  // Also handles importing an STL after the form is already open.
+  // Also handles importing a model after the form is already open.
   useEffect(() => {
-    if (!stlPaths.find((p) => p.id === form.pathId)) {
-      const first = stlPaths[0]
+    if (!modelPaths.find((p) => p.id === form.pathId)) {
+      const first = modelPaths[0]
       if (first) setForm((f) => ({ ...f, pathId: first.id }))
     }
-  }, [stlPaths.length]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [modelPaths.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedTool = tools.find((t) => t.id === form.toolId)
   const selectedPath = paths.find((p) => p.id === form.pathId)
+  const isDepthMap = !!selectedPath?.imageSrc
+  const hasModel = !!selectedPath && (isDepthMap || (!!selectedPath.stlSrc && !!selectedPath.stlModelBounds))
+  // A depth map is finished by raster only: waterline ran out of memory on one. The form
+  // keeps its own choice, so going back to an STL brings Waterline back.
+  const strategy = isDepthMap ? 'raster' : form.finishStrategy
+  // The picture's background level, as the carve will find it (cam/depthMapMesh) — shown so
+  // the floor is not a silent guess. Decoded through the same cache the generate uses.
+  const [floorLevel, setFloorLevel] = useState<number | null>(null)
+  const imageSrc = selectedPath?.imageSrc
+  useEffect(() => {
+    setFloorLevel(null)
+    if (!imageSrc) return
+    let live = true
+    loadImageLuminance(imageSrc).then((img) => { if (live) setFloorLevel(depthMapFloorLevel(img, form.invertDepth)) }, () => {})
+    return () => { live = false }
+  }, [imageSrc, form.invertDepth])
   // Offered as a boundary: the (up to three) closed paths that completely enclose the
   // model, tightest first. The one this op already uses stays on the list whatever it has
   // since become, so opening an op never quietly swaps its boundary.
@@ -135,7 +162,7 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
   }
 
   function handleGenerate() {
-    if (!selectedTool || !selectedPath || !selectedPath.stlSrc || !selectedPath.stlModelBounds) return
+    if (!selectedTool || !selectedPath || !hasModel) return
     setGenerating(true)
     clearError()
     // Re-Generate for a model this form already generated for updates that op in place.
@@ -154,8 +181,10 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
       name: opName,
       toolId: form.toolId,
       pathId: form.pathId,
+      reliefDepthMM: isDepthMap ? form.reliefDepthMM : undefined,
+      invertDepth: isDepthMap && form.invertDepth ? true : undefined,
       stepoverPercent: form.stepoverPercent,
-      finishStrategy: form.finishStrategy,
+      finishStrategy: strategy,
       boundary: form.boundary,
       boundaryPathId: form.boundary === 'path' ? form.boundaryPathId : undefined,
       modelTopMM: form.modelTopMM > 0 ? form.modelTopMM : undefined,
@@ -199,17 +228,18 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
 
   const depthCutMM = profile3dDepthMM(form.maxDepthMM, thicknessMM)
   const nothingReached = modelBelowCut(form.modelTopMM, depthCutMM)
-  const canGenerate = !nothingReached && !!selectedTool && (selectedTool.type === 'ballnose' || selectedTool.type === 'taper') && !!selectedPath?.stlSrc && !generating && form.maxDepthMM > 0
+  const canGenerate = !nothingReached && !!selectedTool && (selectedTool.type === 'ballnose' || selectedTool.type === 'taper') && hasModel && !generating && form.maxDepthMM > 0
+    && (!isDepthMap || form.reliefDepthMM > 0)
     && (form.boundary !== 'path' || boundaryPaths.some((p) => p.id === form.boundaryPathId))
 
   return (
     <FormShell title={editOp ? 'Edit 3D Profile' : 'New 3D Profile'} onClose={onClose}>
-      {/* STL source path */}
+      {/* Model: an STL, or a picture read as a depth map */}
       <div>
-        <label htmlFor="p3d-stl-model" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">STL Model</label>
-        {stlPaths.length === 0 ? (
+        <label htmlFor="p3d-stl-model" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">Model</label>
+        {modelPaths.length === 0 ? (
           <p className="text-body text-amber-600 dark:text-amber-400 flex items-center gap-1">
-            <AlertCircle size={ICON.sm} /> Import an STL file first
+            <AlertCircle size={ICON.sm} /> Import an STL or a depth map image first
           </p>
         ) : (
           <select id="p3d-stl-model"
@@ -217,12 +247,42 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
             onChange={(e) => up('pathId', e.target.value)}
             className="w-full bg-gray-50 dark:bg-neutral-900 border border-gray-400 dark:border-neutral-700 rounded px-2 py-1 text-body text-gray-900 dark:text-neutral-100 focus:outline-none focus:border-blue-500"
           >
-            {stlPaths.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
+            {stlPaths.length > 0 && <optgroup label="STL">
+              {stlPaths.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </optgroup>}
+            {imagePaths.length > 0 && <optgroup label="Depth map image">
+              {imagePaths.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </optgroup>}
           </select>
         )}
       </div>
+
+      {/* A depth map's height comes from brightness: how tall, and which way up */}
+      {isDepthMap && (
+        <div>
+          <label htmlFor="p3d-relief" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">Relief Depth</label>
+          <LengthInput id="p3d-relief" valueMM={form.reliefDepthMM} minMM={0.1} stepMM={0.5}
+            onChangeMM={(v) => up('reliefDepthMM', v)} />
+          <label className="flex items-center gap-2 mt-1 text-body text-gray-700 dark:text-neutral-300 cursor-pointer">
+            <input type="checkbox" checked={form.invertDepth}
+              onChange={(e) => up('invertDepth', e.target.checked)} />
+            Dark is high
+          </label>
+          <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">
+            {form.invertDepth ? 'Black' : 'White'} is the top of the relief; the background is {fmtLen(form.reliefDepthMM, units)} below it, and anything {form.invertDepth ? 'lighter' : 'darker'} is cut flat there.
+            {floorLevel !== null && <> Background: grey {form.invertDepth ? 255 - floorLevel : floorLevel}{form.invertDepth ? ' and above' : ' and below'}.</>}
+          </p>
+          {form.modelTopMM + form.reliefDepthMM > depthCutMM + 1e-9 && !nothingReached && (
+            <p className="text-label text-amber-600 dark:text-amber-500 flex items-center gap-1 mt-0.5">
+              <AlertCircle size={10} className="shrink-0" /> Deeper than Max Depth — the lowest parts are cut flat at {fmtLen(depthCutMM, units)}
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Where the cut may go */}
       <div>
@@ -409,17 +469,22 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
           {hasRoughing ? 'Finishing Strategy' : 'Strategy'}
         </label>
         <select id="p3d-finish-strategy"
-          value={form.finishStrategy}
+          value={strategy}
           onChange={(e) => up('finishStrategy', e.target.value as 'raster' | 'waterline')}
           className="w-full bg-gray-50 dark:bg-neutral-900 border border-gray-400 dark:border-neutral-700 rounded px-2 py-1 text-body text-gray-900 dark:text-neutral-100 focus:outline-none focus:border-blue-500"
         >
           <option value="raster">Raster</option>
-          <option value="waterline">Waterline</option>
+          <option value="waterline" disabled={isDepthMap}>Waterline</option>
         </select>
+        {isDepthMap && (
+          <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">
+            A depth map is finished with Raster.
+          </p>
+        )}
       </div>
 
       {/* Raster angle */}
-      {form.finishStrategy === 'raster' && <div>
+      {strategy === 'raster' && <div>
         <label htmlFor="p3d-angle" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">Angle</label>
         <div className="flex items-center gap-1">
           <NumericInput id="p3d-angle"

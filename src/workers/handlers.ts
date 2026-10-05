@@ -13,6 +13,9 @@ import { takeNotes, type GenNote } from '../cam/notes'
 import { generateVCarve } from '../cam/vcarve'
 import { generatePhotoVCarve } from '../cam/photoVcarve'
 import { generateProfile3d } from '../cam/profile3d'
+import { depthMapMesh } from '../cam/depthMapMesh'
+import type { PhotoImage, PhotoRect } from '../cam/photoVcarve'
+import type { Tool } from '../store/toolStore'
 import { generateInlayFemale, generateInlayMale } from '../cam/inlay'
 import { generateTrochoidal } from '../cam/trochoidal'
 import { generateSurface } from '../cam/surfacing'
@@ -39,6 +42,13 @@ export const handlers = {
     withNotes(async () => ({ segments: await generateVCarve(...args) })),
   generatePhotoVCarve,
   generateProfile3d,
+  // A depth-map picture carved as a 3D Profile: built into a mesh HERE, in the worker,
+  // so the main thread only decodes the pixels and clones a byte per pixel across.
+  generateProfile3dImage: (image: PhotoImage, rect: PhotoRect, reliefMM: number, invert: boolean,
+    tool: Tool, params: Parameters<typeof generateProfile3d>[5]) => {
+    const m = depthMapMesh(image, rect, reliefMM, { invert })
+    return generateProfile3d(m.positions, m.indices, m.bounds, m.bbox, tool, params)
+  },
   generateInlayFemale: (...args: Parameters<typeof generateInlayFemale>) =>
     withNotes(() => generateInlayFemale(...args)),
   generateInlayMale: (...args: Parameters<typeof generateInlayMale>) =>

@@ -199,7 +199,12 @@ export interface InlayOperation extends BaseOperation {
 
 export interface Profile3dOperation extends BaseOperation {
   type: 'profile3d'
+  /** An STL import, or an image import read as a depth map (white high). */
   pathId: string
+  /** Depth map only: how far the white of the picture stands above its black. */
+  reliefDepthMM?: number
+  /** Depth map only: dark is high instead of white. */
+  invertDepth?: boolean
   stepoverPercent: number
   /** Unset: raster (every op saved before waterline existed). */
   finishStrategy?: 'raster' | 'waterline'

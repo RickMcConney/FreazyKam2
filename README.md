@@ -29,6 +29,10 @@ FreazyKam runs entirely in your browser — no account, no server, no install. Y
 
 *A photograph carved as V-grooves whose depth follows image brightness. The 3D view renders the cuts dark, the way the finished board looks once paint is flooded over it and sanded back off the face.*
 
+![3D Profile from a depth map — a dog plaque carved as a relief](docs/images/07-depthmap-plaque.png)
+
+*A greyscale depth map carved as a 3D relief: an end mill roughs out the field inside the drawn oval, a ball nose finishes the surface. The picture's background is found from its histogram and cut flat, so JPEG specks don't carve as bumps.*
+
 ---
 
 ## Features
@@ -37,7 +41,7 @@ FreazyKam runs entirely in your browser — no account, no server, no install. Y
 - **SVG** — paths, shapes, groups, nested transforms, real-world dimensions
 - **DXF** — LINE, LWPOLYLINE, ARC, CIRCLE, SPLINE, ELLIPSE entities; prompts for units when missing
 - **STL** — binary and ASCII for 3D surface machining workflows
-- **Images** — PNG, JPEG, WebP as canvas references, or as the source for a photo V-carve
+- **Images** — PNG, JPEG, WebP as canvas references, as the source for a photo V-carve, or as a greyscale **depth map** for 3D relief carving
 - **G-code** — `.gcode`, `.nc`, `.ngc`, `.tap` for inspection and simulation
 
 ### Drawing Tools
@@ -104,7 +108,7 @@ A **taper end mill** is a V-bit with a ball ground on its tip, described the way
 | V-Carve | Medial-axis depth from V-bit or taper geometry, island/letter-hole support |
 | Photo V-Carve | Rasters a photograph as V-grooves whose depth tracks image brightness (V-bit only) |
 | Inlay | Female socket (pocket + V-carved walls) and male plug generation |
-| 3D Profile | Raster surface following from imported STL with a ball nose or taper, optional roughing pass |
+| 3D Profile | Surface following from an imported STL or a greyscale depth-map image, with a ball nose or taper; raster or waterline finish (raster for depth maps), optional ball or end-mill roughing pass, boundary to clear the field around a relief |
 
 **Pocket strategies**
 

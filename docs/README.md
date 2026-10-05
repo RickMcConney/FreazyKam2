@@ -35,7 +35,7 @@ you will use on every job afterwards. The finished project is
 |---|---|
 | **[5. Cutting with an end mill](05-pockets.md)** | Profile and cut side, holding tabs, the five pocket strategies, trochoidal slotting, drilling, surfacing |
 | **[6. V-carving and inlay](06-vcarve-inlay.md)** | V-carve, photo V-carve, and the geometry that makes an inlay seat |
-| **[7. 3D work](07-3d.md)** | Importing an STL, placing it, roughing and finishing a relief |
+| **[7. 3D work](07-3d.md)** | Importing an STL or a depth-map image, placing it, roughing and finishing a relief |
 | **[8. Parametric parts](08-parts.md)** | Gears, escapements, the clock designer, cams, cutting boards, track, mazes, spirographs |
 | **[9. Nesting](09-nesting.md)** | Packing parts onto a sheet, and leaving the offcut as one usable piece |
 

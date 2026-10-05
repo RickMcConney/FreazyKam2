@@ -433,6 +433,8 @@ export class StockModel {
   readonly minY: number
   readonly cell: number
   private readonly e: number
+  /** Set by `countWorkInside`: 1 where a node is stock the cut is responsible for. */
+  private work: Uint8Array | null = null
 
   constructor(bbox: BBox, marginMM: number) {
     // Matches the roughing surface's resolution — the bound is no finer than that anyway.
@@ -443,6 +445,65 @@ export class StockModel {
     this.ny = Math.ceil((bbox.height + 2 * marginMM) / this.cell) + 1
     this.z = new Float32Array(this.nx * this.ny)   // Z = 0: the top of the stock
     this.e = this.cell * Math.SQRT1_2
+  }
+
+  /**
+   * Mark everything outside `rings` (the stock's own outline) as air. The model starts as
+   * solid stock over its whole box and margin, but past the stock's edge there never was
+   * any — and an open boundary lets each tool run past that edge by its radius, the finish
+   * a different distance from the roughing. The ball reached a sliver of that margin no
+   * roughing carve had touched, read it as stock, and cut a few points of air past the edge
+   * on EVERY raster row: each row then travelled across the cleared floor out to the
+   * border and back instead of turning round where the model ended. A node counts as air
+   * only when it is more than `e` outside, so the stock's edge itself stays stock.
+   */
+  clearOutside(rings: Pt2[][]): void {
+    const grown = inflatePathsD(
+      unionD(rings.filter((r) => r.length >= 3).map((r) => r.map(([x, y]) => ({ x, y }))), FillRule.EvenOdd),
+      this.e, JoinType.Round, EndType.Polygon, 2, 4, 0.01,
+    ).map((r) => r.map((p) => [p.x, p.y] as Pt2))
+    if (!grown.length) return
+    const inside = ringContainment(grown, 0.5)
+    const { z, nx, ny, minX, minY, cell } = this
+    for (let j = 0; j < ny; j++) {
+      const y = minY + j * cell
+      for (let i = 0; i < nx; i++) if (!inside(minX + i * cell, y)) z[j * nx + i] = -Infinity
+    }
+  }
+
+  /**
+   * Limit `stockAbove` — "is there still work here?" — to nodes more than `bandMM` (and at
+   * least `e`) inside the boundary `rings`. Nodes at a boundary always answered yes,
+   * whatever the roughing did. Beyond the line is the wall's own stock (or, past an open
+   * stock edge, stock that never existed), which a node read `e` nearer than it stands
+   * puts in the way of a ball whose edge only grazes the line. And just inside it the
+   * roughing's carve stops short of the line its tool cut to — by `e`, which keeps it an
+   * upper bound, and on a curve by the limit's arc tolerance and chords too. Every
+   * finishing row that reached the boundary therefore found a point or two to cut there,
+   * and rode across the cleared floor to it and back instead of turning round where the
+   * model's work ended.
+   *
+   * At a WALL the band is the finishing tool's whole reach. No finishing centre may come
+   * nearer the line than that, so for a node in the band the nearest any of them can get
+   * is on the limit itself — which is exactly where the finish's lap of the boundary runs,
+   * every time (`wallInto`, `always`). A row reaching in to it could only repeat the lap.
+   * At an OPEN edge there is no lap — the ball runs past the edge instead — so the band is
+   * only `e`. `clearTipZ` still reads every node: an entry must clear the wall.
+   */
+  countWorkInside(rings: Pt2[][], bandMM = 0): void {
+    const inset = inflatePathsD(
+      unionD(rings.filter((r) => r.length >= 3).map((r) => r.map(([x, y]) => ({ x, y }))), FillRule.EvenOdd),
+      -Math.max(this.e, bandMM), JoinType.Round, EndType.Polygon, 2, 4, 0.01,
+    ).map((r) => r.map((p) => [p.x, p.y] as Pt2))
+    if (!inset.length) return
+    const inside = ringContainment(inset, 0.5)
+    const { nx, ny, minX, minY, cell } = this
+    const work = new Uint8Array(nx * ny)
+    for (let j = 0; j < ny; j++) {
+      const y = minY + j * cell
+      for (let i = 0; i < nx; i++) if (inside(minX + i * cell, y)) work[j * nx + i] = 1
+    }
+    this.work = work
   }
 
   /**
@@ -479,7 +540,7 @@ export class StockModel {
   /** Whether `tool` at (x, y) with its tip at `level` would touch stock left — that is,
    *  `clearTipZ(x, y, tool) > level` — answered at the first node that says so. */
   stockAbove(x: number, y: number, tool: ToolKernel, level: number): boolean {
-    return this.highestNeed(x, y, tool, level) > level
+    return this.highestNeed(x, y, tool, level, true) > level
   }
 
   /** The lowest tip height at (x, y) that `tool` is clear of every bit of stock left. */
@@ -489,8 +550,9 @@ export class StockModel {
 
   /** The highest tip height any stock node under `tool` at (x, y) asks for — or the first
    *  one found above `stopAbove`, which settles a yes/no question as soon as it can. */
-  private highestNeed(x: number, y: number, tool: ToolKernel, stopAbove: number): number {
+  private highestNeed(x: number, y: number, tool: ToolKernel, stopAbove: number, workOnly = false): number {
     const { z, nx, ny, minX, minY, cell, e } = this
+    const work = workOnly ? this.work : null
     const reach = tool.reachMM
     const rc = Math.ceil((reach + e) / cell)
     const cx = (x - minX) / cell, cy = (y - minY) / cell
@@ -503,6 +565,7 @@ export class StockModel {
         const dx = (i - cx) * cell
         const d = Math.max(0, Math.sqrt(dx * dx + dy * dy) - e)
         if (d > reach) continue
+        if (work && !work[j * nx + i]) continue
         // The tool's surface sits `reach − term` above its tip at distance d.
         const v = z[j * nx + i] - (reach - tool.termAtDistSq(d * d))
         if (v > need) { need = v; if (need > stopAbove) return need }
@@ -968,7 +1031,10 @@ const boxRing = (b: BBox): Pt2[] => [[b.minX, b.minY], [b.maxX, b.minY], [b.maxX
 // and each end leaves a ball-shaped dent in the stock standing beyond it: a wall of
 // vertical cusps all along the edge. One pass round the limit, on the surface, cuts them
 // into a single clean profile — after each roughing level, and after the finish.
-function wallInto(em: PassEmitter, rings: Pt2[][], prevPassDepthMM = 0): void {
+function wallInto(em: PassEmitter, rings: Pt2[][], prevPassDepthMM = 0,
+  /** Cut the whole ring, not only where the stock model says there is stock: the finish's
+   *  lap of the boundary is what cleans the band `countWorkInside` leaves out. */
+  always = false): void {
   for (const ring of rings) {
     // Dense along the ring, starting at the point nearest the tool.
     const pts: Pt2[] = []
@@ -991,7 +1057,7 @@ function wallInto(em: PassEmitter, rings: Pt2[][], prevPassDepthMM = 0): void {
       if (z === null) { down = false; cleared = false; continue }   // no surface here: lift over it
       // An earlier roughing level already took this stretch, as the raster skips it — and,
       // as the raster does, the tool rides over it as travel when that beats lifting.
-      if ((prevPassDepthMM > 0 && z - em.allowanceMM >= -prevPassDepthMM + 1e-6) || !em.needsCut(x, y, z)) {
+      if ((prevPassDepthMM > 0 && z - em.allowanceMM >= -prevPassDepthMM + 1e-6) || (!always && !em.needsCut(x, y, z))) {
         if (down) cleared = true
         down = false
         continue
@@ -1092,7 +1158,7 @@ export function generateProfile3d(
     } else {
       rasterInto(em, stepoverMM, params.rasterAngleDeg, 0)
     }
-    wallInto(em, finishWall)
+    wallInto(em, finishWall, 0, !!stock && !!area)
     return em.done()
   }
 
@@ -1102,6 +1168,8 @@ export function generateProfile3d(
   // The stock the roughing leaves, for the entries of its later levels and of the finish.
   // Its margin takes in the stock just outside the model that either tool can touch.
   const stock = new StockModel(G, Math.max(rough.radius, finishKernel.reachMM) + 1)
+  if (params.boundaryRings?.length) stock.countWorkInside(params.boundaryRings, open ? 0 : finishKernel.reachMM)
+  if (open && params.boundaryRings?.length) stock.clearOutside(params.boundaryRings)
   const roughingSegs = roughPasses(rough, grid, nx, ny, G, params.maxDepthMM, stock, { safeZ, rapidMmMin }, roughArea, roughWall,
     `finishSurface ${finishSurface.nx}×${finishSurface.ny} R=${finishKernel.reachMM.toFixed(3)}mm`)
   return withToolChange(roughingSegs, finish(stock), safeZ, params.finishingToolId ?? tool.id)
