@@ -265,3 +265,4 @@ fixable.
 
 - **[The guide index](README.md)**
 - **[1. Quick Start](01-quick-start.md)** — the whole workflow in one part
+- **[12. Running the machine](12-machine.md)** — connection and WiFi problems are covered there

@@ -156,6 +156,10 @@ change. A single-tool job doesn't offer either option.
 The `.gcode` file lands in your downloads. Copy it to your controller however you normally
 do.
 
+**On a FluidNC controller you can skip the file altogether:** the **Machine** tab sends
+the design straight to the controller's SD card and runs it from there, with a map to
+check the job against the stock first. See **[12. Running the machine](12-machine.md)**.
+
 Before you press cycle start, the things the app told you but cannot check:
 
 1. **Zero X, Y and Z where the review said they were.**
@@ -170,3 +174,4 @@ Then cut it.
 ## Next
 
 - **[11. When something goes wrong](11-troubleshooting.md)** — failures, refusals, and what they mean
+- **[12. Running the machine](12-machine.md)** — driving a FluidNC controller from FreazyKam

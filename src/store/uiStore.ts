@@ -16,7 +16,7 @@ interface StatusMessage {
   kind: StatusKind
   seq: number
 }
-export type WorkspaceTab = '2d' | '3d' | 'tools' | 'postprocessor'
+export type WorkspaceTab = '2d' | '3d' | 'tools' | 'postprocessor' | 'machine'
 // 'constrain' is the Constrain tool: click a point on one part, then a point on
 // another, and the constraint holding them where they stand is created — see
 // canvas/layers/ConstraintPickLayer.tsx.

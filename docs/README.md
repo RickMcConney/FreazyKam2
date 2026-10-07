@@ -45,6 +45,7 @@ you will use on every job afterwards. The finished project is
 |---|---|
 | **[10. Simulating and exporting](10-export.md)** | The simulator and its readouts, post-processor profiles, the G-code review |
 | **[11. When something goes wrong](11-troubleshooting.md)** | Open-path refusals, missing tools, stale operations, wrong size, wrong depth |
+| **[12. Running the machine](12-machine.md)** | Driving a FluidNC controller over WiFi: the one-time relay setup, homing and zeroing, jogging, the SD card, running and stopping a job |
 
 ---
 

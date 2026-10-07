@@ -45,13 +45,44 @@ function sub(template: string, vals: Record<string, string | number>): string {
   return template.replace(/\{(\w+)\}/g, (_, k) => String(vals[k] ?? ''))
 }
 
-function cmt(text: string, style: PostProcessorProfile['commentStyle']): string {
-  if (style === 'semicolon') return `; ${text}`
+// THE LONGEST LINE ANY CONTROLLER IS SURE TO TAKE. Grbl's line buffer is 80 characters.
+// FluidNC's gc_execute_line (GCode.cpp) copies each line into char[128] and refuses
+// anything over 127 with error 14 "Line too long" — BEFORE comments are stripped, so a
+// long comment-only line fails though it holds no G-code. 3.9 had the same check but a
+// bug in InputFile::ack (`_pending_error == status`) meant an SD job logged the error
+// and carried on; 4.x fixed it, so a 142-character note now aborts the job (ALARM 17).
+// A sender that strips comments hides all this; `$SD/Run` hands the controller the
+// file as written. Motion lines are far shorter; only comments get long.
+export const MAX_GCODE_LINE = 80
+
+/**
+ * A comment as one or more lines, each at most MAX_GCODE_LINE characters with its
+ * delimiters, split at spaces (a word longer than a line is split where it must be).
+ */
+export function commentLines(text: string, style: PostProcessorProfile['commentStyle'], max = MAX_GCODE_LINE): string[] {
+  if (style !== 'semicolon' && style !== 'parenthesis') return []
   // RS274 parenthesis comments don't nest: the first ')' closes the comment, so any
   // '(' or ')' inside the text (tool names, the spindle-dial note, …) would break
   // parsing. Swap them for brackets so the line stays a single valid comment.
-  if (style === 'parenthesis') return `(${text.replace(/[()]/g, (m) => (m === '(' ? '[' : ']'))})`
-  return ''
+  const body = style === 'parenthesis' ? text.replace(/[()]/g, (m) => (m === '(' ? '[' : ']')) : text
+  const wrap = (t: string) => (style === 'semicolon' ? `; ${t}` : `(${t})`)
+  const width = max - wrap('').length
+  // A comment that fits is left exactly as written, spacing and all.
+  if (body.length <= width) return [wrap(body)]
+  const out: string[] = []
+  let line = ''
+  for (let word of body.split(/\s+/).filter(Boolean)) {
+    while (word.length > width) {
+      if (line) { out.push(line); line = '' }
+      out.push(word.slice(0, width))
+      word = word.slice(width)
+    }
+    if (!line) line = word
+    else if (line.length + 1 + word.length <= width) line += ` ${word}`
+    else { out.push(line); line = word }
+  }
+  if (line || !out.length) out.push(line)
+  return out.map(wrap)
 }
 
 // A roughing pass and its finishing pass differ ONLY by the allowance, so without this
@@ -257,7 +288,7 @@ export function generateGcodeWithOps(
 
   const lines: string[] = []
   const date = new Date().toISOString().replace('T', ' ').slice(0, 19)
-  const c = (text: string) => { const l = cmt(text, profile.commentStyle); if (l) lines.push(l) }
+  const c = (text: string) => { lines.push(...commentLines(text, profile.commentStyle)) }
 
   // Segments are stored in workpiece-local coords (0→W, 0→H).
   // G-code must be relative to the machine zero (the origin point the user set on the workpiece).
@@ -642,4 +673,26 @@ export function generateGcodePerTool(
 
 export function downloadGcode(content: string, filename: string) {
   downloadText(content, filename.endsWith('.gcode') ? filename : `${filename}.gcode`, 'text/plain')
+}
+
+// The longest each placeholder can come out: a 4-digit coordinate at 4 places with a
+// sign (inch posts write 4 places), a 5-digit feed or spindle speed.
+const WORST_CASE_PLACEHOLDER: Record<string, string> = {
+  x: '-1234.5678', y: '-1234.5678', z: '-1234.5678', i: '-1234.5678', j: '-1234.5678',
+  f: '99999', s: '99999',
+}
+
+/**
+ * The lines of a post-processor template that would come out longer than
+ * MAX_GCODE_LINE — the user's own text, written into every program as it stands,
+ * so the comment wrapping cannot help it. Placeholders are measured filled with
+ * their longest values. Line numbers are 1-based within the template.
+ */
+export function templateLongLines(template: string): { line: number; length: number }[] {
+  const out: { line: number; length: number }[] = []
+  template.split('\n').forEach((raw, i) => {
+    const length = sub(raw.replace(/\r$/, ''), WORST_CASE_PLACEHOLDER).length
+    if (length > MAX_GCODE_LINE) out.push({ line: i + 1, length })
+  })
+  return out
 }

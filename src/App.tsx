@@ -12,6 +12,8 @@ import { triggerProjectSave } from './io/fileSystem'
 import SaveDialog from './components/SaveDialog'
 import EscapementInfoPanel from './panels/EscapementInfoPanel'
 import ClockInfoPanel from './panels/ClockInfoPanel'
+import MachineControlPanel from './panels/MachineControlPanel'
+import { useMachineStore } from './machine/machineStore'
 import { useWorkpieceStore } from './store/workpieceStore'
 import { useToolpathStore } from './store/toolpathStore'
 import { useTimelineStore } from './timeline/timelineStore'
@@ -32,6 +34,7 @@ const WORKSPACE_TABS: { id: WorkspaceTab; label: string }[] = [
   { id: '3d', label: '3D View' },
   { id: 'tools', label: 'Tool Library' },
   { id: 'postprocessor', label: 'Post-Processor' },
+  { id: 'machine', label: 'Machine' },
 ]
 
 function MainWorkspace() {
@@ -40,6 +43,7 @@ function MainWorkspace() {
   const workspaceTab = useUIStore((s) => s.workspaceTab)
   const bottomTab = useUIStore((s) => s.bottomTab)
   const setWorkspaceTab = useUIStore((s) => s.setWorkspaceTab)
+  const machineConnected = useMachineStore((s) => s.link === 'connected')
 
   return (
     <main className="flex-1 flex flex-col overflow-hidden">
@@ -57,6 +61,10 @@ function MainWorkspace() {
             ].join(' ')}
           >
             {tab.label}
+            {/* The connection outlives the tab, so the tab shows that it is up. */}
+            {tab.id === 'machine' && machineConnected && (
+              <span className="inline-block w-2 h-2 ml-1.5 rounded-full bg-green-500 align-middle" title="Connected" />
+            )}
           </button>
         ))}
       </div>
@@ -78,6 +86,7 @@ function MainWorkspace() {
           )}
           {workspaceTab === 'tools' && <ToolLibraryPanel />}
           {workspaceTab === 'postprocessor' && <PostProcessorPanel />}
+          {workspaceTab === 'machine' && <MachineControlPanel />}
         </div>
 
         {workspaceTab === '2d' && (

@@ -12,6 +12,7 @@ import ShapePanel from '../panels/draw/ShapePanel'
 import ClockPanel from '../panels/draw/ClockPanel'
 import WorkpiecePanel from '../panels/WorkpiecePanel'
 import GcodeViewer from '../panels/GcodeViewer'
+import SdCardPanel from '../panels/SdCardPanel'
 
 const TABS: { id: SidebarTab; label: string; icon: React.ReactNode }[] = [
   { id: 'draw', label: 'Draw', icon: <DraftingCompass size={ICON.md} /> },
@@ -45,6 +46,7 @@ export default function Sidebar() {
   const setupPanelOpen = useUIStore((s) => s.setupPanelOpen)
   const activeTool = useUIStore((s) => s.activeTool)
   const focusConstraintId = useUIStore((s) => s.focusConstraintId)
+  const workspaceTab = useUIStore((s) => s.workspaceTab)
 
   const showProps = selectedIds.length > 0 && !machineFormActive && !clockPanelOpen
   // THE CONSTRAIN TOOL WORKS WITH NOTHING SELECTED — a selection puts resize
@@ -99,7 +101,11 @@ export default function Sidebar() {
       {/* Content column — its scrollbar lands at this column's right edge, to the
           left of the resize handle, so the two no longer overlap. */}
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-      {hasGcode && gcodeViewerOpen ? (
+      {/* While the machine is being driven there is nothing to draw: the SD card's
+          file list and the job controls take the whole sidebar. */}
+      {workspaceTab === 'machine' ? (
+        <SdCardPanel />
+      ) : hasGcode && gcodeViewerOpen ? (
         <GcodeViewer fill />
       ) : setupPanelOpen ? (
         /* Setup fills the sidebar so stock / origin / material edits are visible

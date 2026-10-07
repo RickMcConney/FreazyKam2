@@ -1,0 +1,252 @@
+<!doctype html>
+<!--
+  FreazyKam ⇄ FluidNC relay.
+
+  Upload to the controller's FLASH (local filesystem, not the SD card) as 404.htm —
+  FreazyKam's Machine tab has a download and step-by-step instructions. FluidNC
+  serves a file requested by name as a download (Content-Disposition: attachment),
+  never as a page; only its not-found page, 404.htm, is served inline. So FreazyKam
+  opens http://<controller>/freazykam, a path that is never a file, and FluidNC
+  answers with this page. (Interim: no firmware change needed, but it does not work
+  in access-point mode, where FluidNC answers unknown paths with a captive portal.)
+  FreazyKam (HTTPS) cannot reach the controller (plain http/ws) directly — mixed
+  content — so it opens THIS page in a popup and talks to it with postMessage.
+  This page then talks to its own host, which is same-origin and plain http.
+
+  A dumb pipe: no protocol knowledge, no timers (a background window's timers are
+  throttled; WebSocket and postMessage events are not). Requests go to this host
+  only, so the page cannot be used to reach other machines on the LAN.
+
+  Protocol, FreazyKam → relay:
+    {op:'http', id, method, path, query?, body?, form?}
+        path: absolute path on this host ("/command"). query: {k: v}.
+        body: string | Blob. form: [[name, string | Blob, filename?], ...]
+        (FormData is not structured-cloneable, so multipart is sent as entries).
+    {op:'ws-open', port?, path?, protocol?}
+                                   ws://<this host>:<port><path>; protocol 'webui-v3'
+                                   (default) or 'arduino' (WebUI 2 era firmware)
+    {op:'ws-send', data}           string or ArrayBuffer
+    {op:'ws-close'}
+    {op:'title', text}             window title + status line (FreazyKam supplies the
+                                   machine state; the relay does not parse anything)
+    {op:'theme', dark}             match FreazyKam's light/dark mode
+  Relay → FreazyKam:
+    {op:'ready'}                   on load (and again on 'hello')
+    {op:'http-res', id, status, body}       status 0 = network error
+    {op:'http-progress', id, loaded, total} upload progress
+    {op:'ws-state', state, code?}  'connecting' | 'open' | 'closed' | 'error'
+    {op:'ws-msg', text}            text frame (session messages: CURRENTID, PING...)
+    {op:'ws-bin', data}            binary frame (controller output), ArrayBuffer
+    {op:'closed'}                  relay window is going away
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FreazyKam link</title>
+<script>
+  // Theme before first paint: the last one FreazyKam sent, else the system's.
+  try { var t = localStorage.getItem('fk-theme'); if (t) document.documentElement.dataset.theme = t } catch (e) {}
+</script>
+<style>
+  /* FreazyKam's panel colours (Tailwind gray in light mode, neutral in dark). */
+  :root {
+    --bg: #f9fafb; --panel: #f3f4f6; --head: #e5e7eb; --line: #d1d5db;
+    --text: #374151; --muted: #4b5563; --ok: #16a34a; --bad: #dc2626; --accent: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #171717; --panel: #262626; --head: #262626; --line: #404040;
+      --text: #e5e5e5; --muted: #a3a3a3; --ok: #4ade80; --bad: #f87171; --accent: #3b82f6;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #171717; --panel: #262626; --head: #262626; --line: #404040;
+    --text: #e5e5e5; --muted: #a3a3a3; --ok: #4ade80; --bad: #f87171; --accent: #3b82f6;
+  }
+  html, body { height: 100%; }
+  body {
+    margin: 0; display: flex; align-items: center; justify-content: center;
+    background: var(--bg); color: var(--text);
+    font: 14px/1.4 ui-sans-serif, system-ui, sans-serif;
+  }
+  .card { width: min(100% - 32px, 360px); border: 1px solid var(--line); border-radius: 8px; background: var(--panel); overflow: hidden; }
+  .head { padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--head); font-weight: 600; display: flex; gap: 8px; align-items: center; }
+  .head .mark { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+  .body { padding: 10px 12px; }
+  .body p { margin: 0 0 6px; }
+  .body p:last-child { margin: 0; color: var(--muted); font-size: 12px; }
+  .head span:nth-child(2) { flex: 1; }
+  #size {
+    font: inherit; font-size: 12px; font-weight: 400; padding: 2px 10px; cursor: pointer;
+    color: var(--text); background: transparent; border: 1px solid var(--line); border-radius: 4px;
+  }
+  #size:hover { background: var(--line); }
+  /* Shrunk: the header alone fills the window, and names the machine state. */
+  body.mini { align-items: stretch; background: var(--head); }
+  body.mini .card { width: 100%; border: 0; border-radius: 0; }
+  body.mini .head { border-bottom: 0; }
+  body.mini .body { display: none; }
+  #s { font-weight: 600; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="head"><span class="mark"></span><span id="label">FreazyKam link</span><button id="size" title="Shrink this window into the corner of the screen">Shrink</button></div>
+  <div class="body">
+    <p><span id="s">waiting for FreazyKam…</span></p>
+    <p>Keep this window open while controlling the machine. Shrink it into the corner, or minimise it.</p>
+  </div>
+</div>
+<script>
+(function () {
+  'use strict'
+  var ALLOWED = ['https://freazykam.com', 'https://www.freazykam.com', 'http://localhost:5173', 'http://localhost:4173']
+  var statusEl = document.getElementById('s')
+  var labelEl = document.getElementById('label')
+  var sizeBtn = document.getElementById('size')
+  var restore = null     // the window's place and size while shrunk
+  var parent = window.opener
+  var peer = null        // the origin we answer, fixed by the first valid message
+  var ws = null
+
+  function show(text, cls) {
+    statusEl.textContent = text; statusEl.className = cls || ''
+    if (restore) { labelEl.textContent = text; labelEl.className = cls || '' }
+  }
+
+  // A page cannot minimise its window (and the browser ignores a request to bring
+  // FreazyKam to the front), but a popup may resize and move itself: shrink to a
+  // one-line status strip in the bottom-right corner of the screen, and back.
+  var MINI_W = 300
+  sizeBtn.onclick = function () {
+    if (!restore) {
+      restore = { x: window.screenX, y: window.screenY, w: window.outerWidth, h: window.outerHeight }
+      document.body.classList.add('mini')
+      var h = window.outerHeight - window.innerHeight + 40    // browser frame + one header row
+      var sc = window.screen
+      window.resizeTo(MINI_W, h)
+      window.moveTo((sc.availLeft || 0) + sc.availWidth - MINI_W, (sc.availTop || 0) + sc.availHeight - h)
+      labelEl.textContent = statusEl.textContent; labelEl.className = statusEl.className
+      sizeBtn.textContent = 'Expand'; sizeBtn.title = 'Restore this window'
+    } else {
+      window.resizeTo(restore.w, restore.h)
+      window.moveTo(restore.x, restore.y)
+      restore = null
+      document.body.classList.remove('mini')
+      labelEl.textContent = 'FreazyKam link'; labelEl.className = ''
+      sizeBtn.textContent = 'Shrink'; sizeBtn.title = 'Shrink this window into the corner of the screen'
+    }
+  }
+
+  if (!parent) {
+    sizeBtn.hidden = true
+    show('not opened by FreazyKam — open it from the app\'s Machine panel', 'bad')
+    return
+  }
+
+  // Before the opener has spoken we don't know which allowed origin it is, so the
+  // greeting goes to each of them; postMessage drops it for every non-matching one.
+  function post(msg, transfer) {
+    if (peer) { parent.postMessage(msg, peer, transfer || []); return }
+    for (var i = 0; i < ALLOWED.length; i++) {
+      try { parent.postMessage(msg, ALLOWED[i]) } catch (e) {}
+    }
+  }
+
+  function wsState(state, code) { post({ op: 'ws-state', state: state, code: code }) }
+
+  function http(m) {
+    // Relative to this host only — no open proxy onto the LAN.
+    if (typeof m.path !== 'string' || m.path.charAt(0) !== '/' || m.path.charAt(1) === '/') {
+      post({ op: 'http-res', id: m.id, status: 0, body: 'relay: path must be absolute on this host' })
+      return
+    }
+    var url = new URL(m.path, location.origin)
+    if (url.origin !== location.origin) {
+      post({ op: 'http-res', id: m.id, status: 0, body: 'relay: path leaves this host' })
+      return
+    }
+    if (m.query) for (var k in m.query) url.searchParams.append(k, String(m.query[k]))
+    var body = m.body
+    if (m.form) {
+      body = new FormData()
+      for (var j = 0; j < m.form.length; j++) {
+        var f = m.form[j]
+        if (f[2] !== undefined) body.append(f[0], f[1], f[2]); else body.append(f[0], f[1])
+      }
+    }
+    // XHR rather than fetch: fetch cannot report upload progress.
+    var xhr = new XMLHttpRequest()
+    xhr.open(m.method || 'GET', url.pathname + url.search)
+    xhr.upload.onprogress = function (e) {
+      post({ op: 'http-progress', id: m.id, loaded: e.loaded, total: e.lengthComputable ? e.total : 0 })
+    }
+    xhr.onload = function () { post({ op: 'http-res', id: m.id, status: xhr.status, body: xhr.responseText }) }
+    xhr.onerror = function () { post({ op: 'http-res', id: m.id, status: 0, body: 'relay: network error' }) }
+    xhr.send(body === undefined ? null : body)
+  }
+
+  function wsOpen(m) {
+    if (ws) { ws.onclose = null; try { ws.close() } catch (e) {} ws = null }
+    var port = m.port ? ':' + String(parseInt(m.port, 10)) : ''
+    var path = typeof m.path === 'string' && m.path.charAt(0) === '/' ? m.path : '/'
+    var sock
+    var protocol = m.protocol === 'arduino' ? 'arduino' : 'webui-v3'
+    try { sock = new WebSocket('ws://' + location.hostname + port + path, protocol) }
+    catch (e) { wsState('error'); return }
+    sock.binaryType = 'arraybuffer'
+    ws = sock
+    wsState('connecting')
+    sock.onopen = function () { if (ws === sock) { wsState('open'); show('connected', 'ok') } }
+    sock.onerror = function () { if (ws === sock) wsState('error') }
+    sock.onclose = function (e) {
+      if (ws !== sock) return
+      ws = null
+      wsState('closed', e.code)
+      show('controller connection closed', 'bad')
+    }
+    sock.onmessage = function (e) {
+      if (typeof e.data === 'string') post({ op: 'ws-msg', text: e.data })
+      else post({ op: 'ws-bin', data: e.data }, [e.data])
+    }
+  }
+
+  window.addEventListener('message', function (e) {
+    if (e.source !== parent || ALLOWED.indexOf(e.origin) < 0) return
+    if (!peer) peer = e.origin
+    else if (e.origin !== peer) return
+    var m = e.data
+    if (!m || typeof m.op !== 'string') return
+    switch (m.op) {
+      case 'hello': post({ op: 'ready' }); show('linked to ' + peer, 'ok'); break
+      case 'http': http(m); break
+      case 'ws-open': wsOpen(m); break
+      case 'ws-send': if (ws && ws.readyState === 1) ws.send(m.data); break
+      case 'ws-close': if (ws) ws.close(); break
+      case 'theme': {
+        var theme = m.dark ? 'dark' : 'light'
+        document.documentElement.dataset.theme = theme
+        try { localStorage.setItem('fk-theme', theme) } catch (e) {}
+        break
+      }
+      case 'title': {
+        var t = String(m.text).slice(0, 80)
+        document.title = t ? t + ' — FreazyKam link' : 'FreazyKam link'
+        if (t) show(t, 'ok')
+        break
+      }
+    }
+  })
+
+  window.addEventListener('pagehide', function () {
+    if (ws) { ws.onclose = null; try { ws.close() } catch (e) {} }
+    post({ op: 'closed' })
+  })
+
+  post({ op: 'ready' })
+})()
+</script>
+</body>
+</html>

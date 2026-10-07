@@ -6,6 +6,19 @@ import {
   type PostProcessorProfile,
   type CommentStyle,
 } from '../store/postProcessorStore'
+import { templateLongLines, MAX_GCODE_LINE } from '../cam/gcode'
+
+// A template line too long for a controller to take. The user's text goes into every
+// program as typed, so this is said HERE, not when a job dies at that line with
+// "Line too long" (FluidNC aborts the job; see MAX_GCODE_LINE in cam/gcode.ts).
+function lengthWarning(template: string, multiline: boolean): string | undefined {
+  const long = templateLongLines(template)
+  if (!long.length) return undefined
+  const what = multiline
+    ? long.map((l) => `line ${l.line} (${l.length})`).join(', ')
+    : `${long[0].length} characters`
+  return `Too long: ${what} — over ${MAX_GCODE_LINE} characters, a controller may stop the job here with "Line too long". Split it, or shorten the comment.`
+}
 
 const inputCls =
   'w-full bg-gray-100 dark:bg-neutral-800 border border-gray-200 dark:border-neutral-600 rounded px-2 py-1 text-body text-gray-800 dark:text-neutral-200 focus:outline-none focus:ring-1 focus:ring-blue-500'
@@ -18,10 +31,13 @@ const labelCls = 'block text-label font-semibold text-gray-600 dark:text-neutral
 function Field({
   label,
   hint,
+  warn,
   children,
 }: {
   label: string
   hint?: string
+  /** Shown under the control in amber: the value works but may fail on a machine. */
+  warn?: string
   /** Exactly one form control — Field owns the id and injects it, so the label
    *  can point at it without every call site having to invent one. */
   children: React.ReactElement
@@ -32,6 +48,7 @@ function Field({
       <label className={labelCls} htmlFor={id}>{label}</label>
       {hint && <p className="text-label text-gray-600 dark:text-neutral-400 mb-1">{hint}</p>}
       {React.cloneElement(children, { id } as Partial<unknown>)}
+      {warn && <p className="mt-1 text-label text-amber-700 dark:text-amber-400">{warn}</p>}
     </div>
   )
 }
@@ -69,32 +86,32 @@ function ProfileEditor({ profile }: { profile: PostProcessorProfile }) {
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Start G-code" hint="Emitted once at job start, after G20/G21">
+        <Field label="Start G-code" hint="Emitted once at job start, after G20/G21" warn={lengthWarning(profile.startGcode, true)}>
           <textarea value={profile.startGcode} onChange={(e) => up({ startGcode: e.target.value })} className={textareaCls} rows={8} />
         </Field>
-        <Field label="End G-code" hint="Emitted once at job end">
+        <Field label="End G-code" hint="Emitted once at job end" warn={lengthWarning(profile.endGcode, true)}>
           <textarea value={profile.endGcode} onChange={(e) => up({ endGcode: e.target.value })} className={textareaCls} rows={8} />
         </Field>
       </div>
 
-      <Field label="Tool change G-code" hint="Emitted before each new tool">
+      <Field label="Tool change G-code" hint="Emitted before each new tool" warn={lengthWarning(profile.toolChangeGcode, true)}>
         <textarea value={profile.toolChangeGcode} onChange={(e) => up({ toolChangeGcode: e.target.value })} className={textareaCls} rows={2} />
       </Field>
 
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Spindle on" hint="Placeholders: {s} = spindle speed">
+        <Field label="Spindle on" hint="Placeholders: {s} = spindle speed" warn={lengthWarning(profile.spindleOnTemplate, false)}>
           <input type="text" value={profile.spindleOnTemplate} onChange={(e) => up({ spindleOnTemplate: e.target.value })} className={inputCls} />
         </Field>
-        <Field label="Spindle off" hint="Emitted to stop the spindle">
+        <Field label="Spindle off" hint="Emitted to stop the spindle" warn={lengthWarning(profile.spindleOffGcode, false)}>
           <input type="text" value={profile.spindleOffGcode} onChange={(e) => up({ spindleOffGcode: e.target.value })} className={inputCls} />
         </Field>
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Rapid move" hint="Placeholders: {x} {y} {z}">
+        <Field label="Rapid move" hint="Placeholders: {x} {y} {z}" warn={lengthWarning(profile.rapidTemplate, false)}>
           <input type="text" value={profile.rapidTemplate} onChange={(e) => up({ rapidTemplate: e.target.value })} className={inputCls} />
         </Field>
-        <Field label="Cut move" hint="Placeholders: {x} {y} {z} {f}">
+        <Field label="Cut move" hint="Placeholders: {x} {y} {z} {f}" warn={lengthWarning(profile.cutTemplate, false)}>
           <input type="text" value={profile.cutTemplate} onChange={(e) => up({ cutTemplate: e.target.value })} className={inputCls} />
         </Field>
       </div>
@@ -108,10 +125,10 @@ function ProfileEditor({ profile }: { profile: PostProcessorProfile }) {
 
       {profile.outputArcs && (
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Arc CW (G2)" hint="{x} {y} {i} {j} {f}">
+          <Field label="Arc CW (G2)" hint="{x} {y} {i} {j} {f}" warn={lengthWarning(profile.arcCWTemplate, false)}>
             <input type="text" value={profile.arcCWTemplate} onChange={(e) => up({ arcCWTemplate: e.target.value })} className={inputCls} />
           </Field>
-          <Field label="Arc CCW (G3)" hint="{x} {y} {i} {j} {f}">
+          <Field label="Arc CCW (G3)" hint="{x} {y} {i} {j} {f}" warn={lengthWarning(profile.arcCCWTemplate, false)}>
             <input type="text" value={profile.arcCCWTemplate} onChange={(e) => up({ arcCCWTemplate: e.target.value })} className={inputCls} />
           </Field>
         </div>

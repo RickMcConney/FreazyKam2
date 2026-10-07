@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { generateGcode, generateGcodePerTool } from './gcode'
+import { generateGcode, generateGcodePerTool, commentLines, MAX_GCODE_LINE, templateLongLines } from './gcode'
 import { parseGcode } from '../sim/gcodeParser'
 import { useWorkpieceStore } from '../store/workpieceStore'
-import type { PostProcessorProfile } from '../store/postProcessorStore'
+import { usePostProcessorStore, type PostProcessorProfile } from '../store/postProcessorStore'
 import type { Tool } from '../store/toolStore'
 import type { AnyOperation, MotionSegment, ProfileOperation } from '../store/toolpathStore'
 
@@ -51,6 +51,10 @@ const rapid = (x: number, y: number, z: number): MotionSegment => ({ x, y, z, ra
 const gen = (ops: AnyOperation[], post: PostProcessorProfile = POST) =>
   generateGcode(ops, TOOLS, 'test-project', post)
 
+// Every comment's text, rejoined across the lines a long one was wrapped onto.
+const commentText = (g: string) =>
+  g.split('\n').filter((l) => l.startsWith('; ')).map((l) => l.slice(2)).join(' ')
+
 beforeEach(() => {
   // Pin every workpiece/machine field the emitter reads. autoFeedEnabled=false +
   // maxFeedMmMin=0 (no cap) make feedsForTool return the tool's stored feeds verbatim.
@@ -82,10 +86,14 @@ describe('generateGcode — header and footer', () => {
       ...makeOp([rapid(0, 0, 5), cut(0, 0, -1), cut(10, 0, -1)]),
       type: 'profile3d', stepoverPercent: 20, rasterAngleDeg: 0, maxDepthMM: 10, ...over,
     } as AnyOperation)
-    expect(gen([op3d({ finishStrategy: 'waterline', boundary: 'stock' } as Partial<AnyOperation>)]))
+    // The description is longer than one comment line may be, so read the comments
+    // back as the text they were wrapped from.
+    expect(commentText(gen([op3d({ finishStrategy: 'waterline', boundary: 'stock' } as Partial<AnyOperation>)])))
       .toContain('3D waterline · 20% stepover · 10mm max depth · stock boundary')
     // Saved before waterline existed: no strategy, no boundary — a raster in the model's box.
-    expect(gen([op3d({})])).toMatch(/3D raster · 20% stepover · 10mm max depth$/m)
+    const legacy = commentText(gen([op3d({})]))
+    expect(legacy).toContain('3D raster · 20% stepover · 10mm max depth')
+    expect(legacy).not.toContain('boundary')
   })
 
   it('emits only a comment and M30 when there is nothing to export', () => {
@@ -645,5 +653,71 @@ describe('a 3D Profile ring is exported as arcs that stay on it', () => {
       }
     }
     expect(worst).toBeLessThan(0.05 + 0.01)
+  })
+})
+
+describe('comment lines — no line longer than any controller accepts', () => {
+  it('leaves a comment that fits exactly as written, double spaces and all', () => {
+    expect(commentLines('Origin: center  offset X50.000', 'semicolon')).toEqual(['; Origin: center  offset X50.000'])
+    expect(commentLines('Tool: 3 end mill', 'parenthesis')).toEqual(['(Tool: 3 end mill)'])
+  })
+
+  it('wraps a long comment at spaces into lines of at most 80 characters, delimiters included', () => {
+    const note = 'NOTE: auto feeds & speeds set spindle to 16674 RPM (tool stored 12000). If your machine has no spindle-speed control, set the speed by hand.'
+    for (const style of ['semicolon', 'parenthesis'] as const) {
+      const out = commentLines(note, style)
+      expect(out.length).toBeGreaterThan(1)
+      for (const l of out) expect(l.length).toBeLessThanOrEqual(MAX_GCODE_LINE)
+      // Nothing lost or reordered: the lines read back as the note (brackets for parens).
+      const text = out.map((l) => (style === 'semicolon' ? l.slice(2) : l.slice(1, -1))).join(' ')
+      expect(text).toBe(style === 'semicolon' ? note : note.replace('(', '[').replace(')', ']'))
+    }
+  })
+
+  it('keeps every parenthesis comment line a single valid comment, with no ( or ) inside', () => {
+    for (const l of commentLines('a (b) '.repeat(30), 'parenthesis')) {
+      expect(l.startsWith('(') && l.endsWith(')')).toBe(true)
+      expect(l.slice(1, -1)).not.toMatch(/[()]/)
+    }
+  })
+
+  it('splits a single word longer than a line rather than overrunning', () => {
+    for (const l of commentLines('x'.repeat(200), 'semicolon')) expect(l.length).toBeLessThanOrEqual(MAX_GCODE_LINE)
+  })
+
+  it('emits no line longer than 80 characters in a whole program, however long the names', () => {
+    const longTools = { t1: { ...TOOL, name: 'A very long tool name '.repeat(6) }, t2: TOOL2 }
+    const g = generateGcode([makeOp([rapid(0, 0, 5), cut(0, 0, -1), cut(10, 0, -1)], { name: 'Profile '.repeat(15) })],
+      longTools, 'a project name that goes on and on '.repeat(4), { ...POST, commentStyle: 'parenthesis' })
+    for (const l of g.split('\n')) expect(l.length).toBeLessThanOrEqual(MAX_GCODE_LINE)
+  })
+})
+
+describe('templateLongLines — the post-processor text the user writes', () => {
+  it('passes the built-in style of template', () => {
+    expect(templateLongLines('G21\nG90\nG0 Z10')).toEqual([])
+    expect(templateLongLines('G2 X{x} Y{y} Z{z} I{i} J{j} F{f}')).toEqual([])
+  })
+
+  it('names each line over 80 characters, 1-based, with its length', () => {
+    const long = `(${'x'.repeat(90)})`
+    expect(templateLongLines(`G21\n${long}\nG90`)).toEqual([{ line: 2, length: 92 }])
+  })
+
+  it('raises no warning on any built-in post-processor', () => {
+    // The store starts with the built-ins (persistence is skipped under node).
+    for (const p of usePostProcessorStore.getState().profiles) {
+      for (const t of [p.startGcode, p.endGcode, p.toolChangeGcode, p.spindleOnTemplate, p.spindleOffGcode,
+        p.rapidTemplate, p.cutTemplate, p.arcCWTemplate, p.arcCCWTemplate]) {
+        expect(templateLongLines(t), `${p.name}: ${t}`).toEqual([])
+      }
+    }
+  })
+
+  it('measures a movement line with its placeholders filled at their longest, not as typed', () => {
+    // 48 characters as typed; past 80 once six coordinates and a feed are written out.
+    const t = 'G1 X{x} Y{y} Z{z} I{i} J{j} A{x} F{f} ; cut move'
+    expect(t.length).toBeLessThanOrEqual(MAX_GCODE_LINE)
+    expect(templateLongLines(t)).toHaveLength(1)
   })
 })

@@ -157,6 +157,18 @@ Depths are always measured *from* the start surface, and the tool-reach and past
 - **SVG export** of the selection or the whole drawing — round-trips through this app's own importer with the stock as the page, so a path exported at (120, 40) comes back at (120, 40)
 - Saves as `.fkam` project files (JSON) — geometry, operations, tool library and workpiece, every generated object keeping the parameters it was made from so it stays editable after a reload
 
+### Machine Control (FluidNC)
+- **Drive a FluidNC controller over WiFi from the browser** — no sender to install. A one-time file copied to the controller (the relay, `404.htm`) lets the secure app reach the plain-http controller; the Machine tab offers it for download with step-by-step setup
+- **Position, home, zero and jog** — work and machine readouts, homing per axis (or hide it on a machine without limit switches), zero per axis, motor enable/disable, and a jog pad with mm or inch steps
+- **Go-to map** — the stock with the job's toolpath drawn on it; click anywhere to send the tool there, lifting to the safe height first
+- **SD card** — list, upload, delete and load files, or **Send to card** to post the current design straight to the controller and run it from there; files with lines too long for FluidNC are flagged on load
+- **Run, pause, cancel, stop** — Cancel ends a paused job without an alarm and lifts Z clear; a STOP button is always on screen; feed, rapid and spindle overrides mid-job
+- **Built for real WiFi** — reconnects by itself after a drop and shows the controller's signal strength
+
+![The Machine tab — SD card and job in the sidebar, controls on the left, the go-to map and console on the right](docs/images/12-machine.png)
+
+*Driving the machine: the job loaded from the SD card is drawn on the stock, ready to run.*
+
 ---
 
 ## Keyboard Shortcuts
