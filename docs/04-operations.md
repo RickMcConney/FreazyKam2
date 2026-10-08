@@ -20,7 +20,7 @@ Every operation is made the same way:
 4. **Press Generate Toolpath.**
 5. **Close the form** with the **×** to get the menu back.
 
-The toolpath appears on the canvas and a chip appears in the **Ops** strip. Nothing is
+The toolpath appears on the canvas and a row for it appears under **Paths → Toolpaths** in the sidebar. Nothing is
 committed until you press the button: changing a field doesn't alter an existing
 toolpath, and closing the form without pressing it leaves things as they were.
 
@@ -135,30 +135,43 @@ rather than adding another, and deleting the chip deletes the thing.
 A whole Generate is **one** chip. Profiling five paths makes five operations but was one
 decision, so it edits as one.
 
-### Ops — the program
+### Toolpaths — the program
 
-One chip per operation, **in the order the machine runs them**, which is the order they
-are written to G-code. This is the strip to check before exporting.
+The sidebar's **Paths** tab has two views; switch to **Toolpaths** for the program. One
+row per operation, **in the order the machine runs them**, which is the order they are
+written to G-code — with how long each one takes and its share of the whole job, and a
+faint bar under the row the width of that share, so the long ones stand out down the list.
+This is the list to check before exporting.
+
+![The Toolpaths view: ten operations in two tool blocks — five pockets on the 1/4" end mill taking 63% of the job, a tool change, then five profiles on the 6 mm end mill — each row with its run time and share](images/04-toolpaths.png)
+
+*Ten operations, one tool change, 2 m 22 s in all. Each tool's block is headed by its
+total — the 1/4" end mill's pockets are 63 % of the job — and each row by its own time and
+share.*
+
+<!-- FULL APP · 1600 px wide, downscaled from the 2800 px capture. Paths tab, Toolpaths view. -->
 
 | Control | Does |
 |---|---|
-| Drag a chip | Reorder — this changes the program |
-| Drag a run header | Move that whole tool's block at once |
+| Drag a row | Reorder — this changes the program |
+| Drag a tool's header | Move that whole tool's block at once |
 | Hover → eye | Hide. **A hidden operation is left out of exported G-code** |
-| Hover → × | Delete |
+| Hover → × | Delete (on a tool's header, deletes its whole block — click twice) |
+| Alt-click | Hide or show (a header: the whole block) |
 | Click | Select the paths the operation was made from and reopen its form |
 
-The chip's ring tells you its state: **amber** means it needs regenerating, **red** means
-it failed, a spinner means it's still working. Hovering says what's wrong.
+Each tool's header carries that tool's total time and share. The row's ring tells you its
+state: **amber** means it needs regenerating, **red** means it failed, a spinner means it's
+still working. Hovering says what's wrong.
 
 ### Tool changes
 
 Operations sharing a tool are drawn as one coloured band with a marker at each tool
-change, and the counter at the right reads `N ops · N TC`.
+change, and the line at the top reads `N ops · N TC · total time`.
 
 The ops list is flat and new operations append to it, so a program can easily read
-A, B, A — three tool changes, two of them avoidable. When that happens, a **−N TC**
-button appears. Press it and each tool's operations are gathered together, keeping the
+A, B, A — three tool changes, two of them avoidable. When that happens, a **Group by
+tool −N TC** button appears. Press it and each tool's operations are gathered together, keeping the
 order the tools first appear and the relative order within each tool. It is one explicit,
 undoable edit, so the order in your G-code is always one you chose.
 

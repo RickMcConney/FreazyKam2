@@ -1,3 +1,4 @@
+import { isSettingsData } from './settingsMerge'
 import { regenerateAll } from '../cam/regenerate'
 import { abortGeneration } from '../workers/abortGeneration'
 import { useProjectStore } from '../store/projectStore'
@@ -390,6 +391,7 @@ export function openProjectFile(): Promise<void> {
         } catch {
           throw new ProjectFileError('this is not a FreazyKam project')
         }
+        if (isSettingsData(data)) throw new ProjectFileError('this is a settings file (.fkset) — import it from Setup → Settings File')
         loadProject(data, file.name)
       } catch (err) {
         console.error('Project load failed:', err)

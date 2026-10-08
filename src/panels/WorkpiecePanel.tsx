@@ -1,6 +1,7 @@
 import { useState, useId } from 'react'
 import { ICON } from '../theme'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { ChevronDown, ChevronRight, Import, RotateCcw, Share } from 'lucide-react'
+import { RestoreMachineButton } from '../components/RestoreButtons'
 import InfoPopover from '../components/InfoPopover'
 import {
   useWorkpieceStore,
@@ -16,6 +17,9 @@ import { SPINDLE_INFO, type SpindleType } from '../store/spindle'
 import { NumericInput } from '../components/NumericInput'
 import { NUMERIC_HINT } from '../components/parseNumeric'
 import { rigidityInfo } from '../rigidity'
+import { exportSettings, pickSettingsFile } from '../io/settingsFile'
+import type { SettingsFile } from '../io/settingsMerge'
+import ImportSettingsDialog from '../components/ImportSettingsDialog'
 
 function DimInput({
   label,
@@ -171,6 +175,8 @@ const MATERIAL_GROUPS = KIND_ORDER.map((kind) => ({
     .sort((a, b) => MATERIAL_INFO[a].hardness - MATERIAL_INFO[b].hardness),
 }))
 
+const settingsBtnCls = 'flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded text-body border border-gray-400 dark:border-neutral-600 text-gray-700 dark:text-neutral-200 hover:bg-gray-200 dark:hover:bg-neutral-700'
+
 const RIGIDITY_LABELS: Record<number, string> = {
   1: 'Hobby (light gantry)',
   2: 'Light hobby',
@@ -208,6 +214,7 @@ export default function WorkpiecePanel() {
     setMachineRigidity, setMaxFeed, setMinSpindleRpm, setMaxSpindleRpm, setSpindleType, setAutoFeedEnabled,
   } = useWorkpieceStore()
   const feedId = useId()
+  const [importing, setImporting] = useState<SettingsFile | null>(null)
 
   return (
     <div className="flex flex-col">
@@ -405,6 +412,29 @@ export default function WorkpiecePanel() {
           Max Feed Rate is the X/Y max rate: a hard ceiling generated feeds never exceed, even
           with auto feeds off, and the speed rapids run at.
         </p>
+      </Section>
+
+      {/* Here rather than on the toolbar, which has enough import/export buttons:
+          these are about the user's setup, so they sit with it. */}
+      <Section title="Settings File">
+        {importing && <ImportSettingsDialog file={importing} onClose={() => setImporting(null)} />}
+        <p className="text-body text-gray-600 dark:text-neutral-400 mb-2">
+          Your machine, tools, post-processors and preferences in one file — to move them to
+          another browser, keep a backup, or send with a problem report.
+        </p>
+        <div className="flex gap-2">
+          <button onClick={exportSettings} className={settingsBtnCls} title="Download every setting this browser keeps, as a .fkset file">
+            <Share size={ICON.sm} /> Export…
+          </button>
+          <button onClick={async () => { const f = await pickSettingsFile(); if (f) setImporting(f) }} className={settingsBtnCls}
+            title="Open a .fkset file and choose which of its settings to bring in">
+            <Import size={ICON.sm} /> Import…
+          </button>
+        </div>
+        <RestoreMachineButton className={`${settingsBtnCls} mt-2 w-full`}
+          title="Put the machine limits, feeds & speeds, motion and spindle back to their defaults — lists every change first">
+          <RotateCcw size={ICON.sm} /> Restore default machine settings…
+        </RestoreMachineButton>
       </Section>
     </div>
   )

@@ -23,6 +23,11 @@ export interface JobPreview {
   cuts: [number, number][][]     // feed moves, broken wherever a rapid intervenes
   bounds: { minX: number; minY: number; maxX: number; maxY: number } | null   // of the cuts
   segments: number               // moves in the program, before thinning
+  // For the Z bar: the deepest feed move, and the program's own safe height — the
+  // Z its XY rapids travel at most often (the first and last rapids may sit higher,
+  // so the commonest, not the highest). Null when the program has none.
+  deepestZ: number | null
+  safeZ: number | null
   warnings: string[]
 }
 
@@ -36,13 +41,23 @@ export function jobPreview(text: string, minStepMM = 0.2): JobPreview {
   const cuts: [number, number][][] = []
   let cur: [number, number][] | null = null
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  let deepestZ = Infinity
+  const rapidZ = new Map<number, number>()   // hundredths of a mm → count
   const flush = () => {
     if (cur && cur.length > 1) cuts.push(cur)
     cur = null
   }
   for (let i = 0; i < parsed.segments.length; i++) {
     const s = parsed.segments[i]
-    if (s.rapid) { flush(); continue }
+    if (s.rapid) {
+      flush()
+      if (s.x !== s.prevX || s.y !== s.prevY) {
+        const k = Math.round(s.z * 100)
+        rapidZ.set(k, (rapidZ.get(k) ?? 0) + 1)
+      }
+      continue
+    }
+    deepestZ = Math.min(deepestZ, s.prevZ, s.z)
     // A plunge or retract adds no XY line, but it does not break the cut either.
     if (!cur) cur = [[s.prevX, s.prevY]]
     const last = cur[cur.length - 1]
@@ -54,10 +69,14 @@ export function jobPreview(text: string, minStepMM = 0.2): JobPreview {
     minY = Math.min(minY, s.prevY, s.y); maxY = Math.max(maxY, s.prevY, s.y)
   }
   flush()
+  let safeZ: number | null = null, best = 0
+  for (const [k, n] of rapidZ) if (n > best) { best = n; safeZ = k / 100 }
   return {
     cuts,
     bounds: Number.isFinite(minX) ? { minX, minY, maxX, maxY } : null,
     segments: parsed.segments.length,
+    deepestZ: Number.isFinite(deepestZ) ? deepestZ : null,
+    safeZ,
     warnings: [...longLineWarning(text), ...parsed.warnings],
   }
 }

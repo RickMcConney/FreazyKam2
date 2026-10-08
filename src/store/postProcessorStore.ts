@@ -137,7 +137,7 @@ const GENERIC_MM: PostProcessorProfile = {
 }
 
 // Order here is the order shown in the panel sidebar.
-const BUILTIN_PROFILES: PostProcessorProfile[] = [
+export const BUILTIN_PROFILES: PostProcessorProfile[] = [
   GRBL_MM,
   GRBL_IN,
   GRBLHAL_MM,

@@ -1,9 +1,9 @@
 // The DOCUMENT list: paths, their visibility and their SVG import groups.
 //
-// Toolpaths used to live in the bottom half of this panel. They moved to the Operations
-// strip under the canvas (panels/OperationsPanel.tsx), which shows them in true program
-// order — this panel grouped them by tool id regardless of their actual order, so a list
-// running A, B, A drew two tidy groups while the machine performed three tool changes.
+// Toolpaths are its sibling view in the same sidebar tab (panels/ToolpathsPanel.tsx),
+// which shows them in true program order. They once lived in the bottom half of this
+// panel, grouped by tool id regardless of their actual order — so a list running A, B, A
+// drew two tidy groups while the machine performed three tool changes.
 import { ICON } from '../theme'
 import { Eye, EyeOff, Trash2, Layers, ChevronRight, ChevronDown, FolderOpen, Folder, Image, Box } from 'lucide-react'
 import { usePathsStore, groupKeyOf, outerGroupOf } from '../store/pathsStore'

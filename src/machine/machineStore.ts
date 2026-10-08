@@ -87,13 +87,20 @@ interface MachineState {
   log: string[]
   // Jog settings, kept between sessions. The step is an INDEX into JOG_STEPS_MM
   // for the current units, so flipping mm/in lands on the matching row (10 mm ↔
-  // 0.1") rather than on an odd converted number. Feeds are mm/min.
+  // 0.1") rather than on an odd converted number. Feeds are mm/min. Z has a step of
+  // its own, an index into JOG_STEPS_Z_MM: one shared with XY sent the 10 mm step
+  // that crosses the stock in X and Y straight down into it the moment the user
+  // reached for Z−.
   jogStepIndex: number
+  jogStepIndexZ: number
   jogFeedXY: number
   jogFeedZ: number
-  // Which axes the user has zeroed from this panel. Not persisted, and not cleared
-  // on reconnect: the work offset lives on the controller, but only a zero set
-  // since FreazyKam loaded is one we know matches the stock on the canvas.
+  // Which axes the user has zeroed from this panel (or homed) on THIS connection.
+  // Not persisted, and cleared whenever the link ends: the work offset lives on the
+  // controller, but a check mark says work zero is still where the stock is, and
+  // once we stop watching the machine may be power-cycled, moved by hand with its
+  // motors off, or driven by another sender. Kept through an automatic reconnect
+  // only if the machine reports itself where it was when the socket dropped.
   zeroed: Record<Axis, boolean>
   // Whether this machine has homing switches. Kept between sessions; off hides the
   // Home buttons, since on a machine without switches $H only ever answers error:5.
@@ -120,6 +127,7 @@ interface MachineState {
   command: (cmd: string) => void
   clearLog: () => void
   setJogStepIndex: (i: number) => void
+  setJogStepIndexZ: (i: number) => void
   setJogFeedXY: (mmPerMin: number) => void
   setJogFeedZ: (mmPerMin: number) => void
   /** Relative jog, mm. A move with Z in it runs at the Z feed. */
@@ -134,6 +142,8 @@ interface MachineState {
   setMotors: (enabled: boolean) => void
   /** Step the feed or spindle override (realtime: takes effect mid-move). */
   override: (kind: 'feed' | 'spindle', step: OverrideStep) => void
+  /** Feed or spindle override to the next multiple of 5 % up (+1) or down (−1), 10–200 %. */
+  overrideStep5: (kind: 'feed' | 'spindle', dir: 1 | -1) => void
   rapidOverride: (pct: 100 | 50 | 25) => void
   /**
    * Jog to work position (x, y), mm. When Z has been zeroed and the tool is below
@@ -179,6 +189,9 @@ interface MachineState {
   cancelJob: () => void
 }
 
+/** Starts a console line that records a button action rather than a typeable command. */
+export const ACTION_MARK = '◆ '
+
 const fmtDuration = (ms: number) => {
   const sec = Math.round(ms / 1000)
   return sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, '0')}s`
@@ -190,8 +203,31 @@ let sessionId = ''
 let lastStatusAt = 0
 let statusTimer: ReturnType<typeof setInterval> | undefined
 let lineBuf = ''
-// The axes of the homing cycle in progress, marked zeroed when it ends in Idle.
+// The axes of the homing cycle in progress.
 let homingAxes: Axis[] | null = null
+// Axes homed since the link came up and not lost since (Disable, Alarm, a drop that
+// moved the machine): their machine coordinates are the switches' frame.
+let homed: Record<Axis, boolean> = { x: false, y: false, z: false }
+// HOMING NEVER CHECKS AN AXIS BY ITSELF — it fixes machine coordinates, and says
+// nothing about whether the controller's stored work offset belongs to this stock
+// (it may be the last job's, or never set). The one zero it can bring back is one
+// the user set in this session on a HOMED axis: re-homing puts the machine back in
+// that same frame, so if the controller's offset is still exactly what that Zero
+// click made it (G10 L20 sets it to the machine position), it is good again. Kept
+// across disconnects, which is the point; a page reload forgets it.
+const restorable: Partial<Record<Axis, number>> = {}
+// A MACHINE WITHOUT SWITCHES can never home, so a disconnect would cost it every zero
+// even when nothing happened. Its motors hold while powered, so if the controller
+// comes back reporting EXACTLY the machine position and offset it had when the link
+// ended, it has neither restarted (that wakes at machine 0,0,0 — which is why a
+// disconnect AT 0,0,0 cannot be told apart and is not restored) nor been moved by
+// anything else, and the zeros the user had are still good. Checked against the
+// first report that carries WCO; this browser session only; only with Limit
+// switches unticked — a machine that can home should home instead.
+// The override a 5 % press is on its way to, per kind, so a second press before the
+// controller reports the first builds on it rather than on the stale percentage.
+const ovHeading: { feed: number | null; spindle: number | null } = { feed: null, spindle: null }
+let restoreOnConnect: { mpos: number[]; wco: number[]; zeroed: Record<Axis, boolean> } | null = null
 // Set by Cancel job: once the reset lands and the machine reports Idle, lift the
 // tool out of the cut to the safe height.
 let liftAfterCancel = false
@@ -203,6 +239,9 @@ let reconnectTries = 0
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined
 let attemptTimer: ReturnType<typeof setTimeout> | undefined
 let upSince = 0             // when the socket last came up, for the drop log
+// Where the machine was when the socket dropped, checked against the first report
+// after it reopens (see `zeroed`). Null while no reconnect is pending a check.
+let droppedAt: { mpos: [number, number, number]; moving: boolean } | null = null
 let wifiTimer: ReturnType<typeof setInterval> | undefined
 
 export const useMachineStore = create<MachineState>()(
@@ -210,6 +249,15 @@ export const useMachineStore = create<MachineState>()(
     (set, get) => {
       const log = (line: string) =>
         set((s) => ({ log: s.log.length >= LOG_MAX ? [...s.log.slice(-LOG_MAX + 1), line] : [...s.log, line] }))
+
+      // A BUTTON ACTION, not a command: overrides, jog cancel, STOP and reset go out as
+      // realtime control bytes that cannot be typed, so they are logged in words with
+      // ACTION_MARK in front (and the byte at the end) — never with "> ", which the
+      // console keeps for lines the user could type into the box themselves.
+      const logAction = (text: string, bytes: string) => {
+        const hex = [...new Set(bytes)].map((c) => `0x${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`).join(' ')
+        log(`${ACTION_MARK}${text} · control byte ${hex}`)
+      }
 
       // Resolves once the controller has taken the line, so a caller that awaits
       // one send before the next gets them queued in order.
@@ -265,11 +313,25 @@ export const useMachineStore = create<MachineState>()(
         if (wifiTimer) clearInterval(wifiTimer)
         wifiTimer = undefined
         reconnectTries = 0
+        droppedAt = null
+        homed = { x: false, y: false, z: false }
+        ovHeading.feed = ovHeading.spindle = null
         if (statusTimer) clearInterval(statusTimer)
         statusTimer = undefined
         link = null
         sessionId = ''
-        set({ link: 'disconnected', error, wifi: null })
+        const z = get().zeroed
+        const pos = get().position
+        // A teardown with nothing zeroed (a failed Connect, say) leaves a pending restore alone.
+        if (z.x || z.y || z.z) {
+          restoreOnConnect = !get().hasHoming && pos.mpos.some((v) => Math.abs(v) > 1e-3)
+            ? { mpos: [...pos.mpos], wco: [...pos.wco], zeroed: { ...z } }
+            : null
+        }
+        if (z.x || z.y || z.z) log(restoreOnConnect
+          ? 'Disconnected — zeros will be restored on reconnect only if the machine is exactly where it is now'
+          : 'Disconnected — X, Y and Z zeros no longer trusted; home or zero again after reconnecting')
+        set({ link: 'disconnected', error, wifi: null, zeroed: { x: false, y: false, z: false } })
       }
 
       const readWifi = async () => {
@@ -299,16 +361,65 @@ export const useMachineStore = create<MachineState>()(
           const prev = get().position
           const next = applyStatus(prev, r)
           set({ position: next })
-          // A completed homing cycle puts the machine back on its stored work
-          // offset, so the work position means something again: count those axes as
-          // zeroed. One that ends in Alarm (a switch not found) does not count.
+          if (ovHeading.feed === next.ov.feed) ovHeading.feed = null
+          if (ovHeading.spindle === next.ov.spindle) ovHeading.spindle = null
+          if (restoreOnConnect && r.wco) {
+            const was = restoreOnConnect
+            restoreOnConnect = null
+            const same = (a: number[], b: number[]) => a.every((v, i) => Math.abs(v - b[i]) < 2e-3)
+            const z = get().zeroed
+            if (!get().hasHoming && !z.x && !z.y && !z.z && (next.state === 'Idle' || next.state === 'Hold')
+              && same(next.mpos, was.mpos) && same(next.wco, was.wco)) {
+              set({ zeroed: was.zeroed })
+              log('Zeros restored: the machine is exactly where it was when the connection ended')
+            } else {
+              log('The machine is not where it was when the connection ended — zero again')
+            }
+          }
+          if (droppedAt) {
+            // A job running through the drop moves the machine legitimately; anything
+            // else that moved it, or a restart (which resets machine position), voids
+            // the zeros. A job that ends in Alarm meanwhile is no better.
+            const moved = next.mpos.some((v, i) => Math.abs(v - droppedAt!.mpos[i]) > 0.01)
+            const z = get().zeroed
+            if ((moved && !droppedAt.moving) || next.state === 'Alarm') {
+              homed = { x: false, y: false, z: false }
+              if (z.x || z.y || z.z) {
+                log(`The machine ${next.state === 'Alarm' ? 'is in Alarm' : 'moved'} while the connection was down — home or zero X, Y and Z again`)
+                set({ zeroed: { x: false, y: false, z: false } })
+              }
+            }
+            droppedAt = null
+          }
+          // A homing cycle that ends in Idle homes its axes (one that ends in Alarm,
+          // a switch not found, does not), and brings back only a zero `restorable`
+          // vouches for.
           if (homingAxes && prev.state === 'Home' && next.state !== 'Home') {
             if (next.state === 'Idle') {
               const zeroed = { ...get().zeroed }
-              for (const a of homingAxes) zeroed[a] = true
+              const back: string[] = [], toZero: string[] = []
+              for (const a of homingAxes) {
+                homed[a] = true
+                const want = restorable[a]
+                const i = a === 'x' ? 0 : a === 'y' ? 1 : 2
+                if (want !== undefined && Math.abs(next.wco[i] - want) < 2e-3) { zeroed[a] = true; back.push(a.toUpperCase()) }
+                else if (!zeroed[a]) toZero.push(a.toUpperCase())
+              }
               set({ zeroed })
+              if (back.length) log(`Homed — ${back.join(', ')} zero${back.length > 1 ? 's' : ''} restored from earlier in this session`)
+              if (toZero.length) log(`Homed — now zero ${toZero.join(', ')} on the stock`)
             }
             homingAxes = null
+          }
+          // An alarm (a limit hit, a reset mid-move) means steps may have been lost:
+          // neither the homing nor the zeros can be trusted until redone.
+          if (next.state === 'Alarm' && prev.state !== 'Alarm' && prev.state !== 'Unknown') {
+            homed = { x: false, y: false, z: false }
+            const z = get().zeroed
+            if (z.x || z.y || z.z) {
+              log('Alarm — position may be lost; X, Y and Z zeros cleared. Unlock, then home or zero again')
+              set({ zeroed: { x: false, y: false, z: false } })
+            }
           }
           if (liftAfterCancel && next.state !== prev.state && (next.state === 'Idle' || next.state === 'Alarm')) {
             liftAfterCancel = false
@@ -367,6 +478,10 @@ export const useMachineStore = create<MachineState>()(
         // How long it had been up says whether drops come on a rhythm or at random.
         const upFor = get().link === 'connected' && upSince ? ` after ${fmtDuration(Date.now() - upSince)}` : ''
         if (link?.isOpen && info && wasUp && reconnectTries < RECONNECT_TRIES) {
+          if (!droppedAt) {
+            const p = get().position
+            droppedAt = { mpos: [...p.mpos] as [number, number, number], moving: ['Run', 'Jog', 'Home'].includes(p.state) || !!p.sd }
+          }
           reconnectTries++
           sessionId = ''
           log(`Controller connection ${why}${upFor} — reconnecting (${reconnectTries}/${RECONNECT_TRIES})`)
@@ -438,6 +553,7 @@ export const useMachineStore = create<MachineState>()(
         position: EMPTY_POSITION,
         log: [],
         jogStepIndex: 2,
+        jogStepIndexZ: 2,
         jogFeedXY: 1000,
         jogFeedZ: 300,
         zeroed: { x: false, y: false, z: false },
@@ -519,6 +635,7 @@ export const useMachineStore = create<MachineState>()(
         command: (cmd) => void send(cmd, true),
 
         setJogStepIndex: (jogStepIndex) => set({ jogStepIndex }),
+        setJogStepIndexZ: (jogStepIndexZ) => set({ jogStepIndexZ }),
         setJogFeedXY: (jogFeedXY) => set({ jogFeedXY }),
         setJogFeedZ: (jogFeedZ) => set({ jogFeedZ }),
         jog: (move) => {
@@ -528,14 +645,25 @@ export const useMachineStore = create<MachineState>()(
         },
         // A realtime byte: acted on at once, not queued behind the jogs it stops.
         // Above 0x7F it travels in the URL as UTF-8, as WebUI 3 sends it.
-        jogCancel: () => void send(JOG_CANCEL, false),
+        jogCancel: () => {
+          if (!link?.isOpen) return
+          logAction('Jog cancel', JOG_CANCEL)
+          void send(JOG_CANCEL, false)
+        },
 
         zero: (axes) => {
           const cmd = zeroCommand(axes)
           if (!cmd || get().link !== 'connected') return
           void send(cmd, true)
           const zeroed = { ...get().zeroed }
-          for (const a of axes) zeroed[a] = true
+          const mpos = get().position.mpos
+          for (const a of axes) {
+            zeroed[a] = true
+            // G10 L20 makes the offset the current machine position. Only a homed
+            // axis's machine position means the same thing after the next homing.
+            if (homed[a]) restorable[a] = mpos[a === 'x' ? 0 : a === 'y' ? 1 : 2]
+            else delete restorable[a]
+          }
           set({ zeroed })
         },
 
@@ -557,10 +685,38 @@ export const useMachineStore = create<MachineState>()(
           if (get().link !== 'connected' || (st !== 'Idle' && st !== 'Alarm')) return
           void send(enabled ? '$ME' : '$MD', true)
           set({ motorsCommanded: enabled ? 'enabled' : 'disabled' })
+          // Released motors let the axes be pushed by hand, so no zero survives it.
+          if (!enabled) {
+            homed = { x: false, y: false, z: false }
+            const z = get().zeroed
+            if (z.x || z.y || z.z) log('Motors disabled — X, Y and Z zeros cleared; zero or home again before using the map or Safe Z')
+            set({ zeroed: { x: false, y: false, z: false } })
+          }
         },
 
-        override: (kind, step) => void send(OVERRIDE[kind][step], false),
-        rapidOverride: (pct) => void send(OVERRIDE.rapid[pct], false),
+        // Overrides are single realtime bytes (0x90–0x9D), unreadable echoed as they are,
+        // so the console gets a line in words instead.
+        override: (kind, step) => {
+          ovHeading[kind] = null
+          if (!link?.isOpen) return
+          logAction(`${kind === 'feed' ? 'Feed' : 'Spindle'} override ${step === 'reset' ? 'back to 100 %' : step.replace('plus', '+').replace('minus', '−') + ' %'}`, OVERRIDE[kind][step])
+          void send(OVERRIDE[kind][step], false)
+        },
+        // The controller only has ±10 and ±1 steps, so 5 % is made of 1 % steps,
+        // sent in order. The base is where an earlier press is heading, if any.
+        overrideStep5: async (kind, dir) => {
+          const now = ovHeading[kind] ?? get().position.ov[kind]
+          const target = Math.max(10, Math.min(200, dir > 0 ? Math.floor(now / 5) * 5 + 5 : Math.ceil(now / 5) * 5 - 5))
+          if (target === now) return
+          ovHeading[kind] = target
+          const byte = OVERRIDE[kind][target > now ? 'plus1' : 'minus1']
+          if (link?.isOpen) logAction(`${kind === 'feed' ? 'Feed' : 'Spindle'} override ${now} → ${target} % (${Math.abs(target - now)} × ${target > now ? '+' : '−'}1 %)`, byte)
+          for (let i = 0; i < Math.abs(target - now); i++) await send(byte, false)
+        },
+        rapidOverride: (pct) => {
+          if (link?.isOpen) logAction(`Rapid override ${pct} %`, OVERRIDE.rapid[pct])
+          void send(OVERRIDE.rapid[pct], false)
+        },
 
         goTo: async (x, y) => {
           const { zeroed, position, jogFeedXY, jogFeedZ } = get()
@@ -679,19 +835,19 @@ export const useMachineStore = create<MachineState>()(
         stopMotion: () => {
           if (get().link !== 'connected') return
           if (get().position.state === 'Home') {
-            log('> STOP — homing ignores a feed hold, so: soft reset')
+            logAction('STOP — homing ignores a feed hold, so: soft reset', '\x18')
             homingAxes = null
             void send('\x18', false)
             return
           }
-          log('> STOP (feed hold)')
+          logAction('STOP (feed hold)', '!')
           void send('!', false)
         },
         resume: () => void send('~', true),
-        softReset: () => { log('> stop (soft reset)'); void send('\x18', false) },
+        softReset: () => { logAction('Soft reset', '\x18'); void send('\x18', false) },
         cancelJob: () => {
           if (!holdComplete(get().position)) return
-          log('> cancel job (reset at Hold:0 — no alarm, position kept)')
+          logAction('Cancel job (reset at Hold:0 — no alarm, position kept)', '\x18')
           liftAfterCancel = true
           void send('\x18', false)
         },
@@ -699,7 +855,7 @@ export const useMachineStore = create<MachineState>()(
     },
     {
       name: 'freazykam-machine',
-      partialize: (s) => ({ address: s.address, jogStepIndex: s.jogStepIndex, jogFeedXY: s.jogFeedXY, jogFeedZ: s.jogFeedZ, hasHoming: s.hasHoming }),
+      partialize: (s) => ({ address: s.address, jogStepIndex: s.jogStepIndex, jogStepIndexZ: s.jogStepIndexZ, jogFeedXY: s.jogFeedXY, jogFeedZ: s.jogFeedZ, hasHoming: s.hasHoming }),
     },
   ),
 )

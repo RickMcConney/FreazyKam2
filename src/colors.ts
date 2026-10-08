@@ -47,7 +47,7 @@ export const OP_TYPE_COLORS: Record<string, string> = {
   gcode:    '#6366f1',  // indigo-500
 }
 
-// Tool bands on the Operations strip: one hue per tool, so a run of operations reads as a
+// Tool bands in the Toolpaths list: one hue per tool, so a run of operations reads as a
 // block and the SAME tool appearing twice reads as the same colour twice — which is the
 // point, since two same-coloured bands with a tool change between them are a redundant
 // change. Hues only (not finished colours): the strip mixes them per theme, tinting the

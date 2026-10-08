@@ -1,5 +1,6 @@
-import React, { useId } from 'react'
-import { Copy, Plus, RotateCcw, Trash2 } from 'lucide-react'
+import React, { useId, useState } from 'react'
+import { Copy, Import, ListRestart, Plus, RotateCcw, Share, Trash2 } from 'lucide-react'
+import { RestoreBuiltinsButton } from '../components/RestoreButtons'
 import { ICON } from '../theme'
 import {
   usePostProcessorStore,
@@ -7,6 +8,9 @@ import {
   type CommentStyle,
 } from '../store/postProcessorStore'
 import { templateLongLines, MAX_GCODE_LINE } from '../cam/gcode'
+import { exportPostProcessor, pickSectionFile } from '../io/settingsFile'
+import type { SettingsFile } from '../io/settingsMerge'
+import ImportPreviewDialog from '../components/ImportPreviewDialog'
 
 // A template line too long for a controller to take. The user's text goes into every
 // program as typed, so this is said HERE, not when a job dies at that line with
@@ -140,9 +144,11 @@ function ProfileEditor({ profile }: { profile: PostProcessorProfile }) {
 export default function PostProcessorPanel() {
   const { profiles, activeId, setActiveId, addProfile, duplicateProfile, deleteProfile, resetProfile } = usePostProcessorStore()
   const active = profiles.find((p) => p.id === activeId) ?? profiles[0]
+  const [importing, setImporting] = useState<SettingsFile | null>(null)
 
   return (
     <div className="flex h-full bg-gray-50 dark:bg-neutral-900">
+      {importing && <ImportPreviewDialog file={importing} sectionKey="postProcessors" onClose={() => setImporting(null)} />}
       {/* Profile list sidebar */}
       <div className="w-52 flex flex-col flex-shrink-0 border-r border-gray-300 dark:border-neutral-700">
         <div className="flex items-center justify-between px-3 py-2 border-b border-gray-300 dark:border-neutral-700 flex-shrink-0">
@@ -154,6 +160,16 @@ export default function PostProcessorPanel() {
             <button onClick={() => duplicateProfile(activeId)} title="Duplicate profile" className="p-0.5 rounded text-gray-600 dark:text-neutral-400 hover:text-gray-700 dark:hover:text-neutral-300 hover:bg-gray-200 dark:hover:bg-neutral-700 transition-colors">
               <Copy size={ICON.sm} />
             </button>
+            <button onClick={async () => { const f = await pickSectionFile('postProcessors'); if (f) setImporting(f) }} title="Import post-processors from a .fkset file — added beside yours, never over them" className="p-0.5 rounded text-gray-600 dark:text-neutral-400 hover:text-gray-700 dark:hover:text-neutral-300 hover:bg-gray-200 dark:hover:bg-neutral-700 transition-colors">
+              <Import size={ICON.sm} />
+            </button>
+            <button onClick={() => exportPostProcessor(active)} title={`Export "${active.name}" to a .fkset file, to share or keep`} className="p-0.5 rounded text-gray-600 dark:text-neutral-400 hover:text-gray-700 dark:hover:text-neutral-300 hover:bg-gray-200 dark:hover:bg-neutral-700 transition-colors">
+              <Share size={ICON.sm} />
+            </button>
+            <RestoreBuiltinsButton className="p-0.5 rounded text-gray-600 dark:text-neutral-400 hover:text-gray-700 dark:hover:text-neutral-300 hover:bg-gray-200 dark:hover:bg-neutral-700 transition-colors"
+              title="Restore the built-in profiles — every built-in back to factory and any you deleted back; your own profiles are kept. Shows what changes first.">
+              <ListRestart size={ICON.sm} />
+            </RestoreBuiltinsButton>
             <button onClick={() => deleteProfile(activeId)} disabled={profiles.length <= 1} title={profiles.length <= 1 ? 'Cannot delete the last profile' : 'Delete profile'} className="p-0.5 rounded text-gray-600 dark:text-neutral-400 hover:text-red-400 hover:bg-red-900/20 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
               <Trash2 size={ICON.sm} />
             </button>

@@ -39,18 +39,34 @@ export interface RelayHandlers {
   onClosed?: () => void                         // the relay window went away
 }
 
-const READY_TIMEOUT_MS = 10000
+const READY_TIMEOUT_MS = 15000
+/**
+ * How long a page from the controller may sit in the window without answering
+ * hello before it is taken to be not the relay (a bare 404) and the next path is
+ * tried. The relay answers within a tick or two of loading.
+ */
+const NOT_RELAY_MS = 2000
 
-// How the relay reaches the browser as a PAGE. FluidNC (WebUI/WebUIServer.cpp) serves
-// a file requested by name with `Content-Disposition: attachment` — the browser would
-// download relay.html, not run it — and only `/` (the WebUI's own index.html) and the
-// not-found page are served inline. So the relay is uploaded to the controller's
-// flash as its custom not-found page, 404.htm, and opened at a path that is never a
-// file there: FluidNC finds nothing, falls back to 404.htm, and serves it as a page.
-// Interim, until FluidNC offers a proper way (the user is asking upstream). Does not
-// work with the controller in access-point mode (it answers with a captive portal).
-export const RELAY_FILE_NAME = '404.htm'
-export const RELAY_PATH = '/freazykam'
+// How the relay reaches the browser as a PAGE.
+// FluidNC v4+ (WebUI/WebDAV.cpp) serves any flash file inline at /flash/<name>, with
+// a content type from its extension, so the relay is uploaded as freazyKam.html.
+// v3 (WebUI/WebServer.cpp) has no /flash route and serves a file requested by name
+// with `Content-Disposition: attachment` — a download, not a page; only its not-found
+// page, 404.htm, is served inline. So on v3 the relay goes on flash AS 404.htm.
+// One URL covers both: v3 finds no file at /flash/freazyKam.html (it reads that as
+// /littlefs/flash/freazyKam.html) and falls back to 404.htm.
+// The one case it misses is a v4 controller still holding the relay only as 404.htm
+// (an install from before this change): v4's /flash route answers a bare 404, so
+// RELAY_LEGACY_PATH — never a file — is tried next to reach the not-found page.
+export const RELAY_FILE_NAME = 'freazyKam.html'
+export const RELAY_LEGACY_FILE_NAME = '404.htm'
+export const RELAY_PATH = '/flash/freazyKam.html'
+export const RELAY_LEGACY_PATH = '/freazykam'
+// Always in this order, never remembering which one worked last: a remembered legacy
+// path kept answering (the old 404.htm stays on flash) after freazyKam.html was
+// uploaded, so an upgraded controller was never reached the new way. The detour costs
+// a legacy install NOT_RELAY_MS per Connect.
+const RELAY_PATHS = [RELAY_PATH, RELAY_LEGACY_PATH]
 
 /** Normalise a user-typed controller address to an origin: "fluidnc.local" → "http://fluidnc.local". */
 export function controllerOrigin(address: string): string {
@@ -101,25 +117,42 @@ export class RelayLink {
     window.addEventListener('message', this.onMessage)
     // A small popup rather than a tab, so FreazyKam keeps focus in its own tab.
     // Named, so a second Connect reuses the relay already open.
-    this.win = window.open(`${this.origin}${RELAY_PATH}`, 'freazykam-relay', relayWindowFeatures())
+    let attempt = 0
+    this.win = window.open(`${this.origin}${RELAY_PATHS[0]}`, 'freazykam-relay', relayWindowFeatures())
     if (!this.win) {
       this.dispose()
       return Promise.reject(new Error('The browser blocked the relay window — allow pop-ups for this site'))
     }
     return new Promise((resolve, reject) => {
       const started = Date.now()
+      let loadedAt = 0
       // The relay greets on load, but a reused window has already loaded, and a
       // fresh one is still about:blank for a moment (a post to it is dropped) —
       // so keep asking until it answers.
       const tick = setInterval(() => {
-        if (this.ready) { clearInterval(tick); this.watchClosed(); resolve(); return }
+        if (this.ready) {
+          clearInterval(tick); this.watchClosed(); resolve(); return
+        }
         if (!this.win || this.win.closed) {
           clearInterval(tick); this.dispose(); reject(new Error('The relay window was closed')); return
         }
-        if (Date.now() - started > READY_TIMEOUT_MS) {
+        const now = Date.now()
+        if (now - started > READY_TIMEOUT_MS) {
           clearInterval(tick); this.dispose()
-          reject(new RelaySetupError(`No answer from the relay at ${this.origin}${RELAY_PATH} — is the controller reachable, and is the relay (${RELAY_FILE_NAME}) on its flash?`))
+          reject(new RelaySetupError(`No answer from the relay at ${this.origin}${RELAY_PATH} — is the controller reachable, and is the relay on its flash (${RELAY_FILE_NAME} on FluidNC v4+, ${RELAY_LEGACY_FILE_NAME} on v3)?`))
           return
+        }
+        // A page from the controller has loaded but is not answering: not the relay.
+        // Try the next path. (Until the controller's page commits, the window is still
+        // the opener's own about:blank, readable; after, reading it throws.)
+        if (attempt < RELAY_PATHS.length - 1 && !this.isBlank()) {
+          if (!loadedAt) loadedAt = now
+          else if (now - loadedAt > NOT_RELAY_MS) {
+            attempt++
+            loadedAt = 0
+            try { this.win.location.replace(`${this.origin}${RELAY_PATHS[attempt]}`) } catch { /* window gone */ }
+            return
+          }
         }
         this.post({ op: 'hello' })
       }, 250)
@@ -169,6 +202,11 @@ export class RelayLink {
     // An explicit target origin: if the window has navigated elsewhere, the
     // browser drops the message rather than handing it to a stranger.
     try { this.win?.postMessage(msg, this.origin) } catch { /* window gone */ }
+  }
+
+  /** True while the window still holds the opener's initial about:blank. */
+  private isBlank(): boolean {
+    try { return this.win?.location.href === 'about:blank' } catch { return false }
   }
 
   private watchClosed() {

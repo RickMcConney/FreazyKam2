@@ -9,7 +9,7 @@ and getting the file onto the machine.
 ## The simulator
 
 Press **Simulate G-code** in the toolbar. The program is built from every visible
-operation, in Ops-strip order, and loaded into the player.
+operation, in program order (**Paths → Toolpaths**), and loaded into the player.
 
 **It opens on the finished part, not on bare stock.** That's deliberate — the question you
 opened the simulator to answer is usually *what does this come out like*, and showing you
@@ -67,7 +67,7 @@ alone.
 Controllers disagree about the details of G-code. A **post-processor profile** is the set
 of rules for turning toolpaths into the dialect yours speaks.
 
-![The Post-Processor tab: the profile list on the left and the editor showing start and end G-code, tool change, spindle, move and arc templates](images/10-post-processor.png)
+![The Post-Processor tab: the profile list on the left, with add, duplicate, import, export, restore built-ins and delete above it, and the editor showing start and end G-code, tool change, spindle, move and arc templates](images/10-post-processor.png)
 
 <!-- FULL APP · 1600 px wide, downscaled from a 2× capture. -->
 
@@ -102,6 +102,18 @@ comes out as short straight moves instead. Bigger file, no arcs to misinterpret.
 The **tool change** block is worth setting up properly. The default `M5` / `M0` stops the
 spindle and pauses so you can change the bit and re-zero. If your controller handles tool
 changes differently, this is where to say so.
+
+### Sharing a profile
+
+The **Import** and **Export** buttons at the top of the profile list (the same icons as
+the toolbar's) share a profile with someone else: **Export** saves the selected profile as
+a `.fkset` file, and **Import** brings profiles in from one. An imported profile is always *added* — if you already have one with
+the same name but different contents, it comes in as *"Name (imported)"* beside yours, and
+an identical one is skipped. Nothing you have is changed. A check shows what's about to come in, with **OK** and **Cancel**, before anything does.
+
+**Restore built-ins** (the list icon beside them) resets every built-in profile to factory
+and brings back any you deleted. Your own profiles are kept as they are. It lists exactly
+which built-ins lose your edits and which come back before anything changes.
 
 ---
 

@@ -27,7 +27,6 @@ import { installAutosave, armAutosave, readSnapshot, clearSnapshot, applySnapsho
 const CanvasStage = lazy(() => import('./canvas/CanvasStage'))
 const ThreeView = lazy(() => import('./three/ThreeView'))
 const TimelinePanel = lazy(() => import('./panels/TimelinePanel'))
-const OperationsPanel = lazy(() => import('./panels/OperationsPanel'))
 
 const WORKSPACE_TABS: { id: WorkspaceTab; label: string }[] = [
   { id: '2d', label: '2D View' },
@@ -41,7 +40,6 @@ function MainWorkspace() {
   // Individual selectors — whole-store destructuring re-rendered the entire
   // workspace on every uiStore change (bugs.md H5).
   const workspaceTab = useUIStore((s) => s.workspaceTab)
-  const bottomTab = useUIStore((s) => s.bottomTab)
   const setWorkspaceTab = useUIStore((s) => s.setWorkspaceTab)
   const machineConnected = useMachineStore((s) => s.link === 'connected')
 
@@ -91,7 +89,7 @@ function MainWorkspace() {
 
         {workspaceTab === '2d' && (
           <Suspense fallback={null}>
-            {bottomTab === 'operations' ? <OperationsPanel /> : <TimelinePanel />}
+            <TimelinePanel />
           </Suspense>
         )}
       </div>

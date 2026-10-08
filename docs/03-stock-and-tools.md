@@ -65,9 +65,22 @@ The **Tool Library** tab across the top holds your cutters. It is saved with the
 *and* kept in the browser between sessions, so a new project starts with the tools you
 already own.
 
-![The Tool Library: twelve tools with diameter, flutes, RPM, feeds, max depth and angle](images/03-tool-library.png)
+![The Tool Library: fifteen tools with diameter, flutes, RPM, feeds, max depth and angle, and Restore Defaults, Import, Export and Add Tool across the top](images/03-tool-library.png)
 
-<!-- FULL APP · 1600 px wide. Tool Library tab, default library. -->
+<!-- FULL APP · 1600 px wide, downscaled from the 2800 px capture. Tool Library tab, a working library sorted by name. -->
+
+**Sharing a tool set:** **Export** (top right) saves the whole library as a `.fkset` file,
+and **Import** brings tools in from one — from a friend, a forum, or your other computer.
+Imported tools are always *added*: one with the same name as yours but different sizes or
+feeds comes in as *"Name (imported)"* beside it, and an identical one is skipped, so your
+own tools are never changed. Before anything happens, a check lists what the file would
+add — *"Import 13 tools?"* — with **OK** and **Cancel**; a file that would add nothing
+says so and only offers **Close**.
+
+**Restore Defaults** puts back the tools FreazyKam comes with. It first lists what will be
+removed, which default tools come back, and which of yours are **kept because the open
+project cuts with them** — an operation names its tool, so those stay, or its toolpath would
+lose its cutter. It can't be undone with Undo, so the dialog offers **Export a backup**.
 
 Each row is one cutter. The little picture at the left is drawn from that tool's own
 numbers, so a taper really does taper and a V-bit really does come to a point — a quick
@@ -186,6 +199,38 @@ watch the gauge on a simulated run before you cut anything.
 > tool, your material and how stiff you said your machine is; it does not know your
 > cutter is dull, your stock is a knotty board, or your workholding is a bit optimistic.
 > Treat its output the way you'd treat a manufacturer's chart — a place to start.
+
+---
+
+## Your settings in a file
+
+**Setup → Settings File** saves everything this browser keeps for you — machine, tool
+library, post-processors, last-used form values, the Machine tab's settings and interface
+choices — as one `.fkset` file. Use it to move to another computer or browser, to keep a
+backup, or to send along with a problem report.
+
+**Import…** shows what's in the file, a checkbox per part, before anything changes:
+
+- **Tools** and **post-processors** are *added* to yours by default — each row says how many
+  are already in yours and how many it would add. One with the same name as yours but
+  different contents comes in as a copy, *"Name (imported)"*; an identical one is skipped.
+  Switch a row to **Replace** to swap yours for the file's instead — the way to move your own
+  setup to a new browser without ending up with two sets. Tools the open project uses are
+  kept either way.
+- **Machine**, **stock defaults**, **last-used form values** (the settings each form opens
+  with — every Generate remembers them), **Machine tab** and **interface** *replace*
+  yours, so they start unticked — tick them when restoring your own backup, leave them
+  when the file came from someone else.
+
+Any replace turns the button red (*Import and replace*) and offers **Export a backup**
+first: settings aren't covered by Undo.
+
+**Restore default machine settings…** puts the machine limits, feeds & speeds, motion and
+spindle back to how they came, after listing every setting that changes (*Max feed: 4321 →
+3000 mm/min*). The stock, your tools and your post-processors aren't touched.
+
+A project file (`.fkam`) is not a settings file: opening a project only ever loads the
+drawing and the tools it uses, never someone else's machine settings.
 
 ---
 

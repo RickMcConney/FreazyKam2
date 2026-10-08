@@ -1,4 +1,4 @@
-// Ordering maths for the Operations strip. Pure so the index arithmetic — the part that
+// Ordering maths for the Toolpaths list (ToolpathsPanel). Pure so the index arithmetic — the part that
 // is easy to get subtly wrong and impossible to eyeball — is unit-testable without React.
 import type { AnyOperation } from '../store/toolpathStore'
 

@@ -106,7 +106,7 @@ After a nest, the form reports what happened:
 Nesting moves your parts. Two things follow:
 
 - **Operations that referenced those paths need regenerating** — they'll be marked amber
-  in the Ops strip.
+  in **Paths → Toolpaths**.
 - **Check your holding tabs.** Tabs travel with the path, but a tab that was in a sensible
   place before may now be facing a neighbour with 3 mm between them.
 

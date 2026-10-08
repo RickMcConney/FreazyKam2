@@ -9,13 +9,15 @@
 // it jogs the tool there in X and Y — only once X and Y have been zeroed from the
 // panel, since until then a work position says nothing about where the stock is.
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useMachineStore } from '../machine/machineStore'
 import { stockRectInWork } from '../machine/stockMap'
 import { useWorkpieceStore, lenValue, MM_PER_INCH } from '../store/workpieceStore'
 import { useToolpathStore } from '../store/toolpathStore'
 import { segmentCuts } from '../machine/jobPreview'
 import { useProjectStore } from '../store/projectStore'
+import { useUIStore } from '../store/uiStore'
+import { MATERIAL_COLORS } from '../colors'
 
 // A 1-2-5 grid step giving roughly ten lines across the larger side, in the
 // display unit so an inch user gets an inch grid.
@@ -27,9 +29,15 @@ function gridStepMM(spanMM: number, units: 'mm' | 'in'): number {
   return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * pow * unit
 }
 
-interface Props { enabled: boolean }
+// Where the stock rectangle lands on screen, in client px — the Z bar lines up with it.
+export interface StockBox { top: number; bottom: number; left: number }
 
-export default function GoToMap({ enabled }: Props) {
+interface Props {
+  enabled: boolean
+  onStockBox?: (box: StockBox) => void
+}
+
+export default function GoToMap({ enabled, onStockBox }: Props) {
   const goTo = useMachineStore((s) => s.goTo)
   const wpos = useMachineStore((s) => s.position.wpos)
   const connected = useMachineStore((s) => s.link === 'connected')
@@ -39,8 +47,31 @@ export default function GoToMap({ enabled }: Props) {
   const job = showingJob ? loadedJob : null
   const operations = useToolpathStore((s) => s.operations)
   const projectName = useProjectStore((s) => s.name)
-  const { widthMM, heightMM, origin, units } = useWorkpieceStore()
+  const { widthMM, heightMM, origin, units, material } = useWorkpieceStore()
+  // The stock in its material's colour, as the canvas draws it — the amber this
+  // replaced read as a warning on a tab where amber and red mean Hold and Alarm.
+  const darkMode = useUIStore((s) => s.darkMode)
+  const stockFill = MATERIAL_COLORS[material][darkMode ? 'dark' : 'light']
   const svgRef = useRef<SVGSVGElement>(null)
+  const stockRef = useRef<SVGRectElement>(null)
+  // The letterboxed view moves the stock with the panel's size as well as with the
+  // stock's, so measure after every render and on every resize, reporting changes only.
+  const [, setResized] = useState(0)
+  useEffect(() => {
+    const svg = svgRef.current
+    if (!svg) return
+    const ro = new ResizeObserver(() => setResized((n) => n + 1))
+    ro.observe(svg)
+    return () => ro.disconnect()
+  }, [])
+  const lastBox = useRef('')
+  useLayoutEffect(() => {
+    const r = stockRef.current?.getBoundingClientRect()
+    if (!r || !onStockBox) return
+    const box = { top: r.top, bottom: r.bottom, left: r.left }
+    const key = `${box.top.toFixed(1)},${box.bottom.toFixed(1)},${box.left.toFixed(1)}`
+    if (key !== lastBox.current) { lastBox.current = key; onStockBox(box) }
+  })
   const [hover, setHover] = useState<{ x: number; y: number } | null>(null)
   // Where a click sent the tool, drawn with a dashed line from the tool until that
   // jog is over. Over means the machine went into Jog and came out again — not
@@ -103,7 +134,8 @@ export default function GoToMap({ enabled }: Props) {
     void goTo(p.x, p.y)
   }
 
-  const showTool = connected
+  // Only against a trusted X/Y zero: otherwise the work position may not be on this stock at all.
+  const showTool = connected && zeroed.x && zeroed.y
   const fmt = (mm: number) => lenValue(mm, units, 1)
   const reason = !connected ? 'Connect to the controller'
     : !zeroed.x || !zeroed.y ? 'Zero X and Y on the stock to click-to-go'
@@ -114,7 +146,7 @@ export default function GoToMap({ enabled }: Props) {
   const r = view.w / 120
 
   return (
-    <div className="relative flex-1 min-h-0">
+    <div className="relative flex-1 min-h-0 min-w-0">
       <svg
         ref={svgRef}
         className={`w-full h-full ${enabled ? 'cursor-crosshair' : 'cursor-not-allowed'}`}
@@ -125,15 +157,15 @@ export default function GoToMap({ enabled }: Props) {
         onClick={onClick}
       >
         <g transform="scale(1,-1)">
-          <rect x={stock.minX} y={stock.minY} width={widthMM} height={heightMM}
-            className="fill-amber-100 dark:fill-amber-950 stroke-amber-700 dark:stroke-amber-600" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+          <rect ref={stockRef} x={stock.minX} y={stock.minY} width={widthMM} height={heightMM}
+            fill={stockFill} className="stroke-black/40 dark:stroke-white/40" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
           {gridLines.xs.map((x) => (
             <line key={`x${x}`} x1={x} x2={x} y1={stock.minY} y2={stock.maxY}
-              className="stroke-amber-700/20 dark:stroke-amber-500/20" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+              className="stroke-black/15 dark:stroke-white/15" strokeWidth={1} vectorEffect="non-scaling-stroke" />
           ))}
           {gridLines.ys.map((y) => (
             <line key={`y${y}`} y1={y} y2={y} x1={stock.minX} x2={stock.maxX}
-              className="stroke-amber-700/20 dark:stroke-amber-500/20" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+              className="stroke-black/15 dark:stroke-white/15" strokeWidth={1} vectorEffect="non-scaling-stroke" />
           ))}
           {jobPolys.map((pts, i) => (
             <polyline key={`j${i}`} points={pts} fill="none" strokeLinejoin="round"
@@ -149,8 +181,8 @@ export default function GoToMap({ enabled }: Props) {
             </g>
           )}
           {showTool && (
-            <g className="stroke-red-600 dark:stroke-red-400" strokeWidth={2} vectorEffect="non-scaling-stroke">
-              <circle cx={wpos[0]} cy={wpos[1]} r={r * 0.8} className="fill-red-600/25" vectorEffect="non-scaling-stroke" />
+            <g className="stroke-blue-600 dark:stroke-sky-400" strokeWidth={2} vectorEffect="non-scaling-stroke">
+              <circle cx={wpos[0]} cy={wpos[1]} r={r * 0.8} className="fill-blue-600/25 dark:fill-sky-400/25" vectorEffect="non-scaling-stroke" />
               <line x1={wpos[0] - r * 1.6} x2={wpos[0] + r * 1.6} y1={wpos[1]} y2={wpos[1]} vectorEffect="non-scaling-stroke" />
               <line y1={wpos[1] - r * 1.6} y2={wpos[1] + r * 1.6} x1={wpos[0]} x2={wpos[0]} vectorEffect="non-scaling-stroke" />
             </g>

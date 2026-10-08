@@ -21,7 +21,7 @@ about twenty minutes.
 
 Open the app and this is what you get — an empty project on a default piece of stock.
 
-![The app on opening: the Draw sidebar listing Draw, CAM Operations and Path Tools; the 2D canvas with the stock outline; the Objects and Ops strip along the bottom](images/01-empty.png)
+![The app on opening: the Draw sidebar listing Draw, CAM Operations and Path Tools; the 2D canvas with the stock outline; the Objects strip along the bottom](images/01-empty.png)
 
 <!-- FULL APP · 1600 px wide, downscaled from the 2800 px capture. Default state,
      Draw tab, nothing drawn. -->
@@ -32,9 +32,9 @@ Five regions, and everything in this guide happens in one of them:
 |---|---|---|
 | **Toolbar** | across the top | New / open / save, import, export G-code, export SVG, undo / redo, simulate, and on the right the mm ⇄ inch toggle, snap, theme and **?** help |
 | **View tabs** | under the toolbar | **2D View** to draw and generate, **3D View** to watch material come off, **Tool Library** for your cutters, **Post-Processor** for your controller's dialect |
-| **Sidebar** | down the left | Three tabs: **Draw** (the menu in the picture), **Paths** (a list of everything in the project), **Setup** (stock, origin, material, feeds) |
+| **Sidebar** | down the left | Three tabs: **Draw** (the menu in the picture), **Paths** (two views: **Paths**, everything in the project, and **Toolpaths**, the program in cut order with each toolpath's time), **Setup** (stock, origin, material, feeds) |
 | **Canvas** | the middle | Your geometry and toolpaths, in millimetres, with X0 Y0 marked |
-| **Strips** | along the bottom | **Objects** — what's in the project · **Ops** — what the machine will do, in order. Below them the status bar shows the current mode, the stock, and the grid |
+| **Objects strip** | along the bottom | What's in the project, one chip each. Below it the status bar shows the current mode, the stock, and the grid |
 
 ### The Draw tab is the menu for everything
 
@@ -64,17 +64,17 @@ whole app. The rest of this chapter does it four times.
 
 The chevron under the shape button swaps the sidebar for the picker:
 
-![The shape picker filling the sidebar: eighteen shapes plus the clock designer, with Circle selected](images/01-shapes.png)
+![The shape picker filling the sidebar: nineteen shapes plus the clock designer, with Circle selected](images/01-shapes.png)
 
 <!-- FULL APP · 1600 px wide. Picker open, Circle armed, canvas hint banner showing. -->
 
-Eighteen shapes and the clock designer, in three families:
+Nineteen shapes and the clock designer, in three families:
 
 | Family | Buttons | |
 |---|---|---|
 | **Outlines** | Rect · Round · Sign · Circle · Ellipse · Polygon · Star · Heart · Slot · Shield | Everyday geometry, each with its own parameters |
 | **Generated patterns** | Spiro · Maze | A curve or a route computed from a rule rather than drawn |
-| **Real parts** | Board · Gear · Cam · Escape · Pend · Track · Clock | Working mechanisms, not lookalikes — a gear is a true involute profile, and the clock is a whole going train solved from the beat |
+| **Real parts** | Board · Gear · Cam · Ratchet · Escape · Pend · Track · Clock | Working mechanisms, not lookalikes — a gear is a true involute profile, and the clock is a whole going train solved from the beat |
 
 Click one and the picker closes, that shape is armed, its parameters appear under the
 Draw menu, and a banner across the canvas tells you what the next click will do —
@@ -161,12 +161,12 @@ You now have two paths. Press **Escape** to leave the shape tool and return to s
 > shape resize about its middle afterwards. It rides with each object, so you can change
 > it later from that object's properties.
 
-![Two concentric circles drawn on the stock, with a chip for each in the Objects strip](images/01-two-circles.png)
+![Two concentric circles drawn on the stock, with a chip for each in the Objects strip; the Pocket form, the next step, is already open in the sidebar](images/01-two-circles.png)
 
 *Both circles are still shapes, not frozen outlines — each chip in the Objects strip
 reopens the editor that made it.*
 
-<!-- FULL APP · 1600 px wide. Objects tab selected in the bottom strip. -->
+<!-- FULL APP · 1600 px wide, downscaled from the 2800 px capture. -->
 
 Click either circle and the Properties panel gives you back **Radius**, not a frozen
 outline — that stays true for the life of the project.
@@ -217,15 +217,15 @@ Set:
 
 Click **Generate Toolpath**.
 
-The toolpath appears on the canvas, and a chip for it appears in the **Ops** strip
-along the bottom.
+The toolpath appears on the canvas, and a row for it appears under **Paths →
+Toolpaths** in the sidebar.
 
 ![The generated pocket toolpath filling the inner circle](images/01-pocket-toolpath.png)
 
 *The auto strategy rasters the open ground and contours the boundary.*
 
-<!-- FULL APP · 1600 px wide. Ops tab selected in the bottom strip so the new
-     Pocket chip is visible. -->
+<!-- FULL APP · 1600 px wide. Sidebar on Paths → Toolpaths so the new Pocket row is
+     visible. -->
 
 ---
 
@@ -289,13 +289,13 @@ Look at the strip under the canvas. It has two tabs, and they are not the same t
 - **Objects** is your *document* — one chip per thing in the project. The two circles,
   the tabs, the pocket, the profile. Click a chip to select the thing and reopen the
   editor that made it.
-- **Ops** is your *program* — one chip per toolpath, **in the order the machine runs
-  them**, which is the order they are written to G-code.
+- **Paths → Toolpaths** in the sidebar is your *program* — one row per toolpath, **in
+  the order the machine runs them**, which is the order they are written to G-code, with
+  how long each takes.
 
-Switch to **Ops**. You should see **Pocket** then **Profile**. That order matters: cut
-the recess while the coaster is still solidly attached to the sheet, and cut it free
-last. If they are the other way round, drag the Pocket chip in front of the Profile
-chip.
+Open **Paths → Toolpaths**. You should see **Pocket** then **Profile**. That order
+matters: cut the recess while the coaster is still solidly attached to the sheet, and cut
+it free last. If they are the other way round, drag the Pocket row above the Profile row.
 
 Operations that share a tool are drawn as one coloured band with a marker at each tool
 change, so you can see at a glance how many times you will be at the machine swapping
@@ -413,7 +413,7 @@ Every job in this app is the same five moves:
 1. **Set the stock** — dimensions, origin, material
 2. **Draw or import the geometry**
 3. **Pick geometry, pick an operation, generate** — repeat per feature
-4. **Order the operations** in the Ops strip, and simulate
+4. **Order the operations** in **Paths → Toolpaths**, and simulate
 5. **Preflight and export**
 
 Everything else — v-carving, inlay, 3D surfacing, gears, nesting — plugs into step 3.

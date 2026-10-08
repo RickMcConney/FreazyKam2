@@ -64,7 +64,7 @@ export function sameCut(a: Tool, b: Tool): boolean {
 // ending in `ToolId` (an inlay's pocket and V-bit tools, profile3d's roughing tool).
 const isToolField = (key: string) => key === 'toolId' || key.endsWith('ToolId')
 
-function toolIdsOf(op: AnyOperation): string[] {
+export function toolIdsOf(op: AnyOperation): string[] {
   return Object.entries(op)
     .filter(([k, v]) => isToolField(k) && typeof v === 'string')
     .map(([, v]) => v as string)

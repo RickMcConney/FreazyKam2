@@ -119,12 +119,16 @@ interface UIState {
   clockInfoOpen: boolean
   clockDraft: ClockSpec | null
   timelineOpen: boolean
-  // Which strip the bottom bar shows: history (timeline) or the ordered program
-  // (operations). They are different orderings of different things — see OperationsPanel.
-  bottomTab: 'timeline' | 'operations'
+  // Which list the sidebar's Paths tab shows: the document's paths, or the program —
+  // every toolpath in the order the machine runs it (ToolpathsPanel). Different
+  // orderings of different things, so two views rather than one mixed list.
+  pathsView: 'paths' | 'toolpaths'
   // Ask MachinePanel to open an operation's edit form (set by TimelinePanel
   // when an op chip is clicked, consumed + cleared by MachinePanel).
   requestEditOpId: string | null
+  // The edit form was opened from the Toolpaths list, so closing it goes back there
+  // rather than leaving the user on the Draw tab. Any other edit request clears it.
+  returnToToolpaths: boolean
   // Ask MachinePanel to open a generator form (boolean/offset/pattern) in edit
   // mode for a GENERATED PATH — the object carries the parameters (see
   // ImportedPath.definition), so the form is opened on the thing rather than on
@@ -184,8 +188,9 @@ interface UIState {
   setClockInfoOpen: (open: boolean) => void
   setClockDraft: (spec: ClockSpec | null) => void
   setTimelineOpen: (open: boolean) => void
-  setBottomTab: (tab: 'timeline' | 'operations') => void
+  setPathsView: (v: 'paths' | 'toolpaths') => void
   setRequestEditOpId: (id: string | null) => void
+  setReturnToToolpaths: (v: boolean) => void
   setRequestEditPathId: (id: string | null) => void
   setRequestMachineForm: (form: string | null) => void
   flashProperties: () => void
@@ -263,8 +268,9 @@ export const useUIStore = create<UIState>()(
   clockInfoOpen: false,
   clockDraft: null,
   timelineOpen: true,
-  bottomTab: 'timeline' as const,
+  pathsView: 'paths' as const,
   requestEditOpId: null,
+  returnToToolpaths: false,
   requestEditPathId: null,
   requestMachineForm: null,
   propertiesFlashSeq: 0,
@@ -314,8 +320,11 @@ export const useUIStore = create<UIState>()(
   setClockInfoOpen: (open) => set({ clockInfoOpen: open }),
   setClockDraft: (spec) => set({ clockDraft: spec }),
   setTimelineOpen: (open) => set({ timelineOpen: open }),
-  setBottomTab: (tab) => set({ bottomTab: tab }),
-  setRequestEditOpId: (id) => set({ requestEditOpId: id }),
+  setPathsView: (v) => set({ pathsView: v }),
+  // A NEW request (a chip or a row asking for a form) starts without a way back; the
+  // consumer's clear (null) must leave the flag alone, or it is gone before the form opens.
+  setRequestEditOpId: (id) => set(id ? { requestEditOpId: id, returnToToolpaths: false } : { requestEditOpId: null }),
+  setReturnToToolpaths: (v) => set({ returnToToolpaths: v }),
   setRequestEditPathId: (id) => set({ requestEditPathId: id }),
   setRequestMachineForm: (form) => set({ requestMachineForm: form }),
   flashProperties: () => set((s) => ({ propertiesFlashSeq: s.propertiesFlashSeq + 1 })),
@@ -362,7 +371,7 @@ export const useUIStore = create<UIState>()(
       // functions (the node-edit undo/redo callbacks) that must not be serialised.
       // A preference the user sets explicitly belongs here; darkMode was missing, so
       // every reload snapped back to the `darkMode: true` default.
-      partialize: (s) => ({ penCurveType: s.penCurveType, lastShapeType: s.lastShapeType, timelineOpen: s.timelineOpen, bottomTab: s.bottomTab, darkMode: s.darkMode, shapeFromCenter: s.shapeFromCenter }),
+      partialize: (s) => ({ penCurveType: s.penCurveType, lastShapeType: s.lastShapeType, timelineOpen: s.timelineOpen, pathsView: s.pathsView, darkMode: s.darkMode, shapeFromCenter: s.shapeFromCenter }),
     }
   )
 )

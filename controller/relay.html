@@ -2,13 +2,14 @@
 <!--
   FreazyKam ⇄ FluidNC relay.
 
-  Upload to the controller's FLASH (local filesystem, not the SD card) as 404.htm —
-  FreazyKam's Machine tab has a download and step-by-step instructions. FluidNC
-  serves a file requested by name as a download (Content-Disposition: attachment),
-  never as a page; only its not-found page, 404.htm, is served inline. So FreazyKam
-  opens http://<controller>/freazykam, a path that is never a file, and FluidNC
-  answers with this page. (Interim: no firmware change needed, but it does not work
-  in access-point mode, where FluidNC answers unknown paths with a captive portal.)
+  Upload to the controller's FLASH (local filesystem, not the SD card) as
+  freazyKam.html on FluidNC v4+, or as 404.htm on v3 — FreazyKam's Machine tab has a
+  download and step-by-step instructions. FreazyKam opens
+  http://<controller>/flash/freazyKam.html. v4 serves that as a page (its /flash
+  WebDAV route). v3 has no such route: it finds no file there and answers with its
+  not-found page, 404.htm — the only file v3 serves inline rather than as a
+  download. (On v3 this fails in access-point mode, where unknown paths get the
+  captive portal.)
   FreazyKam (HTTPS) cannot reach the controller (plain http/ws) directly — mixed
   content — so it opens THIS page in a popup and talks to it with postMessage.
   This page then talks to its own host, which is same-origin and plain http.

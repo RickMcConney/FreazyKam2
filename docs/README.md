@@ -27,7 +27,7 @@ you will use on every job afterwards. The finished project is
 |---|---|
 | **[2. The canvas](02-canvas.md)** | Getting around, selecting, the Properties panel, transforms, groups, constraints, the pen tool, point editing, path tools |
 | **[3. Stock, origin and tools](03-stock-and-tools.md)** | Where zero is, the tool library, the two angle conventions, feeds and speeds |
-| **[4. Operations](04-operations.md)** | The shape of every operation form, pick order, Start height, the Objects and Ops strips, regenerating |
+| **[4. Operations](04-operations.md)** | The shape of every operation form, pick order, Start height, the Objects strip and the Toolpaths list, regenerating |
 
 ## Cutting things out
 

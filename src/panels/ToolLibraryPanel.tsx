@@ -1,7 +1,11 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { NumericInput } from '../components/NumericInput'
 import { NUMERIC_HINT } from '../components/parseNumeric'
-import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronUp, Import, ListRestart, Plus, Share, Trash2 } from 'lucide-react'
+import { RestoreToolsButton } from '../components/RestoreButtons'
+import { exportTools, pickSectionFile } from '../io/settingsFile'
+import type { SettingsFile } from '../io/settingsMerge'
+import ImportPreviewDialog from '../components/ImportPreviewDialog'
 import { ICON } from '../theme'
 import { useToolStore, type Tool, type ToolType, type ToolSortKey } from '../store/toolStore'
 import { includedAngleDeg, maxCutRadiusMM } from '../cam/geom'
@@ -27,16 +31,28 @@ type SortKey = ToolSortKey
 // from auto feeds (or the operation's own field) and the direction is per
 // operation, so both were edited here and then ignored. They are gone from
 // `Tool` — a form's initial step-down now comes from `seedStepDownMM(tool)`.
-const COLUMNS: { key: keyof Omit<Tool, 'id'>; label: string; title: string; width: string; unit?: string; numeric?: boolean; sort?: SortKey }[] = [
-  { key: 'name',        label: 'Name',    title: 'Tool name — click to sort', width: 'w-40', sort: 'name' },
-  { key: 'type',        label: 'Type',    title: 'Tool type — click to sort', width: 'w-28', sort: 'type' },
-  { key: 'diameterMM',  label: 'Ø',       title: 'Diameter — click to sort',  width: 'w-20', numeric: true, sort: 'diameter' },
-  { key: 'fluteCount',  label: 'Flutes',  title: 'Number of flutes',          width: 'w-16', numeric: true },
-  { key: 'rpm',         label: 'RPM',     title: 'Spindle speed (RPM)',       width: 'w-20', numeric: true },
-  { key: 'xyFeedMmMin', label: 'XY Feed', title: 'XY feed rate (mm/min)',     width: 'w-20', numeric: true },
-  { key: 'zFeedMmMin',  label: 'Z Feed',  title: 'Plunge feed rate (mm/min)', width: 'w-20', numeric: true },
-  { key: 'maxDepthMM',  label: 'Max Z',   title: 'Maximum cut depth of this tool',    width: 'w-18', numeric: true },
+// THE TABLE IS FIXED-LAYOUT, every column a set width but Name, which takes the rest.
+// Left to size itself it went wrong both ways: first it squeezed the columns to fit, and
+// since the fields fill their cells a 5-digit RPM came out as "1800" with its last digit
+// cut off — which reads as a valid speed. Then minimum widths only made it grow, because
+// an <input> claims ~170 px of content whatever its column, and the table ran off the
+// panel with the tool pictures squeezed out. Widths fit the value plus its stepper
+// arrows; the table's minWidth (TABLE_MIN_W) keeps Name usable, and a window narrower
+// than that scrolls sideways rather than clipping a number.
+const COLUMNS: { key: keyof Omit<Tool, 'id'>; label: string; title: string; w?: string; unit?: string; numeric?: boolean; sort?: SortKey }[] = [
+  { key: 'name',        label: 'Name',    title: 'Tool name — click to sort', sort: 'name' },
+  { key: 'type',        label: 'Type',    title: 'Tool type — click to sort', w: '8.5rem', sort: 'type' },
+  { key: 'diameterMM',  label: 'Ø',       title: 'Diameter — click to sort',  w: '5.5rem', numeric: true, sort: 'diameter' },
+  { key: 'fluteCount',  label: 'Flutes',  title: 'Number of flutes',          w: '4rem', numeric: true },
+  { key: 'rpm',         label: 'RPM',     title: 'Spindle speed (RPM)',       w: '6rem', numeric: true },
+  { key: 'xyFeedMmMin', label: 'XY Feed', title: 'XY feed rate (mm/min)',     w: '6.5rem', numeric: true },
+  { key: 'zFeedMmMin',  label: 'Z Feed',  title: 'Plunge feed rate (mm/min)', w: '6rem', numeric: true },
+  { key: 'maxDepthMM',  label: 'Max Z',   title: 'Maximum cut depth of this tool',    w: '5rem', numeric: true },
 ]
+// Picture 5 + the columns above 41.5 + Angle 6.5 + delete 2 = 55, and at least 9 for
+// Name: 64rem (1024 px). That fits beside the sidebar in a 1400 px window — a 2800 px
+// capture on a 2× display, the size the docs are shot at — with room for the scrollbar.
+const TABLE_MIN_W = '64rem'
 
 // Group tools the way the type dropdown is ordered rather than alphabetically —
 // the point of a type sort is to put all the ball noses together, and this keeps
@@ -111,7 +127,7 @@ function ToolRow({ tool, units, spindleType, selected }: { tool: Tool; units: Un
         selected ? 'bg-blue-600/20' : 'hover:bg-gray-100/40 dark:hover:bg-neutral-800/40'
       }`}>
       <td className="px-2 py-1">
-        <img src={TOOL_TYPE_ICON[tool.type]} alt={tool.type} title={tool.type} className="h-8 w-20 object-contain" />
+        <img src={TOOL_TYPE_ICON[tool.type]} alt={tool.type} title={tool.type} className="h-8 w-16 object-contain" />
       </td>
       <td className="px-2 py-1">
         <input type="text" value={tool.name} onChange={(e) => up({ name: e.target.value })} className={cellCls} />
@@ -186,7 +202,7 @@ function ToolRow({ tool, units, spindleType, selected }: { tool: Tool; units: Un
             {tool.type === 'taper' && (
               // The number that actually decides whether this bit can cut the job,
               // and it is derived from all three columns so it exists nowhere else.
-              <div className="text-label text-gray-600 dark:text-neutral-400 px-1 mt-0.5 whitespace-nowrap">
+              <div className="text-label text-gray-600 dark:text-neutral-400 px-1 mt-0.5 text-right">
                 Ø{fmtDim(2 * maxCutRadiusMM(tool), units)} at depth · {includedAngleDeg(tool)}° incl
               </div>
             )}
@@ -208,9 +224,12 @@ function ToolRow({ tool, units, spindleType, selected }: { tool: Tool; units: Un
   )
 }
 
+const headBtnCls = 'flex items-center gap-1.5 px-2.5 py-1 rounded text-body bg-gray-200 dark:bg-neutral-700 hover:bg-gray-300 dark:hover:bg-neutral-600 text-gray-700 dark:text-neutral-300 transition-colors'
+
 export default function ToolLibraryPanel() {
   const { tools, addTool, selectedToolId, sortBy, setSortBy } = useToolStore()
   const selectedTool = tools.find((t) => t.id === selectedToolId) ?? null
+  const [importing, setImporting] = useState<SettingsFile | null>(null)
   const units = useWorkpieceStore((s) => s.units)
   const spindleType = useWorkpieceStore((s) => s.spindleType)
   const lenUnit = units === 'in' ? 'in' : 'mm'
@@ -226,10 +245,29 @@ export default function ToolLibraryPanel() {
 
   return (
     <div className="flex flex-col h-full bg-gray-50 dark:bg-neutral-900">
+      {importing && <ImportPreviewDialog file={importing} sectionKey="tools" onClose={() => setImporting(null)} />}
       <div className="flex items-center justify-between px-4 py-2 border-b border-gray-300 dark:border-neutral-700 flex-shrink-0">
         <span className="text-body font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider">
           Tool Library — {tools.length} tool{tools.length !== 1 ? 's' : ''}
         </span>
+        <div className="flex items-center gap-2">
+        <RestoreToolsButton className={headBtnCls}
+          title="Put back the tools FreazyKam comes with — shows what will be removed and kept before anything changes">
+          <ListRestart size={ICON.sm} />
+          Restore Defaults
+        </RestoreToolsButton>
+        <button onClick={async () => { const f = await pickSectionFile('tools'); if (f) setImporting(f) }}
+          title="Import a tool set from a .fkset file — tools are added beside yours; one with your tool's name but different sizes or feeds comes in as a copy"
+          className={headBtnCls}>
+          <Import size={ICON.sm} />
+          Import
+        </button>
+        <button onClick={exportTools}
+          title={`Export all ${tools.length} tools to a .fkset file, to share or keep`}
+          className={headBtnCls}>
+          <Share size={ICON.sm} />
+          Export
+        </button>
         <button onClick={addTool}
           title={selectedTool
             ? `Add a copy of "${selectedTool.name}" — click the selected row to deselect and add a plain end mill instead`
@@ -238,17 +276,18 @@ export default function ToolLibraryPanel() {
           <Plus size={ICON.sm} />
           Add Tool
         </button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-auto">
-        <table className="w-full border-collapse text-body" style={{ minWidth: '760px' }}>
+        <table className="w-full table-fixed border-collapse text-body" style={{ minWidth: TABLE_MIN_W }}>
           <thead>
             <tr className="border-b border-gray-200 dark:border-neutral-600 sticky top-0 bg-gray-100 dark:bg-neutral-800">
-              <th className="px-2 py-1.5 w-24" />
+              <th className="px-2 py-1.5" style={{ width: '5rem' }} />
               {COLUMNS.map((col) => (
-                <th key={col.key} title={col.title}
+                <th key={col.key} title={col.title} style={col.w ? { width: col.w } : undefined}
                   onClick={col.sort ? () => clickSort(col.sort!) : undefined}
-                  className={`px-2 py-1.5 ${col.numeric ? 'text-right' : 'text-left'} text-label font-semibold uppercase tracking-wider whitespace-nowrap select-none ${
+                  className={`px-2 py-1.5 align-bottom ${col.numeric ? 'text-right' : 'text-left'} text-label font-semibold uppercase tracking-wider select-none ${
                     col.sort
                       ? 'cursor-pointer hover:text-gray-600 dark:hover:text-neutral-300 ' +
                         (sortBy?.key === col.sort ? 'text-gray-600 dark:text-neutral-300' : 'text-gray-600 dark:text-neutral-400')
@@ -256,10 +295,10 @@ export default function ToolLibraryPanel() {
                   }`}>
                   {col.label}
                   {(col.key === 'diameterMM' || col.key === 'maxDepthMM') && (
-                    <span className="ml-0.5 text-gray-600 dark:text-neutral-400 normal-case font-normal tracking-normal">{lenUnit}</span>
+                    <span className="block text-gray-600 dark:text-neutral-400 normal-case font-normal tracking-normal">{lenUnit}</span>
                   )}
                   {(col.key === 'xyFeedMmMin' || col.key === 'zFeedMmMin') && (
-                    <span className="ml-0.5 text-gray-600 dark:text-neutral-400 normal-case font-normal tracking-normal">{feedUnit}</span>
+                    <span className="block text-gray-600 dark:text-neutral-400 normal-case font-normal tracking-normal">{feedUnit}</span>
                   )}
                   {sortBy && sortBy.key === col.sort && (
                     sortBy.dir === 'asc'
@@ -268,11 +307,11 @@ export default function ToolLibraryPanel() {
                   )}
                 </th>
               ))}
-              <th title="V-bit full included angle (V-bit only)"
+              <th title="V-bit full included angle (V-bit only)" style={{ width: '6.5rem' }}
                 className="px-2 py-1.5 text-right text-label font-semibold text-gray-600 dark:text-neutral-400 uppercase tracking-wider whitespace-nowrap select-none">
                 Angle<span className="ml-0.5 normal-case font-normal tracking-normal">°</span>
               </th>
-              <th className="px-2 py-1.5 w-8" />
+              <th className="px-2 py-1.5" style={{ width: '2rem' }} />
             </tr>
           </thead>
           <tbody>

@@ -25,6 +25,17 @@ describe('jobPreview', () => {
     expect(cut.length).toBeLessThan(10)
     expect(cut[cut.length - 1][0]).toBeCloseTo(1)
   })
+
+  it('takes the safe height from the Z its XY rapids travel at most often, not the higher first and last ones', () => {
+    const p = jobPreview(['G0 Z20', 'G0 X0 Y0', 'G0 Z5', 'G1 Z-1 F300', 'G1 X10', 'G0 Z5', 'G0 X20', 'G1 Z-1', 'G1 X30',
+      'G0 Z5', 'G0 X40', 'G1 Z-1', 'G0 Z20', 'G0 X0 Y0'].join('\n'))
+    expect(p.safeZ).toBe(5)
+  })
+
+  it('reports the deepest feed move, plunges included', () => {
+    const p = jobPreview(['G0 X0 Y0 Z5', 'G1 Z-3 F300', 'G1 X10', 'G1 Z-6.5', 'G0 Z5'].join('\n'))
+    expect(p.deepestZ).toBe(-6.5)
+  })
 })
 
 describe('segmentCuts', () => {

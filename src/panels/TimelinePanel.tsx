@@ -17,7 +17,6 @@ import { shapeDisplayName } from '../shapes/shapeGenerators'
 import { useUIStore } from '../store/uiStore'
 import { OP_TYPE_COLORS } from '../colors'
 import { InlayIcon } from './MachinePanel'
-import { BottomTabs } from './BottomTabs'
 import { regenerateAffected } from '../cam/regenerate'
 
 // The object strip docked under the 2D canvas: ONE CHIP PER THING IN THE
@@ -473,7 +472,6 @@ export default function TimelinePanel() {
   return (
     <div className="border-t border-gray-300 dark:border-neutral-700 bg-gray-200 dark:bg-neutral-800 flex-shrink-0 select-none">
       <div className="flex items-center h-14 px-2 gap-1">
-        <BottomTabs />
         {/* Mouse handling lives on the container so any point over the strip's
             full height targets the chip at that x position */}
         <div

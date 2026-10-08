@@ -23,7 +23,7 @@ export interface Tool {
   vbitAngleDeg?: number  // only meaningful for vbit and taper types
 }
 
-const DEFAULT_TOOLS: Tool[] = [
+export const DEFAULT_TOOLS: Tool[] = [
   { id: 'default-1', name: '1/4" End Mill',   type: 'endmill',  diameterMM: 6.35,  fluteCount: 2, rpm: 18000, xyFeedMmMin: 2500, zFeedMmMin: 500, maxDepthMM: 25.0 },
   { id: 'default-2', name: '1/8" End Mill',   type: 'endmill',  diameterMM: 3.175, fluteCount: 2, rpm: 24000, xyFeedMmMin: 1500, zFeedMmMin: 300, maxDepthMM: 15.0 },
   { id: 'default-3', name: '60° V-Bit',       type: 'vbit',     diameterMM: 6.35,  fluteCount: 2, rpm: 18000, xyFeedMmMin: 2000, zFeedMmMin: 400, maxDepthMM: 10.0, vbitAngleDeg: 60 },

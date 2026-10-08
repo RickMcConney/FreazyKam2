@@ -142,7 +142,12 @@ export default function MachinePanel({ fill = false }: { fill?: boolean }) {
   }, [requestMachineForm]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const openForm = (t: FormState) => { clearEditCtx(); startForm(t) }
-  const closeForm = () => { clearEditCtx(); setActiveForm('menu'); setMachineFormActive(false) }
+  const closeForm = () => {
+    clearEditCtx(); setActiveForm('menu'); setMachineFormActive(false)
+    // Opened from the Toolpaths list: go back to it, not to the Draw menu.
+    const ui = useUIStore.getState()
+    if (ui.returnToToolpaths) { ui.setReturnToToolpaths(false); ui.setPathsView('toolpaths'); ui.setSidebarTab('paths') }
+  }
 
   return (
     <div className={fill ? 'flex-1 overflow-y-auto' : ''}>

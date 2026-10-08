@@ -105,8 +105,8 @@ const FEATURES = [
     desc: 'The strip under the canvas holds one chip per thing in the document — every path, every clock, every operation. Click a chip to select what it stands for and reopen the editor that made it: a gear chip its module and tooth count, a boolean chip its union or subtract, a pocket chip its depth. Editing a thing changes its chip instead of adding another, and hovering a chip and clicking its ✕ deletes the thing itself. A group, a multi-part shape or a whole Generate is one chip; tabs and corner treatments get their own, attached to the path they belong to.',
   },
   {
-    title: 'Ops strip',
-    desc: 'The Ops tab of the same strip is the program rather than the document: one chip per toolpath, in the order the machine will run them, which is the order G-code is written in. Operations sharing a tool are drawn as one coloured band with a marker at every tool change; drag a chip or a whole band to reorder. When the program visits a tool more than once a −N TC button appears and gathers that tool\'s operations into one step so you load it once. Hover a chip to hide an operation (hidden operations are left out of exported G-code) or to delete it.',
+    title: 'Toolpaths list',
+    desc: 'Paths → Toolpaths in the sidebar is the program rather than the document: one row per toolpath, in the order the machine will run them, which is the order G-code is written in, each with its run time and share of the job. Operations sharing a tool are drawn as one coloured block with a marker at every tool change; drag a row or a whole block by its header to reorder. When the program visits a tool more than once a Group by tool button appears and gathers that tool\'s operations into one step so you load it once. Hover a row to hide an operation (hidden operations are left out of exported G-code) or to delete it; click it to edit.',
   },
 ]
 

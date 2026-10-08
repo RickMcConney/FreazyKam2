@@ -7,23 +7,25 @@
 // plain-http server at all (mixed content) — the relay IS the way in. So it goes
 // through the controller's own WebUI, served over http by the controller.
 //
-// Why 404.htm and not relay.html: see RELAY_PATH in machine/relayClient.ts.
+// Why freazyKam.html on FluidNC v4+ but 404.htm on v3: see RELAY_PATH in
+// machine/relayClient.ts.
 
 import { Download, ExternalLink, X } from 'lucide-react'
 import relayHtml from '../../controller/relay.html?raw'
-import { controllerOrigin, RELAY_FILE_NAME, RELAY_PATH } from '../machine/relayClient'
+import { controllerOrigin, RELAY_FILE_NAME, RELAY_LEGACY_FILE_NAME, RELAY_PATH } from '../machine/relayClient'
 
 interface Props {
   address: string
   onClose: () => void
 }
 
-export function downloadRelay() {
+export function downloadRelay(name: string = RELAY_FILE_NAME) {
   const url = URL.createObjectURL(new Blob([relayHtml], { type: 'text/html' }))
   const a = document.createElement('a')
   a.href = url
-  // The name is load-bearing: FluidNC serves only its not-found page, 404.htm, inline.
-  a.download = RELAY_FILE_NAME
+  // The name is load-bearing: FreazyKam opens /flash/freazyKam.html, and FluidNC v3
+  // serves only its not-found page, 404.htm, inline.
+  a.download = name
   a.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
@@ -63,14 +65,18 @@ export default function RelaySetupDialog({ address, onClose }: Props) {
               <span className={numCls}>1</span>
               <div className="space-y-1.5">
                 <p>Download the relay. It is saved as {code(RELAY_FILE_NAME)} — keep that name.</p>
-                <button onClick={downloadRelay}
+                <button onClick={() => downloadRelay()}
                   className="inline-flex items-center gap-1.5 px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm">
                   <Download size={15} /> Download {RELAY_FILE_NAME}
                 </button>
                 <p className={noteCls}>
-                  FluidNC hands any file asked for by name to the browser as a download, never as a page.
-                  The one exception is its "page not found" page, {code(RELAY_FILE_NAME)}, which is why the
-                  relay goes in under that name.
+                  That is for FluidNC v4.0 and later. On v3,{' '}
+                  <button onClick={() => downloadRelay(RELAY_LEGACY_FILE_NAME)} className={linkCls}>
+                    download it as {RELAY_LEGACY_FILE_NAME}
+                  </button>{' '}
+                  instead: v3 hands any file asked for by name to the browser as a download, never as a
+                  page — except its "page not found" page, {code(RELAY_LEGACY_FILE_NAME)}. The WebUI's
+                  About box shows the version.
                 </p>
               </div>
             </li>
@@ -91,7 +97,7 @@ export default function RelaySetupDialog({ address, onClose }: Props) {
               <div className="space-y-1">
                 <p>
                   In the WebUI's <b>Files</b> panel, switch the drop-down from <b>SD</b> to <b>Flash</b>, and
-                  upload {code(RELAY_FILE_NAME)} to the top folder — next to {code('index.html.gz')} and
+                  upload the relay ({code(RELAY_FILE_NAME)}, or {code(RELAY_LEGACY_FILE_NAME)} on v3) to the top folder — next to {code('index.html.gz')} and
                   your {code('config.yaml')}.
                 </p>
                 <p className={noteCls}>
@@ -110,8 +116,8 @@ export default function RelaySetupDialog({ address, onClose }: Props) {
                   A small page titled <b>FreazyKam link</b> means it is in place. Close that tab.
                 </p>
                 <p className={noteCls}>
-                  If the browser downloads a file instead, or shows the controller's ordinary "not found"
-                  page, the relay is not on the flash under that name — repeat step 3.
+                  If the browser downloads a file, or shows a blank or "not found" page instead, the relay
+                  is not on the flash under the name your FluidNC version needs — repeat steps 1 and 3.
                 </p>
               </div>
             </li>
@@ -128,9 +134,9 @@ export default function RelaySetupDialog({ address, onClose }: Props) {
 
           <div className="rounded border border-amber-400/60 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 space-y-1 text-xs text-amber-900 dark:text-amber-200">
             <p className="font-semibold">Good to know</p>
-            <p>The controller must be on your WiFi network (station mode). In access-point mode FluidNC answers with its captive portal instead of the relay.</p>
+            <p>On FluidNC v3 the controller must be on your WiFi network (station mode). In access-point mode v3 answers with its captive portal instead of the relay.</p>
             <p>Connect before starting a job: while the machine is moving, FluidNC will not serve pages from its flash.</p>
-            <p>Any mistyped address on the controller now shows the relay page instead of "not found". That is harmless — the relay only takes orders from FreazyKam.</p>
+            <p>On v3, any mistyped address on the controller now shows the relay page instead of "not found". That is harmless — the relay only takes orders from FreazyKam.</p>
           </div>
         </div>
 

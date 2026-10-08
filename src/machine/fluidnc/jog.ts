@@ -29,6 +29,14 @@ export const JOG_STEPS_MM: Record<'mm' | 'in', number[]> = {
   in: [0.001, 0.01, 0.1, 1].map((i) => i * 25.4),
 }
 
+// Z's own steps: finer at the top end than XY's, since Z travel is a few tens of mm
+// and a 50 mm step there is only ever a crash. Index for index the inch row matches
+// the mm one (0.2" ≈ 5 mm), so flipping units lands on the matching size.
+export const JOG_STEPS_Z_MM: Record<'mm' | 'in', number[]> = {
+  mm: [0.1, 0.5, 1, 5],
+  in: [0.005, 0.02, 0.05, 0.2].map((i) => i * 25.4),
+}
+
 export type Axis = 'x' | 'y' | 'z'
 
 /**

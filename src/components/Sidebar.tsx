@@ -5,6 +5,8 @@ import { useUIStore, type SidebarTab } from '../store/uiStore'
 import { usePathsStore } from '../store/pathsStore'
 import { useSimStore } from '../store/simStore'
 import PathsPanel from '../panels/PathsPanel'
+import ToolpathsPanel from '../panels/ToolpathsPanel'
+import { useToolpathStore } from '../store/toolpathStore'
 import MachinePanel from '../panels/MachinePanel'
 import PropertiesPanel from '../panels/PropertiesPanel'
 import ConstraintsSection from '../panels/ConstraintsSection'
@@ -32,7 +34,35 @@ function TabContent({ tab, machineFormActive, shapesPanelOpen, clockPanelOpen }:
       {!shapesPanelOpen && <MachinePanel fill={machineFormActive} />}
     </>
   )
-  return <PathsPanel />
+  return <PathsTab />
+}
+
+// The Paths tab holds two lists: the document's paths, and the program — every toolpath
+// in cut order with its time. A segmented switch rather than one mixed list, because
+// they are different orderings of different things.
+function PathsTab() {
+  const view = useUIStore((s) => s.pathsView)
+  const setView = useUIStore((s) => s.setPathsView)
+  const opCount = useToolpathStore((s) => s.operations.length)
+  const seg = (id: 'paths' | 'toolpaths', label: string, title: string) => (
+    <button key={id} onClick={() => setView(id)} title={title}
+      className={['flex-1 px-2 py-1 text-body rounded transition-colors',
+        view === id ? 'bg-white dark:bg-neutral-700 text-gray-800 dark:text-neutral-100 shadow-sm font-medium'
+          : 'text-gray-600 dark:text-neutral-400 hover:text-gray-800 dark:hover:text-neutral-200'].join(' ')}>
+      {label}
+    </button>
+  )
+  return (
+    <div className="flex flex-col flex-1 min-h-0">
+      <div className="flex gap-0.5 m-2 mb-0 p-0.5 rounded bg-gray-200 dark:bg-neutral-900 flex-shrink-0">
+        {seg('paths', 'Paths', 'Everything drawn in the document')}
+        {seg('toolpaths', `Toolpaths${opCount ? ` · ${opCount}` : ''}`, 'The program — every toolpath in the order the machine cuts it, with its time')}
+      </div>
+      <div className="flex-1 min-h-0">
+        {view === 'toolpaths' ? <ToolpathsPanel /> : <PathsPanel />}
+      </div>
+    </div>
+  )
 }
 
 export default function Sidebar() {
@@ -48,7 +78,12 @@ export default function Sidebar() {
   const focusConstraintId = useUIStore((s) => s.focusConstraintId)
   const workspaceTab = useUIStore((s) => s.workspaceTab)
 
-  const showProps = selectedIds.length > 0 && !machineFormActive && !clockPanelOpen
+  const pathsView = useUIStore((s) => s.pathsView)
+  // The Toolpaths list is about the program, not the drawing: a canvas selection there
+  // (clicking a row selects the paths it cuts, on purpose) must not push a path editor
+  // in under it.
+  const inToolpaths = sidebarTab === 'paths' && pathsView === 'toolpaths'
+  const showProps = selectedIds.length > 0 && !machineFormActive && !clockPanelOpen && !inToolpaths
   // THE CONSTRAIN TOOL WORKS WITH NOTHING SELECTED — a selection puts resize
   // handles over the parts and those swallow the clicks the tool needs — so its
   // section has to survive an empty canvas selection, which `showProps` does
@@ -132,7 +167,7 @@ export default function Sidebar() {
             {TABS.map((tab) => (
               <button
                 key={tab.id}
-                onClick={() => { setSidebarTab(tab.id); if (tab.id === 'draw') { setMachineFormActive(false); setShapesPanelOpen(false); setClockPanelOpen(false) } }}
+                onClick={() => { setSidebarTab(tab.id); useUIStore.getState().setReturnToToolpaths(false); if (tab.id === 'draw') { setMachineFormActive(false); setShapesPanelOpen(false); setClockPanelOpen(false) } }}
                 title={tab.label}
                 className={[
                   'flex-1 flex flex-col items-center gap-0.5 py-2 text-body transition-colors border-b-2',

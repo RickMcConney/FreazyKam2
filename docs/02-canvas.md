@@ -332,10 +332,11 @@ The result is a new path; the sources aren't deleted, only hidden, so nothing is
 you undo. Click the result's chip to reopen **Edit Boolean**, where you can swap the
 operation — union to subtract, say — without re-picking the sources.
 
-![The Boolean form, Union selected, over an L-shaped path and a circle about to be combined](images/02-boolean.png)
+![The union of a rectangle and a circle: one outline, selected, with Rectangle, Circle and Boolean chips in the Objects strip](images/02-boolean.png)
 
-*Union highlighted, with the two source shapes still showing their own selection handles
-on canvas.*
+*A rectangle and a circle after **Union**: one outline, selected. The two sources are
+hidden rather than deleted — their chips are still in the strip beside the Boolean's,
+and clicking the Boolean chip reopens the form to change the operation.*
 
 <!-- FULL APP · 1600 px wide. -->
 
@@ -398,11 +399,12 @@ overcuts a small circular notch into the corner so the mating part fits. Its rad
 asks for the **tool radius**, not a decorative size, because that is what decides how much
 must be relieved.
 
-![Five polygons with a small notch cut into each corner, from Dogbone at a 5mm tool radius](images/02-corners.png)
+![The same hexagon five times: Outer Round, Inner Round, Chamfer and Dogbone, and one left sharp, with the Corners form open on Dogbone](images/02-corners.png)
 
-*Dogbone at a 5 mm tool radius, applied to every corner. The status bar's cursor readout
-is from picking specific corners — leave none picked and Apply treats every sharp corner
-on the path.*
+*One hexagon, each treatment: **Outer Round** (top left), **Inner Round** (top right),
+**Chamfer** (bottom left) and **Dogbone** at a 5 mm tool radius (bottom right), with the
+untreated original in the middle. Each was applied with no corners picked, so every
+sharp corner on the path was treated.*
 
 <!-- FULL APP · 1600 px wide. -->
 
