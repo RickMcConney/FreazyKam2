@@ -66,8 +66,12 @@ function spindleDial(type: SpindleType, rpm: number): number | null {
 // Short label for the dial setting, rounded to the nearest half-detent that a router
 // dial can actually be set to (e.g. "dial 2.5"). Null when not applicable.
 export function spindleDialLabel(type: SpindleType, rpm: number): string | null {
+  const setting = spindleDialSetting(type, rpm)
+  return setting == null ? null : `dial ${setting}`
+}
+
+/** The dial setting for `rpm`, to the half detent; null for a spindle without a dial. */
+export function spindleDialSetting(type: SpindleType, rpm: number): number | null {
   const dial = spindleDial(type, rpm)
-  if (dial == null) return null
-  const rounded = Math.round(dial * 2) / 2
-  return `dial ${rounded}`
+  return dial == null ? null : Math.round(dial * 2) / 2
 }

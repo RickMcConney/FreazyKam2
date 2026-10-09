@@ -166,7 +166,7 @@ export class Heightfield {
     for (const s of segments) {
       if (s.rapid || (s.prevZ >= 0 && s.z >= 0)) continue
       const ts = segTool(s, toolStates)
-      this.carve(s.prevX, s.prevY, s.x, s.y, s.prevZ, s.z, ts.toolVbitHalfAngleTan, ts.toolBallNose, ts.toolDiameterMM, ts.toolTipRadiusMM)
+      this.carve(s.prevX, s.prevY, s.x, s.y, s.prevZ, s.z, ts.toolVbitHalfAngleTan, ts.toolBallNose, ts.toolDiameterMM, ts.toolTipRadiusMM, ts.toolCornerRadiusMM)
     }
   }
 
@@ -179,6 +179,7 @@ export class Heightfield {
     ballNose?: boolean,
     toolDiameterMM = 0,
     tipRadiusMM = 0,
+    cornerRadiusMM = 0,
   ) {
     const dz = endZ - prevZ
     // Deliberately NOT capped at the tool's own diameter: this model has always let the
@@ -284,6 +285,21 @@ export class Heightfield {
           // (the max(0, …) clamp degrades to exactly that past dist = br).
           if (dist > br + covEps) continue
           newH = Math.max(0, this.T + z_tc + br - Math.sqrt(Math.max(0, br * br - dist * dist)))
+        } else if (cornerRadiusMM > 0) {
+          // Bull nose: flat out to R − rc, then the corner's quarter-round — the ball nose
+          // above with a flat let into its middle (its own branch, so a ball nose's carve
+          // stays exactly what it was).
+          const tc = Math.max(0, Math.min(1, tc_raw))
+          const z_tc = prevZ + tc * dz
+          if (z_tc >= 0) continue
+          const br = toolDiameterMM / 2
+          const rc = Math.min(cornerRadiusMM, br)
+          const flatR = br - rc
+          const dt = tc - tc_raw
+          const dist = Math.sqrt(dt * dt * lenSq + perp_sq)
+          if (dist > br + covEps) continue
+          const e = Math.max(0, dist - flatR)
+          newH = Math.max(0, this.T + z_tc + rc - Math.sqrt(Math.max(0, rc * rc - e * e)))
         } else {
           const tc = Math.max(0, Math.min(1, tc_raw))
           const z_tc = prevZ + tc * dz

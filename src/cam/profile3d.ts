@@ -1,5 +1,5 @@
 import type { MotionSegment } from '../store/toolpathStore'
-import { pushAll, maxCutRadiusMM, toolProfileHeightMM, ringsBBox } from './geom'
+import { pushAll, maxCutRadiusMM, toolProfileHeightMM, ringsBBox, cornerRadiusMM } from './geom'
 import type { Pt2 } from './pathFlattener'
 import { inflatePathsD, unionD, FillRule, JoinType, EndType } from 'clipper2-ts'
 import { perfLog } from '../debug'
@@ -44,6 +44,7 @@ export interface Profile3dParams {
   maxDepthMM: number        // max cut depth below workpiece surface (positive value)
   roughingRadiusMM?: number        // set → generate roughing pass then rest-machining finish (the rougher's radius, ball or flat)
   roughingFlat?: boolean             // the rougher is a flat end mill, not a ball nose
+  roughingCornerRadiusMM?: number    // the rougher is a bull nose with this corner radius
   roughingStepoverPercent?: number   // stepover % for roughing pass (XY spacing)
   roughingStepDownMM?: number        // axial depth per roughing pass
   roughingStockAllowanceMM?: number  // how much material to leave for finishing (default 0.3)
@@ -233,6 +234,19 @@ export interface ToolKernel {
 export function ballKernel(radius: number): ToolKernel {
   const r2 = radius * radius
   return { reachMM: radius, termAtDistSq: (d2) => Math.sqrt(r2 - d2) }
+}
+
+/** A bull nose: flat out to `radius − corner`, then the corner's quarter-round. */
+export function bullKernel(radius: number, corner: number): ToolKernel {
+  const flat = radius - corner
+  const c2 = corner * corner
+  return {
+    reachMM: radius,
+    termAtDistSq: (d2) => {
+      const e = Math.sqrt(d2) - flat
+      return e <= 0 ? radius : radius - corner + Math.sqrt(Math.max(0, c2 - e * e))
+    },
+  }
 }
 
 /** A flat end mill of radius `radius`: its tip is its whole bottom, out to its rim. */
@@ -1083,8 +1097,8 @@ export function generateProfile3d(
   tool: Tool,
   params: Profile3dParams,
 ): MotionSegment[] {
-  if (tool.type !== 'ballnose' && tool.type !== 'taper') {
-    throw new Error('3D Profile requires a ball nose or taper tool')
+  if (tool.type !== 'ballnose' && tool.type !== 'bullnose' && tool.type !== 'taper') {
+    throw new Error('3D Profile requires a ball nose, bull nose or taper tool')
   }
   if (bbox.width < 0.001 || bbox.height < 0.001) {
     throw new Error('STL path has zero dimensions')
@@ -1094,8 +1108,9 @@ export function generateProfile3d(
   const rapidMmMin = params.rapidMmMin && params.rapidMmMin > 0 ? params.rapidMmMin : 5000
   const finishKernel = toolKernel(tool)
   // Stepover is set by the geometry that finishes a near-horizontal surface, which is
-  // the tool's TIP — its ball for both a ball nose and a taper. `diameterMM` is exactly
-  // that for either type (a taper stores its tip), so this needs no per-type branch.
+  // the tool's TIP — its ball for both a ball nose and a taper, the flat and its corners
+  // for a bull nose. `diameterMM` is exactly that for each (a taper stores its tip), so
+  // this needs no per-type branch.
   const stepoverMM = Math.max(0.01, tool.diameterMM * params.stepoverPercent / 100)
 
   const rough = roughPlan(params, tool)
@@ -1118,7 +1133,14 @@ export function generateProfile3d(
   const floorZ = stlToCnc(bounds, bbox, zOff).z(bounds.minZ)
 
   // Height map resolution: ≈ stepover / 3 (oversampled), capped at 1500×1500
-  const cellSize = Math.max(0.05, stepoverMM / 3)
+  // A bull nose reads the grid (there is no exact drop cutter for it), and the grid is
+  // interpolated in straight lines between nodes: where the tool rolls over a model edge
+  // its tip follows the CORNER's arc, which a chord across one cell undercuts by up to
+  // about cell²/(4·rc) — so the cell is sized off the corner, not the stepover. Measured
+  // on a Ø6 / 1.5 mm corner bull nose in a 45° groove: 0.032 mm into the wall at the
+  // stepover's 0.6 mm cell, 0.003 mm at 0.15. √(0.02·rc) holds that sag to 5 µm.
+  const cornerCell = tool.type === 'bullnose' && cornerRadiusMM(tool) > 0 ? Math.sqrt(0.02 * cornerRadiusMM(tool)) : Infinity
+  const cellSize = Math.max(0.05, Math.min(stepoverMM / 3, cornerCell))
   const nx = Math.min(1500, Math.max(2, Math.ceil(G.width  / cellSize) + 1))
   const ny = Math.min(1500, Math.max(2, Math.ceil(G.height / cellSize) + 1))
 
@@ -1194,7 +1216,10 @@ function roughPlan(params: Profile3dParams, tool: Tool): RoughPlan | null {
   if (radius === undefined || !(radius > 0) || params.roughingStepoverPercent === undefined) return null
   return {
     radius,
-    kernel: params.roughingFlat ? flatKernel(radius) : ballKernel(radius),
+    kernel: params.roughingFlat ? flatKernel(radius)
+      : params.roughingCornerRadiusMM !== undefined && params.roughingCornerRadiusMM < radius
+        ? bullKernel(radius, Math.max(0, params.roughingCornerRadiusMM))
+        : ballKernel(radius),
     stepMM: Math.max(0.01, radius * 2 * params.roughingStepoverPercent / 100),
     stepDownMM: params.roughingStepDownMM && params.roughingStepDownMM > 0 ? params.roughingStepDownMM : radius * 0.75,
     stockMM: params.roughingStockAllowanceMM ?? 0.3,

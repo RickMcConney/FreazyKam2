@@ -1,29 +1,17 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { NumericInput } from '../components/NumericInput'
 import { NUMERIC_HINT } from '../components/parseNumeric'
-import { ChevronDown, ChevronUp, Import, ListRestart, Plus, Share, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronUp, CopyPlus, Folder, FolderInput, FolderOpen, FolderPlus, Import, ListRestart, Plus, Share, Trash2, X } from 'lucide-react'
 import { RestoreToolsButton } from '../components/RestoreButtons'
-import { exportTools, pickSectionFile } from '../io/settingsFile'
-import type { SettingsFile } from '../io/settingsMerge'
-import ImportPreviewDialog from '../components/ImportPreviewDialog'
+import { applyDeleteFolder, exportToolFolder, pickToolFile, planDeleteFolder, type FolderDeletePlan, type ToolFileImport } from '../io/settingsFile'
+import ToolImportDialog from '../components/ToolImportDialog'
+import ConfirmSettingsDialog from '../components/ConfirmSettingsDialog'
+import { useUIStore } from '../store/uiStore'
 import { ICON } from '../theme'
-import { useToolStore, type Tool, type ToolType, type ToolSortKey } from '../store/toolStore'
-import { includedAngleDeg, maxCutRadiusMM } from '../cam/geom'
+import { useToolStore, folderNames, folderOf, MY_TOOLS, type Tool, type ToolType, type ToolSortKey } from '../store/toolStore'
 import { useWorkpieceStore, toMM, fromMM, type Units } from '../store/workpieceStore'
-import { spindleDialLabel, type SpindleType } from '../store/spindle'
-import endmillIcon from '../icons/endmill.svg'
-import ballnoseIcon from '../icons/ballnose.svg'
-import vbitIcon from '../icons/vbit.svg'
-import taperIcon from '../icons/taper.svg'
-import drillIcon from '../icons/drill.svg'
-
-const TOOL_TYPE_ICON: Record<ToolType, string> = {
-  endmill: endmillIcon,
-  ballnose: ballnoseIcon,
-  vbit: vbitIcon,
-  taper: taperIcon,
-  drill: drillIcon,
-}
+import { SPINDLE_INFO, spindleDialSetting, type SpindleType } from '../store/spindle'
+import { TOOL_TYPE_ICON, TYPE_ORDER } from './toolTypes'
 
 type SortKey = ToolSortKey
 
@@ -49,15 +37,11 @@ const COLUMNS: { key: keyof Omit<Tool, 'id'>; label: string; title: string; w?: 
   { key: 'zFeedMmMin',  label: 'Z Feed',  title: 'Plunge feed rate (mm/min)', w: '6rem', numeric: true },
   { key: 'maxDepthMM',  label: 'Max Z',   title: 'Maximum cut depth of this tool',    w: '5rem', numeric: true },
 ]
-// Picture 5 + the columns above 41.5 + Angle 6.5 + delete 2 = 55, and at least 9 for
-// Name: 64rem (1024 px). That fits beside the sidebar in a 1400 px window — a 2800 px
+// Picture 5 + the columns above 41.5 + Angle/R 5 + actions 5.5 = 57, and at least 9 for
+// Name: 66rem (1056 px); a spindle with a speed dial adds the 3.5rem Dial column. That fits beside the sidebar in a 1400 px window — a 2800 px
 // capture on a 2× display, the size the docs are shot at — with room for the scrollbar.
-const TABLE_MIN_W = '64rem'
-
-// Group tools the way the type dropdown is ordered rather than alphabetically —
-// the point of a type sort is to put all the ball noses together, and this keeps
-// like cutters adjacent instead of interleaving by first letter.
-const TYPE_ORDER: ToolType[] = ['endmill', 'ballnose', 'vbit', 'taper', 'drill']
+const TABLE_MIN_W = '66rem'
+const DIAL_W = 3.5
 
 const byName = (a: Tool, b: Tool) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
 
@@ -101,17 +85,24 @@ function DimInput({ valueMM, onChangeMM, minMM, stepMM, kind, units, title }: {
   )
 }
 
-// Read-only length for a derived hint — the editable fields go through DimInput.
-function fmtDim(mm: number, units: Units): string {
-  const v = fromMM(mm, units)
-  return `${v.toFixed(units === 'in' ? 3 : 2)} ${units === 'in' ? 'in' : 'mm'}`
-}
 
-function ToolRow({ tool, units, spindleType, selected }: { tool: Tool; units: Units; spindleType: SpindleType; selected: boolean }) {
-  const { updateTool, deleteTool, selectTool, tools } = useToolStore()
+const NEW_FOLDER = 'new'
+
+// The row actions (move, copy, delete) and the folder tabs run a size above the panel's
+// usual ICON.sm: they are the controls this table is worked with, not decoration.
+const ROW_ICON = 20
+const FOLDER_ICON = 18
+
+function ToolRow({ tool, units, spindleType, selected, folders, onNewFolder }: {
+  tool: Tool; units: Units; spindleType: SpindleType; selected: boolean
+  folders: string[]                 // every folder there is, '' (My Tools) first
+  onNewFolder: (toolId: string) => void
+}) {
+  const { updateTool, deleteTool, selectTool, copyToMyTools, moveToFolder, tools } = useToolStore()
   const up = (updates: Partial<Omit<Tool, 'id'>>) => updateTool(tool.id, updates)
   const canDelete = tools.length > 1
-  const dialLabel = spindleDialLabel(spindleType, tool.rpm)
+  const hasDial = !!SPINDLE_INFO[spindleType].dial
+  const dial = spindleDialSetting(spindleType, tool.rpm)
 
   return (
     // Clicking anywhere in the row selects it — including inside a cell's input,
@@ -139,9 +130,16 @@ function ToolRow({ tool, units, spindleType, selected }: { tool: Tool; units: Un
             // included for a V-bit, 5° per side for a taper. Seeding a taper
             // with 60 would make a 120° included cone.
             const seed = type === 'vbit' ? 60 : type === 'taper' ? 5 : undefined
+            // A bull nose starts with a quarter of its diameter as corner radius — plainly
+            // neither flat nor ball, so the corner reads as something to set.
+            if (type === 'bullnose' && !(tool.cornerRadiusMM && tool.cornerRadiusMM > 0)) {
+              up({ type, cornerRadiusMM: Math.round(tool.diameterMM / 4 * 1000) / 1000 })
+              return
+            }
             up(seed !== undefined && !tool.vbitAngleDeg ? { type, vbitAngleDeg: seed } : { type })
           }} className={cellCls + ' bg-gray-100 dark:bg-neutral-800'}>
           <option value="endmill">End Mill</option>
+          <option value="bullnose">Bull Nose</option>
           <option value="ballnose">Ball Nose</option>
           <option value="vbit">V-bit</option>
           <option value="taper">Taper End Mill</option>
@@ -162,10 +160,12 @@ function ToolRow({ tool, units, spindleType, selected }: { tool: Tool; units: Un
         <NumericInput value={tool.rpm} min={0} step={100}
           onChange={(rpm) => up({ rpm })}
           className={cellCls + ' text-right'} title={NUMERIC_HINT} />
-        {dialLabel && (
-          <div className="text-label text-gray-600 dark:text-neutral-400 text-right px-1 mt-0.5">{dialLabel}</div>
-        )}
       </td>
+      {/* The dial setting has a column of its own: as a second line under the RPM it
+          was the one thing making every row taller than one field. */}
+      {hasDial && (
+        <td className="px-2 py-1 text-right text-gray-600 dark:text-neutral-400 tabular-nums">{dial ?? '—'}</td>
+      )}
       <td className="px-2 py-1">
         <DimInput valueMM={tool.xyFeedMmMin} onChangeMM={(mm) => up({ xyFeedMmMin: mm })}
           minMM={0} stepMM={10} kind="feed" units={units} />
@@ -182,42 +182,70 @@ function ToolRow({ tool, units, spindleType, selected }: { tool: Tool; units: Un
         {tool.type === 'vbit' || tool.type === 'taper' ? (
           <>
             {/* One column, two conventions — because that is how the two bits are
-                sold. The suffix says which one this row is in; includedAngleDeg()
-                is what everything downstream reads. A taper's angles are small,
-                so it steps by 1° where a V-bit steps by 5°. */}
-            <div className="flex items-baseline gap-1">
-              <NumericInput
-                value={tool.vbitAngleDeg ?? (tool.type === 'taper' ? 5 : 60)}
-                min={tool.type === 'taper' ? 0.5 : 5}
-                max={tool.type === 'taper' ? 60 : 175}
-                step={tool.type === 'taper' ? 1 : 5}
-                onChange={(vbitAngleDeg) => up({ vbitAngleDeg })}
-                className={cellCls + ' text-right'}
-                title={NUMERIC_HINT}
-              />
-              <span className="text-label text-gray-600 dark:text-neutral-400 whitespace-nowrap">
-                {tool.type === 'taper' ? '/side' : 'incl'}
-              </span>
-            </div>
-            {tool.type === 'taper' && (
-              // The number that actually decides whether this bit can cut the job,
-              // and it is derived from all three columns so it exists nowhere else.
-              <div className="text-label text-gray-600 dark:text-neutral-400 px-1 mt-0.5 text-right">
-                Ø{fmtDim(2 * maxCutRadiusMM(tool), units)} at depth · {includedAngleDeg(tool)}° incl
-              </div>
-            )}
+                sold. The number stands bare, as the bit is sold, and the tooltip says
+                which convention the row is in. includedAngleDeg() is what everything
+                downstream reads. A taper's angles are small, so it steps by 1° where a
+                V-bit steps by 5°. */}
+            <NumericInput
+              value={tool.vbitAngleDeg ?? (tool.type === 'taper' ? 5 : 60)}
+              min={tool.type === 'taper' ? 0.5 : 5}
+              max={tool.type === 'taper' ? 60 : 175}
+              step={tool.type === 'taper' ? 1 : 5}
+              onChange={(vbitAngleDeg) => up({ vbitAngleDeg })}
+              className={cellCls + ' text-right'}
+              title={`${tool.type === 'taper' ? 'Angle per side' : 'Included angle'} — ${NUMERIC_HINT}`}
+            />
           </>
+        ) : tool.type === 'bullnose' ? (
+          // A bull nose has no angle; its one shape number is the corner radius, which
+          // shares the column rather than widening the table for one type.
+          <DimInput valueMM={tool.cornerRadiusMM ?? 0} onChangeMM={(mm) => up({ cornerRadiusMM: Math.min(mm, tool.diameterMM / 2) })}
+            minMM={0} stepMM={0.5} kind="length" units={units}
+            title={`Corner radius (${units === 'in' ? 'in' : 'mm'}) — 0 is a flat end mill, half the Ø a ball nose`} />
         ) : (
-          <span className="text-gray-600 dark:text-neutral-400 px-1">—</span>
+          // Right-aligned under the angles, which end left of NumericInput's stepper:
+          // the field's own px-1 plus the stepper's ml-1 + 11 px chevrons = 19 px.
+          <div className="text-right pr-[19px] text-gray-600 dark:text-neutral-400">—</div>
         )}
       </td>
-      <td className="px-2 py-1 text-center">
+      <td className="px-2 py-1 text-center whitespace-nowrap">
+        {/* Move to another folder: a native select laid invisibly over the icon, so the
+            menu is the platform's own and needs no popover of ours. Folder options are
+            'f:'-prefixed because My Tools is the folder '' — the same as the placeholder,
+            so picking it would not register as a change. */}
+        <span className="relative inline-block opacity-0 group-hover:opacity-100 focus-within:opacity-100 p-0.5 rounded text-gray-600 dark:text-neutral-400 hover:text-blue-500 hover:bg-blue-900/20 transition-colors"
+          title="Move to another folder">
+          <FolderInput size={ROW_ICON} />
+          <select value="" aria-label="Move to another folder"
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => {
+              if (e.target.value === NEW_FOLDER) { onNewFolder(tool.id); return }
+              const to = e.target.value.slice(2)
+              moveToFolder(tool.id, to)
+              useUIStore.getState().showStatus(`Moved "${tool.name}" to ${to || MY_TOOLS}.`, 'info')
+            }}
+            className="absolute inset-0 opacity-0 cursor-pointer w-full">
+            <option value="" disabled>Move to…</option>
+            {folders.filter((f) => f !== folderOf(tool)).map((f) => (
+              <option key={f || '(mine)'} value={`f:${f}`}>{f || MY_TOOLS}</option>
+            ))}
+            <option value={NEW_FOLDER}>New folder…</option>
+          </select>
+        </span>
+        {folderOf(tool) !== '' && (
+          // A catalogue is for browsing; the bits the user actually owns belong in their rack.
+          <button onClick={(e) => { e.stopPropagation(); copyToMyTools(tool.id) }}
+            title={`Copy to ${MY_TOOLS} — this folder keeps its own`}
+            className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-gray-600 dark:text-neutral-400 hover:text-blue-500 hover:bg-blue-900/20 transition-colors">
+            <CopyPlus size={ROW_ICON} />
+          </button>
+        )}
         {/* stopPropagation: the row's select would otherwise fire after the
             delete and leave selectedToolId pointing at the removed tool. */}
         <button onClick={(e) => { e.stopPropagation(); if (canDelete) deleteTool(tool.id) }} disabled={!canDelete}
           title={canDelete ? 'Delete tool' : 'Cannot delete the last tool'}
           className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-gray-600 dark:text-neutral-400 hover:text-red-400 hover:bg-red-900/20 disabled:opacity-20 disabled:cursor-not-allowed transition-colors">
-          <Trash2 size={ICON.sm} />
+          <Trash2 size={ROW_ICON} />
         </button>
       </td>
     </tr>
@@ -227,11 +255,22 @@ function ToolRow({ tool, units, spindleType, selected }: { tool: Tool; units: Un
 const headBtnCls = 'flex items-center gap-1.5 px-2.5 py-1 rounded text-body bg-gray-200 dark:bg-neutral-700 hover:bg-gray-300 dark:hover:bg-neutral-600 text-gray-700 dark:text-neutral-300 transition-colors'
 
 export default function ToolLibraryPanel() {
-  const { tools, addTool, selectedToolId, sortBy, setSortBy } = useToolStore()
+  const { tools: allTools, addTool, selectedToolId, sortBy, setSortBy, openFolder: wantFolder, setOpenFolder, renameFolder } = useToolStore()
+  const folders = useMemo(() => folderNames(allTools), [allTools])
+  // A folder emptied (its last tool deleted) no longer exists — show My Tools.
+  const openFolder = wantFolder && folders.includes(wantFolder) ? wantFolder : ''
+  const tools = useMemo(() => allTools.filter((t) => folderOf(t) === openFolder), [allTools, openFolder])
   const selectedTool = tools.find((t) => t.id === selectedToolId) ?? null
-  const [importing, setImporting] = useState<SettingsFile | null>(null)
+  const [importing, setImporting] = useState<ToolFileImport | null>(null)
+  const [deleting, setDeleting] = useState<FolderDeletePlan | null>(null)
+  const [renaming, setRenaming] = useState<string | null>(null)
+  // A tool waiting for a name for the folder it is being moved into ("New folder…").
+  const [newFolderFor, setNewFolderFor] = useState<string | null>(null)
+  const moveToFolder = useToolStore((s) => s.moveToFolder)
+  const folderLabel = openFolder || MY_TOOLS
   const units = useWorkpieceStore((s) => s.units)
   const spindleType = useWorkpieceStore((s) => s.spindleType)
+  const hasDial = !!SPINDLE_INFO[spindleType].dial
   const lenUnit = units === 'in' ? 'in' : 'mm'
   const feedUnit = units === 'in' ? 'in/min' : 'mm/min'
 
@@ -245,25 +284,41 @@ export default function ToolLibraryPanel() {
 
   return (
     <div className="flex flex-col h-full bg-gray-50 dark:bg-neutral-900">
-      {importing && <ImportPreviewDialog file={importing} sectionKey="tools" onClose={() => setImporting(null)} />}
+      {importing && <ToolImportDialog file={importing} onClose={() => setImporting(null)} />}
+      {deleting && (
+        <ConfirmSettingsDialog title={`Delete the folder "${deleting.folder}"?`} confirmLabel="Delete folder"
+          intro={`Its tools are removed from the library. ${MY_TOOLS} and your other folders are not touched.`}
+          groups={[
+            { heading: `Deleted (${deleting.removed.length})`, items: deleting.removed.map((t) => t.name), tone: 'remove' },
+            { heading: `Kept — the open project cuts with ${deleting.kept.length === 1 ? 'it' : 'them'} (${deleting.kept.length})`, items: deleting.kept.map((t) => t.name), tone: 'keep' },
+          ]}
+          onClose={() => setDeleting(null)}
+          onConfirm={() => {
+            const ok = applyDeleteFolder(deleting)
+            const kept = deleting.kept.length ? ` — ${deleting.kept.length} the open project cuts with kept` : ''
+            useUIStore.getState().showStatus(ok
+              ? `Deleted ${deleting.removed.length} tool${deleting.removed.length === 1 ? '' : 's'} from "${deleting.folder}"${kept}.`
+              : `"${deleting.folder}" holds every tool in the library — add one to ${MY_TOOLS} before deleting it.`, ok ? 'info' : 'warn')
+          }} />
+      )}
       <div className="flex items-center justify-between px-4 py-2 border-b border-gray-300 dark:border-neutral-700 flex-shrink-0">
         <span className="text-body font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider">
-          Tool Library — {tools.length} tool{tools.length !== 1 ? 's' : ''}
+          Tool Library — {folderLabel} — {tools.length} tool{tools.length !== 1 ? 's' : ''}
         </span>
         <div className="flex items-center gap-2">
         <RestoreToolsButton className={headBtnCls}
-          title="Put back the tools FreazyKam comes with — shows what will be removed and kept before anything changes">
+          title="Put back the tools FreazyKam comes with in My Tools — imported folders are not touched; shows what will be removed and kept first">
           <ListRestart size={ICON.sm} />
           Restore Defaults
         </RestoreToolsButton>
-        <button onClick={async () => { const f = await pickSectionFile('tools'); if (f) setImporting(f) }}
-          title="Import a tool set from a .fkset file — tools are added beside yours; one with your tool's name but different sizes or feeds comes in as a copy"
+        <button onClick={async () => { const f = await pickToolFile(); if (f) setImporting(f) }}
+          title="Import a tool set — a .fkset or a Fusion 360 tool library (.json) — into a folder of its own; your tools are not touched"
           className={headBtnCls}>
           <Import size={ICON.sm} />
           Import
         </button>
-        <button onClick={exportTools}
-          title={`Export all ${tools.length} tools to a .fkset file, to share or keep`}
+        <button onClick={() => exportToolFolder(openFolder)}
+          title={`Export the ${tools.length} tools in "${folderLabel}" to a .fkset file, to share or keep`}
           className={headBtnCls}>
           <Share size={ICON.sm} />
           Export
@@ -279,13 +334,87 @@ export default function ToolLibraryPanel() {
         </div>
       </div>
 
+      {/* The folders. My Tools is always first and is the user's own; every other folder
+          is a tool set imported beside it. The open one renames on double-click. */}
+      {(folders.length > 0 || openFolder || newFolderFor) && (
+        <div className="flex items-center gap-1 px-3 py-1.5 border-b border-gray-300 dark:border-neutral-700 flex-shrink-0 overflow-x-auto">
+          {['', ...folders].map((f) => {
+            const open = f === openFolder
+            const n = allTools.filter((t) => folderOf(t) === f).length
+            return renaming !== null && f !== '' && f === renaming ? (
+              <input key={f} autoFocus defaultValue={f}
+                onBlur={(e) => { if (e.target.value.trim()) renameFolder(f, e.target.value); setRenaming(null) }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                  if (e.key === 'Escape') { e.stopPropagation(); setRenaming(null) }
+                }}
+                className="px-2 py-0.5 rounded text-body bg-white dark:bg-neutral-900 border border-blue-500 text-gray-900 dark:text-neutral-100 focus:outline-none w-48" />
+            ) : (
+              // An imported folder's tab carries its own delete, shown on hover (always on
+              // the open one) — the bar's Delete button alone sat far from the tabs and only
+              // for the open folder. My Tools has none: it is the user's own and always exists.
+              <div key={f || '(mine)'} className={`group/tab flex items-center rounded transition-colors ${
+                  open ? 'bg-blue-600 text-white' : 'text-gray-700 dark:text-neutral-300 hover:bg-gray-200 dark:hover:bg-neutral-700'
+                }`}>
+                <button onClick={() => setOpenFolder(f)}
+                  onDoubleClick={() => { if (f) setRenaming(f) }}
+                  title={f ? `${f} — double-click to rename` : 'Your own tools'}
+                  className={`flex items-center gap-1.5 py-0.5 text-body whitespace-nowrap ${f ? 'pl-2.5 pr-1' : 'px-2.5'}`}>
+                  {open ? <FolderOpen size={FOLDER_ICON} /> : <Folder size={FOLDER_ICON} />}
+                  {f || MY_TOOLS}
+                  <span className={open ? 'text-blue-100' : 'text-gray-500 dark:text-neutral-500'}>{n}</span>
+                </button>
+                {f && (
+                  <button onClick={() => setDeleting(planDeleteFolder(f))}
+                    title={`Delete the folder "${f}" and its tools`}
+                    className={`mr-1 p-0.5 rounded hover:bg-red-600 hover:text-white transition-opacity ${
+                      open ? 'opacity-80' : 'opacity-0 group-hover/tab:opacity-100'
+                    }`}>
+                    <X size={ICON.sm} />
+                  </button>
+                )}
+              </div>
+            )
+          })}
+          {newFolderFor && (
+            <span className="flex items-center gap-1 text-gray-700 dark:text-neutral-300">
+              <FolderPlus size={FOLDER_ICON} />
+              <input autoFocus placeholder="New folder name"
+                onBlur={(e) => {
+                  const name = e.target.value.trim()
+                  const tool = allTools.find((t) => t.id === newFolderFor)
+                  if (name && tool) {
+                    moveToFolder(tool.id, name)
+                    useUIStore.getState().showStatus(`Moved "${tool.name}" to ${name}.`, 'info')
+                  }
+                  setNewFolderFor(null)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                  if (e.key === 'Escape') { e.stopPropagation(); (e.target as HTMLInputElement).value = ''; (e.target as HTMLInputElement).blur() }
+                }}
+                className="px-2 py-0.5 rounded text-body bg-white dark:bg-neutral-900 border border-blue-500 text-gray-900 dark:text-neutral-100 focus:outline-none w-48" />
+            </span>
+          )}
+          {openFolder && (
+            <button onClick={() => setDeleting(planDeleteFolder(openFolder))}
+              title={`Delete the folder "${openFolder}" and its tools`}
+              className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded text-body text-gray-600 dark:text-neutral-400 hover:text-red-400 hover:bg-red-900/20 transition-colors whitespace-nowrap">
+              <Trash2 size={ICON.sm} />
+              Delete folder
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="flex-1 overflow-auto">
-        <table className="w-full table-fixed border-collapse text-body" style={{ minWidth: TABLE_MIN_W }}>
+        <table className="w-full table-fixed border-collapse text-body" style={{ minWidth: hasDial ? `calc(${TABLE_MIN_W} + ${DIAL_W}rem)` : TABLE_MIN_W }}>
           <thead>
             <tr className="border-b border-gray-200 dark:border-neutral-600 sticky top-0 bg-gray-100 dark:bg-neutral-800">
-              <th className="px-2 py-1.5" style={{ width: '5rem' }} />
+              <th className="px-2 py-1.5" style={{ width: '5.5rem' }} />
               {COLUMNS.map((col) => (
-                <th key={col.key} title={col.title} style={col.w ? { width: col.w } : undefined}
+                <Fragment key={col.key}>
+                <th title={col.title} style={col.w ? { width: col.w } : undefined}
                   onClick={col.sort ? () => clickSort(col.sort!) : undefined}
                   className={`px-2 py-1.5 align-bottom ${col.numeric ? 'text-right' : 'text-left'} text-label font-semibold uppercase tracking-wider select-none ${
                     col.sort
@@ -306,18 +435,32 @@ export default function ToolLibraryPanel() {
                       : <ChevronDown size={ICON.xs} className="inline-block ml-0.5 -mt-0.5" />
                   )}
                 </th>
+                {col.key === 'rpm' && hasDial && (
+                  <th title={`Speed dial setting on the ${SPINDLE_INFO[spindleType].label}, to the half detent`}
+                    style={{ width: `${DIAL_W}rem` }}
+                    className="px-2 py-1.5 align-bottom text-right text-label font-semibold uppercase tracking-wider select-none text-gray-600 dark:text-neutral-400">
+                    Dial
+                  </th>
+                )}
+                </Fragment>
               ))}
-              <th title="V-bit full included angle (V-bit only)" style={{ width: '6.5rem' }}
+              <th title="V-bit: included angle · Taper: angle per side · Bull nose: corner radius" style={{ width: '5rem' }}
                 className="px-2 py-1.5 text-right text-label font-semibold text-gray-600 dark:text-neutral-400 uppercase tracking-wider whitespace-nowrap select-none">
-                Angle<span className="ml-0.5 normal-case font-normal tracking-normal">°</span>
+                Angle<span className="ml-0.5 normal-case font-normal tracking-normal">° / R</span>
               </th>
-              <th className="px-2 py-1.5" style={{ width: '2rem' }} />
+              {/* Named, because the icons under it only show on hover — unlabelled, the
+                  column read as empty space after the table. */}
+              <th title="Move to another folder · Copy to My Tools · Delete — hover a row to see them"
+                style={{ width: '5.5rem' }}
+                className="px-2 py-1.5 text-center text-label font-semibold text-gray-600 dark:text-neutral-400 uppercase tracking-wider whitespace-nowrap select-none">
+                Actions
+              </th>
             </tr>
           </thead>
           <tbody>
             {rows.map((tool) => (
               <ToolRow key={tool.id} tool={tool} units={units} spindleType={spindleType}
-                selected={tool.id === selectedToolId} />
+                selected={tool.id === selectedToolId} folders={['', ...folders]} onNewFolder={setNewFolderFor} />
             ))}
           </tbody>
         </table>

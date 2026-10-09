@@ -49,7 +49,7 @@ export function mergeProjectTools(
 
 /**
  * Whether two tools cut the same shape. What a toolpath is computed from — the type,
- * the diameter, the cone angle of a V-bit or taper, and a taper's length (it sets how
+ * the diameter, the cone angle of a V-bit or taper, a bull nose's corner radius, and a taper's length (it sets how
  * wide the taper opens out: `maxCutRadiusMM`). Name, flutes, rpm and feeds are how the
  * user RUNS the tool, and are theirs to keep.
  */
@@ -57,6 +57,7 @@ export function sameCut(a: Tool, b: Tool): boolean {
   if (a.type !== b.type || a.diameterMM !== b.diameterMM) return false
   if ((a.type === 'vbit' || a.type === 'taper') && a.vbitAngleDeg !== b.vbitAngleDeg) return false
   if (a.type === 'taper' && a.maxDepthMM !== b.maxDepthMM) return false
+  if (a.type === 'bullnose' && (a.cornerRadiusMM ?? 0) !== (b.cornerRadiusMM ?? 0)) return false
   return true
 }
 

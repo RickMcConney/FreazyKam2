@@ -65,22 +65,71 @@ The **Tool Library** tab across the top holds your cutters. It is saved with the
 *and* kept in the browser between sessions, so a new project starts with the tools you
 already own.
 
-![The Tool Library: fifteen tools with diameter, flutes, RPM, feeds, max depth and angle, and Restore Defaults, Import, Export and Add Tool across the top](images/03-tool-library.png)
+![The Tool Library showing the IDC folder: 79 imported tools sorted by name, with My Tools and IDC folder tabs above the table, and Restore Defaults, Import, Export and Add Tool across the top](images/03-tool-library.png)
 
-<!-- FULL APP · 1600 px wide, downscaled from the 2800 px capture. Tool Library tab, a working library sorted by name. -->
+<!-- FULL APP · 1600 px wide, downscaled from the 2800 px capture. Tool Library tab, the IDC Woodcraft catalogue imported into its own folder, sorted by name. -->
 
-**Sharing a tool set:** **Export** (top right) saves the whole library as a `.fkset` file,
-and **Import** brings tools in from one — from a friend, a forum, or your other computer.
-Imported tools are always *added*: one with the same name as yours but different sizes or
-feeds comes in as *"Name (imported)"* beside it, and an identical one is skipped, so your
-own tools are never changed. Before anything happens, a check lists what the file would
-add — *"Import 13 tools?"* — with **OK** and **Cancel**; a file that would add nothing
-says so and only offers **Close**.
+### Folders
 
-**Restore Defaults** puts back the tools FreazyKam comes with. It first lists what will be
-removed, which default tools come back, and which of yours are **kept because the open
-project cuts with them** — an operation names its tool, so those stay, or its toolpath would
-lose its cutter. It can't be undone with Undo, so the dialog offers **Export a backup**.
+The library is split into **folders**, shown as tabs above the table. **My Tools** is your
+own rack — the cutters you actually own — and is always there. Every other folder is a
+tool set you **imported**, and an import always lands in a folder of its own, so a vendor's
+80-bit catalogue never mixes in with, renames, or overwrites the tools you set up yourself.
+The number on each tab is how many tools it holds; click a tab to show its tools.
+
+- **Rename** a folder by double-clicking its tab.
+- **Delete** a folder with the **×** on its tab (or **Delete folder** at the right of the
+  bar). The dialog lists what goes, and keeps any tool the open project cuts with. My Tools
+  can't be deleted.
+- **Move** a tool to another folder with the folder icon in its row's **Actions** — pick a
+  folder, or **New folder…** to make one. The tool keeps its identity, so toolpaths that
+  use it are unaffected.
+- **Copy to My Tools** (the copy icon, in an imported folder's rows) adds the bit to your
+  own rack and leaves the folder as the vendor published it. This is how a catalogue bit
+  you've bought becomes one of yours.
+
+**Add Tool** adds to the folder you're looking at, and **Export** saves *that folder* as a
+`.fkset` file to share. (The whole library, every folder, goes out with Setup's
+**Export** — see [settings files](#your-settings-in-a-file).)
+
+### Importing a tool set
+
+**Import** reads two kinds of file:
+
+- a FreazyKam **`.fkset`** — a tool set a friend exported, or one of your own from another
+  computer;
+- a **Fusion 360 tool library** (`.json`) — the format most bit makers publish their
+  catalogue in. Look on the maker's website for a *Fusion 360* download.
+
+A dialog asks **which folder** the tools go into — the maker's name by default (*IDC
+Woodcraft*), or the file's name — and lists what will be added before anything changes.
+Pick an existing folder to bring a catalogue up to date: tools already there exactly are
+skipped, and a changed one comes in beside the old as *"Name (imported)"*, so importing
+the same file twice adds nothing. Your own tools are never touched. Typing *My Tools* as
+the folder is the one way to import straight into your rack.
+
+From a Fusion 360 library, FreazyKam takes each bit's type, diameter, flutes, flute
+length, and the maker's starting **RPM, feed and plunge**, converted to millimetres. A few
+things are worth knowing:
+
+- **Bits FreazyKam can't model are left out, and listed.** Round-over (radius) bits are the
+  usual ones — the dialog names each one and why.
+- **A bull-nose or bowl bit comes in as a Bull Nose**, keeping its corner radius.
+- **A V-bit's Max Z is worked out from its cone**, not copied from the file — catalogues
+  often get the flute length wrong (one lists a ½" 90° V-bit as 1.7 mm deep when its cone is
+  6.35 mm).
+- **A taper's angle comes in per side, and its Ø is the tip** — the same conventions the
+  library uses ([below](#the-two-angle-conventions)).
+- The maker's feeds are **starting numbers for their bit, not for your machine**. With
+  Auto Feeds & Speeds on, each cut works out its own anyway.
+
+**Restore Defaults** puts back the tools FreazyKam comes with **in My Tools** — imported
+folders are not touched. It first lists what will be removed, which default tools come
+back, and which of yours are **kept because the open project cuts with them** — an
+operation names its tool, so those stay, or its toolpath would lose its cutter. It can't
+be undone with Undo, so the dialog offers **Export a backup**.
+
+### The table
 
 Each row is one cutter. The little picture at the left is drawn from that tool's own
 numbers, so a taper really does taper and a V-bit really does come to a point — a quick
@@ -89,20 +138,23 @@ check that a row says what you meant.
 | Column | Means |
 |---|---|
 | **Name** | Yours to choose. Name them the way you'd reach for them in the shop |
-| **Type** | End Mill, Ball Nose, V-bit, Taper End Mill, Drill — this decides which operations offer it |
+| **Type** | End Mill, Bull Nose, Ball Nose, V-bit, Taper End Mill, Drill — this decides which operations offer it |
 | **Ø** | Cutting diameter — **except on a taper**, where it is the *tip* diameter |
 | **Flutes** | With RPM and feed, this sets chip load |
-| **RPM** | Spindle speed, with the router dial equivalent beneath it |
+| **RPM** | Spindle speed |
+| **Dial** | The router's speed dial setting for that RPM — shown only when Setup names a trim router with a dial ([Spindle](#spindle)) |
 | **XY Feed** | Cutting feed |
 | **Z Feed** | Plunge feed — always slower; a cutter plunging is cutting with its worst geometry |
 | **Max Z** | Deepest this tool may cut, i.e. its usable flute length |
-| **Angle** | V-bits: **included**. Tapers: **per side**. Blank for everything else |
+| **Angle° / R** | V-bits: the **included** angle. Tapers: the angle **per side**. Bull noses: the **corner radius**. Hover the field to see which. A dash for everything else |
+| **Actions** | Shown when you hover a row: move to another folder, copy to My Tools (imported folders only), delete |
 
 ### Type decides where a tool can be used
 
 | Tool | Offered to |
 |---|---|
 | End mill | Profile, Pocket, Trochoidal, Surface, Inlay, helical drilling |
+| Bull nose | Profile, Pocket, Trochoidal, 3D Profile (finishing and roughing) |
 | Ball nose | Profile, Pocket, Trochoidal, 3D Profile |
 | V-bit | V-Carve, Photo V-Carve, Inlay walls, Profile |
 | Taper end mill | V-Carve, Inlay walls, 3D Profile, Profile |
@@ -111,6 +163,24 @@ check that a row says what you meant.
 If a cutter you expected isn't in an operation's list, it is the wrong **type** for that
 operation. Max Z does not hide a tool — ask for more depth than it has and the depth
 field warns *Exceeds tool Max Z*, leaving the decision to you.
+
+### Bull nose and bowl bits
+
+A **bull nose** has a flat bottom whose edge is rounded into the side by a **corner
+radius**, R in the Angle° / R column. A bowl bit is a bull nose with a big corner: the 1"
+IDC bowl bit has a ⅜" corner, so only the middle ¼" of its bottom is flat. Set R to 0 and it
+cuts like an end mill; set it to half the diameter and it is a ball nose. When you switch a
+tool to Bull Nose, R starts at a quarter of its diameter.
+
+It is offered wherever a flat-bottomed or round-bottomed cutter is: Profile, Pocket,
+Trochoidal, and 3D Profile for finishing or roughing. Two things to know:
+
+- **In a pocket, keep the stepover under the flat width** (Ø − 2 × R). The passes are
+  spaced as if the whole diameter were flat, so a wider step leaves low ridges between
+  them — about 0.2 mm on the bowl bit at a 0.4" step.
+- **In 3D Profile it is modelled exactly**, flat and corner, so it never cuts into the
+  model. It works the model out on a finer grid when the corner is small, which makes a
+  small-cornered bull nose slower to generate than a ball nose of the same size.
 
 ### The two angle conventions
 
@@ -121,10 +191,10 @@ the trade rather than tidying it up:
   on each side of the axis.
 - A **taper end mill's** angle is **per side**, which is how the bits are sold.
 
-And a taper's diameter column is its **tip**, not what it cuts. The library works out the
-rest for you: the shot above shows a 5°/side taper on a 2 mm tip, annotated *Ø5.33 mm at
-depth · 10° incl*. That is the real cutting diameter at its usable length, and the
-included angle for comparison against a V-bit.
+And a taper's diameter column is its **tip**, not what it cuts. Its widest cut comes from
+the tip, the angle and Max Z together: a 5°/side taper on a 2 mm tip with 20 mm of taper
+cuts Ø5.33 mm at full depth, and its included angle is 10°, for comparison against a
+V-bit.
 
 The practical difference is at the bottom of a cut. A taper's tip is a small ball, so it
 can enter a groove narrower than itself and leave a round-bottomed cut instead of refusing

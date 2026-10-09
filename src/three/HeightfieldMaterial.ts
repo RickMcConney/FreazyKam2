@@ -412,7 +412,7 @@ export class HeightfieldMaterial {
       const s = segments[i]
       if (isCuttingSeg(s)) {
         const ts = segTool(s, this._toolStates)
-        this._hf.carve(s.prevX, s.prevY, s.x, s.y, s.prevZ, s.z, ts.toolVbitHalfAngleTan, ts.toolBallNose, ts.toolDiameterMM, ts.toolTipRadiusMM)
+        this._hf.carve(s.prevX, s.prevY, s.x, s.y, s.prevZ, s.z, ts.toolVbitHalfAngleTan, ts.toolBallNose, ts.toolDiameterMM, ts.toolTipRadiusMM, ts.toolCornerRadiusMM)
       }
       // Checked in blocks: performance.now() per segment costs more than the carve on
       // the short moves a fine toolpath is made of.
@@ -438,7 +438,7 @@ export class HeightfieldMaterial {
         const pz0 = seg.prevZ + (seg.z - seg.prevZ) * startT
         const pz1 = seg.prevZ + (seg.z - seg.prevZ) * t
         const ts = segTool(seg, this._toolStates)
-        this._hf.carve(x0, y0, x1, y1, pz0, pz1, ts.toolVbitHalfAngleTan, ts.toolBallNose, ts.toolDiameterMM, ts.toolTipRadiusMM)
+        this._hf.carve(x0, y0, x1, y1, pz0, pz1, ts.toolVbitHalfAngleTan, ts.toolBallNose, ts.toolDiameterMM, ts.toolTipRadiusMM, ts.toolCornerRadiusMM)
       }
     }
     this._lastPartialIdx = segIdx

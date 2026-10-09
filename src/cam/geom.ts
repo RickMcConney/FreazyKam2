@@ -20,6 +20,10 @@ import type { Tool } from '../store/toolStore'
 //    the cone runs out (h > R/tanθ).
 //  • ballnose — sphere of radius R tangent to the shank: a(h) = √(h(2R−h)) while
 //    h < R, then the full radius.
+//  • bullnose — a flat bottom of radius R − r rounded into the wall by a corner of
+//    radius r: f(d) = 0 out to R − r, then r − √(r² − (d − (R − r))²). The general
+//    family of the two straight-shanked tools: r = 0 is the end mill, r = R the ball
+//    nose. A bowl bit is a bull nose with a big corner.
 //  • taper — a ball of radius r at the tip blended TANGENTIALLY into a cone of
 //    half-angle θ; the general two-parameter family that contains both of the
 //    above. The ball and the cone meet at
@@ -56,6 +60,16 @@ function halfAngleTan(tool: Tool): number | null {
   const halfDeg = includedAngleDeg(tool) / 2
   if (!(halfDeg > 0 && halfDeg < 90)) return null
   return Math.tan((halfDeg * Math.PI) / 180)
+}
+
+// A bull nose's corner radius, clamped to [0, R]; a ball nose is all corner (R) and
+// every other type has none.
+export function cornerRadiusMM(tool: Tool): number {
+  const R = Math.max(0, tool.diameterMM / 2)
+  if (tool.type === 'ballnose') return R
+  if (tool.type !== 'bullnose') return 0
+  const r = tool.cornerRadiusMM ?? 0
+  return Number.isFinite(r) ? Math.max(0, Math.min(R, r)) : 0
 }
 
 // Radius of the ball ground on the tip. A taper's stored diameter IS that ball;
@@ -143,6 +157,11 @@ export function toolProfileHeightMM(tool: Tool, dMM: number): number {
     }
     case 'ballnose':
       return ballProfile(dc, R)
+    case 'bullnose': {
+      const rc = cornerRadiusMM(tool)
+      const flat = R - rc
+      return dc <= flat ? 0 : ballProfile(dc - flat, rc)
+    }
     default:
       return 0
   }
@@ -166,6 +185,10 @@ export function toolRadiusAtHeight(tool: Tool, heightAboveTipMM: number): number
     }
     case 'ballnose':
       return h >= R ? R : Math.sqrt(Math.max(0, h * (2 * R - h)))
+    case 'bullnose': {
+      const rc = cornerRadiusMM(tool)
+      return h >= rc ? R : R - rc + Math.sqrt(Math.max(0, h * (2 * rc - h)))
+    }
     default:
       return R
   }

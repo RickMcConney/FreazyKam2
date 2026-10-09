@@ -22,7 +22,7 @@ export function RestoreToolsButton({ className, title, children }: Props) {
   const c = useConfirm(planRestoreTools)
   const p = c.plan
   const groups: ChangeGroup[] = p ? [
-    { heading: `Removed from your library (${p.removed.length})`, items: p.removed, tone: 'remove' },
+    { heading: `Removed from My Tools (${p.removed.length})`, items: p.removed, tone: 'remove' },
     { heading: `Default tools put back (${p.added.length})`, items: p.added, tone: 'change' },
     { heading: `Kept — the open project cuts with ${p.kept.length === 1 ? 'it' : 'them'} (${p.kept.length})`, items: p.kept, tone: 'keep' },
   ] : []
@@ -30,7 +30,7 @@ export function RestoreToolsButton({ className, title, children }: Props) {
     <button className={className} title={title} onClick={c.open}>{children}</button>
     {p && (
       <ConfirmSettingsDialog title={`Restore the ${DEFAULT_TOOLS.length} default tools?`} groups={groups} confirmLabel="Restore defaults"
-        intro="Your tool library will be replaced by the tools FreazyKam comes with."
+        intro="My Tools will be replaced by the tools FreazyKam comes with. Imported folders are not touched."
         onClose={c.close}
         onConfirm={() => {
           applyToolReplace(p)

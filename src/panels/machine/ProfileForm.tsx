@@ -56,7 +56,7 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
   // A profile follows the path with the side of the tool, so it needs a side-cutting
   // edge — a drill has none. Tapered tools stay: the taper hint below explains the
   // wall a V-bit or ball nose leaves.
-  const cutters = toolsOfType(tools, ['endmill', 'ballnose', 'vbit', 'taper'])
+  const cutters = toolsOfType(tools, ['endmill', 'bullnose', 'ballnose', 'vbit', 'taper'])
   const defaultTool = cutters[0]
   const [form, setForm] = useState<ProfileFormState>(() => {
     const base = editOp ? {

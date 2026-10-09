@@ -28,7 +28,7 @@ toolpath, and closing the form without pressing it leaves things as they were.
 
 | Field | What to know |
 |---|---|
-| **Tool** | Lists only the tool *types* this operation can use (see [chapter 3](03-stock-and-tools.md#type-decides-where-a-tool-can-be-used)) |
+| **Tool** | Lists only the tool *types* this operation can use (see [chapter 3](03-stock-and-tools.md#type-decides-where-a-tool-can-be-used)), from My Tools and tools you've used lately. **Browse library…** finds the rest — see [below](#choosing-a-tool-from-another-folder) |
 | **Start** | Where in Z the cut begins — see [below](#start-height) |
 | **Depth** | Total depth of the cut, measured **down from the start height**, not from stock top |
 | **Step down** | How much each pass takes. Left alone it is derived from the tool, material and rigidity, and snapped to a whole division of the depth so the last pass isn't a sliver |
@@ -40,6 +40,34 @@ toolpath, and closing the form without pressing it leaves things as they were.
 starts thick and ends thin, which leaves a cleaner edge and pushes the cutter away from
 the work. Conventional suits a machine with backlash it can't take up, or a material that
 tears out on the way in.
+
+### Choosing a tool from another folder
+
+The **Tool** dropdown is kept short on purpose. It lists **My Tools**, then **Recent from
+other folders** — bits from an imported catalogue that you've picked lately — and the tool
+already chosen, wherever it lives. A whole vendor catalogue would bury your own handful of
+bits, so it isn't listed there.
+
+To use any other tool, pick **Browse library…** at the bottom of the dropdown:
+
+![The Choose a tool dialog over the Profile form: folders down the left with My Tools and IDC Woodcraft, the IDC Woodcraft folder's end mills in a table with diameter, angle, flutes, RPM and feed, and a search box at the top](images/04-choose-tool.png)
+
+<!-- FULL APP · 1600 px wide, downscaled from the 2800 px capture. Profile form open, Browse library… chosen from the Tool dropdown. -->
+
+- **Folders** run down the left, each with a count, and it opens on the folder holding the
+  current tool.
+- **Search every folder** finds a bit by name wherever it is filed, and adds a Folder
+  column to the results.
+- The table shows what tells two near-identical bits apart — type, Ø (a taper's is
+  marked *tip*), angle, flutes, RPM and feed.
+- **Only tools this operation can cut with are listed**, so a Profile never offers a drill.
+- **Click a row** to use that tool. It then appears under *Recent from other folders* in
+  every tool dropdown, so you only browse for it once.
+- Hover a catalogue row and click its **copy icon** to copy the bit into My Tools *and*
+  use the copy — the way to make a catalogue bit permanently one of yours.
+
+**Esc** or **Cancel** closes the dialog without changing the tool. The dropdown has no
+Browse entry until you've imported a folder.
 
 ### Depth is how far below the start, not a Z position
 

@@ -34,6 +34,7 @@ export interface ToolState {
   // point, and the two are otherwise the same tool — a cone tangent to a tip ball.
   toolTipRadiusMM?: number
   toolBallNose?: boolean         // set for ball nose segments
+  toolCornerRadiusMM?: number    // a bull nose's corner radius; set for bull nose segments
   toolDrill?: boolean            // set for drill-bit segments (118° point)
   spindleRpm: number             // active spindle speed (S word); 0 if none seen
   fluteCount: number             // from "flutes:N" comment; defaults to 2
@@ -70,6 +71,7 @@ export function segTool(seg: SimSegment, toolStates: ToolState[]): ToolState {
 export function toolTypeOf(ts: ToolState): ToolType {
   return ts.toolDrill ? 'drill'
     : ts.toolBallNose ? 'ballnose'
+    : ts.toolCornerRadiusMM !== undefined ? 'bullnose'
     : ts.toolTipRadiusMM ? 'taper'
     : ts.toolVbitHalfAngleTan !== undefined ? 'vbit' : 'endmill'
 }
@@ -87,7 +89,7 @@ export function feedDiameterOf(ts: ToolState): number {
 const WORD_RE = /([A-Za-z])\s*(-?\d*\.?\d+)/g
 
 // Every tool-comment marker read below ("dia", "vbit-angle:", "taper-tip:", "ballnose",
-// "drillbit", "flutes:") contains an a, an i or a colon, so a line with none of them
+// "bullnose-r:", "drillbit", "flutes:") contains an a, an i or a colon, so a line with none of them
 // cannot match any of those regexes. That skips every plain G0/G1 X/Y/Z/F move exactly.
 // (Gating on ';' or '(' instead would be cheaper but not equivalent: the markers are
 // matched anywhere on the line, comment or not.)
@@ -180,6 +182,7 @@ export function parseGcode(text: string, initialZMM = 5, limits?: MotionLimits):
   let toolVbitHalfAngleTan: number | undefined
   let toolTipRadiusMM: number | undefined
   let toolBallNose: boolean | undefined
+  let toolCornerRadiusMM: number | undefined
   let toolDrill: boolean | undefined
   let spindleRpm = 0
   let fluteCount = 2
@@ -209,14 +212,14 @@ export function parseGcode(text: string, initialZMM = 5, limits?: MotionLimits):
   const matchesCur = (t: ToolState) =>
     t.toolDiameterMM === toolDiameterMM && t.toolVbitHalfAngleTan === toolVbitHalfAngleTan &&
     t.toolTipRadiusMM === toolTipRadiusMM &&
-    t.toolBallNose === toolBallNose && t.toolDrill === toolDrill &&
+    t.toolBallNose === toolBallNose && t.toolCornerRadiusMM === toolCornerRadiusMM && t.toolDrill === toolDrill &&
     t.spindleRpm === spindleRpm && t.fluteCount === fluteCount
   const syncToolState = () => {
     if (matchesCur(toolStates[curStateIdx])) return
     const found = toolStates.findIndex(matchesCur)
     if (found >= 0) { curStateIdx = found; return }
     curStateIdx = toolStates.length
-    toolStates.push({ toolDiameterMM, toolVbitHalfAngleTan, toolTipRadiusMM, toolBallNose, toolDrill, spindleRpm, fluteCount })
+    toolStates.push({ toolDiameterMM, toolVbitHalfAngleTan, toolTipRadiusMM, toolBallNose, toolCornerRadiusMM, toolDrill, spindleRpm, fluteCount })
   }
 
   // Axis words: absolute (G90) coordinates, or deltas from the current
@@ -235,6 +238,7 @@ export function parseGcode(text: string, initialZMM = 5, limits?: MotionLimits):
         toolVbitHalfAngleTan = undefined  // reset; overwritten below if vbit-angle present
         toolTipRadiusMM = undefined        // reset; overwritten below if taper-tip present
         toolBallNose = undefined           // reset; overwritten below if ballnose present
+        toolCornerRadiusMM = undefined     // reset; overwritten below if bullnose-r present
         toolDrill = undefined              // reset; overwritten below if drillbit present
       }
 
@@ -251,6 +255,10 @@ export function parseGcode(text: string, initialZMM = 5, limits?: MotionLimits):
       const ballMatch = /\bballnose\b/i.test(raw)
       if (ballMatch) toolBallNose = true
 
+      // Parse a bull nose's corner radius: "; bullnose-r:3.175" (mm)
+      const bullMatch = raw.match(/bullnose-r:([\d.]+)/i)
+      if (bullMatch) toolCornerRadiusMM = parseFloat(bullMatch[1])
+
       // Parse drill-bit marker: "; drillbit" (distinct token — op descriptions
       // like "peck drill · 5mm" contain the bare word "drill" for any tool type)
       const drillMatch = /\bdrillbit\b/i.test(raw)
@@ -261,7 +269,7 @@ export function parseGcode(text: string, initialZMM = 5, limits?: MotionLimits):
       if (fluteMatch) fluteCount = Math.max(1, parseInt(fluteMatch[1]))
 
       // Fold any tool-comment changes on this line into the flyweight table.
-      if (diamMatch || vbitMatch || tipMatch || fluteMatch || drillMatch || ballMatch) syncToolState()
+      if (diamMatch || vbitMatch || tipMatch || fluteMatch || drillMatch || ballMatch || bullMatch) syncToolState()
     }
 
     // Words, in one pass. A letter's FIRST occurrence on the line is the one that

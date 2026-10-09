@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { uid } from '../uid'
 
-export type ToolType = 'endmill' | 'ballnose' | 'vbit' | 'taper' | 'drill'
+export type ToolType = 'endmill' | 'ballnose' | 'bullnose' | 'vbit' | 'taper' | 'drill'
 export type CuttingDirection = 'climb' | 'conventional'
 
 export interface Tool {
@@ -21,6 +21,24 @@ export interface Tool {
   // field raw — `includedAngleDeg(tool)` in cam/geom.ts is the one place the two
   // conventions meet, and everything downstream works in included angle / its half.
   vbitAngleDeg?: number  // only meaningful for vbit and taper types
+  // A bull nose's corner radius: a flat bottom of radius R − r with a quarter-round of r
+  // at its edge (a bowl bit is a big one). Only meaningful for the bullnose type; read it
+  // through `cornerRadiusMM(tool)` in cam/geom.ts, which clamps it to [0, R].
+  cornerRadiusMM?: number
+  // The library folder the tool is filed in. Absent is MY TOOLS — the user's own rack.
+  // Anything imported lands in a NAMED folder (a vendor catalogue is 80 bits the user
+  // mostly does not own), so an import never mixes into, renames against or restores
+  // over their own tools. A folder exists exactly while a tool names it.
+  folder?: string
+}
+
+/** The folder a tool is filed in; '' is My Tools. */
+export const folderOf = (t: Tool): string => t.folder ?? ''
+export const MY_TOOLS = 'My Tools'
+
+/** Every named folder in the library, in the order they first appear. */
+export function folderNames(tools: Tool[]): string[] {
+  return [...new Set(tools.map(folderOf).filter((f) => f !== ''))]
 }
 
 export const DEFAULT_TOOLS: Tool[] = [
@@ -45,6 +63,16 @@ interface ToolState {
   tools: Tool[]
   selectedToolId: string | null
   sortBy: ToolSort | null
+  // The folder the library panel shows ('' = My Tools) — persisted, like the sort.
+  openFolder: string
+  setOpenFolder: (folder: string) => void
+  renameFolder: (from: string, to: string) => void
+  copyToMyTools: (id: string) => string | null   // the copy's id
+  // Tools picked lately in a form's tool picker, newest first — what keeps a catalogue
+  // bit in the short dropdown after it was found once through Browse library.
+  recentToolIds: string[]
+  noteToolUsed: (id: string) => void
+  moveToFolder: (id: string, folder: string) => void
   setSortBy: (sort: ToolSort | null) => void
   addTool: () => void
   updateTool: (id: string, updates: Partial<Omit<Tool, 'id'>>) => void
@@ -53,26 +81,73 @@ interface ToolState {
   setTools: (tools: Tool[]) => void
 }
 
+const RECENT_MAX = 8
+
+/** `tool` filed in `folder` ('' = My Tools, which is the field ABSENT, not empty). */
+export function withFolder(tool: Tool, folder: string): Tool {
+  const { folder: _drop, ...rest } = tool
+  return folder ? { ...rest, folder } : rest
+}
+
 export const useToolStore = create<ToolState>()(
   persist(
     (set) => ({
       tools: DEFAULT_TOOLS,
       selectedToolId: DEFAULT_TOOLS[0].id,
       sortBy: null,
+      openFolder: '',
 
       setSortBy: (sortBy) => set({ sortBy }),
+
+      setOpenFolder: (openFolder) => set({ openFolder }),
+
+      // Renaming onto another folder's name merges the two — that is what the name means.
+      renameFolder: (from, to) =>
+        set((s) => {
+          const name = to.trim() === MY_TOOLS ? '' : to.trim()
+          if (!from || name === from) return s
+          return {
+            tools: s.tools.map((t) => (folderOf(t) === from ? withFolder(t, name) : t)),
+            openFolder: s.openFolder === from ? name : s.openFolder,
+          }
+        }),
+
+      // Taking a catalogue bit into the user's own rack: a COPY, with a fresh id, so the
+      // catalogue stays as the vendor published it and a re-import still matches it.
+      // Same tool, same id — only where it is filed changes, so every operation cutting
+      // with it still finds it. Moving a folder's last tool out is how it disappears.
+      moveToFolder: (id, folder) =>
+        set((s) => {
+          const key = folder.trim() === MY_TOOLS ? '' : folder.trim()
+          return { tools: s.tools.map((t) => (t.id === id ? withFolder(t, key) : t)) }
+        }),
+
+      copyToMyTools: (id) => {
+        const src = useToolStore.getState().tools.find((t) => t.id === id)
+        if (!src) return null
+        const copy = withFolder({ ...src, id: uid('tool') }, '')
+        set((s) => ({ tools: [...s.tools, copy] }))
+        return copy.id
+      },
+
+      recentToolIds: [],
+      noteToolUsed: (id) =>
+        set((s) => s.recentToolIds[0] === id ? s
+          : { recentToolIds: [id, ...s.recentToolIds.filter((x) => x !== id)].slice(0, RECENT_MAX) }),
 
       // A new tool copies the selected row when there is one: a library is
       // usually filled in a run of near-identical cutters (same collet, same
       // spindle, one size apart), so the row the user just clicked is a far
       // better starting point than a fixed generic end mill.
+      // The new tool goes in the folder the panel is showing — a copy of a row picked in
+      // another folder (the selection outlives switching folders) is not the base.
       addTool: () => {
         const id = uid('tool')
         set((s) => {
-          const base = s.tools.find((t) => t.id === s.selectedToolId)
+          const base = s.tools.find((t) => t.id === s.selectedToolId && folderOf(t) === s.openFolder)
           const t: Tool = base
             ? { ...base, id, name: `${base.name} copy` }
-            : { id, name: 'New End Mill', type: 'endmill', diameterMM: 6.35, fluteCount: 2, rpm: 18000, xyFeedMmMin: 2000, zFeedMmMin: 500, maxDepthMM: 20.0 }
+            : withFolder({ id, name: 'New End Mill', type: 'endmill', diameterMM: 6.35, fluteCount: 2, rpm: 18000, xyFeedMmMin: 2000, zFeedMmMin: 500, maxDepthMM: 20.0 }, s.openFolder)
           return { tools: [...s.tools, t], selectedToolId: id }
         })
       },

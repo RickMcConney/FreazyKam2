@@ -67,13 +67,19 @@ alone.
 Controllers disagree about the details of G-code. A **post-processor profile** is the set
 of rules for turning toolpaths into the dialect yours speaks.
 
-![The Post-Processor tab: the profile list on the left, with add, duplicate, import, export, restore built-ins and delete above it, and the editor showing start and end G-code, tool change, spindle, move and arc templates](images/10-post-processor.png)
+![The Post-Processor tab: Restore Built-ins, Import, Export, Duplicate, Add Profile and Delete across the top, the seven profiles listed on the left, and the editor showing start and end G-code, tool change, spindle, move and arc templates](images/10-post-processor.png)
 
 <!-- FULL APP · 1600 px wide, downscaled from a 2× capture. -->
 
 Seven profiles are built in — **Grbl (mm)**, **Grbl (inches)**, **grblHAL**, **LinuxCNC**,
 **Mach3**, **UCCNC** and a **Generic** one. Grbl (mm) is the default and covers most hobby
 machines.
+
+The buttons across the top act on the profile selected in the list: **Duplicate** copies
+it, **Export** saves it as a `.fkset` file to share, and **Delete** removes it (the last
+one can't go). **Add Profile** starts a new one, **Import** brings profiles in from a
+`.fkset` — always *added* beside yours, never over them — and **Restore Built-ins** puts
+every built-in back to factory and brings back any you deleted, leaving your own alone.
 
 Any of them can be edited, and a built-in carries a **Reset** button that puts it back to
 factory defaults, so you can experiment without losing the original. To keep both,

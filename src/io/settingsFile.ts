@@ -10,7 +10,7 @@
 // unticked. The pure half lives in settingsMerge.ts.
 
 import { useWorkpieceStore } from '../store/workpieceStore'
-import { useToolStore, DEFAULT_TOOLS, type Tool } from '../store/toolStore'
+import { useToolStore, DEFAULT_TOOLS, MY_TOOLS, folderOf, withFolder, type Tool } from '../store/toolStore'
 import { usePostProcessorStore, BUILTIN_PROFILES, type PostProcessorProfile } from '../store/postProcessorStore'
 import { useToolpathStore } from '../store/toolpathStore'
 import { toolIdsOf } from './toolMerge'
@@ -21,8 +21,9 @@ import { BUILD_DATE } from '../version'
 import { uid } from '../uid'
 import { downloadText } from './download'
 import { sanitizeFileName } from './filename'
+import { fromFusionLibrary, isFusionLibrary } from './fusionTools'
 import {
-  SETTINGS_FORMAT, SETTINGS_VERSION, mergeByName, parseSettings, pickKnown,
+  SETTINGS_FORMAT, SETTINGS_VERSION, mergeByName, mergeIntoFolders, parseSettings, pickKnown, SettingsFileError,
   type MergeResult, type SectionKey, type SettingsFile,
 } from './settingsMerge'
 
@@ -72,14 +73,6 @@ export function exportPostProcessor(profile: PostProcessorProfile) {
   useUIStore.getState().showStatus(`Exported "${profile.name}" — the file is in your downloads.`, 'info')
 }
 
-/** The whole tool library alone, as a tool set to share: a settings file with just that section. */
-export function exportTools() {
-  const tools = useToolStore.getState().tools
-  const day = new Date().toISOString().slice(0, 10)
-  downloadText(fileOf({ tools }), `freazykam-tools-${day}${SETTINGS_EXT}`, 'application/json')
-  useUIStore.getState().showStatus(`Exported ${tools.length} tool${tools.length === 1 ? '' : 's'} — the file is in your downloads.`, 'info')
-}
-
 /**
  * Pick a file for ONE section's own tab — the tool library's or the post-processors'.
  * Null (after saying why) when it has none of that section; a file with other sections
@@ -127,7 +120,7 @@ function wholeLike<T extends object>(template: T, v: unknown, optional: string[]
 
 const TOOL_TEMPLATE: Tool = { id: '', name: '', type: 'endmill', diameterMM: 0, fluteCount: 0, rpm: 0, xyFeedMmMin: 0, zFeedMmMin: 0, maxDepthMM: 0 }
 // What makes two tools the same tool: exactly what the import brings in, and no more.
-const TOOL_KEYS = [...Object.keys(TOOL_TEMPLATE), 'vbitAngleDeg']
+const TOOL_KEYS = [...Object.keys(TOOL_TEMPLATE), 'vbitAngleDeg', 'cornerRadiusMM', 'folder']
 
 function toolsIn(v: unknown): Tool[] {
   if (!Array.isArray(v)) return []
@@ -135,8 +128,10 @@ function toolsIn(v: unknown): Tool[] {
   for (const raw of v) {
     const t = wholeLike(TOOL_TEMPLATE, raw)
     if (!t) continue
-    const angle = (raw as { vbitAngleDeg?: unknown }).vbitAngleDeg
-    out.push(typeof angle === 'number' && Number.isFinite(angle) ? { ...t, vbitAngleDeg: angle } : t)
+    const { vbitAngleDeg: angle, cornerRadiusMM: corner, folder } = raw as { vbitAngleDeg?: unknown; cornerRadiusMM?: unknown; folder?: unknown }
+    let tool = typeof angle === 'number' && Number.isFinite(angle) ? { ...t, vbitAngleDeg: angle } : t
+    if (typeof corner === 'number' && Number.isFinite(corner) && corner >= 0) tool = { ...tool, cornerRadiusMM: corner }
+    out.push(typeof folder === 'string' && folder.trim() ? { ...tool, folder: folder.trim() } : tool)
   }
   return out
 }
@@ -157,7 +152,7 @@ function profilesIn(v: unknown): PostProcessorProfile[] {
  */
 export function planMerge(file: SettingsFile, key: 'tools' | 'postProcessors'): MergeResult<{ id: string; name: string }> {
   return key === 'tools'
-    ? mergeByName(useToolStore.getState().tools, toolsIn(file.sections.tools), () => uid('tool'), TOOL_KEYS)
+    ? mergeIntoFolders(useToolStore.getState().tools, toolsIn(file.sections.tools), () => uid('tool'), TOOL_KEYS)
     : mergeByName(usePostProcessorStore.getState().profiles, profilesIn(file.sections.postProcessors), () => uid('pp'), ppKeys())
 }
 
@@ -241,7 +236,10 @@ export function planToolReplace(target: Tool[]): ToolReplacePlan {
   }
 }
 
-export const planRestoreTools = () => planToolReplace(DEFAULT_TOOLS)
+// Restoring the defaults is about the user's OWN rack: the folders imported beside it
+// are carried across untouched, ids and all.
+export const planRestoreTools = () =>
+  planToolReplace([...DEFAULT_TOOLS, ...useToolStore.getState().tools.filter((t) => folderOf(t) !== '')])
 
 export function applyToolReplace(plan: ToolReplacePlan) {
   const { selectedToolId } = useToolStore.getState()
@@ -407,4 +405,107 @@ export function applySettings(file: SettingsFile, keys: SectionKey[], modes: Par
     }
   }
   return out
+}
+
+// ── Importing a tool set into a folder (the Tool Library's own Import) ────────────────
+
+/** A tool file read and converted, before any folder is chosen for it. */
+export interface ToolFileImport {
+  fileName: string
+  format: 'FreazyKam' | 'Fusion 360'
+  tools: Tool[]
+  skipped: { name: string; why: string }[]
+  notes: string[]
+  // What the folder is called unless the user says otherwise: the vendor most of a
+  // catalogue comes from, else the file's own name.
+  folder: string
+}
+
+/**
+ * Read a tool file — a `.fkset` with a tools section, or a Fusion 360 tool library —
+ * into tools. Pure apart from `mintId`; throws SettingsFileError with a status-bar message.
+ */
+export function readToolFile(fileName: string, text: string): ToolFileImport {
+  const stem = fileName.replace(/\.[^.]*$/, '').trim() || 'Imported'
+  let data: unknown
+  try { data = JSON.parse(text) } catch { throw new SettingsFileError('it is not a tool set FreazyKam can read (a .fkset or a Fusion 360 tool library)') }
+  if (isFusionLibrary(data)) {
+    const f = fromFusionLibrary(data, () => uid('tool'))
+    // Folders are flat here: the file's tools all land in the one chosen on import.
+    return { fileName, format: 'Fusion 360', tools: f.tools, skipped: f.skipped, notes: f.notes, folder: f.vendor ?? stem }
+  }
+  const file = parseSettings(text)
+  if (!file.sections.tools) throw new SettingsFileError('that settings file has no tools in it')
+  return { fileName, format: 'FreazyKam', tools: toolsIn(file.sections.tools), skipped: [], notes: [], folder: stem }
+}
+
+/** Ask for a tool file and read it. Null (after saying why) when there is nothing usable. */
+export function pickToolFile(): Promise<ToolFileImport | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = `${SETTINGS_EXT},.json`
+    input.oncancel = () => resolve(null)
+    input.onchange = async () => {
+      const file = input.files?.[0]
+      if (!file) { resolve(null); return }
+      try {
+        resolve(readToolFile(file.name, await file.text()))
+      } catch (e) {
+        useUIStore.getState().showStatus(`Could not import ${file.name} — ${(e as Error).message}.`, 'error')
+        resolve(null)
+      }
+    }
+    input.click()
+  })
+}
+
+/** The folder name as stored: '' for My Tools, however it was typed. */
+export const folderKey = (name: string) => (name.trim() === MY_TOOLS ? '' : name.trim())
+
+/** What importing `tools` into `folder` would do — the same merge `applyToolFolderImport` runs. */
+export function planToolFolderImport(tools: Tool[], folder: string): MergeResult<Tool> {
+  const key = folderKey(folder)
+  return mergeIntoFolders(useToolStore.getState().tools, tools.map((t) => withFolder(t, key)), () => uid('tool'), TOOL_KEYS)
+}
+
+export function applyToolFolderImport(tools: Tool[], folder: string): MergeResult<Tool> {
+  const r = planToolFolderImport(tools, folder)
+  useToolStore.setState({ tools: r.list, openFolder: folderKey(folder) })
+  return r
+}
+
+export interface FolderDeletePlan {
+  folder: string
+  removed: Tool[]
+  kept: Tool[]     // the open project cuts with these — they stay, and so does the folder
+}
+
+/** What deleting a folder would do. A tool an operation names by id is never deleted under it. */
+export function planDeleteFolder(folder: string): FolderDeletePlan {
+  const inUse = toolIdsInUse()
+  const tools = useToolStore.getState().tools.filter((t) => folder !== '' && folderOf(t) === folder)
+  return { folder, removed: tools.filter((t) => !inUse.has(t.id)), kept: tools.filter((t) => inUse.has(t.id)) }
+}
+
+/** False, changing nothing, when it would empty the library (deleteTool's rule: never the last tool). */
+export function applyDeleteFolder(plan: FolderDeletePlan): boolean {
+  const gone = new Set(plan.removed.map((t) => t.id))
+  const s = useToolStore.getState()
+  const tools = s.tools.filter((t) => !gone.has(t.id))
+  if (tools.length === 0) return false
+  useToolStore.setState({
+    tools,
+    openFolder: tools.some((t) => folderOf(t) === s.openFolder) ? s.openFolder : '',
+    selectedToolId: tools.some((t) => t.id === s.selectedToolId) ? s.selectedToolId : null,
+  })
+  return true
+}
+
+/** One folder's tools as a tool set to share — filed loose, the importer names the folder. */
+export function exportToolFolder(folder: string) {
+  const tools = useToolStore.getState().tools.filter((t) => folderOf(t) === folder).map((t) => withFolder(t, ''))
+  const name = folder || 'my-tools'
+  downloadText(fileOf({ tools }), `${sanitizeFileName(name, 'tools')}${SETTINGS_EXT}`, 'application/json')
+  useUIStore.getState().showStatus(`Exported ${tools.length} tool${tools.length === 1 ? '' : 's'} from "${folder || MY_TOOLS}" — the file is in your downloads.`, 'info')
 }

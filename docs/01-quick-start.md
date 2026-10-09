@@ -190,7 +190,9 @@ Find a **6 mm end mill**, or add one with **+**. What matters for this job:
 **An operation only lists the tool types that can do its job.** Pocket offers end mills
 and ball noses; V-Carve offers V-bits and tapers; Drill offers drills. So if a cutter you
 expected isn't in the list, it is the wrong *type* for that operation — not the wrong
-size. Max Z never hides a tool; it warns you in the depth field instead.
+size. Max Z never hides a tool; it warns you in the depth field instead. (Once you've
+imported a maker's catalogue, its bits are a **Browse library…** away at the bottom of the
+list — see [chapter 4](04-operations.md#choosing-a-tool-from-another-folder).)
 
 Return to the **2D View** tab.
 

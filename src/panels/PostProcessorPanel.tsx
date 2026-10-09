@@ -30,6 +30,7 @@ const inputCls =
 const textareaCls =
   'w-full bg-gray-100 dark:bg-neutral-800 border border-gray-200 dark:border-neutral-600 rounded px-2 py-1.5 text-body text-gray-800 dark:text-neutral-200 font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 resize-y min-h-[64px]'
 
+const headBtnCls = 'flex items-center gap-1.5 px-2.5 py-1 rounded text-body bg-gray-200 dark:bg-neutral-700 hover:bg-gray-300 dark:hover:bg-neutral-600 text-gray-700 dark:text-neutral-300 transition-colors'
 const labelCls = 'block text-label font-semibold text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1'
 
 function Field({
@@ -146,35 +147,57 @@ export default function PostProcessorPanel() {
   const active = profiles.find((p) => p.id === activeId) ?? profiles[0]
   const [importing, setImporting] = useState<SettingsFile | null>(null)
 
+  const canDelete = profiles.length > 1
+
   return (
-    <div className="flex h-full bg-gray-50 dark:bg-neutral-900">
+    <div className="flex flex-col h-full bg-gray-50 dark:bg-neutral-900">
       {importing && <ImportPreviewDialog file={importing} sectionKey="postProcessors" onClose={() => setImporting(null)} />}
+      {/* The same top bar as the Tool Library: labelled buttons, not a row of 15 px icons
+          squeezed into the profile list's header. */}
+      <div className="flex items-center justify-between px-4 py-2 border-b border-gray-300 dark:border-neutral-700 flex-shrink-0">
+        <span className="text-body font-semibold text-gray-500 dark:text-neutral-400 uppercase tracking-wider">
+          Post-Processors — {profiles.length} profile{profiles.length !== 1 ? 's' : ''}
+        </span>
+        <div className="flex items-center gap-2">
+          <RestoreBuiltinsButton className={headBtnCls}
+            title="Restore the built-in profiles — every built-in back to factory and any you deleted back; your own profiles are kept. Shows what changes first.">
+            <ListRestart size={ICON.sm} />
+            Restore Built-ins
+          </RestoreBuiltinsButton>
+          <button onClick={async () => { const f = await pickSectionFile('postProcessors'); if (f) setImporting(f) }}
+            title="Import post-processors from a .fkset file — added beside yours, never over them"
+            className={headBtnCls}>
+            <Import size={ICON.sm} />
+            Import
+          </button>
+          <button onClick={() => exportPostProcessor(active)}
+            title={`Export "${active.name}" to a .fkset file, to share or keep`}
+            className={headBtnCls}>
+            <Share size={ICON.sm} />
+            Export
+          </button>
+          <button onClick={() => duplicateProfile(activeId)}
+            title={`Add a copy of "${active.name}"`}
+            className={headBtnCls}>
+            <Copy size={ICON.sm} />
+            Duplicate
+          </button>
+          <button onClick={addProfile} title="Add a new profile" className={headBtnCls}>
+            <Plus size={ICON.sm} />
+            Add Profile
+          </button>
+          <button onClick={() => deleteProfile(activeId)} disabled={!canDelete}
+            title={canDelete ? `Delete "${active.name}"` : 'Cannot delete the last profile'}
+            className={headBtnCls + ' hover:text-red-500 dark:hover:text-red-400 disabled:opacity-40 disabled:cursor-not-allowed'}>
+            <Trash2 size={ICON.sm} />
+            Delete
+          </button>
+        </div>
+      </div>
+
+      <div className="flex flex-1 min-h-0">
       {/* Profile list sidebar */}
       <div className="w-52 flex flex-col flex-shrink-0 border-r border-gray-300 dark:border-neutral-700">
-        <div className="flex items-center justify-between px-3 py-2 border-b border-gray-300 dark:border-neutral-700 flex-shrink-0">
-          <span className="text-label font-semibold text-gray-600 dark:text-neutral-400 uppercase tracking-wider">Profiles</span>
-          <div className="flex gap-1">
-            <button onClick={addProfile} title="New profile" className="p-0.5 rounded text-gray-600 dark:text-neutral-400 hover:text-gray-700 dark:hover:text-neutral-300 hover:bg-gray-200 dark:hover:bg-neutral-700 transition-colors">
-              <Plus size={ICON.sm} />
-            </button>
-            <button onClick={() => duplicateProfile(activeId)} title="Duplicate profile" className="p-0.5 rounded text-gray-600 dark:text-neutral-400 hover:text-gray-700 dark:hover:text-neutral-300 hover:bg-gray-200 dark:hover:bg-neutral-700 transition-colors">
-              <Copy size={ICON.sm} />
-            </button>
-            <button onClick={async () => { const f = await pickSectionFile('postProcessors'); if (f) setImporting(f) }} title="Import post-processors from a .fkset file — added beside yours, never over them" className="p-0.5 rounded text-gray-600 dark:text-neutral-400 hover:text-gray-700 dark:hover:text-neutral-300 hover:bg-gray-200 dark:hover:bg-neutral-700 transition-colors">
-              <Import size={ICON.sm} />
-            </button>
-            <button onClick={() => exportPostProcessor(active)} title={`Export "${active.name}" to a .fkset file, to share or keep`} className="p-0.5 rounded text-gray-600 dark:text-neutral-400 hover:text-gray-700 dark:hover:text-neutral-300 hover:bg-gray-200 dark:hover:bg-neutral-700 transition-colors">
-              <Share size={ICON.sm} />
-            </button>
-            <RestoreBuiltinsButton className="p-0.5 rounded text-gray-600 dark:text-neutral-400 hover:text-gray-700 dark:hover:text-neutral-300 hover:bg-gray-200 dark:hover:bg-neutral-700 transition-colors"
-              title="Restore the built-in profiles — every built-in back to factory and any you deleted back; your own profiles are kept. Shows what changes first.">
-              <ListRestart size={ICON.sm} />
-            </RestoreBuiltinsButton>
-            <button onClick={() => deleteProfile(activeId)} disabled={profiles.length <= 1} title={profiles.length <= 1 ? 'Cannot delete the last profile' : 'Delete profile'} className="p-0.5 rounded text-gray-600 dark:text-neutral-400 hover:text-red-400 hover:bg-red-900/20 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
-              <Trash2 size={ICON.sm} />
-            </button>
-          </div>
-        </div>
         <div className="flex-1 overflow-y-auto py-1">
           {profiles.map((p) => (
             <button key={p.id} onClick={() => setActiveId(p.id)}
@@ -206,7 +229,7 @@ export default function PostProcessorPanel() {
               <button
                 onClick={() => resetProfile(active.id)}
                 title="Reset this built-in profile to its factory defaults"
-                className="flex items-center gap-1 text-label text-gray-600 dark:text-neutral-400 hover:text-gray-700 dark:hover:text-neutral-300 transition-colors"
+                className={headBtnCls}
               >
                 <RotateCcw size={ICON.sm} /> Reset
               </button>
@@ -217,6 +240,7 @@ export default function PostProcessorPanel() {
           </span>
         </div>
         <ProfileEditor profile={active} />
+      </div>
       </div>
     </div>
   )

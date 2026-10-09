@@ -6,6 +6,7 @@ import { NUMERIC_HINT } from '../../components/parseNumeric'
 import { ICON } from '../../theme'
 import { AlertCircle, AlertTriangle, Loader2 } from 'lucide-react'
 import type { Tool, ToolType } from '../../store/toolStore'
+import { ToolPicker } from './ToolPicker'
 import { useWorkpieceStore, fromMM, toMM, fmtLen, lenValue, inchStepFor } from '../../store/workpieceStore'
 import { useGenProgressStore } from '../../store/genProgressStore'
 import { useToolpathStore } from '../../store/toolpathStore'
@@ -157,23 +158,11 @@ export function ToolSelector({ tools, value, onChange }: {
   value: string
   onChange: (id: string) => void
 }) {
-  const units = useWorkpieceStore((s) => s.units)
   const id = useId()
   return (
     <div>
       <label className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1" htmlFor={id}>Tool</label>
-      <select
-        id={id}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={tools.length === 0}
-        className="w-full bg-gray-50 dark:bg-neutral-900 border border-gray-400 dark:border-neutral-700 rounded px-2 py-1 text-body text-gray-900 dark:text-neutral-100 focus:outline-none focus:border-blue-500 disabled:opacity-60"
-      >
-        {tools.length === 0 && <option value="">No suitable tool — add one in the Tool Library</option>}
-        {tools.map((t) => (
-          <option key={t.id} value={t.id}>{t.name} (Ø{fmtLen(t.diameterMM, units)})</option>
-        ))}
-      </select>
+      <ToolPicker id={id} tools={tools} value={value} onChange={onChange} />
     </div>
   )
 }

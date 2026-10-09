@@ -29,6 +29,8 @@ const REFERENCE_DIAMETER_MM = 6
 const CHIP_LOAD_FACTOR: Record<ToolType, number> = {
   endmill: 1,
   ballnose: 0.8,
+  // Between the two it generalises: a flat-bottomed cutter whose corners are rounded.
+  bullnose: 0.9,
   // The knife edge of a V-bit is the most fragile cutter here.
   vbit: 0.6,
   // A taper is a small, well-supported cutter whose flute is backed by the cone — it

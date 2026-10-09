@@ -1,5 +1,6 @@
 // ─── 3D Profile form ──────────────────────────────────────────────────────────
 import { FormShell, AutoStepField, GenerateBtn, useSessionOps, toolsOfType, pickToolId, LengthInput, FormError, useGenerateError, discardFailedOps } from './shared'
+import { ToolPicker } from './ToolPicker'
 import { useState, useEffect, useMemo } from 'react'
 import { NumericInput } from '../../components/NumericInput'
 import { NUMERIC_HINT } from '../../components/parseNumeric'
@@ -55,8 +56,8 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
   // The ROUGHING bit is a ball nose or a flat end mill — the two shapes profile3d models
   // a rougher as. Any other type (a V-bit, a drill) would silently become no roughing pass
   // at all, so it is not offered.
-  const finishTools = toolsOfType(tools, ['ballnose', 'taper'])
-  const roughTools = toolsOfType(tools, ['ballnose', 'endmill'])
+  const finishTools = toolsOfType(tools, ['ballnose', 'bullnose', 'taper'])
+  const roughTools = toolsOfType(tools, ['ballnose', 'bullnose', 'endmill'])
   const defaultTool = finishTools[0]
   // The model: an STL, or an imported picture read as a depth map (cam/depthMapMesh).
   const stlPaths = paths.filter((p) => !!p.stlSrc)
@@ -228,7 +229,7 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
 
   const depthCutMM = profile3dDepthMM(form.maxDepthMM, thicknessMM)
   const nothingReached = modelBelowCut(form.modelTopMM, depthCutMM)
-  const canGenerate = !nothingReached && !!selectedTool && (selectedTool.type === 'ballnose' || selectedTool.type === 'taper') && hasModel && !generating && form.maxDepthMM > 0
+  const canGenerate = !nothingReached && !!selectedTool && (selectedTool.type === 'ballnose' || selectedTool.type === 'bullnose' || selectedTool.type === 'taper') && hasModel && !generating && form.maxDepthMM > 0
     && (!isDepthMap || form.reliefDepthMM > 0)
     && (form.boundary !== 'path' || boundaryPaths.some((p) => p.id === form.boundaryPathId))
 
@@ -332,16 +333,11 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
           <label htmlFor="p3d-roughing-tool-optional" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">
             Roughing Tool <span className="normal-case text-gray-600 dark:text-neutral-400">(optional)</span>
           </label>
-          <select id="p3d-roughing-tool-optional"
+          <ToolPicker id="p3d-roughing-tool-optional"
+            tools={roughTools}
             value={form.roughingToolId}
-            onChange={(e) => up('roughingToolId', e.target.value)}
-            className="w-full bg-gray-50 dark:bg-neutral-900 border border-gray-400 dark:border-neutral-700 rounded px-2 py-1 text-body text-gray-900 dark:text-neutral-100 focus:outline-none focus:border-blue-500"
-          >
-            <option value="">— None (single-pass) —</option>
-            {roughTools.map((t) => (
-              <option key={t.id} value={t.id}>{t.name} (Ø{fmtLen(t.diameterMM, units)})</option>
-            ))}
-          </select>
+            onChange={(id) => up('roughingToolId', id)}
+            none={{ value: '', label: '— None (single-pass) —' }} />
         </div>
 
         {hasRoughing && (
@@ -416,19 +412,12 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
         <label htmlFor="p3d-f7" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">
           {hasRoughing ? 'Finishing Tool' : 'Tool'}
         </label>
-        <select id="p3d-f7"
+        <ToolPicker id="p3d-f7"
+          tools={finishTools}
           value={form.toolId}
-          onChange={(e) => handleToolChange(e.target.value)}
-          disabled={finishTools.length === 0}
-          className="w-full bg-gray-50 dark:bg-neutral-900 border border-gray-400 dark:border-neutral-700 rounded px-2 py-1 text-body text-gray-900 dark:text-neutral-100 focus:outline-none focus:border-blue-500 disabled:opacity-60"
-        >
-          {finishTools.length === 0 && <option value="">No ball nose or taper — add one in the Tool Library</option>}
-          {finishTools.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name} (Ø{fmtLen(t.diameterMM, units)}{t.type === 'taper' ? ' tip' : ''})
-            </option>
-          ))}
-        </select>
+          onChange={handleToolChange}
+          emptyText="No ball nose, bull nose or taper — add one in the Tool Library"
+          label={(t) => `${t.name} (Ø${fmtLen(t.diameterMM, units)}${t.type === 'taper' ? ' tip' : ''})`} />
       </div>
       {selectedTool && selectedTool.type === 'taper' && (
         // The stepover comes off the TIP, so a fine taper asks for a great many passes.
@@ -436,9 +425,9 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
           Taper: passes are spaced off the Ø{fmtLen(selectedTool.diameterMM, units)} tip.
         </p>
       )}
-      {selectedTool && selectedTool.type !== 'ballnose' && selectedTool.type !== 'taper' && (
+      {selectedTool && selectedTool.type !== 'ballnose' && selectedTool.type !== 'bullnose' && selectedTool.type !== 'taper' && (
         <p className="text-label text-amber-600 dark:text-amber-400 flex items-center gap-1">
-          <AlertCircle size={ICON.xs} /> 3D Profile needs a ball nose or taper tool
+          <AlertCircle size={ICON.xs} /> 3D Profile needs a ball nose, bull nose or taper tool
         </p>
       )}
 

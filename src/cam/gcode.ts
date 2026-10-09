@@ -7,7 +7,7 @@ import { useWorkpieceStore, zDatumOffsetMM, MM_PER_INCH as MM_PER_IN } from '../
 import { SPINDLE_INFO, spindleDialLabel } from '../store/spindle'
 import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
 import { feedsForTool } from './feeds'
-import { includedAngleDeg, isVCutter, maxCutRadiusMM } from './geom'
+import { cornerRadiusMM, includedAngleDeg, isVCutter, maxCutRadiusMM } from './geom'
 import { arcFitPolyline, douglasPeucker, ARC_FIT_MAX_SPAN, type Pt2 } from './pathFlattener'
 import { lineSpacingMM } from './photoVcarve'
 import { asciiFileName } from '../io/filename'
@@ -38,6 +38,8 @@ function toolShapeComments(tool: Tool, angleDeg: number | undefined, c: (s: stri
     if (tool.type === 'taper') c(`taper-tip:${f(tool.diameterMM)}`)
   }
   if (tool.type === 'ballnose') c(`ballnose`)
+  // The corner radius in mm; without it the sim carves a bowl bit as a flat end mill.
+  if (tool.type === 'bullnose') c(`bullnose-r:${f(cornerRadiusMM(tool))}`)
   if (tool.type === 'drill') c(`drillbit`)
 }
 

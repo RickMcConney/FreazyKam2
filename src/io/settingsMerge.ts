@@ -137,3 +137,36 @@ export function pickKnown(current: Record<string, unknown>, incoming: unknown): 
   }
   return out
 }
+
+/**
+ * `mergeByName`, a FOLDER at a time: an incoming entry is only ever compared with the
+ * existing entries of its own folder (absent `folder` being the user's own, My Tools).
+ * A vendor catalogue's "1/4" End Mill" is not a clash with the user's — they sit in
+ * different folders, and neither is renamed for the other. Ids are unique across the
+ * whole list, whichever folder they came in under. New entries are appended in the
+ * order they came, so the existing list keeps its order.
+ */
+export function mergeIntoFolders<T extends { id: string; name: string; folder?: string; builtin?: boolean }>(
+  existing: T[], incoming: T[], mintId: () => string, keys?: readonly string[],
+): MergeResult<T> {
+  const result: MergeResult<T> = { list: [...existing], added: [], copied: [], same: 0 }
+  const ids = new Set(existing.map((e) => e.id))
+  const folders = [...new Set(incoming.map((t) => t.folder ?? ''))]
+  for (const folder of folders) {
+    const mine = result.list.filter((e) => (e.folder ?? '') === folder)
+    const inc = incoming
+      .filter((t) => (t.folder ?? '') === folder)
+      .map((t) => {
+        const id = ids.has(t.id) ? mintId() : t.id
+        ids.add(id)
+        return id === t.id ? t : { ...t, id }
+      })
+    const r = mergeByName(mine, inc, mintId, keys)
+    const fresh = r.list.slice(mine.length)
+    result.list.push(...fresh)
+    result.added.push(...r.added)
+    result.copied.push(...r.copied)
+    result.same += r.same
+  }
+  return result
+}

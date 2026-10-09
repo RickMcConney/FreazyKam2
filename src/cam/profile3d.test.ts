@@ -13,6 +13,10 @@ import type { BBox } from '../canvas/selectionUtils'
 
 const BALL: Tool = { id: 'ball', name: 'Ball 6', type: 'ballnose', diameterMM: 6, fluteCount: 2, rpm: 18000, xyFeedMmMin: 1000, zFeedMmMin: 300, maxDepthMM: 20 }
 const TAPER: Tool = { id: 'taper', name: 'Taper', type: 'taper', diameterMM: 1, fluteCount: 2, rpm: 18000, xyFeedMmMin: 1000, zFeedMmMin: 300, maxDepthMM: 25, vbitAngleDeg: 5 }
+// A bowl bit in miniature: Ø6 with a 1.5 mm corner, so a 3 mm flat across its middle.
+const BULL: Tool = { id: 'bull', name: 'Bull 6', type: 'bullnose', diameterMM: 6, fluteCount: 2, rpm: 18000, xyFeedMmMin: 1000, zFeedMmMin: 300, maxDepthMM: 20, cornerRadiusMM: 1.5 }
+// A small corner is the hard case: the tighter the corner, the more a coarse grid misses.
+const BULL_SMALL: Tool = { ...BULL, id: 'bull-s', cornerRadiusMM: 0.5 }
 const SAFE_Z = 5
 
 const box = (minX: number, minY: number, w: number, h: number): BBox =>
@@ -179,7 +183,7 @@ describe('the stock model that entries rapid down onto', () => {
 describe('generateProfile3d refuses what it cannot cut', () => {
   it('refuses a tool with no rounded tip', () => {
     for (const type of ['endmill', 'vbit', 'drill'] as const) {
-      expect(() => run({ ...BALL, type })).toThrow('3D Profile requires a ball nose or taper tool')
+      expect(() => run({ ...BALL, type })).toThrow('3D Profile requires a ball nose, bull nose or taper tool')
     }
   })
 
@@ -358,6 +362,12 @@ describe('the finish never cuts into the model', () => {
     }
     it(`taper: ${name}`, { timeout: 30000 }, () => {
       expect(worstGouge(S, n, TAPER, 30, W, 40)).toBeLessThan(GOUGE_TOL)
+    })
+    // The flat across a bull nose's middle is where a ball-nose stand-in would gouge;
+    // measured under the bull nose's own profile, it must not.
+    it(`bull nose: ${name}`, { timeout: 30000 }, () => {
+      expect(worstGouge(S, n, BULL, 30, W, 4)).toBeLessThan(GOUGE_TOL)
+      expect(worstGouge(S, n, BULL_SMALL, 30, W, 4)).toBeLessThan(GOUGE_TOL)
     })
   }
 

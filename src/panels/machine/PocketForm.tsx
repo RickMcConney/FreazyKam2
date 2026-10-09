@@ -63,7 +63,7 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
 
   // Clearing a pocket needs a side-cutting edge, so the same filter as the dropdown
   // picks the default and vets a saved one.
-  const cutters = toolsOfType(tools, ['endmill', 'ballnose'])
+  const cutters = toolsOfType(tools, ['endmill', 'bullnose', 'ballnose'])
   const defaultTool = cutters[0]
   const [form, setForm] = useState<PocketFormState>(() => {
     const base = editOp ? {

@@ -70,4 +70,9 @@ describe('sameCut — what a toolpath is computed from, and nothing else', () =>
     expect(sameCut(taper({}), taper({ maxDepthMM: 25 }))).toBe(false)
     expect(sameCut(tool('a'), tool('a', { maxDepthMM: 25 }))).toBe(true)
   })
+  it('differs on a bull nose\'s corner radius — a 1/4" corner and a 3/8" one are different bowl bits', () => {
+    const bull = (cornerRadiusMM: number) => tool('a', { type: 'bullnose', diameterMM: 25.4, cornerRadiusMM })
+    expect(sameCut(bull(6.35), bull(9.525))).toBe(false)
+    expect(sameCut(bull(6.35), bull(6.35))).toBe(true)
+  })
 })

@@ -37,7 +37,7 @@ export function TrochoidalForm({ onClose, editOp }: { onClose: () => void; editO
 
   // Trochoidal cuts the whole width with the side of the tool — a drill can't, and a
   // V-bit's width changes with depth, so the trochoid radius wouldn't mean anything.
-  const cutters = toolsOfType(tools, ['endmill', 'ballnose'])
+  const cutters = toolsOfType(tools, ['endmill', 'bullnose', 'ballnose'])
   const defaultTool = cutters[0]
   const [form, setForm] = useState<TrochoidalFormState>(() => {
     const base = editOp ? {

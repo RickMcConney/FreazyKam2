@@ -13,6 +13,7 @@ import { getBBox, extractCircles, extractRectInfo } from '../canvas/selectionUti
 import { loadImageLuminance } from '../io/imageLuminance'
 import { decodeStlMesh } from '../importers/stlImporter'
 import { effectiveStepDownMM, trochoidalEngagementFraction } from './feeds'
+import { cornerRadiusMM } from './geom'
 import { resolveStartZForOp } from './startHeight'
 import type { GenNote } from './notes'
 import type { MachineRates } from './sharedLineProfile'
@@ -256,12 +257,11 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
     if (!stlPath.imageSrc && (!stlPath.stlSrc || !stlPath.stlModelBounds)) throw new Error('Path is not an STL or image import')
     const cncBbox = getBBox(stlPath.d)
     if (!cncBbox) throw new Error('Could not read the model outline — the model may be empty')
-    // Roughing runs with a ball nose or a flat end mill — the two shapes the generator
-    // models. A rough tool since deleted or retyped in the library is simply no roughing pass —
+    // Roughing runs with a ball nose, a bull nose or a flat end mill. A rough tool since deleted or retyped in the library is simply no roughing pass —
     // and then no roughing id either, so nothing downstream announces a tool that never
     // cuts. The G-code reads the handover from the segments anyway (initialToolId).
     const roughCandidate = op.roughingToolId ? tools.find((t) => t.id === op.roughingToolId) : undefined
-    const roughingTool = roughCandidate?.type === 'ballnose' || roughCandidate?.type === 'endmill' ? roughCandidate : undefined
+    const roughingTool = roughCandidate?.type === 'ballnose' || roughCandidate?.type === 'bullnose' || roughCandidate?.type === 'endmill' ? roughCandidate : undefined
     // A model sunk below the stock top still stops above the stock's bottom.
     const depthMM = profile3dDepthMM(op.maxDepthMM, useWorkpieceStore.getState().thicknessMM)
     if (modelBelowCut(op.modelTopMM, depthMM)) throw new Error(MODEL_BELOW_CUT_MSG)
@@ -288,6 +288,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       maxDepthMM: depthMM,
       roughingRadiusMM: roughingTool ? roughingTool.diameterMM / 2 : undefined,
       roughingFlat: roughingTool?.type === 'endmill',
+      roughingCornerRadiusMM: roughingTool?.type === 'bullnose' ? cornerRadiusMM(roughingTool) : undefined,
       roughingStepoverPercent: op.roughingStepoverPercent,
       roughingStepDownMM: roughingTool != null && op.roughingStepDownMM != null
         ? effectiveStepDownMM(roughingTool, op.roughingStepDownMM, depthMM)

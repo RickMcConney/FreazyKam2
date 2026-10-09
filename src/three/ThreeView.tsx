@@ -9,7 +9,7 @@ import { useToolStore } from '../store/toolStore'
 import { usePathsStore } from '../store/pathsStore'
 import { getCurrentSegIdx, interpolatePos, segFraction, segTool, type SimSegment } from '../sim/gcodeParser'
 import { flattenPath } from '../cam/pathFlattener'
-import { includedAngleDeg, isVCutter, maxCutRadiusMM } from '../cam/geom'
+import { cornerRadiusMM, includedAngleDeg, isVCutter, maxCutRadiusMM } from '../cam/geom'
 import { getBBox } from '../canvas/selectionUtils'
 import { THREE_BG_COLOR_THREE, MATERIAL_COLORS } from '../colors'
 import { HeightfieldMaterial } from './HeightfieldMaterial'
@@ -101,7 +101,7 @@ function makeFluteTexture(fluteCount: number, helical: boolean): THREE.CanvasTex
 // Ball nose: striped hemisphere tip + striped flute cylinder + shank
 // Drill:     striped 118° point + striped flute cylinder + shank
 // Flat:      striped flute cylinder with dark end face + shank
-function buildToolMesh(type: string, diamMM: number, vbitAngleDeg = 60, fluteCount = 2, tipDiaMM = 0): THREE.Object3D {
+function buildToolMesh(type: string, diamMM: number, vbitAngleDeg = 60, fluteCount = 2, tipDiaMM = 0, cornerMM = 0): THREE.Object3D {
   // A taper is drawn from its WIDEST cutting diameter down to its tip ball; `diamMM`
   // carries that widest diameter (the sim's one meaning for a tool diameter) and
   // `tipDiaMM` the ball.
@@ -238,6 +238,27 @@ function buildToolMesh(type: string, diamMM: number, vbitAngleDeg = 60, fluteCou
     bodyGeo.translate(0, y + bodyH / 2, 0)
     group.add(new THREE.Mesh(bodyGeo, shankMat))
     y += bodyH
+  } else if (type === 'bull' || type === 'bullnose') {
+    // A bull nose: a flat end face of radius r − rc, the corner turned up to the wall as a
+    // quarter-round, then the straight flutes.
+    const rc = Math.max(0.01, Math.min(cornerMM, r))
+    const flatR = r - rc
+    const pts: THREE.Vector2[] = []
+    for (let k = 0; k <= 12; k++) {
+      const a = (k / 12) * (Math.PI / 2)
+      pts.push(new THREE.Vector2(flatR + rc * Math.sin(a), rc - rc * Math.cos(a)))
+    }
+    group.add(new THREE.Mesh(new THREE.LatheGeometry(pts, SEGS), fluteMat))
+    if (flatR > 0.01) {
+      const face = new THREE.CircleGeometry(flatR, SEGS)
+      face.rotateX(Math.PI / 2)
+      group.add(new THREE.Mesh(face, capMat))
+    }
+    y = rc
+    const bodyGeo = new THREE.CylinderGeometry(r, r, Math.max(fluteLen - rc, 0.01), SEGS, 1, true)
+    bodyGeo.translate(0, y + Math.max(fluteLen - rc, 0.01) / 2, 0)
+    group.add(new THREE.Mesh(bodyGeo, fluteMat))
+    y = fluteLen
   } else {
     addFluteCylinder(fluteLen)
   }
@@ -504,14 +525,16 @@ export default function ThreeView() {
             tAngle = Math.atan(ts.toolVbitHalfAngleTan) * (180 / Math.PI) * 2
           } else if (ts.toolBallNose) {
             tType = 'ball'
+          } else if (ts.toolCornerRadiusMM) {
+            tType = 'bull'
           } else if (ts.toolDrill) {
             tType = 'drill'
           }
           // The tip is part of the shape, so it belongs in the key — without it a
           // taper and a V-bit of the same diameter and angle share a mesh.
-          const key = `${tType}|${tDiam}|${tAngle}|${ts.fluteCount}|${tTip}`
+          const key = `${tType}|${tDiam}|${tAngle}|${ts.fluteCount}|${tTip}|${ts.toolCornerRadiusMM ?? 0}`
           if (key !== refs.activeToolKey) {
-            buildToolIndicatorForParams(refs, tType, tDiam, tAngle, ts.fluteCount, tTip)
+            buildToolIndicatorForParams(refs, tType, tDiam, tAngle, ts.fluteCount, tTip, ts.toolCornerRadiusMM ?? 0)
             refs.activeToolKey = key
           }
         }
@@ -806,13 +829,13 @@ function rebuildHeightfield(refs: SceneRefs) {
   perfLog(`[heightfield] built ${hf.topZ.length.toLocaleString()} samples @ ${hf.cellMM.toFixed(3)}mm cell`)
 }
 
-function buildToolIndicatorForParams(refs: SceneRefs, toolType: string, diamMM: number, vbitAngleDeg: number, fluteCount = 2, tipDiaMM = 0) {
+function buildToolIndicatorForParams(refs: SceneRefs, toolType: string, diamMM: number, vbitAngleDeg: number, fluteCount = 2, tipDiaMM = 0, cornerMM = 0) {
   if (refs.toolMesh) {
     refs.scene.remove(refs.toolMesh)
     disposeObject3D(refs.toolMesh)
     refs.toolMesh = null
   }
-  const mesh = buildToolMesh(toolType, diamMM, vbitAngleDeg, fluteCount, tipDiaMM)
+  const mesh = buildToolMesh(toolType, diamMM, vbitAngleDeg, fluteCount, tipDiaMM, cornerMM)
   mesh.visible = false
   refs.scene.add(mesh)
   refs.toolMesh = mesh
@@ -824,7 +847,7 @@ function buildToolIndicator(refs: SceneRefs) {
   refs.activeToolKey = ''
 
   const { segments, toolStates } = useSimStore.getState()
-  let toolType = 'flat', diamMM = 3, vbitAngleDeg = 60, fluteCount = 2, tipDiaMM = 0
+  let toolType = 'flat', diamMM = 3, vbitAngleDeg = 60, fluteCount = 2, tipDiaMM = 0, cornerMM = 0
 
   for (const seg of segments) {
     if (!seg.rapid) {
@@ -837,6 +860,9 @@ function buildToolIndicator(refs: SceneRefs) {
         vbitAngleDeg = Math.atan(ts.toolVbitHalfAngleTan) * (180 / Math.PI) * 2
       } else if (ts.toolBallNose) {
         toolType = 'ball'
+      } else if (ts.toolCornerRadiusMM) {
+        toolType = 'bull'
+        cornerMM = ts.toolCornerRadiusMM
       } else if (ts.toolDrill) {
         toolType = 'drill'
       }
@@ -853,9 +879,10 @@ function buildToolIndicator(refs: SceneRefs) {
     if (isVCutter(t)) vbitAngleDeg = includedAngleDeg(t)
     // A library taper stores its TIP as its diameter; the mesh wants the widest.
     if (t.type === 'taper') { tipDiaMM = t.diameterMM; diamMM = 2 * maxCutRadiusMM(t) }
+    cornerMM = cornerRadiusMM(t)
   }
 
-  buildToolIndicatorForParams(refs, toolType, diamMM, vbitAngleDeg, fluteCount, tipDiaMM)
+  buildToolIndicatorForParams(refs, toolType, diamMM, vbitAngleDeg, fluteCount, tipDiaMM, cornerMM)
 }
 
 function rebuildShapes(refs: SceneRefs) {

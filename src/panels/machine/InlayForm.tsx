@@ -1,5 +1,6 @@
 // ─── Inlay form ───────────────────────────────────────────────────────────────
 import { FormShell, PathChip, PathListSection, AutoStepField, GenerateBtn, useSessionOps, toolsOfType, pickToolId, LengthInput, FormError, useGenerateError, discardFailedOps } from './shared'
+import { ToolPicker } from './ToolPicker'
 import { useState } from 'react'
 import { ICON } from '../../theme'
 import { AlertCircle } from 'lucide-react'
@@ -401,36 +402,25 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
       {/* Roughing tool */}
       <div>
         <label htmlFor="inlay-roughing-tool-end" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">Roughing Tool (End Mill)</label>
-        <select id="inlay-roughing-tool-end"
+        <ToolPicker id="inlay-roughing-tool-end"
+          tools={endmills}
           value={form.pocketToolId}
-          onChange={(e) => {
-            const t = tools.find((x) => x.id === e.target.value)
+          onChange={(id) => {
+            const t = tools.find((x) => x.id === id)
             if (t) up('stepDownMM', seedStepDownMM(t))
-            up('pocketToolId', e.target.value)
+            up('pocketToolId', id)
           }}
-          disabled={endmills.length === 0}
-          className="w-full bg-gray-50 dark:bg-neutral-900 border border-gray-400 dark:border-neutral-700 rounded px-2 py-1 text-body text-gray-900 dark:text-neutral-100 focus:outline-none focus:border-blue-500 disabled:opacity-60"
-        >
-          {endmills.length === 0 && <option value="">No end mill — add one in the Tool Library</option>}
-          {endmills.map((t) => (
-            <option key={t.id} value={t.id}>{t.name} (Ø{fmtLen(t.diameterMM, units)})</option>
-          ))}
-        </select>
+          emptyText="No end mill — add one in the Tool Library" />
       </div>
       {/* Finish tool */}
       <div>
         <label htmlFor="inlay-finishing-tool" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">Finishing Tool</label>
-        <select id="inlay-finishing-tool"
+        {/* None skips the wall-finish pass — the roughing bit alone forms the socket / plug walls. */}
+        <ToolPicker id="inlay-finishing-tool"
+          tools={finishers}
           value={form.vbitToolId}
-          onChange={(e) => up('vbitToolId', e.target.value)}
-          className="w-full bg-gray-50 dark:bg-neutral-900 border border-gray-400 dark:border-neutral-700 rounded px-2 py-1 text-body text-gray-900 dark:text-neutral-100 focus:outline-none focus:border-blue-500"
-        >
-          {/* Skip the wall-finish pass — the roughing bit alone forms the socket / plug walls. */}
-          <option value={INLAY_NO_FINISH}>None — roughing only</option>
-          {finishers.map((t) => (
-            <option key={t.id} value={t.id}>{t.name} (Ø{fmtLen(t.diameterMM, units)})</option>
-          ))}
-        </select>
+          onChange={(id) => up('vbitToolId', id)}
+          none={{ value: INLAY_NO_FINISH, label: 'None — roughing only' }} />
         {finishIsNone && (
           <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">No finish pass — flat walls left by the roughing tool (corners at its radius).</p>
         )}

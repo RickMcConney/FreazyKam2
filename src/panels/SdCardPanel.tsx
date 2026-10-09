@@ -49,9 +49,12 @@ export default function SdCardPanel() {
         <span className="flex-1 text-sm font-semibold text-gray-700 dark:text-neutral-300">SD card</span>
         {/* No card traffic while a job runs: the controller is reading the job off that
             same card, and a transfer competing for the ESP32 is what stalls its link. */}
-        <button className={iconBtn} title={running ? 'Not while a job is running' : 'Upload a file to this folder'}
+        {/* Labelled, not a bare icon: it is the way in for a program from any other CAM,
+            and as an arrow beside Refresh it went unnoticed. */}
+        <button className={`${iconBtn} flex items-center gap-1`}
+          title={running ? 'Not while a job is running' : `Upload a G-code file from this computer to the card (${m.sdPath})`}
           disabled={!connected || busy || running} onClick={() => fileRef.current?.click()}>
-          <Upload size={ICON.sm} />
+          <Upload size={ICON.sm} /> <span>Upload file</span>
         </button>
         <button className={iconBtn} title="Refresh" disabled={!connected || busy} onClick={() => void m.sdRefresh()}>
           <RefreshCw size={ICON.sm} className={busy ? 'animate-spin' : ''} />
