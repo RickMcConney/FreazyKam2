@@ -26,12 +26,30 @@ import { jogCommand, JOG_CANCEL, zeroCommand, goToCommands, homeCommand, zMoveCo
 import { useWorkpieceStore, zDatumOffsetMM } from '../store/workpieceStore'
 import { parseSdListing, sdDownloadPath, sdJoin, sdRunCommand, sdUploadForm, type SdListing } from './fluidnc/sdFiles'
 import { jobPreview, type JobPreview } from './jobPreview'
+import { parsePrb, probeDownCommand, zOffsetFromProbe, probeAlarmMessage, type ProbeResult } from './fluidnc/probe'
 import { buildGcodeInputs } from '../io/gcodeExport'
 import { generateGcode } from '../cam/gcode'
 import { asciiFileName } from '../io/filename'
 import { useProjectStore } from '../store/projectStore'
+import { uid } from '../uid'
 
 export type LinkState = 'disconnected' | 'connecting' | 'connected'
+
+/** A named run of G-code lines the user saved, sent one after another by a button. */
+export interface Macro { id: string; name: string; gcode: string }
+
+/** The lines a macro sends: trimmed, blank lines and whole-line comments left out. */
+export function macroLines(gcode: string): string[] {
+  return gcode.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== '' && !l.startsWith(';') && !/^\([^)]*\)$/.test(l))
+}
+
+const HISTORY_MAX = 50
+// One press of a feed or spindle override arrow, percent.
+const OV_STEP = 10
+// Z probing: back off this far after the fast touch, then touch again slowly; lift this far
+// above the plate when done, so it can be taken away.
+const PROBE_BACKOFF_MM = 2
+const PROBE_LIFT_MM = 5
 
 const LOG_MAX = 300
 const REPORT_INTERVAL_MS = 200
@@ -115,17 +133,59 @@ interface MachineState {
   sdListing: SdListing | null
   sdBusy: string | null
   sdError: string | null
-  // The file loaded to be cut: where it is on the card, and its toolpath for the map.
+  // The file loaded to be cut: where it is on the card, and its toolpath for the map. The
+  // map shows this and nothing else — never the design open in FreazyKam, which cannot run
+  // until it has been sent to the card and loaded. Unloading leaves the map bare.
   job: { dir: string; name: string; preview: JobPreview } | null
-  // What the go-to map draws: the design open in FreazyKam, or the loaded job. A
-  // loaded job stays loaded while the design is shown, so switching back is instant.
-  mapSource: 'design' | 'job'
+  // Commands typed into the console, oldest first, so ↑ / ↓ can bring one back.
+  // Kept between sessions; consecutive repeats are stored once.
+  cmdHistory: string[]
+  macros: Macro[]
+  // How far the go-to map is turned, clockwise, so it matches the table as seen from where
+  // the user sits — someone beside the machine sees its X axis running up or down, not
+  // across. Display only: positions and clicks stay in work X/Y. Kept between sessions.
+  mapRotation: 0 | 90 | 180 | 270
+  // The macro whose lines are being sent, if any — one at a time.
+  macroRunning: string | null
+  // Z touch plate: its thickness, how far down to search, the fast and slow probe feeds
+  // (mm, mm/min). Kept between sessions.
+  probePlateMM: number
+  probeSearchMM: number
+  probeFeedMmMin: number
+  probeSlowMmMin: number
+  // A probe cycle is under way; and why the last one failed, if it did.
+  probing: boolean
+  probeError: string | null
+  // What the Z bar draws while probing, in MACHINE Z (work Z means nothing until the probe
+  // has set it): where the tool started, how far it may search, and where it touched the
+  // plate once it has. Kept until the lift off the plate has finished.
+  // startWorkZ: where it started in work Z, if Z was ✓ zeroed then (else unknown).
+  probeView: { startZ: number; startWorkZ: number | null; searchMM: number; contactZ: number | null } | null
 
   setAddress: (a: string) => void
   connect: () => Promise<void>
   disconnect: () => void
   command: (cmd: string) => void
   clearLog: () => void
+  /** Remember a command the user TYPED (buttons are not history). */
+  rememberCommand: (cmd: string) => void
+  /** Turn the go-to map a further 90° clockwise. */
+  rotateMap: () => void
+  addMacro: (macro: Omit<Macro, 'id'>) => void
+  updateMacro: (id: string, changes: Partial<Omit<Macro, 'id'>>) => void
+  deleteMacro: (id: string) => void
+  /**
+   * Send a macro's lines in order, each once the controller has taken the last. STOP,
+   * feed hold, reset and a lost connection end it: the lines after are never sent.
+   */
+  runMacro: (id: string) => Promise<void>
+  setProbe: (changes: Partial<Pick<MachineState, 'probePlateMM' | 'probeSearchMM' | 'probeFeedMmMin' | 'probeSlowMmMin'>>) => void
+  /**
+   * Find the stock top with a Z touch plate: a fast touch, back off, a slow touch; set work
+   * Z0 to the contact point less the plate's thickness; lift clear; mark Z zeroed. Needs the
+   * machine Idle and the probe input open. STOP, feed hold, reset or a lost connection end it.
+   */
+  probeZ: () => Promise<void>
   setJogStepIndex: (i: number) => void
   setJogStepIndexZ: (i: number) => void
   setJogFeedXY: (mmPerMin: number) => void
@@ -142,8 +202,8 @@ interface MachineState {
   setMotors: (enabled: boolean) => void
   /** Step the feed or spindle override (realtime: takes effect mid-move). */
   override: (kind: 'feed' | 'spindle', step: OverrideStep) => void
-  /** Feed or spindle override to the next multiple of 5 % up (+1) or down (−1), 10–200 %. */
-  overrideStep5: (kind: 'feed' | 'spindle', dir: 1 | -1) => void
+  /** Feed or spindle override to the next multiple of 10 % up (+1) or down (−1), 10–200 %. */
+  overrideStep: (kind: 'feed' | 'spindle', dir: 1 | -1) => void
   rapidOverride: (pct: 100 | 50 | 25) => void
   /**
    * Jog to work position (x, y), mm. When Z has been zeroed and the tool is below
@@ -158,12 +218,12 @@ interface MachineState {
   goToOrigin: () => Promise<void>
 
   sdRefresh: (path?: string) => Promise<void>
+  /** Upload a file to the folder shown and, once it is on the card, make it the job. */
   sdUpload: (file: File) => Promise<void>
   sdDelete: (name: string) => Promise<void>
   /** Download a file from the card and preview its toolpath; it becomes the job to run. */
   sdLoad: (name: string) => Promise<void>
   unloadJob: () => void
-  showDesign: () => void
   /**
    * Write the design's G-code to the card as `<project>.nc` in the folder shown,
    * and load it — the step between designing a job and running it.
@@ -243,6 +303,18 @@ let upSince = 0             // when the socket last came up, for the drop log
 // after it reopens (see `zeroed`). Null while no reconnect is pending a check.
 let droppedAt: { mpos: [number, number, number]; moving: boolean } | null = null
 let wifiTimer: ReturnType<typeof setInterval> | undefined
+// Set by anything that stops the machine, so a macro mid-way sends nothing more.
+let macroAbort = false
+// A probe cycle under way, and the step of it waiting on the controller: for the PRB line
+// a G38.2 ends with, or for the machine to come to rest where a back-off jog was sent.
+// Anything that stops the machine rejects it, which ends the cycle there.
+let probingNow = false
+let probeWait: { resolve: (r: ProbeResult | null) => void; reject: (e: Error) => void } | null = null
+const failProbeWait = (why: string) => {
+  const w = probeWait
+  probeWait = null
+  w?.reject(new Error(why))
+}
 
 export const useMachineStore = create<MachineState>()(
   persist(
@@ -304,6 +376,7 @@ export const useMachineStore = create<MachineState>()(
 
       const teardown = (error: string | null) => {
         liftAfterCancel = false
+        failProbeWait('Probing stopped — the connection was lost')
         if (keepAliveTimer) clearInterval(keepAliveTimer)
         keepAliveTimer = undefined
         if (reconnectTimer) clearTimeout(reconnectTimer)
@@ -331,7 +404,7 @@ export const useMachineStore = create<MachineState>()(
         if (z.x || z.y || z.z) log(restoreOnConnect
           ? 'Disconnected — zeros will be restored on reconnect only if the machine is exactly where it is now'
           : 'Disconnected — X, Y and Z zeros no longer trusted; home or zero again after reconnecting')
-        set({ link: 'disconnected', error, wifi: null, zeroed: { x: false, y: false, z: false } })
+        set({ link: 'disconnected', error, wifi: null, zeroed: { x: false, y: false, z: false }, probeView: null })
       }
 
       const readWifi = async () => {
@@ -355,6 +428,23 @@ export const useMachineStore = create<MachineState>()(
 
       const onLine = (line: string) => {
         if (AUTO_REPORT_CONFIRMED.test(line)) autoReport = true
+        const prb = parsePrb(line)
+        if (prb) {
+          log(line)
+          const w = probeWait
+          probeWait = null
+          w?.resolve(prb)
+          return
+        }
+        if (probeWait) {
+          const alarm = /^ALARM:(\d+)/.exec(line)
+          if (alarm) failProbeWait(probeAlarmMessage(Number(alarm[1]), get().probeSearchMM) ?? `The controller alarmed while probing (${line})`)
+          else if (/^error:/i.test(line)) failProbeWait(`The controller refused the probe move (${line})`)
+          // FluidNC answers a G38 with no probe input set up by logging this and not moving
+          // (mc_probe_cycle) — without catching it the cycle would wait out its timeout.
+          else if (/probe pin is not configured/i.test(line)) failProbeWait('The controller has no probe input set up — add a probe pin to its config file (probe: pin:), then try again.')
+          else if (/^\[MSG:ERR:/i.test(line)) failProbeWait(`The controller reported an error while probing: ${line}`)
+        }
         const r = parseStatus(line)
         if (r) {
           lastStatusAt = Date.now()
@@ -413,7 +503,9 @@ export const useMachineStore = create<MachineState>()(
           }
           // An alarm (a limit hit, a reset mid-move) means steps may have been lost:
           // neither the homing nor the zeros can be trusted until redone.
-          if (next.state === 'Alarm' && prev.state !== 'Alarm' && prev.state !== 'Unknown') {
+          // A probe's own alarm (4: already touching, 5: no contact) loses no steps — the
+          // controller knows exactly where it stopped — so it clears nothing.
+          if (next.state === 'Alarm' && prev.state !== 'Alarm' && prev.state !== 'Unknown' && !probingNow) {
             homed = { x: false, y: false, z: false }
             const z = get().zeroed
             if (z.x || z.y || z.z) {
@@ -426,6 +518,8 @@ export const useMachineStore = create<MachineState>()(
             if (next.state === 'Idle') liftOutOfCut(next)
             else log('Cancel ended in Alarm — not lifting Z; check the machine, Unlock, then jog clear')
           }
+          // The probe view stays up through the lift off the plate, and goes when it ends.
+          if (get().probeView && !probingNow && next.state === 'Idle' && prev.state !== 'Idle') set({ probeView: null })
           if (next.state !== prev.state || next.subState !== prev.subState) showStateInTitle(next)
           return
         }
@@ -564,10 +658,133 @@ export const useMachineStore = create<MachineState>()(
         sdBusy: null,
         sdError: null,
         job: null,
-        mapSource: 'design',
+        cmdHistory: [],
+        macros: [],
+        mapRotation: 0,
+        macroRunning: null,
+        probePlateMM: 10,
+        probeSearchMM: 25,
+        probeFeedMmMin: 100,
+        probeSlowMmMin: 25,
+        probing: false,
+        probeError: null,
+        probeView: null,
 
         setAddress: (address) => set({ address }),
         clearLog: () => set({ log: [] }),
+
+        rememberCommand: (cmd) => {
+          const c = cmd.trim()
+          if (!c) return
+          set((s) => s.cmdHistory[s.cmdHistory.length - 1] === c ? s
+            : { cmdHistory: [...s.cmdHistory, c].slice(-HISTORY_MAX) })
+        },
+
+        setProbe: (changes) => set(changes),
+
+        probeZ: async () => {
+          const s0 = get()
+          if (s0.link !== 'connected' || s0.position.state !== 'Idle' || s0.position.sd || s0.probing || s0.macroRunning) return
+          if (s0.position.probe) {
+            set({ probeError: 'The probe already reads touching — check the clip is on the bit, the plate is clear of it, and the lead is not shorted.' })
+            return
+          }
+          const { probePlateMM: plate, probeSearchMM: search, probeFeedMmMin: fast, probeSlowMmMin: slow } = s0
+          // The PRB line comes when the move ends; give it the move's time and a margin.
+          const awaitPrb = (distMM: number, feed: number) => new Promise<ProbeResult | null>((resolve, reject) => {
+            probeWait = { resolve, reject }
+            setTimeout(() => { if (probeWait?.resolve === resolve) failProbeWait('No answer from the controller while probing') }, (distMM / feed) * 60000 * 1.5 + 5000)
+          })
+          // Backed off: Idle again, and clearly up off the plate — at least half the back-off
+          // above the TRIGGER point. Not "at trigger + back-off": the axis decelerates past the
+          // trigger before it stops (PRB reports the trigger, not the stop), so the jog, which
+          // is relative, ends short of that by the overshoot — 0.03 mm on an MPCNC Z at 50
+          // mm/s² and 100 mm/min. Waiting for it within 0.01 mm never ended, on the first real
+          // machine. Before the jog the tool sits at or below the trigger, so this cannot be
+          // met early.
+          const awaitBackedOff = (triggerZ: number) => new Promise<ProbeResult | null>((resolve, reject) => {
+            probeWait = { resolve, reject }
+            const unsub = useMachineStore.subscribe((s) => {
+              if (probeWait?.resolve !== resolve) { unsub(); return }
+              if (s.position.state === 'Idle' && s.position.mpos[2] >= triggerZ + PROBE_BACKOFF_MM / 2) {
+                unsub(); probeWait = null; resolve(null)
+              }
+            })
+            setTimeout(() => { if (probeWait?.resolve === resolve) { unsub(); failProbeWait('The machine did not back off the plate') } }, 15000)
+          })
+
+          probingNow = true
+          set({ probing: true, probeError: null, probeView: { startZ: s0.position.mpos[2], startWorkZ: s0.zeroed.z ? s0.position.wpos[2] : null, searchMM: search, contactZ: null } })
+          log(`${ACTION_MARK}Probe Z — plate ${plate} mm, searching ${search} mm down`)
+          try {
+            // 1. Fast, to find the plate.
+            const first = awaitPrb(search, fast)
+            await send(probeDownCommand(get().position.wpos[2] - search, fast), true)
+            const touch1 = await first
+            if (!touch1?.ok) throw new Error(probeAlarmMessage(5, search) ?? 'The probe never touched')
+            set({ probeView: { ...get().probeView!, contactZ: touch1.mpos[2] } })
+            // 2. Off the plate, then 3. slowly back down onto it — the accurate touch.
+            const backedOff = awaitBackedOff(touch1.mpos[2])
+            await send(jogCommand({ z: PROBE_BACKOFF_MM }, fast)!, true)
+            await backedOff
+            const second = awaitPrb(PROBE_BACKOFF_MM * 2, slow)
+            await send(probeDownCommand(get().position.wpos[2] - PROBE_BACKOFF_MM * 2, slow), true)
+            const touch2 = await second
+            if (!touch2?.ok) throw new Error('The slow touch missed the plate — it may have moved. Try again.')
+            // 4. Work Z0 is the plate's top less its thickness — the stock top.
+            const contactZ = touch2.mpos[2]
+            set({ probeView: { ...get().probeView!, contactZ } })
+            // Z0 is the surface the plate lies on — the stock top, or the table for a
+            // bottom-of-stock origin (the user puts it there; see zOffsetFromProbe).
+            const ws = useWorkpieceStore.getState()
+            await send(zOffsetFromProbe(contactZ, plate), true)
+            if (homed.z) restorable.z = contactZ - plate
+            else delete restorable.z
+            set({ zeroed: { ...get().zeroed, z: true } })
+            // 5. Up off the plate, so it can be taken away.
+            await send(jogCommand({ z: PROBE_LIFT_MM }, fast)!, true)
+            log(`Probed Z: Z0 set on the ${ws.zOrigin === 'bottom' ? 'table (the stock bottom)' : 'stock top'}, ${plate} mm under the plate's top. Remove the plate.`)
+            // A lift that ends between two status reports never shows its Jog → Idle, so
+            // the view is also let go a moment after the lift should be done.
+            setTimeout(() => { if (!probingNow && get().position.state === 'Idle') set({ probeView: null }) }, 3000)
+          } catch (e) {
+            const why = (e as Error).message
+            set({ probeError: why, probeView: null })
+            log(`! ${why}`)
+          } finally {
+            probeWait = null
+            probingNow = false
+            set({ probing: false })
+          }
+        },
+
+        rotateMap: () => set((s) => ({ mapRotation: ((s.mapRotation + 90) % 360) as 0 | 90 | 180 | 270 })),
+
+        addMacro: (macro) => set((s) => ({ macros: [...s.macros, { ...macro, id: uid('macro') }] })),
+        updateMacro: (id, changes) => set((s) => ({ macros: s.macros.map((x) => (x.id === id ? { ...x, ...changes } : x)) })),
+        deleteMacro: (id) => set((s) => ({ macros: s.macros.filter((x) => x.id !== id) })),
+
+        runMacro: async (id) => {
+          const macro = get().macros.find((x) => x.id === id)
+          // One at a time, never into a running job, and only on a live link.
+          if (!macro || get().macroRunning || get().link !== 'connected' || get().position.sd) return
+          const lines = macroLines(macro.gcode)
+          if (!lines.length) return
+          macroAbort = false
+          set({ macroRunning: id })
+          log(`${ACTION_MARK}Macro "${macro.name}" — ${lines.length} line${lines.length === 1 ? '' : 's'}`)
+          try {
+            for (const line of lines) {
+              if (macroAbort || get().link !== 'connected') {
+                log(`${ACTION_MARK}Macro "${macro.name}" stopped — the rest was not sent`)
+                break
+              }
+              await send(line, true)
+            }
+          } finally {
+            set({ macroRunning: null })
+          }
+        },
 
         connect: async () => {
           if (link) return
@@ -628,6 +845,8 @@ export const useMachineStore = create<MachineState>()(
         },
 
         disconnect: () => {
+          macroAbort = true
+          failProbeWait('Probing stopped — the connection was closed')
           link?.close()
           teardown(null)
         },
@@ -702,16 +921,24 @@ export const useMachineStore = create<MachineState>()(
           logAction(`${kind === 'feed' ? 'Feed' : 'Spindle'} override ${step === 'reset' ? 'back to 100 %' : step.replace('plus', '+').replace('minus', '−') + ' %'}`, OVERRIDE[kind][step])
           void send(OVERRIDE[kind][step], false)
         },
-        // The controller only has ±10 and ±1 steps, so 5 % is made of 1 % steps,
-        // sent in order. The base is where an earlier press is heading, if any.
-        overrideStep5: async (kind, dir) => {
+        // A press goes to the next multiple of OV_STEP: 10 %, the controller's own coarse
+        // step (5 % was too modest to be worth a click). Made of the controller's ±10 bytes,
+        // then ±1 bytes for whatever is left to land on the round number (103 → 110 is seven
+        // +1s), sent in order. The base is where an earlier press is heading, if any.
+        overrideStep: async (kind, dir) => {
           const now = ovHeading[kind] ?? get().position.ov[kind]
-          const target = Math.max(10, Math.min(200, dir > 0 ? Math.floor(now / 5) * 5 + 5 : Math.ceil(now / 5) * 5 - 5))
+          const target = Math.max(10, Math.min(200, dir > 0 ? Math.floor(now / OV_STEP) * OV_STEP + OV_STEP : Math.ceil(now / OV_STEP) * OV_STEP - OV_STEP))
           if (target === now) return
           ovHeading[kind] = target
-          const byte = OVERRIDE[kind][target > now ? 'plus1' : 'minus1']
-          if (link?.isOpen) logAction(`${kind === 'feed' ? 'Feed' : 'Spindle'} override ${now} → ${target} % (${Math.abs(target - now)} × ${target > now ? '+' : '−'}1 %)`, byte)
-          for (let i = 0; i < Math.abs(target - now); i++) await send(byte, false)
+          const up = target > now
+          const diff = Math.abs(target - now)
+          const tens = Math.floor(diff / 10), ones = diff % 10
+          const bytes = [
+            ...Array(tens).fill(OVERRIDE[kind][up ? 'plus10' : 'minus10']),
+            ...Array(ones).fill(OVERRIDE[kind][up ? 'plus1' : 'minus1']),
+          ] as string[]
+          if (link?.isOpen) logAction(`${kind === 'feed' ? 'Feed' : 'Spindle'} override ${now} → ${target} %`, bytes.join(''))
+          for (const b of bytes) await send(b, false)
         },
         rapidOverride: (pct) => {
           if (link?.isOpen) logAction(`Rapid override ${pct} %`, OVERRIDE.rapid[pct])
@@ -747,11 +974,15 @@ export const useMachineStore = create<MachineState>()(
           })
           log(`SD: uploaded ${sdJoin(dir, file.name)} (${r.status === 200 ? 'ok' : `HTTP ${r.status}`})`)
           takeListing(r.status, r.body, dir)
-          // Overwriting the loaded job: its preview is now of a file that no longer
-          // exists, so load the new contents (already in hand, no read back needed).
-          const job = get().job
-          if (job && job.dir === dir && job.name === file.name && onCard(file.name)) {
+          // The file just uploaded is the one about to be run, so it becomes the job and
+          // the map shows it — as Send to card does — from the text already in hand, no
+          // read back needed. Judged by the listing: only a file that landed is loaded.
+          // (This also replaces a loaded job of the same name, whose preview would
+          // otherwise be of a file that no longer exists.)
+          if (onCard(file.name)) {
             set({ job: { dir, name: file.name, preview: jobPreview(await file.text()) } })
+          } else if (r.status === 200) {
+            set({ sdError: `${file.name} did not appear on the card after uploading` })
           }
         },
 
@@ -762,7 +993,7 @@ export const useMachineStore = create<MachineState>()(
           const r = await link.http({ path: '/upload', query: { path: dir, action: 'delete', filename: name } })
           log(`SD: deleted ${sdJoin(dir, name)} (${r.status === 200 ? 'ok' : `HTTP ${r.status}`})`)
           const job = get().job
-          if (job && job.dir === dir && job.name === name) set({ job: null, mapSource: 'design' })
+          if (job && job.dir === dir && job.name === name) set({ job: null })
           takeListing(r.status, r.body, dir)
         },
 
@@ -779,12 +1010,11 @@ export const useMachineStore = create<MachineState>()(
             return
           }
           const preview = jobPreview(r.body)
-          set({ sdBusy: null, job: { dir, name, preview }, mapSource: 'job' })
+          set({ sdBusy: null, job: { dir, name, preview } })
           log(`SD: loaded ${sdJoin(dir, name)} — ${preview.segments} moves`)
         },
 
-        unloadJob: () => set({ job: null, mapSource: 'design' }),
-        showDesign: () => set({ mapSource: 'design' }),
+        unloadJob: () => set({ job: null }),
 
         sendDesignToCard: async () => {
           if (!link?.isOpen) return
@@ -813,14 +1043,14 @@ export const useMachineStore = create<MachineState>()(
           // The text is in hand, so it loads without reading it back off the card —
           // REPLACING a loaded job of the same name, which is the usual case after an
           // edit. Success is judged by the listing, not one exact HTTP status.
-          if (r.status === 200 || onCard(name)) set({ job: { dir, name, preview: jobPreview(gcode) }, mapSource: 'job' })
+          if (r.status === 200 || onCard(name)) set({ job: { dir, name, preview: jobPreview(gcode) } })
           else set({ sdError: `The design did not reach the card (HTTP ${r.status})` })
         },
 
         runJob: () => {
           const job = get().job
-          // Only the job the map is showing: never one hidden behind the design.
-          // And never before X, Y and Z are zeroed (by the Zero buttons or by homing):
+          // The loaded job — the only thing the map ever shows — and never before X, Y and
+          // Z are zeroed (by the Zero buttons or by homing):
           // a program's coordinates mean nothing until work zero sits on the stock.
           const { zeroed } = get()
           if (!zeroed.x || !zeroed.y || !zeroed.z) return
@@ -828,11 +1058,13 @@ export const useMachineStore = create<MachineState>()(
           // loaded one, so Run would start the file being replaced, not the one just
           // clicked; during an upload the file on the card is still being written.
           if (get().sdBusy) return
-          if (job && get().mapSource === 'job' && get().position.state === 'Idle') void send(sdRunCommand(job.dir, job.name), true)
+          if (job && get().position.state === 'Idle') void send(sdRunCommand(job.dir, job.name), true)
         },
         // Realtime bytes: acted on at once, not queued behind the program.
-        feedHold: () => void send('!', true),
+        feedHold: () => { macroAbort = true; failProbeWait('Probing stopped by a feed hold'); void send('!', true) },
         stopMotion: () => {
+          macroAbort = true
+          failProbeWait('Probing stopped')
           if (get().link !== 'connected') return
           if (get().position.state === 'Home') {
             logAction('STOP — homing ignores a feed hold, so: soft reset', '\x18')
@@ -844,7 +1076,7 @@ export const useMachineStore = create<MachineState>()(
           void send('!', false)
         },
         resume: () => void send('~', true),
-        softReset: () => { logAction('Soft reset', '\x18'); void send('\x18', false) },
+        softReset: () => { macroAbort = true; failProbeWait('Probing stopped by a reset'); logAction('Soft reset', '\x18'); void send('\x18', false) },
         cancelJob: () => {
           if (!holdComplete(get().position)) return
           logAction('Cancel job (reset at Hold:0 — no alarm, position kept)', '\x18')
@@ -855,7 +1087,7 @@ export const useMachineStore = create<MachineState>()(
     },
     {
       name: 'freazykam-machine',
-      partialize: (s) => ({ address: s.address, jogStepIndex: s.jogStepIndex, jogStepIndexZ: s.jogStepIndexZ, jogFeedXY: s.jogFeedXY, jogFeedZ: s.jogFeedZ, hasHoming: s.hasHoming }),
+      partialize: (s) => ({ address: s.address, jogStepIndex: s.jogStepIndex, jogStepIndexZ: s.jogStepIndexZ, jogFeedXY: s.jogFeedXY, jogFeedZ: s.jogFeedZ, hasHoming: s.hasHoming, cmdHistory: s.cmdHistory, macros: s.macros, mapRotation: s.mapRotation, probePlateMM: s.probePlateMM, probeSearchMM: s.probeSearchMM, probeFeedMmMin: s.probeFeedMmMin, probeSlowMmMin: s.probeSlowMmMin }),
     },
   ),
 )

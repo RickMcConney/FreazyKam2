@@ -265,6 +265,20 @@ describe('tools, speeds and feeds', () => {
     expect(has(/^warn: Chip load is too low on 1 tool \(Endmill 6\)/)).toBe(true)
   })
 
+  it('judges a manual feed against the bit\'s RATED chip load where that is lighter than the material would take', () => {
+    // Fed exactly at the material-and-size aim — fine for an unrated bit, but three times
+    // what this bit is rated for, so too hot.
+    const t = toolAtChipLoad(1)
+    const { material, machineRigidity } = useWorkpieceStore.getState()
+    const rating = aimChipLoad(t.type, t.diameterMM, material, machineRigidity) / 3
+    useToolStore.setState({ tools: [t] })
+    setOps(op())
+    expect(has(/Chip load/)).toBe(false)
+    useToolStore.setState({ tools: [{ ...t, chipLoadMM: rating }] })
+    setOps(op())
+    expect(has(/Chip load is too high/)).toBe(true)
+  })
+
   it('accepts a chip load inside the band either side of the target', () => {
     for (const ratio of [0.8, 1, 1.35]) {
       useToolStore.setState({ tools: [toolAtChipLoad(ratio)] })

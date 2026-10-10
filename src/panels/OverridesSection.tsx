@@ -38,17 +38,16 @@ export default function OverridesSection({ sectionCls, headCls }: Props) {
         <span className={labelCls}>{label}</span>
         <span className={liveCls}>{live}</span>
       </div>
-      {/* 5 % a press, to the next multiple of 5: finer than the controller's 10,
-          and few enough presses to get anywhere. */}
-      <button className={stepBtn} disabled={!connected || pct <= 10} onClick={() => m.overrideStep5(kind, -1)}
-        title={`${label} −5 %`} aria-label={`${label} down 5 percent`}>
+      {/* 10 % a press, to the next multiple of 10. */}
+      <button className={stepBtn} disabled={!connected || pct <= 10} onClick={() => m.overrideStep(kind, -1)}
+        title={`${label} −10 %`} aria-label={`${label} down 10 percent`}>
         <ChevronLeft size={ICON.sm} />
       </button>
       {/* Blue, not amber, when changed: amber is Hold on this tab, and 115% is a
           choice, not a fault. */}
       <span className={`w-12 text-center text-sm font-semibold tabular-nums ${pct !== 100 ? 'text-blue-600 dark:text-sky-400' : 'text-gray-800 dark:text-neutral-100'}`}>{pct}%</span>
-      <button className={stepBtn} disabled={!connected || pct >= 200} onClick={() => m.overrideStep5(kind, 1)}
-        title={`${label} +5 %`} aria-label={`${label} up 5 percent`}>
+      <button className={stepBtn} disabled={!connected || pct >= 200} onClick={() => m.overrideStep(kind, 1)}
+        title={`${label} +10 %`} aria-label={`${label} up 10 percent`}>
         <ChevronRight size={ICON.sm} />
       </button>
       <button className={`${stepBtn} ml-0.5`} disabled={!connected || pct === 100} onClick={() => m.override(kind, 'reset')} title="Back to 100%">

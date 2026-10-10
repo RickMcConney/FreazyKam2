@@ -1,21 +1,20 @@
-// The go-to map on the Machine tab: the stock, the tool, and ONE of two things on
-// the stock — the design open in FreazyKam or the job loaded from the SD card —
-// whichever the sidebar has picked (machineStore.mapSource). Never both: a job is
-// usually that same design posted out, and two copies of one picture, one perhaps
-// stale, is what was confusing. Either way only TOOLPATHS are drawn, never the
-// design's shapes: a job off the card has no shapes, so drawing them for the design
-// made the same work look different depending on where it was opened from.
-// Drawn in WORK coordinates (work zero = the stock's origin point). Clicking
+// The go-to map on the Machine tab: the stock, the tool, and the job loaded from the SD
+// card — and nothing else. The design open in FreazyKam is NOT drawn: it cannot run until
+// it has been sent to the card and loaded (Send to card does both), and a map showing it
+// read as though it could. With no job loaded the stock is bare. Only TOOLPATHS are drawn,
+// never shapes: a job off the card has none.
+// Drawn in WORK coordinates (work zero = the stock's origin point), turned by
+// machineStore.mapRotation so it matches the table as the user sees it from where they sit
+// — watched from beside the machine, an unturned map runs 90° out from the real one, and a
+// job's tool marker looked to be well ahead of (or behind) the bit when it was not. Clicking
 // it jogs the tool there in X and Y — only once X and Y have been zeroed from the
 // panel, since until then a work position says nothing about where the stock is.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useMachineStore } from '../machine/machineStore'
 import { stockRectInWork } from '../machine/stockMap'
+import { workToMap } from '../machine/mapRotation'
 import { useWorkpieceStore, lenValue, MM_PER_INCH } from '../store/workpieceStore'
-import { useToolpathStore } from '../store/toolpathStore'
-import { segmentCuts } from '../machine/jobPreview'
-import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import { MATERIAL_COLORS } from '../colors'
 
@@ -43,17 +42,16 @@ export default function GoToMap({ enabled, onStockBox }: Props) {
   const connected = useMachineStore((s) => s.link === 'connected')
   const zeroed = useMachineStore((s) => s.zeroed)
   const loadedJob = useMachineStore((s) => s.job)
-  const showingJob = useMachineStore((s) => s.mapSource === 'job') && !!loadedJob
-  const job = showingJob ? loadedJob : null
-  const operations = useToolpathStore((s) => s.operations)
-  const projectName = useProjectStore((s) => s.name)
+  const job = loadedJob
   const { widthMM, heightMM, origin, units, material } = useWorkpieceStore()
   // The stock in its material's colour, as the canvas draws it — the amber this
   // replaced read as a warning on a tab where amber and red mean Hold and Alarm.
   const darkMode = useUIStore((s) => s.darkMode)
   const stockFill = MATERIAL_COLORS[material][darkMode ? 'dark' : 'light']
   const svgRef = useRef<SVGSVGElement>(null)
+  const groupRef = useRef<SVGGElement>(null)
   const stockRef = useRef<SVGRectElement>(null)
+  const rotation = useMachineStore((s) => s.mapRotation)
   // The letterboxed view moves the stock with the panel's size as well as with the
   // stock's, so measure after every render and on every resize, reporting changes only.
   const [, setResized] = useState(0)
@@ -96,17 +94,22 @@ export default function GoToMap({ enabled, onStockBox }: Props) {
     : stock
   const pad = Math.max(10, 0.08 * Math.max(ext.maxX - ext.minX, ext.maxY - ext.minY))
   const view = { minX: ext.minX - pad, minY: ext.minY - pad, w: ext.maxX - ext.minX + 2 * pad, h: ext.maxY - ext.minY + 2 * pad }
+  // The drawing group's transform: Y-flip (work Y up), then the turn, clockwise on screen.
+  // The SVG's viewBox is the turned view rectangle's bounds, so the turned map fills the box.
+  const toSvg = (x: number, y: number) => workToMap(x, y, rotation)
+  const corners = [[view.minX, view.minY], [view.minX + view.w, view.minY], [view.minX, view.minY + view.h], [view.minX + view.w, view.minY + view.h]]
+    .map(([x, y]) => toSvg(x, y))
+  const vb = {
+    x: Math.min(...corners.map((c) => c[0])), y: Math.min(...corners.map((c) => c[1])),
+    w: Math.max(...corners.map((c) => c[0])) - Math.min(...corners.map((c) => c[0])),
+    h: Math.max(...corners.map((c) => c[1])) - Math.min(...corners.map((c) => c[1])),
+  }
   const offStock = !!jb && (jb.minX < stock.minX - 0.01 || jb.minY < stock.minY - 0.01 || jb.maxX > stock.maxX + 0.01 || jb.maxY > stock.maxY + 0.01)
   const step = gridStepMM(Math.max(widthMM, heightMM), units)
 
-  // The job's cuts, or the design's generated toolpaths (stored stock-local, 0→W,
-  // 0→H, so shifted into work coordinates).
-  const jobPolys = useMemo(() => {
-    const cuts = job
-      ? job.preview.cuts
-      : segmentCuts(operations.filter((o) => o.visible && o.status === 'done').map((o) => o.segments), stock.minX, stock.minY)
-    return cuts.map((poly) => poly.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' '))
-  }, [job, operations, stock.minX, stock.minY])
+  // The loaded job's cuts; none without one.
+  const jobPolys = useMemo(() => (job ? job.preview.cuts : [])
+    .map((poly) => poly.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' ')), [job])
 
   const gridLines = useMemo(() => {
     const xs: number[] = [], ys: number[] = []
@@ -115,14 +118,14 @@ export default function GoToMap({ enabled, onStockBox }: Props) {
     return { xs, ys }
   }, [stock.minX, stock.minY, stock.maxX, stock.maxY, step])
 
-  // Pointer → work mm. The drawing sits in a scale(1,−1) group, so SVG y is −work Y.
+  // Pointer → work mm, through the DRAWING GROUP's own screen transform: that includes the
+  // Y-flip and the turn, so a click on a turned map still lands on the work X/Y under it.
   const toWork = (e: React.PointerEvent | React.MouseEvent) => {
-    const svg = svgRef.current
-    const ctm = svg?.getScreenCTM()
-    if (!svg || !ctm) return null
+    const ctm = groupRef.current?.getScreenCTM()
+    if (!ctm) return null
     const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(ctm.inverse())
     // Tenths of a mm: finer than anyone can click, and keeps the console readable.
-    return { x: Math.round(pt.x * 10) / 10, y: Math.round(-pt.y * 10) / 10 }
+    return { x: Math.round(pt.x * 10) / 10, y: Math.round(pt.y * 10) / 10 }
   }
 
   const onClick = (e: React.MouseEvent) => {
@@ -150,13 +153,13 @@ export default function GoToMap({ enabled, onStockBox }: Props) {
       <svg
         ref={svgRef}
         className={`w-full h-full ${enabled ? 'cursor-crosshair' : 'cursor-not-allowed'}`}
-        viewBox={`${view.minX} ${-(view.minY + view.h)} ${view.w} ${view.h}`}
+        viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
         preserveAspectRatio="xMidYMid meet"
         onPointerMove={(e) => setHover(toWork(e))}
         onPointerLeave={() => setHover(null)}
         onClick={onClick}
       >
-        <g transform="scale(1,-1)">
+        <g ref={groupRef} transform={`rotate(${rotation}) scale(1,-1)`}>
           <rect ref={stockRef} x={stock.minX} y={stock.minY} width={widthMM} height={heightMM}
             fill={stockFill} className="stroke-black/40 dark:stroke-white/40" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
           {gridLines.xs.map((x) => (
@@ -204,9 +207,10 @@ export default function GoToMap({ enabled, onStockBox }: Props) {
         </div>
       )}
       {!job && (
-        <div className="absolute top-1 right-2 text-xs text-right pointer-events-none text-gray-700 dark:text-neutral-300">
-          Current design{projectName !== 'Untitled Project' ? `: ${projectName}` : ''}
-          {jobPolys.length === 0 && <div className="text-gray-500 dark:text-neutral-500">no toolpaths generated</div>}
+        // The design is never drawn here (it is not on the machine until sent and loaded),
+        // so the corner says what IS shown: nothing yet.
+        <div className="absolute top-1 right-2 text-xs text-right pointer-events-none text-gray-500 dark:text-neutral-500">
+          No job loaded
         </div>
       )}
       {reason && (

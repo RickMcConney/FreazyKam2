@@ -77,27 +77,60 @@ export function rigidityFeedCeilingMmMin(rigidity: number): number {
 // machines aren't handed near-full-diameter step-downs. Indexed by rigidity 1..5.
 const RIGIDITY_DEPTH_FACTOR = [0.3, 0.45, 0.6, 0.85, 1.0]
 
+// How a bit's chip scales with its size, relative to REFERENCE_DIAMETER_MM. In proportion
+// to the diameter from 1/8" up (capped at 2×), and FASTER than that below it: a small bit
+// is weaker for its size, so its chip falls as Ø^1.5. Maker charts show it — IDC's 1/16"
+// takes a third of their 1/8"'s chip, not half. This used to be floored at 0.3× instead,
+// so every bit under 1.8 mm was fed as a 1.8 mm bit: a 1/32" downcut in maple at 1159
+// mm/min where its maker says 254 — a broken bit.
+const SMALL_BIT_KNEE_MM = 3.175
+const SMALL_BIT_EXPONENT = 1.5
+export function chipDiameterScale(diameterMM: number): number {
+  if (diameterMM >= SMALL_BIT_KNEE_MM) return Math.min(diameterMM / REFERENCE_DIAMETER_MM, 2)
+  const d = Math.max(0, diameterMM)
+  return (SMALL_BIT_KNEE_MM / REFERENCE_DIAMETER_MM) * Math.pow(d / SMALL_BIT_KNEE_MM, SMALL_BIT_EXPONENT)
+}
+
+// THE CHIP-LOAD CEILING is the tool's RATED chip load (`Tool.chipLoadMM`) — the maker's
+// recommendation, fixed, never derived from the feed and rpm it is there to judge. The
+// reference everything judges by is the LOWER of it and the material-and-size model:
+// Auto Feeds aims there, and with Auto Feeds off the chip gauge and the export check
+// warn when the user's own feed and rpm run the bit too hot or too cold against it.
+// A published chip load is a recommendation rather than a hard limit, but a bit fed too
+// slowly shows as rubbing on the gauge while one fed too hard breaks — so it is read as a
+// ceiling. None for a drill (its chip is not a side-cutting one) or an unrated tool.
+export function toolChipCeilingMM(tool: Tool): number | undefined {
+  if (tool.type === 'drill') return undefined
+  return tool.chipLoadMM !== undefined && tool.chipLoadMM > 0 ? tool.chipLoadMM : undefined
+}
+
 // Intrinsic recommended chip load (mm per tooth) for a tool in a given material —
 // a property of the tool type + diameter + material only (this is what manufacturer
-// chip-load charts give). Machine rigidity does NOT enter here.
-export function targetChipLoad(toolType: ToolType, diameterMM: number, material: Material): number {
-  const diaScale = clamp(diameterMM / REFERENCE_DIAMETER_MM, 0.3, 2)
-  return MATERIAL_INFO[material].chipLoadMM * (CHIP_LOAD_FACTOR[toolType] ?? 1) * diaScale
+// chip-load charts give). Machine rigidity does NOT enter here. `ceilingMM` is the
+// tool's own chip-load ceiling (`toolChipCeilingMM`): the chip never goes above it,
+// whatever the material would take. Everything else — the rigidity-trimmed aim, the
+// rubbing floor — is derived from this, so the ceiling reaches all of them.
+export function targetChipLoad(toolType: ToolType, diameterMM: number, material: Material, ceilingMM?: number): number {
+  const fz = MATERIAL_INFO[material].chipLoadMM * (CHIP_LOAD_FACTOR[toolType] ?? 1) * chipDiameterScale(diameterMM)
+  return ceilingMM !== undefined && ceilingMM > 0 ? Math.min(fz, ceilingMM) : fz
 }
 
 // The chip auto feeds actually aims for on this machine: the intrinsic chip trimmed
 // for rigidity, but never below the material's floor. Shared by the feed calc, the
 // simulator's gauge and the export preflight, so all three judge against one aim.
-export function aimChipLoad(toolType: ToolType, diameterMM: number, material: Material, rigidity: number): number {
-  return Math.max(
-    targetChipLoad(toolType, diameterMM, material) * rigidityChipFactor(rigidity),
-    minChipLoad(toolType, diameterMM, material),
+export function aimChipLoad(toolType: ToolType, diameterMM: number, material: Material, rigidity: number, ceilingMM?: number): number {
+  const aim = Math.max(
+    targetChipLoad(toolType, diameterMM, material, ceilingMM) * rigidityChipFactor(rigidity),
+    minChipLoad(toolType, diameterMM, material, ceilingMM),
   )
+  // A stiff machine's rigidity factor runs ABOVE 1; it still may not take the bit past
+  // the tool's own ceiling.
+  return ceilingMM !== undefined && ceilingMM > 0 ? Math.min(aim, ceilingMM) : aim
 }
 
 // The thinnest chip this tool should ever run in this material before it rubs.
-export function minChipLoad(toolType: ToolType, diameterMM: number, material: Material): number {
-  return targetChipLoad(toolType, diameterMM, material) * MIN_CHIP_FRACTION[MATERIAL_INFO[material].kind]
+export function minChipLoad(toolType: ToolType, diameterMM: number, material: Material, ceilingMM?: number): number {
+  return targetChipLoad(toolType, diameterMM, material, ceilingMM) * MIN_CHIP_FRACTION[MATERIAL_INFO[material].kind]
 }
 
 // The simulator and the export preflight call a chip under 0.75× the aim "rubbing".
@@ -162,7 +195,8 @@ function computeFeeds(input: FeedCalcInput): FeedCalcResult {
 
   // The chip comes first: the material's own, trimmed for rigidity no further than
   // the material tolerates.
-  const fzAim = aimChipLoad(tool.type, feedDiameterMM(tool), material, R)
+  const ceiling = toolChipCeilingMM(tool)
+  const fzAim = aimChipLoad(tool.type, feedDiameterMM(tool), material, R, ceiling)
 
   // Spindle speed is a computed output, not taken from the tool: pick the rpm that
   // lets the feed reach the target feed at the aimed chip, bounded by the machine's
@@ -198,7 +232,7 @@ function computeFeeds(input: FeedCalcInput): FeedCalcResult {
   // beyond that the feed runs over the target to keep it — the rigidity figure is
   // soft, a thin chip melts plastic. Only the machine's own max feed is hard, and
   // only it may thin the chip further.
-  const fzFloor = Math.max(minChipLoad(tool.type, feedDiameterMM(tool), material), RUBBING_MARGIN * fzAim)
+  const fzFloor = Math.max(minChipLoad(tool.type, feedDiameterMM(tool), material, ceiling), RUBBING_MARGIN * fzAim)
   const fzRun = clamp(targetFeed / (flutes * rpm), fzFloor, fzAim)
   const xyFeed = Math.min(fzRun * flutes * rpm, maxFeed)
   const rpmAdjusted = rpm !== tool.rpm

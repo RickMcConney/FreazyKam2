@@ -6,7 +6,7 @@ import type { PostProcessorProfile } from '../store/postProcessorStore'
 import { useWorkpieceStore, zDatumOffsetMM, MM_PER_INCH as MM_PER_IN } from '../store/workpieceStore'
 import { SPINDLE_INFO, spindleDialLabel } from '../store/spindle'
 import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
-import { feedsForTool } from './feeds'
+import { feedsForTool, toolChipCeilingMM } from './feeds'
 import { cornerRadiusMM, includedAngleDeg, isVCutter, maxCutRadiusMM } from './geom'
 import { arcFitPolyline, douglasPeucker, ARC_FIT_MAX_SPAN, type Pt2 } from './pathFlattener'
 import { lineSpacingMM } from './photoVcarve'
@@ -41,6 +41,10 @@ function toolShapeComments(tool: Tool, angleDeg: number | undefined, c: (s: stri
   // The corner radius in mm; without it the sim carves a bowl bit as a flat end mill.
   if (tool.type === 'bullnose') c(`bullnose-r:${f(cornerRadiusMM(tool))}`)
   if (tool.type === 'drill') c(`drillbit`)
+  // The tool's rated chip load, so the simulator's chip gauge judges the feed against the
+  // same reference as Auto Feeds and the export check — with Auto Feeds on or off.
+  const ceiling = toolChipCeilingMM(tool)
+  if (ceiling !== undefined) c(`fzmax:${ceiling.toFixed(5)}`)
 }
 
 function sub(template: string, vals: Record<string, string | number>): string {

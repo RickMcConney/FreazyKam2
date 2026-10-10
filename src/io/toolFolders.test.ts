@@ -9,7 +9,7 @@ import {
   planDeleteFolder, applyDeleteFolder, applySettings,
 } from './settingsFile'
 import { mergeIntoFolders, parseSettings } from './settingsMerge'
-import { useToolStore, DEFAULT_TOOLS, folderOf, type Tool } from '../store/toolStore'
+import { useToolStore, DEFAULT_TOOLS, folderOf, withRatedChip, type Tool } from '../store/toolStore'
 import { useToolpathStore, type AnyOperation } from '../store/toolpathStore'
 import { includedAngleDeg } from '../cam/geom'
 
@@ -30,8 +30,9 @@ let n = 0
 const mint = () => `t${n++}`
 const one = (data: unknown) => fromFusionLibrary(data, mint).tools[0]
 
+// Rated, as every tool in a loaded library is (the store rates an unrated one on load).
 const myTool = (id: string, name: string, extra: Partial<Tool> = {}): Tool =>
-  ({ id, name, type: 'endmill', diameterMM: 6.35, fluteCount: 2, rpm: 18000, xyFeedMmMin: 1000, zFeedMmMin: 300, maxDepthMM: 10, ...extra })
+  withRatedChip({ id, name, type: 'endmill', diameterMM: 6.35, fluteCount: 2, rpm: 18000, xyFeedMmMin: 1000, zFeedMmMin: 300, maxDepthMM: 10, ...extra })
 
 describe('reading a Fusion 360 tool library', () => {
   it('recognises a Fusion library and not a FreazyKam settings file', () => {
@@ -66,6 +67,31 @@ describe('reading a Fusion 360 tool library', () => {
     expect(t).toMatchObject({ type: 'taper', vbitAngleDeg: 5, maxDepthMM: 28.575 })
     expect(t.diameterMM).toBeCloseTo(1.585, 3)
     expect(includedAngleDeg(t)).toBe(10)
+  })
+
+  it('rates the bit with the maker\'s chip load from f_z, in mm per tooth', () => {
+    const d = fusion('flat end mill', { DC: 0.03125, NOF: 2, LCF: 0.1 })
+    ;(d.data[0]['start-values'] as { presets: Record<string, number>[] }).presets[0].f_z = 0.000185
+    expect(one(d).chipLoadMM).toBeCloseTo(0.0047, 5)
+  })
+
+  it('works the rating out from the maker\'s feed, speed and flutes when f_z is missing', () => {
+    // 60 in/min ÷ (18000 rpm × 2 flutes) = 0.00167 in = 0.0423 mm per tooth
+    expect(one(fusion('flat end mill', { DC: 0.25, NOF: 2 })).chipLoadMM).toBeCloseTo(60 / 36000 * 25.4, 5)
+  })
+
+  it('gives a drill no rating — its chip is not a side-cutting one', () => {
+    expect(one(fusion('drill', { DC: 0.25, LCF: 1 })).chipLoadMM).toBeUndefined()
+  })
+
+  it.skipIf(!HAVE_IDC)('rates every IDC bit with IDC\'s own f_z', () => {
+    const tools = fromFusionLibrary(IDC, mint).tools
+    for (const raw of IDC.data as { description: string; 'start-values': { presets: { f_z?: number }[] } }[]) {
+      const fz = raw['start-values'].presets[0].f_z
+      const t = tools.find((x) => x.name === raw.description.trim())
+      if (!t || fz === undefined || t.type === 'drill') continue
+      expect(t.chipLoadMM).toBeCloseTo(fz * 25.4, 4)
+    }
   })
 
   it('gives a drill no side feed', () => {
@@ -154,6 +180,15 @@ describe('importing a tool file into a folder', () => {
   it('keeps a bull nose\'s corner radius through a .fkset', () => {
     const text = JSON.stringify({ format: 'freazykam-settings', version: 1, sections: { tools: [myTool('x', 'Bowl', { type: 'bullnose', cornerRadiusMM: 9.525 })] } })
     expect(readToolFile('bowl.fkset', text).tools[0]).toMatchObject({ type: 'bullnose', cornerRadiusMM: 9.525 })
+  })
+
+  it('keeps a tool\'s chip rating through a .fkset, and rates one from a file that has none from its own numbers', () => {
+    const rated = myTool('a', 'Rated', { chipLoadMM: 0.03 })
+    const { chipLoadMM: _none, ...old } = myTool('b', 'Old')   // unrated, as a file from before the Chip column: 1000 ÷ (18000 × 2)
+    const text = JSON.stringify({ format: 'freazykam-settings', version: 1, sections: { tools: [rated, old] } })
+    const [r, o] = readToolFile('t.fkset', text).tools
+    expect(r.chipLoadMM).toBe(0.03)
+    expect(o.chipLoadMM).toBeCloseTo(1000 / 36000, 5)
   })
 
   it('"My Tools" as the folder name means the user\'s own, the folder field left absent', () => {

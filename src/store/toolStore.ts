@@ -25,11 +25,38 @@ export interface Tool {
   // at its edge (a bowl bit is a big one). Only meaningful for the bullnose type; read it
   // through `cornerRadiusMM(tool)` in cam/geom.ts, which clamps it to [0, R].
   cornerRadiusMM?: number
+  // The RATED chip load, mm per tooth — the maker's recommended feed per tooth for this
+  // bit. Fixed: editing the feed, rpm or flutes never changes it, because judging those
+  // against it is the whole point (the chip gauge and the export check warn when they
+  // run the bit too hot or too cold). Auto Feeds never aims above it. Shown and editable
+  // in the library's Chip column; absent means no rating, and the material-and-size
+  // model is the only reference.
+  chipLoadMM?: number
   // The library folder the tool is filed in. Absent is MY TOOLS — the user's own rack.
   // Anything imported lands in a NAMED folder (a vendor catalogue is 80 bits the user
   // mostly does not own), so an import never mixes into, renames against or restores
   // over their own tools. A folder exists exactly while a tool names it.
   folder?: string
+}
+
+/**
+ * The chip load a tool's own feed, rpm and flutes give — feed ÷ (rpm × flutes). How a
+ * rating is FILLED IN where there is none (the defaults, a library from before the Chip
+ * column, a plain new tool, a file that carries none); never how one is kept up to date.
+ * Undefined for a drill (its chip is not a side-cutting one) and for no feed or speed.
+ */
+export function chipLoadFromFeeds(tool: Tool): number | undefined {
+  if (tool.type === 'drill' || !(tool.xyFeedMmMin > 0) || !(tool.rpm > 0)) return undefined
+  return Math.round(tool.xyFeedMmMin / (tool.rpm * Math.max(1, tool.fluteCount)) * 1e5) / 1e5
+}
+
+/** `tool` with a rated chip load filled in from its own numbers if it has none. */
+export function withRatedChip(tool: Tool): Tool {
+  if (tool.chipLoadMM !== undefined && tool.chipLoadMM > 0) return tool
+  const legacy = (tool as Tool & { makerChipLoadMM?: number }).makerChipLoadMM
+  const { makerChipLoadMM: _drop, ...rest } = tool as Tool & { makerChipLoadMM?: number }
+  const fz = legacy && legacy > 0 ? legacy : chipLoadFromFeeds(tool)
+  return fz === undefined ? rest : { ...rest, chipLoadMM: fz }
 }
 
 /** The folder a tool is filed in; '' is My Tools. */
@@ -41,16 +68,29 @@ export function folderNames(tools: Tool[]): string[] {
   return [...new Set(tools.map(folderOf).filter((f) => f !== ''))]
 }
 
-export const DEFAULT_TOOLS: Tool[] = [
-  { id: 'default-1', name: '1/4" End Mill',   type: 'endmill',  diameterMM: 6.35,  fluteCount: 2, rpm: 18000, xyFeedMmMin: 2500, zFeedMmMin: 500, maxDepthMM: 25.0 },
-  { id: 'default-2', name: '1/8" End Mill',   type: 'endmill',  diameterMM: 3.175, fluteCount: 2, rpm: 24000, xyFeedMmMin: 1500, zFeedMmMin: 300, maxDepthMM: 15.0 },
-  { id: 'default-3', name: '60° V-Bit',       type: 'vbit',     diameterMM: 6.35,  fluteCount: 2, rpm: 18000, xyFeedMmMin: 2000, zFeedMmMin: 400, maxDepthMM: 10.0, vbitAngleDeg: 60 },
-  { id: 'default-4', name: '1/4" Ball Nose',  type: 'ballnose', diameterMM: 6.35,  fluteCount: 2, rpm: 18000, xyFeedMmMin: 2000, zFeedMmMin: 400, maxDepthMM: 20.0 },
-  { id: 'default-5', name: '3mm Drill',       type: 'drill',    diameterMM: 3.0,   fluteCount: 2, rpm: 12000, xyFeedMmMin: 0,    zFeedMmMin: 200, maxDepthMM: 20.0 },
+// The factory set. RPM, feeds, plunge and Max Z of the first four are IDC Woodcraft's
+// published numbers for their equivalent bit (1/4" and 1/8" downcut, 60° 1/4"-shank V-bit,
+// 1/4" ball nose) — a consistent reference rather than numbers of unknown origin. They are
+// used as they stand only with Auto Feeds off; with it on each cut works its own out.
+// The drill takes IDC's spindle speed but a moderate plunge: their 1/8" is a Lightning
+// drill, built to plunge far harder than a generic twist drill should. No IDC bit matches
+// the taper, so it keeps its own.
+const FACTORY_TOOLS: Tool[] = [
+  { id: 'default-1', name: '1/4" End Mill',   type: 'endmill',  diameterMM: 6.35,  fluteCount: 2, rpm: 19000, xyFeedMmMin: 1778, zFeedMmMin: 762, maxDepthMM: 25.4 },
+  { id: 'default-2', name: '1/8" End Mill',   type: 'endmill',  diameterMM: 3.175, fluteCount: 2, rpm: 22000, xyFeedMmMin: 1270, zFeedMmMin: 381, maxDepthMM: 19.05 },
+  // Max Z is the depth of the cone: a 1/4" 60° V-bit is 5.5 mm deep at its full width.
+  { id: 'default-3', name: '60° V-Bit',       type: 'vbit',     diameterMM: 6.35,  fluteCount: 2, rpm: 22000, xyFeedMmMin: 1524, zFeedMmMin: 508, maxDepthMM: 5.5, vbitAngleDeg: 60 },
+  { id: 'default-4', name: '1/4" Ball Nose',  type: 'ballnose', diameterMM: 6.35,  fluteCount: 2, rpm: 19000, xyFeedMmMin: 1778, zFeedMmMin: 762, maxDepthMM: 35.56 },
+  // A small bowl bit: ½" across, a 3/16" corner, so ⅛" of flat in the middle. Shape,
+  // speeds and feeds are Cadence's "Bowl-Cut Jenny", from the same IDC catalogue.
+  { id: 'default-7', name: '1/2" Bull Nose',  type: 'bullnose', diameterMM: 12.7,  fluteCount: 2, rpm: 17000, xyFeedMmMin: 3048, zFeedMmMin: 1524, maxDepthMM: 25.4, cornerRadiusMM: 4.762 },
+  { id: 'default-5', name: '3mm Drill',       type: 'drill',    diameterMM: 3.0,   fluteCount: 2, rpm: 17000, xyFeedMmMin: 0,    zFeedMmMin: 500, maxDepthMM: 20.0 },
   // Ø is the TIP ball diameter and maxDepth the usable taper length: together with the
   // 5°/side they say this bit opens out to Ø5.29 mm at 25 mm deep.
   { id: 'default-6', name: '5° Taper 1mm Tip', type: 'taper',   diameterMM: 1.0,   fluteCount: 2, rpm: 18000, xyFeedMmMin: 1200, zFeedMmMin: 300, maxDepthMM: 25.0, vbitAngleDeg: 5 },
 ]
+// Each rated from its own (IDC-matched) numbers; the drill has none.
+export const DEFAULT_TOOLS: Tool[] = FACTORY_TOOLS.map(withRatedChip)
 
 // How the library table is ordered for display. The tools array itself keeps its
 // creation order (that's what `addTool` appends to and what `sortBy: null`
@@ -147,7 +187,7 @@ export const useToolStore = create<ToolState>()(
           const base = s.tools.find((t) => t.id === s.selectedToolId && folderOf(t) === s.openFolder)
           const t: Tool = base
             ? { ...base, id, name: `${base.name} copy` }
-            : withFolder({ id, name: 'New End Mill', type: 'endmill', diameterMM: 6.35, fluteCount: 2, rpm: 18000, xyFeedMmMin: 2000, zFeedMmMin: 500, maxDepthMM: 20.0 }, s.openFolder)
+            : withFolder(withRatedChip({ id, name: 'New End Mill', type: 'endmill', diameterMM: 6.35, fluteCount: 2, rpm: 18000, xyFeedMmMin: 2000, zFeedMmMin: 500, maxDepthMM: 20.0 }), s.openFolder)
           return { tools: [...s.tools, t], selectedToolId: id }
         })
       },
@@ -179,7 +219,12 @@ export const useToolStore = create<ToolState>()(
         if (!state) return
         const seen = new Set<string>()
         let changed = false
-        const tools = state.tools.map((t) => {
+        // A library saved before the Chip column gets each tool rated ONCE from its own
+        // numbers (or from the maker's figure an earlier build stored); from then on the
+        // rating is the user's, and editing feed or rpm leaves it alone.
+        const tools = state.tools.map((t0) => {
+          const t = withRatedChip(t0)
+          if (t !== t0) changed = true
           if (seen.has(t.id)) { changed = true; return { ...t, id: uid('tool') } }
           seen.add(t.id)
           return t

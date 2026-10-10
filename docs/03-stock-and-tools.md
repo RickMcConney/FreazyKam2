@@ -65,9 +65,9 @@ The **Tool Library** tab across the top holds your cutters. It is saved with the
 *and* kept in the browser between sessions, so a new project starts with the tools you
 already own.
 
-![The Tool Library showing the IDC folder: 79 imported tools sorted by name, with My Tools and IDC folder tabs above the table, and Restore Defaults, Import, Export and Add Tool across the top](images/03-tool-library.png)
+![The Tool Library showing the IDC Woodcraft folder sorted by type: end mills, two bull nose bowl bits with their corner radius, ball noses and V-bits, with columns for diameter, flutes, rated chip load, RPM, router dial, feeds, Max Z, angle or corner radius, and the move, copy and delete actions on the hovered row](images/03-tool-library.png)
 
-<!-- FULL APP · 1600 px wide, downscaled from the 2800 px capture. Tool Library tab, the IDC Woodcraft catalogue imported into its own folder, sorted by name. -->
+<!-- FULL APP · 1589 px wide, a 1× capture of a window wide enough for the whole table (the Tool Library needs ~1560 px with the Dial column; at 1400 it scrolls sideways). Not upscaled. Tool Library tab, the IDC Woodcraft catalogue in its own folder, sorted by type. -->
 
 ### Folders
 
@@ -120,8 +120,8 @@ things are worth knowing:
   6.35 mm).
 - **A taper's angle comes in per side, and its Ø is the tip** — the same conventions the
   library uses ([below](#the-two-angle-conventions)).
-- The maker's feeds are **starting numbers for their bit, not for your machine**. With
-  Auto Feeds & Speeds on, each cut works out its own anyway.
+- **The maker's chip load comes in as the bit's rating,** in the **Chip** column — see
+  [below](#the-rated-chip-load).
 
 **Restore Defaults** puts back the tools FreazyKam comes with **in My Tools** — imported
 folders are not touched. It first lists what will be removed, which default tools come
@@ -141,13 +141,14 @@ check that a row says what you meant.
 | **Type** | End Mill, Bull Nose, Ball Nose, V-bit, Taper End Mill, Drill — this decides which operations offer it |
 | **Ø** | Cutting diameter — **except on a taper**, where it is the *tip* diameter |
 | **Flutes** | With RPM and feed, this sets chip load |
+| **Chip** | The bit's **rated chip load** per tooth — the maker's recommendation. Fixed: the feeds are checked against it. Blank for no rating ([below](#the-rated-chip-load)) |
 | **RPM** | Spindle speed |
 | **Dial** | The router's speed dial setting for that RPM — shown only when Setup names a trim router with a dial ([Spindle](#spindle)) |
 | **XY Feed** | Cutting feed |
 | **Z Feed** | Plunge feed — always slower; a cutter plunging is cutting with its worst geometry |
 | **Max Z** | Deepest this tool may cut, i.e. its usable flute length |
 | **Angle° / R** | V-bits: the **included** angle. Tapers: the angle **per side**. Bull noses: the **corner radius**. Hover the field to see which. A dash for everything else |
-| **Actions** | Shown when you hover a row: move to another folder, copy to My Tools (imported folders only), delete |
+| **Actions** | Shown when you hover a row — in the picture above, the row for THE "RIPPER" 1/2" Hogging Upcut: **move** to another folder (the folder-with-arrow icon), **copy to My Tools** (the copy icon, imported folders only) and **delete** (the bin) |
 
 ### Type decides where a tool can be used
 
@@ -209,6 +210,46 @@ rounded foot leaves a hairline gap at the finished face.
 The bottom of the Setup panel decides how hard the machine is driven. **Auto Feeds &
 Speeds** is on by default, and it is the right default: it computes a feed, plunge feed,
 spindle speed and step-down per operation, from the tool, the material and your machine.
+
+### How the chip load is chosen
+
+The **chip load** is how thick a bite each tooth takes: feed ÷ (RPM × flutes). Auto Feeds
+picks it first and sets everything else around it. It depends on **both the material and
+the bit**:
+
+- **The material** sets the scale. Pine takes a thicker chip than maple, and aluminium a
+  far thinner one.
+- **The bit's size** scales it. From 1/8" up the chip grows in step with the diameter (up
+  to twice a 6 mm bit's). **Below 1/8" it shrinks faster than the bit does**, because a
+  small bit is weaker for its size. A 1/16" bit takes about a third of a 1/8"'s chip, not
+  half. Without that, a 1/32" engraving bit gets fed hard enough to snap.
+- **The bit's type** adjusts it. A V-bit's point is fragile; a ball nose and bull nose cut
+  with less of their edge.
+- **The bit's rated chip load** (the **Chip** column) sets a ceiling: the chip never goes
+  above it, whatever the material would take.
+
+Your machine then trims it (rigidity, below), and the spindle speed is chosen so the
+feed your machine can manage still delivers that chip.
+
+### The rated chip load
+
+Every bit has a **Chip** column in the library: its **rated chip load**, the bite per tooth
+its maker recommends. It's a fixed property of the bit. The feed, RPM and flutes are what
+you set; the chip check judges them against this rating.
+
+- **Where it comes from.** An imported bit carries its maker's figure. The factory tools
+  are rated from their IDC-matched numbers. Tools from before the column existed were rated
+  once from their own feed, RPM and flutes. **Add Tool** copies the selected row's rating
+  along with everything else. A drill has none, since it plunges rather than side-cuts.
+- **Editing the feed, RPM or flutes never changes it.** That's the point: if you set an
+  RPM or feed that runs the bit too hot or too cold for its rating, the export review and
+  the simulator's chip-load gauge say so — with Auto Feeds on or off.
+- **With Auto Feeds on**, each cut aims for the lower of the rating and what the material
+  and bit size call for, so it never feeds a bit harder than its rating.
+- **Making your own tool:** type the rating from the maker's chart, or copy it from a
+  similar bit, then set the feed and RPM you want; the check still has something to judge
+  them by. Clear the field for no rating, and the material-and-size model is the only
+  reference.
 
 ### Machine rigidity
 

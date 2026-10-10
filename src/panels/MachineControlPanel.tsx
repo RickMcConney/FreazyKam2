@@ -8,11 +8,11 @@
 
 import { useEffect, useRef, useState } from 'react'
 import {
-  ArrowUp, ArrowDown, ArrowLeft, ArrowRight,
-  ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, OctagonX, Check, Home, Power, PowerOff, Wifi, WifiLow, WifiOff, Download,
+  ArrowUp, ArrowDown, ArrowLeft, ArrowRight, RotateCw, ChevronDown, ChevronRight,
+  ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, OctagonX, Wifi, WifiLow, WifiOff, Download,
 } from 'lucide-react'
 import { ICON } from '../theme'
-import { useMachineStore, safeWorkZ, ACTION_MARK } from '../machine/machineStore'
+import { useMachineStore, ACTION_MARK } from '../machine/machineStore'
 import type { WifiStatus } from '../machine/fluidnc/esp800'
 import { useWorkpieceStore, lenValue, fromMM, toMM, zDatumOffsetMM } from '../store/workpieceStore'
 import { NumericInput } from '../components/NumericInput'
@@ -22,7 +22,10 @@ import GoToMap, { type StockBox } from './GoToMap'
 import ZBar from './ZBar'
 import RelaySetupDialog, { downloadRelay } from './RelaySetupDialog'
 import { RELAY_FILE_NAME } from '../machine/relayClient'
-import OverridesSection from './OverridesSection'
+import { screenDirToWork } from '../machine/mapRotation'
+import HomeZeroSection from './HomeZeroSection'
+import StopButton from './StopButton'
+import ProbeLight from './ProbeLight'
 
 const AXES = ['X', 'Y', 'Z']
 
@@ -42,7 +45,10 @@ const JOG_ICON = 30
 // Lucide's default 2 scales up with the size and reads heavy at 30 px.
 const JOG_STROKE = 1.25
 
-// The XY pad, read as the machine is seen from the front: +Y away, +X right.
+// The XY pad, by the direction each arrow POINTS on screen (dx right, dy up). What it sends
+// follows the go-to map's turn (screenDirToWork): the arrow moves the tool the way it points
+// on the map, so someone sitting beside the machine with the map turned to match never has
+// to translate. Unturned that is the machine seen from the front: +Y away, +X right.
 const XY_PAD: { dx: number; dy: number; icon: React.ReactNode }[] = [
   { dx: -1, dy: 1, icon: <ArrowUpLeft size={JOG_ICON} strokeWidth={JOG_STROKE} /> },
   { dx: 0, dy: 1, icon: <ArrowUp size={JOG_ICON} strokeWidth={JOG_STROKE} /> },
@@ -79,17 +85,26 @@ const headCls = 'px-3 py-1.5 border-b border-gray-300 dark:border-neutral-700 te
 const padBtnCls = 'flex items-center justify-center h-9 rounded border border-gray-400 dark:border-neutral-600 text-gray-700 dark:text-neutral-200 hover:bg-gray-200 dark:hover:bg-neutral-700 disabled:opacity-40 disabled:hover:bg-transparent'
 const zStepBtnCls = 'flex-1 h-full flex items-center text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-200 dark:hover:bg-neutral-700 disabled:opacity-30 disabled:hover:bg-transparent'
 const inputCls = 'min-w-0 flex-1 px-2 py-1 rounded border border-gray-400 dark:border-neutral-600 bg-white dark:bg-neutral-900 text-gray-800 dark:text-neutral-200 text-sm'
-const smallBtnCls = 'flex items-center justify-center gap-1 h-7 rounded text-xs font-semibold border border-gray-400 dark:border-neutral-600 text-gray-700 dark:text-neutral-200 hover:bg-gray-200 dark:hover:bg-neutral-700 disabled:opacity-40 disabled:hover:bg-transparent'
 const btnCls = 'px-3 py-1 rounded text-sm border border-gray-400 dark:border-neutral-600 text-gray-700 dark:text-neutral-200 hover:bg-gray-200 dark:hover:bg-neutral-700 disabled:opacity-40'
 
 export default function MachineControlPanel() {
   const m = useMachineStore()
   const units = useWorkpieceStore((s) => s.units)
-  const origin = useWorkpieceStore((s) => s.origin)
   const zOrigin = useWorkpieceStore((s) => s.zOrigin)
   const thicknessMM = useWorkpieceStore((s) => s.thicknessMM)
   const [cmd, setCmd] = useState('')
+  // ↑ / ↓ walk the typed-command history, like a shell: `histAt` is the entry shown (null
+  // while editing a new line), `draft` what was being typed before ↑ was first pressed.
+  const [histAt, setHistAt] = useState<number | null>(null)
+  const [draft, setDraft] = useState('')
   const [setupOpen, setSetupOpen] = useState(false)
+  // The Connection section collapses once connected and opens again when the link is
+  // lost — on the transition only, so the user can still open or close it in between.
+  const [connOpen, setConnOpen] = useState(m.link !== 'connected')
+  useEffect(() => {
+    if (m.link === 'connected') setConnOpen(false)
+    else if (m.link === 'disconnected') setConnOpen(true)
+  }, [m.link])
   const [stockBox, setStockBox] = useState<StockBox | null>(null)
   const logRef = useRef<HTMLDivElement>(null)
 
@@ -121,8 +136,6 @@ export default function MachineControlPanel() {
   const zDownCuts = connected && m.zeroed.z && p.wpos[2] - stepZMM < stockTopZ - 1e-3
   // Zeroing (G10) and go-to are refused mid-motion, so both wait for Idle.
   const idle = connected && p.state === 'Idle'
-  // Homing is how a machine with switches leaves the startup Alarm, so Alarm allows it.
-  const canHome = connected && (p.state === 'Idle' || p.state === 'Alarm')
   // 0.01, not lenValue's fixed 0.010: these are labels on buttons.
   const stepLabel = (mm: number) => String(Number(lenValue(mm, units, 1)))
   const axisLabel = (axis: string, sign: number) => `${axis}${sign > 0 ? '+' : '−'} ${stepLabel(axis === 'Z' ? stepZMM : stepMM)} ${units}`
@@ -133,41 +146,47 @@ export default function MachineControlPanel() {
     const c = cmd.trim()
     if (!c) return
     m.command(c)
+    m.rememberCommand(c)
     setCmd('')
+    setHistAt(null)
+    setDraft('')
   }
 
   return (
     <div className="flex h-full gap-3 p-3 bg-gray-50 dark:bg-neutral-900 text-sm">
       {setupOpen && <RelaySetupDialog address={m.address} onClose={() => setSetupOpen(false)} />}
       <div className="w-[22rem] flex-shrink-0 space-y-2 overflow-y-auto">
-        {/* ONE WAY TO STOP THAT ALWAYS WORKS, whatever is moving and whatever started
-            it: a go-to or Safe-Z move is a jog, which the job box's Stop never
-            covered, and the jog pad's cancel ignores programs and homing. Pinned
-            to the top of the column so scrolling can never put it out of reach.
-            It needs the link: it is no substitute for the machine's own E-stop. */}
-        <div className="sticky top-0 z-10 bg-gray-50 dark:bg-neutral-900 pb-1">
-          <button
-            onClick={m.stopMotion}
-            disabled={!connected}
-            title={!connected
-              ? 'Not connected — use the machine\'s own E-stop or power switch'
-              : p.state === 'Home'
-                ? 'Stop homing (soft reset — the machine will alarm)'
-                : 'Stop all motion now: jogs and go-to moves cancel, a running job pauses (then Resume or Cancel)'}
-            className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-red-600 hover:bg-red-700 active:bg-red-800 text-white text-base font-bold tracking-wider disabled:opacity-40 disabled:hover:bg-red-600">
-            <OctagonX size={20} /> STOP
-          </button>
-        </div>
+        {/* STOP lives in the Go to panel now (StopButton), at its bottom-left corner. */}
+        {/* Collapsed while connected, to its status line, so the jog pad and the macros fit
+            without scrolling; it opens again by itself when the link is lost. */}
         <section className={sectionCls}>
-          <div className={`${headCls} flex items-center`}>
-            <span className="flex-1">Connection</span>
-            <button className="normal-case tracking-normal font-normal hover:text-gray-800 dark:hover:text-neutral-200 hover:underline"
-              onClick={() => setSetupOpen(true)} title="How to put the relay on the controller (once per controller)">
-              Set up…
+          <div className={`${headCls} flex items-center gap-2`}>
+            <button className="flex-1 min-w-0 flex items-center gap-1 text-left uppercase tracking-wider hover:text-gray-800 dark:hover:text-neutral-200"
+              onClick={() => setConnOpen(!connOpen)}
+              title={connOpen ? 'Collapse to one line' : `Show the address and Disconnect${m.info?.firmware ? ` — ${m.info.firmware}` : ''}`}>
+              {connOpen ? <ChevronDown size={ICON.xs} /> : <ChevronRight size={ICON.xs} />}
+              Connection
+              {!connOpen && <span className="ml-1 normal-case tracking-normal font-normal truncate">· {m.address}</span>}
             </button>
+            {/* Folded, the state and the signal ride on the header line itself. */}
+            {!connOpen && (
+              <span className="flex items-center gap-2 normal-case tracking-normal font-normal flex-shrink-0">
+                <span className={`px-2 py-0.5 rounded text-xs font-semibold ${STATE_CLASS[p.state] && connected ? STATE_CLASS[p.state] : 'bg-gray-300 dark:bg-neutral-600 text-gray-700 dark:text-neutral-200'}`}>
+                  {state}
+                </span>
+                {connected && m.wifi && <WifiSignal wifi={m.wifi} />}
+              </span>
+            )}
+            {connOpen && (
+              <button className="normal-case tracking-normal font-normal hover:text-gray-800 dark:hover:text-neutral-200 hover:underline"
+                onClick={() => setSetupOpen(true)} title="How to put the relay on the controller (once per controller)">
+                Set up…
+              </button>
+            )}
           </div>
-          <div className="px-3 py-2 space-y-2">
-            <div className="flex gap-2">
+          {/* Folded, the body shows only what needs acting on: a message, or Unlock in Alarm. */}
+          {(connOpen || m.error || (connected && p.state === 'Alarm')) && <div className="px-3 py-2 space-y-2">
+            {connOpen && <div className="flex gap-2">
               <input
                 className={inputCls}
                 value={m.address}
@@ -179,7 +198,7 @@ export default function MachineControlPanel() {
               {m.link === 'disconnected'
                 ? <button className={btnCls} onClick={() => void m.connect()}>Connect</button>
                 : <button className={btnCls} onClick={m.disconnect}>Disconnect</button>}
-            </div>
+            </div>}
             {/* Before the first connection the relay has to be on the controller, so the
                 way to get it is on show whenever there is no link — not only after a
                 failed Connect, and not only behind the small "Set up…" in the header. */}
@@ -204,17 +223,24 @@ export default function MachineControlPanel() {
                 )}
               </p>
             )}
-            <div className="flex items-center gap-2">
-              <span className={`px-2 py-0.5 rounded text-xs font-semibold ${STATE_CLASS[p.state] && connected ? STATE_CLASS[p.state] : 'bg-gray-300 dark:bg-neutral-600 text-gray-700 dark:text-neutral-200'}`}>
-                {state}
-              </span>
-              {m.info?.firmware && <span className="text-xs text-gray-600 dark:text-neutral-400 truncate">{m.info.firmware}</span>}
-              {connected && m.wifi && <WifiSignal wifi={m.wifi} />}
-              {connected && p.state === 'Alarm' && (
+            {connOpen ? (
+              <div className="flex items-center gap-2">
+                <span className={`px-2 py-0.5 rounded text-xs font-semibold ${STATE_CLASS[p.state] && connected ? STATE_CLASS[p.state] : 'bg-gray-300 dark:bg-neutral-600 text-gray-700 dark:text-neutral-200'}`}>
+                  {state}
+                </span>
+                {m.info?.firmware && <span className="text-xs text-gray-600 dark:text-neutral-400 truncate">{m.info.firmware}</span>}
+                {connected && m.wifi && <WifiSignal wifi={m.wifi} />}
+                {connected && p.state === 'Alarm' && (
+                  <button className={`${btnCls} ml-auto py-0.5 text-xs`} onClick={() => m.command('$X')} title="Clear the alarm ($X)">Unlock</button>
+                )}
+              </div>
+            ) : connected && p.state === 'Alarm' && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-red-600 dark:text-red-400">In Alarm</span>
                 <button className={`${btnCls} ml-auto py-0.5 text-xs`} onClick={() => m.command('$X')} title="Clear the alarm ($X)">Unlock</button>
-              )}
-            </div>
-          </div>
+              </div>
+            )}
+          </div>}
         </section>
 
         <section className={sectionCls}>
@@ -248,87 +274,36 @@ export default function MachineControlPanel() {
         </section>
 
         <section className={sectionCls}>
-          <div className={`${headCls} flex items-center`}>
-            <span className="flex-1">Home &amp; Zero</span>
-            <label className="flex items-center gap-1 normal-case tracking-normal font-normal" title="Untick if the machine has no limit switches to home against">
-              <input type="checkbox" checked={m.hasHoming} onChange={(e) => m.setHasHoming(e.target.checked)} />
-              Limit switches
-            </label>
-          </div>
-          <div className="px-3 py-2 space-y-1">
-            <div className="grid grid-cols-[2.5rem_repeat(4,1fr)] items-center gap-1">
-              {m.hasHoming && (
-                <>
-                  <span className="text-xs text-gray-600 dark:text-neutral-400">Home</span>
-                  <button className={smallBtnCls} onClick={() => m.home()} disabled={!canHome} title="Home all axes ($H)">
-                    <Home size={ICON.xs} /> All
-                  </button>
-                  {(['x', 'y', 'z'] as Axis[]).map((a) => (
-                    <button key={a} className={smallBtnCls} onClick={() => m.home(a)} disabled={!canHome} title={`Home ${a.toUpperCase()} ($H${a.toUpperCase()})`}>
-                      {a.toUpperCase()}
-                    </button>
-                  ))}
-                </>
-              )}
-              <span className="text-xs text-gray-600 dark:text-neutral-400">Zero</span>
-              <button className={smallBtnCls} onClick={() => m.zero(['x', 'y', 'z'])} disabled={!idle}
-                title="Make the current position work X0 Y0 Z0">
-                All
-              </button>
-              {(['x', 'y', 'z'] as Axis[]).map((a) => (
-                <button key={a} className={smallBtnCls} onClick={() => m.zero([a])} disabled={!idle}
-                  title={`Make the current ${a.toUpperCase()} position work ${a.toUpperCase()}0`}>
-                  {a.toUpperCase()}
-                  {m.zeroed[a] && <Check size={ICON.xs} className="text-green-600 dark:text-green-400" />}
-                </button>
-              ))}
-              <span className="text-xs text-gray-600 dark:text-neutral-400">Motors</span>
-              <button className={`${smallBtnCls} col-span-2 ${m.motorsCommanded === 'enabled' ? 'ring-1 ring-green-600' : ''}`}
-                onClick={() => m.setMotors(true)} disabled={!canHome}
-                title="Power the stepper motors ($ME) — they hold position">
-                <Power size={ICON.xs} /> Enable
-              </button>
-              <button className={`${smallBtnCls} col-span-2 ${m.motorsCommanded === 'disabled' ? 'ring-1 ring-amber-500' : ''}`}
-                onClick={() => m.setMotors(false)} disabled={!canHome}
-                title="Release the stepper motors ($MD) so the axes can be moved by hand. Any jog, go-to or job switches them back on.">
-                <PowerOff size={ICON.xs} /> Disable
-              </button>
-              <span className="text-xs text-gray-600 dark:text-neutral-400">Go</span>
-              <button className={`${smallBtnCls} col-span-4`} onClick={() => void m.goToOrigin()}
-                disabled={!idle || !m.zeroed.x || !m.zeroed.y || !m.zeroed.z}
-                title={m.zeroed.x && m.zeroed.y && m.zeroed.z
-                  ? `Raise Z to the safe height (Z${lenValue(safeWorkZ(), units)} ${units}), then go to X0 Y0`
-                  : 'Zero X, Y and Z first — the safe height is measured from the Z zero'}>
-                <ArrowUp size={ICON.xs} /> Safe Z, then X0 Y0
-              </button>
-            </div>
-            <p className="text-xs text-gray-600 dark:text-neutral-400">
-              Zero at the stock's {origin.replace('-', ' ')}, Z on the {zOrigin === 'bottom' ? 'stock bottom' : 'top surface'}.
-            </p>
-          </div>
-        </section>
-
-        <section className={sectionCls}>
           <div className={headCls}>Jog</div>
           <div className="px-3 py-2 space-y-2">
             <div className="flex gap-3">
               <div className="grid grid-cols-3 gap-1 flex-1">
-                {XY_PAD.map(({ dx, dy, icon }) => dx === 0 && dy === 0
-                  ? (
+                {XY_PAD.map(({ dx, dy, icon }) => {
+                  if (dx === 0 && dy === 0) return (
                     <button key="cancel" className={`${padBtnCls} text-red-600 dark:text-red-400`}
                       onClick={m.jogCancel} disabled={!connected} title="Stop jogging">
                       <OctagonX size={JOG_ICON} strokeWidth={JOG_STROKE} />
                     </button>
                   )
-                  : (
+                  // The work direction this arrow means on the turned map.
+                  const w = screenDirToWork(dx, dy, m.mapRotation)
+                  // The four straight arrows say which axis they drive; the diagonals do not.
+                  const axisTag = dx === 0 || dy === 0
+                    ? (w.x ? `X${w.x > 0 ? '+' : '−'}` : `Y${w.y > 0 ? '+' : '−'}`)
+                    : null
+                  return (
                     <button key={`${dx},${dy}`}
-                      className={`${padBtnCls} ${inStock ? '!border-orange-500 dark:!border-orange-400' : ''}`}
-                      onClick={() => jog({ x: dx * stepMM, y: dy * stepMM })} disabled={!canJog}
-                      title={[dx && axisLabel('X', dx), dy && axisLabel('Y', dy)].filter(Boolean).join(', ')
+                      className={`${padBtnCls} relative ${inStock ? '!border-orange-500 dark:!border-orange-400' : ''}`}
+                      onClick={() => jog({ x: w.x * stepMM, y: w.y * stepMM })} disabled={!canJog}
+                      title={[w.x && axisLabel('X', w.x), w.y && axisLabel('Y', w.y)].filter(Boolean).join(', ')
                         + (inStock ? ' — the tool is below the stock surface, so this jog will cut' : '')}>
                       {icon}
+                      {axisTag && (
+                        <span className="absolute top-0.5 left-1 text-[13px] font-bold leading-none text-gray-900 dark:text-neutral-100">{axisTag}</span>
+                      )}
                     </button>
-                  ))}
+                  )
+                })}
               </div>
               <div className="grid grid-rows-3 gap-1 w-16">
                 <button className={padBtnCls} onClick={() => jog({ z: stepZMM })} disabled={!canJog} title={axisLabel('Z', 1)}>
@@ -389,15 +364,32 @@ export default function MachineControlPanel() {
           </div>
         </section>
 
-        <OverridesSection sectionCls={sectionCls} headCls={headCls} />
+        {/* Under the jog pad: jog to the stock, then zero there. The overrides and the
+            macros are in the sidebar, under the job they act on. */}
+        <HomeZeroSection />
       </div>
 
       <div className="flex-1 min-w-0 flex flex-col gap-3">
       <section className={`${sectionCls} flex-[3] min-h-0 flex flex-col`}>
-        <div className={headCls}>Go to</div>
-        <div className="flex-1 min-h-0 flex gap-2 p-2">
+        <div className={`${headCls} flex items-center`}>
+          <span className="flex-1">Go to</span>
+          {/* Turn the map to match the table as seen from where you sit. */}
+          <button className="flex items-center gap-1 normal-case tracking-normal font-normal hover:text-gray-800 dark:hover:text-neutral-200"
+            onClick={m.rotateMap}
+            title="Turn the map a quarter-turn clockwise, to match the table as you see it from where you sit. Positions and clicks are unchanged">
+            <RotateCw size={ICON.xs} /> Rotate · {m.mapRotation}°
+          </button>
+        </div>
+        <div className="relative flex-1 min-h-0 flex gap-2 p-2">
           <ZBar stockBox={stockBox} />
           <GoToMap enabled={idle && m.zeroed.x && m.zeroed.y} onStockBox={setStockBox} />
+          {/* STOP in the panel's bottom-left corner, left of the Z bar (which keeps clear
+              of it — STOP_CLEARANCE_PX in ZBar.tsx): always in view, where the eye is. The
+              probe light sits right above it, as big, to be read from the machine. */}
+          <div className="absolute bottom-2 left-2 z-10 flex flex-col gap-2">
+            <ProbeLight />
+            <StopButton />
+          </div>
         </div>
       </section>
 
@@ -420,8 +412,24 @@ export default function MachineControlPanel() {
           <input
             className={`${inputCls} font-mono`}
             value={cmd}
-            onChange={(e) => setCmd(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') submit() }}
+            onChange={(e) => { setCmd(e.target.value); setHistAt(null) }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { submit(); return }
+              const hist = m.cmdHistory
+              if (e.key === 'ArrowUp' && hist.length) {
+                e.preventDefault()
+                const at = histAt === null ? hist.length - 1 : Math.max(0, histAt - 1)
+                if (histAt === null) setDraft(cmd)
+                setHistAt(at)
+                setCmd(hist[at])
+              } else if (e.key === 'ArrowDown' && histAt !== null) {
+                e.preventDefault()
+                // Past the newest entry is the line that was being typed, as in a shell.
+                if (histAt >= hist.length - 1) { setHistAt(null); setCmd(draft) }
+                else { setHistAt(histAt + 1); setCmd(hist[histAt + 1]) }
+              }
+            }}
+            title="Enter sends · ↑ / ↓ bring back commands typed before"
             disabled={!connected}
             placeholder="G-code or $ command"
           />

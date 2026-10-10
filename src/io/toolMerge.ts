@@ -1,4 +1,4 @@
-import type { Tool } from '../store/toolStore'
+import { withRatedChip, type Tool } from '../store/toolStore'
 import type { AnyOperation } from '../store/toolpathStore'
 import { uid } from '../uid'
 
@@ -32,11 +32,13 @@ export function mergeProjectTools(
   for (const t of fileTools) {
     if (!used.has(t.id) || remap.has(t.id)) continue
     const have = mine.get(t.id)
-    if (!have) { addedTools.push(t); mine.set(t.id, t); continue }
+    // A project's tool from before the Chip column is rated from its own numbers, as the
+    // library is.
+    if (!have) { const r = withRatedChip(t); addedTools.push(r); mine.set(t.id, r); continue }
     if (sameCut(have, t)) continue
     const id = uid('tool')
     remap.set(t.id, id)
-    addedTools.push({ ...t, id })
+    addedTools.push(withRatedChip({ ...t, id }))
     renamed++
   }
   return {

@@ -387,7 +387,6 @@ describe('running a job', () => {
     await loaded()
     expect(store().job).toMatchObject({ dir: '/', name: 'a.nc' })
     expect(store().job!.preview.segments).toBeGreaterThan(0)
-    expect(store().mapSource).toBe('job')
   })
 
   it('runs the loaded file by its full path once X, Y and Z are zeroed', async () => {
@@ -404,10 +403,11 @@ describe('running a job', () => {
     expect(sent()).toEqual([])
   })
 
-  it('will not run a job hidden behind the design on the map', async () => {
+  it('will not run once the job is unloaded — the map is bare and there is nothing to run', async () => {
     await loaded()
     await zeroAll()
-    store().showDesign()
+    store().unloadJob()
+    expect(store().job).toBeNull()
     store().runJob(); await flush()
     expect(sent()).toEqual([])
   })
@@ -467,19 +467,28 @@ describe('stopping and cancelling', () => {
 })
 
 describe('overrides', () => {
-  it('a 5 % step goes to the next multiple of 5, in 1 % bytes', async () => {
+  it('a step goes to the next multiple of 10 — one +10 byte from a round number', async () => {
+    await connect()
+    await store().overrideStep('feed', 1)
+    expect(sent()).toEqual(['\x91'])                   // 100 → 110
+    report('<Idle|MPos:0.000,0.000,0.000|FS:0,0|Ov:110,100,100>')
+    await store().overrideStep('feed', -1)
+    expect(sent()).toEqual(['\x92'])                   // 110 → 100
+  })
+
+  it('lands on the round number from anywhere, in 1 % bytes for the remainder', async () => {
     await connect()
     report('<Idle|MPos:0.000,0.000,0.000|FS:0,0|Ov:103,100,100>')
-    await store().overrideStep5('feed', 1)
-    expect(sent()).toEqual(Array(2).fill('\x93'))      // 103 → 105
+    await store().overrideStep('feed', 1)
+    expect(sent()).toEqual(Array(7).fill('\x93'))      // 103 → 110
   })
 
   it('a second press before the controller reports the first builds on where the first was heading', async () => {
     await connect()
     report('<Idle|MPos:0.000,0.000,0.000|FS:0,0|Ov:103,100,100>')
-    await store().overrideStep5('feed', 1); sent()
-    await store().overrideStep5('feed', 1)             // the report still says 103 %
-    expect(sent()).toEqual(Array(5).fill('\x93'))      // 105 → 110, not 103 → 105 again
+    await store().overrideStep('feed', 1); sent()
+    await store().overrideStep('feed', 1)              // the report still says 103 %
+    expect(sent()).toEqual(['\x91'])                   // 110 → 120, not 103 → 110 again
   })
 })
 
@@ -492,12 +501,11 @@ describe('the SD card', () => {
     expect(store().job?.name).toBe('a.nc')
   })
 
-  it('deleting the loaded job unloads it and puts the design back on the map', async () => {
+  it('deleting the loaded job unloads it, leaving the map clear', async () => {
     await connect()
     await store().sdLoad('a.nc')
     await store().sdDelete('a.nc')
     expect(store().job).toBeNull()
-    expect(store().mapSource).toBe('design')
     expect(store().sdListing?.files).toEqual([])
   })
 
@@ -515,6 +523,22 @@ describe('the SD card', () => {
     await store().sdUpload(new File(['G0 X0\n'], 'b.nc'))
     expect(store().sdListing?.files.map((f) => f.name)).toEqual(['a.nc', 'b.nc'])
     expect(store().sdBusy).toBeNull()
+  })
+
+  it('an uploaded file becomes the job and the map shows it, as Send to card does', async () => {
+    await connect()
+    await store().sdUpload(new File([PROGRAM], 'b.nc'))
+    expect(store().job).toMatchObject({ dir: '/', name: 'b.nc' })
+    expect(store().job!.preview.segments).toBeGreaterThan(0)
+  })
+
+  it('an upload that never reaches the card does not become the job, and says so', async () => {
+    await connect()
+    await store().sdLoad('a.nc')
+    g.__respond = (req) => (req.method === 'POST' ? { status: 200, body: listing('/') } : controller(req))
+    await store().sdUpload(new File(['G0 X0\n'], 'lost.nc'))
+    expect(store().job?.name).toBe('a.nc')
+    expect(store().sdError).toMatch(/did not appear on the card/)
   })
 
   it('sending the design with no toolpaths says so and uploads nothing', async () => {
@@ -603,5 +627,185 @@ describe('status polling', () => {
     report('<Hold:1|MPos:0.000,0.000,0.000|FS:0,0>')
     await vi.advanceTimersByTimeAsync(1000)
     expect(polls()).toBeGreaterThan(0)
+  })
+})
+
+describe('the console\'s command history', () => {
+  it('remembers typed commands oldest first, a repeat of the last one once', () => {
+    store().rememberCommand('$X')
+    store().rememberCommand('G0 X10')
+    store().rememberCommand('G0 X10')
+    store().rememberCommand('  ')
+    expect(store().cmdHistory).toEqual(['$X', 'G0 X10'])
+  })
+
+  it('keeps only the last fifty', () => {
+    for (let i = 0; i < 60; i++) store().rememberCommand(`G0 X${i}`)
+    expect(store().cmdHistory).toHaveLength(50)
+    expect(store().cmdHistory[0]).toBe('G0 X10')
+  })
+})
+
+describe('macros', () => {
+  const park = 'G53 G0 Z-5\n; lift first\n\nG53 G0 X0 Y-10\n(done)'
+
+  it('sends only the commands — blank lines and whole-line comments are left out', async () => {
+    const { macroLines } = await import('./machineStore')
+    expect(macroLines(park)).toEqual(['G53 G0 Z-5', 'G53 G0 X0 Y-10'])
+  })
+
+  it('sends its lines in order', async () => {
+    await connect()
+    store().addMacro({ name: 'Park', gcode: park })
+    await store().runMacro(store().macros[0].id)
+    expect(sent()).toEqual(['G53 G0 Z-5', 'G53 G0 X0 Y-10'])
+    expect(store().macroRunning).toBeNull()
+  })
+
+  it('stops at STOP: the lines after it are never sent', async () => {
+    await connect()
+    store().addMacro({ name: 'Three moves', gcode: 'G0 X1\nG0 X2\nG0 X3' })
+    // The controller takes the first line; the user presses STOP while it does.
+    g.__respond = (req) => {
+      if (req.query?.cmd === 'G0 X1') store().stopMotion()
+      return controller(req)
+    }
+    await store().runMacro(store().macros[0].id)
+    expect(sent()).toEqual(['G0 X1', '!'])
+  })
+
+  it('will not run while a job runs, or while another macro is still sending', async () => {
+    await connect()
+    store().addMacro({ name: 'A', gcode: 'G0 X1' })
+    const id = store().macros[0].id
+    report('<Run|MPos:0.000,0.000,0.000|FS:500,0|SD:10.00,/a.nc>')
+    await store().runMacro(id)
+    expect(sent()).toEqual([])
+    report('<Idle|MPos:0.000,0.000,0.000|FS:0,0>')
+    useMachineStore.setState({ macroRunning: 'other' })
+    await store().runMacro(id)
+    expect(sent()).toEqual([])
+  })
+
+  it('edits and deletes by id', () => {
+    store().addMacro({ name: 'A', gcode: 'G0 X1' })
+    const id = store().macros[0].id
+    store().updateMacro(id, { name: 'B' })
+    expect(store().macros[0]).toMatchObject({ id, name: 'B', gcode: 'G0 X1' })
+    store().deleteMacro(id)
+    expect(store().macros).toEqual([])
+  })
+})
+
+describe('probing Z with a touch plate', () => {
+  // The fake controller's side of a probe cycle: a G38.2 is answered with the PRB line a
+  // touch gives (machine Z, the TRIGGER point), and the back-off jog with the machine at rest
+  // 2 mm above where it actually STOPPED — 0.03 mm past the trigger, as a real axis
+  // decelerates (an MPCNC Z at 50 mm/s² and 100 mm/min). Without the overshoot the test
+  // passed while the first real machine hung waiting for an exact height.
+  const line = (l: string) => link().handlers.onWsBinary!(new TextEncoder().encode(`${l}\n`).buffer as ArrayBuffer)
+  function plateAt(machineZ: number, opts: { miss?: boolean; noPin?: boolean } = {}) {
+    let touches = 0
+    g.__respond = (req) => {
+      const c = req.query?.cmd ?? ''
+      if (c.includes('G38.2')) {
+        touches++
+        if (opts.noPin) line('[MSG:ERR: Probe pin is not configured]')
+        else if (opts.miss) { line('ALARM:5'); line('[PRB:0.000,0.000,0.000:0]') }
+        else line(`[PRB:0.000,0.000,${(machineZ - (touches - 1) * 0.005).toFixed(3)}:1]`)
+      } else if (c.startsWith('$J=G91 G21 Z2 ')) {
+        report(`<Jog|MPos:0.000,0.000,${(machineZ - 0.03 + 1).toFixed(3)}|FS:100,0>`)
+        report(`<Idle|MPos:0.000,0.000,${(machineZ - 0.03 + 2).toFixed(3)}|FS:0,0>`)
+      }
+      return controller(req)
+    }
+  }
+
+  it('touches fast, backs off, touches slowly, sets Z0 on the stock top from the slow touch, lifts, and marks Z zeroed', async () => {
+    await connect()
+    plateAt(-10)
+    await store().probeZ()
+    expect(sent()).toEqual([
+      'G90 G21 G38.2 Z-25 F100',          // 25 mm down from work Z 0, fast
+      '$J=G91 G21 Z2 F100',               // off the plate
+      'G90 G21 G38.2 Z-12.03 F25',        // from where it really came to rest (−8.03), 4 mm, slowly
+      'G10 L2 P0 Z-20.005',               // the slow touch, less the 10 mm plate
+      '$J=G91 G21 Z5 F100',               // clear of the plate
+    ])
+    expect(store().zeroed.z).toBe(true)
+    expect(store().probeError).toBeNull()
+    expect(store().probing).toBe(false)
+  })
+
+  it('with Z already zeroed, tells the Z bar where the tool started in work Z, so it can be drawn from the start', async () => {
+    await connect('0.000,0.000,0.000', '0.000,0.000,-30.000')     // work Z 30 above the old zero
+    store().zero(['z']); await flush(); sent()
+    useMachineStore.setState({ zeroed: { x: false, y: false, z: true } })
+    report('<Idle|MPos:0.000,0.000,0.000|FS:0,0|WCO:0.000,0.000,-30.000>')
+    plateAt(-10)
+    const p = store().probeZ()
+    expect(store().probeView).toMatchObject({ startZ: 0, startWorkZ: 30, contactZ: null })
+    await p
+  })
+
+  it('with a bottom-of-stock origin, puts Z0 on the table the plate lies on — not a stock thickness lower', async () => {
+    // The plate sits on the surface Z0 is measured from: here the table, flush with the
+    // stock's bottom. So Z0 is the plate's underside either way.
+    workpiece.setState({ zOrigin: 'bottom', thicknessMM: 19 })
+    await connect()
+    plateAt(-10)
+    await store().probeZ()
+    expect(sent()).toContain('G10 L2 P0 Z-20.005')
+  })
+
+  it('gives the Z bar the start, the search and the slow touch, in machine Z, until the lift off the plate ends', async () => {
+    await connect()
+    plateAt(-10)
+    await store().probeZ()
+    expect(store().probeView).toEqual({ startZ: 0, startWorkZ: null, searchMM: 25, contactZ: -10.005 })
+    report('<Jog|MPos:0.000,0.000,-7.000|FS:100,0>')
+    expect(store().probeView).not.toBeNull()
+    report('<Idle|MPos:0.000,0.000,-5.005|FS:0,0>')
+    expect(store().probeView).toBeNull()
+  })
+
+  it('reports a miss in plain words, sets nothing, and keeps the X and Y zeros — a probe alarm loses no steps', async () => {
+    await connect()
+    store().zero(['x', 'y']); await flush(); sent()
+    plateAt(-10, { miss: true })
+    const p = store().probeZ()
+    report('<Alarm|MPos:0.000,0.000,-25.000|FS:0,0>')
+    await p
+    expect(store().probeError).toMatch(/never touched in 25 mm/)
+    expect(store().probeView).toBeNull()
+    expect(sent().some((c) => c.startsWith('G10'))).toBe(false)
+    expect(store().zeroed).toEqual({ x: true, y: true, z: false })
+  })
+
+  it('will not start while the probe already reads touching', async () => {
+    await connect()
+    report('<Idle|MPos:0.000,0.000,0.000|FS:0,0|Pn:P>')
+    await store().probeZ()
+    expect(sent()).toEqual([])
+    expect(store().probeError).toMatch(/already reads touching/)
+  })
+
+  it('stops at STOP, partway, without setting Z', async () => {
+    await connect()
+    g.__respond = (req) => {
+      if (req.query?.cmd?.includes('G38.2')) store().stopMotion()
+      return controller(req)
+    }
+    await store().probeZ()
+    expect(store().probeError).toMatch(/Probing stopped/)
+    expect(sent()).toEqual(['G90 G21 G38.2 Z-25 F100', '!'])
+    expect(store().zeroed.z).toBe(false)
+  })
+
+  it('says so at once when the controller has no probe input set up', async () => {
+    await connect()
+    plateAt(-10, { noPin: true })
+    await store().probeZ()
+    expect(store().probeError).toMatch(/no probe input set up/)
   })
 })

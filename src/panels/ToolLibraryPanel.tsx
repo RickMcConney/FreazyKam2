@@ -32,15 +32,17 @@ const COLUMNS: { key: keyof Omit<Tool, 'id'>; label: string; title: string; w?: 
   { key: 'type',        label: 'Type',    title: 'Tool type — click to sort', w: '8.5rem', sort: 'type' },
   { key: 'diameterMM',  label: 'Ø',       title: 'Diameter — click to sort',  w: '5.5rem', numeric: true, sort: 'diameter' },
   { key: 'fluteCount',  label: 'Flutes',  title: 'Number of flutes',          w: '4rem', numeric: true },
+  { key: 'chipLoadMM',  label: 'Chip',    title: 'Rated chip load per tooth — the maker\'s recommendation. Fixed: Auto Feeds never goes above it, and the chip check warns when your feed and RPM run the bit too hot or too cold against it. Clear it for no rating.', w: '5.5rem', numeric: true },
   { key: 'rpm',         label: 'RPM',     title: 'Spindle speed (RPM)',       w: '6rem', numeric: true },
   { key: 'xyFeedMmMin', label: 'XY Feed', title: 'XY feed rate (mm/min)',     w: '6.5rem', numeric: true },
   { key: 'zFeedMmMin',  label: 'Z Feed',  title: 'Plunge feed rate (mm/min)', w: '6rem', numeric: true },
   { key: 'maxDepthMM',  label: 'Max Z',   title: 'Maximum cut depth of this tool',    w: '5rem', numeric: true },
 ]
-// Picture 5 + the columns above 41.5 + Angle/R 5 + actions 5.5 = 57, and at least 9 for
-// Name: 66rem (1056 px); a spindle with a speed dial adds the 3.5rem Dial column. That fits beside the sidebar in a 1400 px window — a 2800 px
-// capture on a 2× display, the size the docs are shot at — with room for the scrollbar.
-const TABLE_MIN_W = '66rem'
+// Picture 5 + the columns above 47 + Angle/R 5 + actions 5.5 = 62.5, and at least 9 for
+// Name: 71.5rem (1144 px); a spindle with a speed dial adds the 3.5rem Dial column. Since
+// the Chip column that no longer fits beside the sidebar in a 1400 px window (1080 px of
+// panel): the table scrolls sideways there rather than clip a number.
+const TABLE_MIN_W = '71.5rem'
 const DIAL_W = 3.5
 
 const byName = (a: Tool, b: Tool) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
@@ -155,6 +157,24 @@ function ToolRow({ tool, units, spindleType, selected, folders, onNewFolder }: {
         <NumericInput value={tool.fluteCount} min={1} step={1} integer
           onChange={(fluteCount) => up({ fluteCount })}
           className={cellCls + ' text-right'} title={NUMERIC_HINT} />
+      </td>
+      <td className="px-2 py-1">
+        {tool.type === 'drill' ? (
+          // A drill plunges; it takes no side-cutting chip to rate.
+          <div className="text-right pr-[19px] text-gray-600 dark:text-neutral-400">—</div>
+        ) : (
+          // In the display units, like every length here; blank means no rating.
+          <NumericInput
+            value={fromMM(tool.chipLoadMM ?? 0, units)}
+            isEmpty={tool.chipLoadMM === undefined}
+            placeholder="—"
+            onEmpty={() => up({ chipLoadMM: undefined })}
+            min={0.0001}
+            step={units === 'in' ? 0.0001 : 0.001}
+            onChange={(v) => up({ chipLoadMM: toMM(v, units) })}
+            className={cellCls + ' text-right'}
+            title={`Rated chip load (${units === 'in' ? 'in' : 'mm'} per tooth) — blank for no rating — ${NUMERIC_HINT}`} />
+        )}
       </td>
       <td className="px-2 py-1">
         <NumericInput value={tool.rpm} min={0} step={100}
@@ -425,6 +445,9 @@ export default function ToolLibraryPanel() {
                   {col.label}
                   {(col.key === 'diameterMM' || col.key === 'maxDepthMM') && (
                     <span className="block text-gray-600 dark:text-neutral-400 normal-case font-normal tracking-normal">{lenUnit}</span>
+                  )}
+                  {col.key === 'chipLoadMM' && (
+                    <span className="block text-gray-600 dark:text-neutral-400 normal-case font-normal tracking-normal">{lenUnit}/tooth</span>
                   )}
                   {(col.key === 'xyFeedMmMin' || col.key === 'zFeedMmMin') && (
                     <span className="block text-gray-600 dark:text-neutral-400 normal-case font-normal tracking-normal">{feedUnit}</span>

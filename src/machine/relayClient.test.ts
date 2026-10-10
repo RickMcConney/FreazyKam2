@@ -12,15 +12,18 @@ interface FakePopup {
   location: { href: string; replace: (url: string) => void }
   postMessage: (msg: Record<string, unknown>, origin: string) => void
   close: () => void
+  moveTo: (x: number, y: number) => void
 }
 
 let popup: FakePopup
 let listener: ((e: MessageEvent) => void) | null
+let pageHide: (() => void) | null
 let openUrl: string | null
 
 beforeEach(() => {
   vi.useFakeTimers()
   listener = null
+  pageHide = null
   openUrl = null
   popup = {
     closed: false,
@@ -28,11 +31,18 @@ beforeEach(() => {
     location: { href: 'about:blank', replace: vi.fn() },
     postMessage(msg, origin) { this.posted.push({ msg, origin }) },
     close() { this.closed = true },
+    moveTo: vi.fn(),
   }
   vi.stubGlobal('window', {
     screenX: 0, screenY: 0, outerWidth: 1400, outerHeight: 900,
-    addEventListener: (type: string, fn: (e: MessageEvent) => void) => { if (type === 'message') listener = fn },
-    removeEventListener: (type: string, fn: (e: MessageEvent) => void) => { if (type === 'message' && listener === fn) listener = null },
+    addEventListener: (type: string, fn: (e: MessageEvent) => void) => {
+      if (type === 'message') listener = fn
+      if (type === 'pagehide') pageHide = fn as () => void
+    },
+    removeEventListener: (type: string, fn: (e: MessageEvent) => void) => {
+      if (type === 'message' && listener === fn) listener = null
+      if (type === 'pagehide' && pageHide === fn) pageHide = null
+    },
     open: (url: string) => { openUrl = url; return popup },
   })
 })
@@ -73,6 +83,26 @@ describe('opening the relay', () => {
     const l = await opened()
     expect(openUrl).toBe(`${ORIGIN}${RELAY_PATH}`)
     expect(l.isOpen).toBe(true)
+  })
+
+  it('moves the new relay window to the centre of FreazyKam itself, since Chrome may ignore the left/top it was opened with', async () => {
+    vi.stubGlobal('window', { ...window, screenX: 2000, screenY: 100 })
+    await opened()
+    // A 1400 × 900 FreazyKam window at (2000, 100); the relay is 420 × 200.
+    expect(popup.moveTo).toHaveBeenCalledWith(2000 + 490, 100 + 350)
+  })
+
+  it('still opens a relay window it is not allowed to move — one already on the controller\'s page', async () => {
+    popup.moveTo = () => { throw new DOMException('cross-origin', 'SecurityError') }
+    const l = await opened()
+    expect(l.isOpen).toBe(true)
+  })
+
+  it('closes the relay window when FreazyKam unloads, so the next Connect opens a new one centred over it rather than reusing one left wherever it was', async () => {
+    await opened()
+    pageHide?.()
+    expect(popup.closed).toBe(true)
+    expect(pageHide).toBeNull()
   })
 
   it('posts only to the controller\'s origin, so a window that navigated elsewhere gets nothing', async () => {

@@ -136,7 +136,7 @@ export default function SimulationPlayer() {
   // A drill is judged as the end mill it is shaped like, as it always was here.
   const toolType: ToolType = ts ? (toolTypeOf(ts) === 'drill' ? 'endmill' : toolTypeOf(ts)) : 'endmill'
   const feedDiaMM = ts ? feedDiameterOf(ts) : 0
-  const targetFz = ts ? targetChipLoad(toolType, feedDiaMM, material) : 0
+  const targetFz = ts ? targetChipLoad(toolType, feedDiaMM, material, ts.toolChipCeilingMM) : 0
   // Chip-load color applies only to steady side-cutting: the tip must be below the
   // material top (z < 0, not cutting air) AND not descending. Descending moves —
   // ramp-in, plunges, helical entries — run a deliberately reduced feed and have
@@ -152,7 +152,7 @@ export default function SimulationPlayer() {
     : null
   // Display the intrinsic target, but judge the color against the rigidity-adjusted
   // aim — so a hobby machine running its lighter chip still reads "sweet spot".
-  const aimFz = ts ? aimChipLoad(toolType, feedDiaMM, material, machineRigidity) : 0
+  const aimFz = ts ? aimChipLoad(toolType, feedDiaMM, material, machineRigidity, ts.toolChipCeilingMM) : 0
   const status = chipStatus(actualFz, aimFz)
   const chip = CHIP_STATUS[status]
   // For manual feeds, suggest the feed that puts chip load in the sweet spot at the

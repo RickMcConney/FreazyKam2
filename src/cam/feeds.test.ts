@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import {
-  targetChipLoad, aimChipLoad, minChipLoad, rigidityChipFactor, rigidityFeedCeilingMmMin,
+  targetChipLoad, aimChipLoad, minChipLoad, rigidityChipFactor, rigidityFeedCeilingMmMin, toolChipCeilingMM,
   feedsForTool, effectiveStepDownMM, seedStepDownMM, trochoidalEngagementFraction,
 } from './feeds'
 import { useWorkpieceStore, MATERIAL_INFO } from '../store/workpieceStore'
@@ -43,13 +43,39 @@ describe('targetChipLoad', () => {
     expect(targetChipLoad('drill', 6, 'oak') / em).toBeCloseTo(1, 9)
   })
 
-  it('scales with diameter, but only within 0.3× and 2×', () => {
-    // A bigger cutter takes a bigger bite; the clamps stop a 0.5 mm engraver being
-    // handed a chip it cannot survive, and a 60 mm surfacing bit an absurd one.
+  it('scales in proportion to the diameter from 1/8" up, capped at twice the 6 mm chip', () => {
+    // A bigger cutter takes a bigger bite; the cap stops a 60 mm surfacing bit being
+    // handed an absurd one.
     const at6 = targetChipLoad('endmill', 6, 'oak')
+    expect(targetChipLoad('endmill', 3.175, 'oak')).toBeCloseTo(at6 * 3.175 / 6, 9)
     expect(targetChipLoad('endmill', 12, 'oak')).toBeCloseTo(2 * at6, 9)
-    expect(targetChipLoad('endmill', 1, 'oak')).toBeCloseTo(0.3 * at6, 9)
     expect(targetChipLoad('endmill', 60, 'oak')).toBeCloseTo(2 * at6, 9)
+  })
+
+  it('falls faster than the diameter below 1/8" — a small bit is weaker for its size', () => {
+    // Ø^1.5 from the 1/8" chip down: halving the bit takes the chip to 35 %, not 50 %.
+    // IDC's own chart: their 1/16" takes a third of their 1/8"'s chip.
+    const at8th = targetChipLoad('endmill', 3.175, 'oak')
+    expect(targetChipLoad('endmill', 3.175 / 2, 'oak') / at8th).toBeCloseTo(Math.pow(0.5, 1.5), 9)
+    expect(targetChipLoad('endmill', 3.175 / 4, 'oak') / at8th).toBeCloseTo(Math.pow(0.25, 1.5), 9)
+  })
+
+  it('no longer feeds a tiny bit as a 1.8 mm one', () => {
+    // Floored at 0.3× the 6 mm chip before, a 1/32" downcut in maple was fed at 4.6× its
+    // maker's feed. It now takes under a quarter of that floored chip.
+    expect(targetChipLoad('endmill', 0.79, 'oak')).toBeLessThan(0.3 * targetChipLoad('endmill', 6, 'oak') / 4)
+  })
+
+  it('keeps a stiff machine\'s aim at or under the maker\'s figure, whatever its rigidity factor', () => {
+    const maker = targetChipLoad('endmill', 6, 'pine') / 2
+    expect(aimChipLoad('endmill', 6, 'pine', 5, maker)).toBeLessThanOrEqual(maker)
+  })
+
+  it('never goes above the bit maker\'s own chip load, where the tool carries one', () => {
+    const free = targetChipLoad('endmill', 6, 'pine')
+    expect(targetChipLoad('endmill', 6, 'pine', free / 2)).toBeCloseTo(free / 2, 12)
+    expect(targetChipLoad('endmill', 6, 'pine', free * 2)).toBeCloseTo(free, 12)      // a looser maker figure changes nothing
+    expect(targetChipLoad('endmill', 6, 'pine', 0)).toBeCloseTo(free, 12)             // 0 means no figure
   })
 
   it('is set by the material, not its hardness — Delrin is harder than MDF and still takes a thicker chip', () => {
@@ -86,6 +112,46 @@ describe('aimChipLoad', () => {
     expect(rigidityChipFactor(9)).toBe(1.05)
     expect(rigidityChipFactor(3.4)).toBe(0.8)
     expect(rigidityChipFactor(3.6)).toBe(0.95)
+  })
+})
+
+const chipOf = (f: { xyFeedMmMin: number; rpm: number }, tool: Tool) => f.xyFeedMmMin / (f.rpm * tool.fluteCount)
+
+describe('toolChipCeilingMM — the tool\'s rated chip load', () => {
+  it('is the rating the tool carries', () => {
+    expect(toolChipCeilingMM({ ...EM6, chipLoadMM: 0.05 })).toBe(0.05)
+  })
+
+  it('is NOT moved by the feed, rpm or flutes it is there to judge', () => {
+    const rated: Tool = { ...EM6, chipLoadMM: 0.05 }
+    expect(toolChipCeilingMM({ ...rated, xyFeedMmMin: 9999 })).toBe(0.05)
+    expect(toolChipCeilingMM({ ...rated, rpm: 9000 })).toBe(0.05)
+    expect(toolChipCeilingMM({ ...rated, fluteCount: 4 })).toBe(0.05)
+  })
+
+  it('is none for an unrated tool and for a drill', () => {
+    expect(toolChipCeilingMM(EM6)).toBeUndefined()
+    expect(toolChipCeilingMM({ ...EM6, type: 'drill', chipLoadMM: 0.05 })).toBeUndefined()
+  })
+})
+
+describe('feedsForTool — held to the tool\'s rated chip load', () => {
+  it('runs at the rating when it is lighter than the material would take', () => {
+    machine({ material: 'pine', machineRigidity: 5, maxFeedMmMin: 0 })
+    const freeFz = chipOf(feedsForTool(EM6), EM6)
+    const held: Tool = { ...EM6, chipLoadMM: freeFz / 3 }
+    expect(chipOf(feedsForTool(held), held)).toBeLessThanOrEqual(freeFz / 3 + 1e-9)
+  })
+
+  it('is untouched by a rating heavier than its own aim', () => {
+    expect(feedsForTool({ ...EM6, chipLoadMM: 10 })).toEqual(feedsForTool(EM6))
+  })
+
+  it('thins below the material\'s rubbing floor if the rating says so — a broken bit is worse than a warm one', () => {
+    machine({ material: 'delrin', machineRigidity: 3 })
+    const floorFree = minChipLoad('endmill', 6, 'delrin')
+    const held: Tool = { ...EM6, chipLoadMM: floorFree / 2 }
+    expect(chipOf(feedsForTool(held), held)).toBeLessThanOrEqual(floorFree / 2 + 1e-9)
   })
 })
 

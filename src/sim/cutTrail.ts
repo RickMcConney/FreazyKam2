@@ -98,7 +98,7 @@ export function heatPieces(seg: SimSegment, toolStates: ToolState[], heat: HeatS
   const ts = segTool(seg, toolStates)
   const type = toolTypeOf(ts)
   if (type === 'drill' || !(ts.spindleRpm > 0) || !(ts.fluteCount > 0)) return whole(HEAT_NEUTRAL)
-  const aim = aimChipLoad(type, feedDiameterOf(ts), heat.material, heat.rigidity)
+  const aim = aimChipLoad(type, feedDiameterOf(ts), heat.material, heat.rigidity, ts.toolChipCeilingMM)
   const perSec = (ts.spindleRpm * ts.fluteCount) / 60   // teeth per second
   const bandAt = (speedMmS: number) => heatBand(speedMmS / perSec / aim)
 

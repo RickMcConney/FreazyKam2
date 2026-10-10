@@ -15,7 +15,7 @@ export const SETTINGS_SECTIONS = [
   { key: 'machine', label: 'Machine (limits, feeds & speeds, motion, spindle)', mode: 'replace' },
   { key: 'stock', label: 'Stock defaults (size, units, origin, material, safe height)', mode: 'replace' },
   { key: 'formDefaults', label: 'Last-used form values (what each form opens with)', mode: 'replace' },
-  { key: 'machineTab', label: 'Machine tab (address, jog steps and feeds, limit switches)', mode: 'replace' },
+  { key: 'machineTab', label: 'Machine tab (address, jog steps and feeds, limit switches, macros)', mode: 'replace' },
   { key: 'interface', label: 'Interface (dark mode and the like)', mode: 'replace' },
 ] as const
 

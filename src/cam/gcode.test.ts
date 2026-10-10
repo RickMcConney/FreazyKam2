@@ -721,3 +721,24 @@ describe('templateLongLines — the post-processor text the user writes', () => 
     expect(templateLongLines(t)).toHaveLength(1)
   })
 })
+
+describe('the tool\'s rated chip load in the program', () => {
+  const rated: Tool = { ...TOOL, chipLoadMM: 0.0235 }
+  const prog = (t: Tool) => generateGcode([makeOp([rapid(0, 0, 5), cut(0, 0, -1), cut(10, 0, -1)])], { t1: t }, 'p', POST)
+
+  it('rides in the tool comment, Auto Feeds on or off, so the gauge always judges against it', () => {
+    for (const autoFeedEnabled of [false, true]) {
+      useWorkpieceStore.setState({ autoFeedEnabled })
+      const g = prog(rated)
+      expect(g).toMatch(/fzmax:0\.02350/)
+      const { segments, toolStates } = parseGcode(g)
+      expect(toolStates[segments.find((s) => !s.rapid)!.toolStateIdx].toolChipCeilingMM).toBeCloseTo(0.0235, 6)
+    }
+  })
+
+  it('is left out for an unrated tool, and forgotten at the next tool comment', () => {
+    expect(prog(TOOL)).not.toMatch(/fzmax/)
+    const { segments, toolStates } = parseGcode('; dia 1.000mm fzmax:0.005\nG1 X1 Z-1 F100\n; dia 6.000mm\nG1 X2 Z-1 F100')
+    expect(toolStates[segments[1].toolStateIdx].toolChipCeilingMM).toBeUndefined()
+  })
+})

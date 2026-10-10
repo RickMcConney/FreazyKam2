@@ -20,6 +20,7 @@ export interface StatusReport {
   spindle?: number         // rpm
   sd?: SdProgress          // present on every report while an SD job runs
   ov?: Overrides           // sent only now and then, and when one changes
+  pins?: string            // `Pn:` — the inputs active now (P = probe); absent means none
 }
 
 /** Override percentages: feed, rapid, spindle. */
@@ -51,6 +52,7 @@ export function parseStatus(line: string): StatusReport | null {
       case 'FS': { const [fd, sp] = nums(val); r.feed = fd; r.spindle = sp; break }
       case 'F': r.feed = Number(val); break
       case 'Ov': { const [f, r2, sp] = nums(val); r.ov = { feed: f, rapid: r2, spindle: sp }; break }
+      case 'Pn': r.pins = val; break
       // `SD:45.20,/jobs/a.nc` — the file name may itself hold a comma.
       case 'SD': {
         const c = val.indexOf(',')
@@ -72,11 +74,12 @@ export interface Position {
   spindle: number
   sd: SdProgress | null    // the SD job running, if any
   ov: Overrides
+  probe: boolean           // the probe input is on — the plate is touching the bit
 }
 
 export const EMPTY_POSITION: Position = {
   state: 'Unknown', mpos: [0, 0, 0], wpos: [0, 0, 0], wco: [0, 0, 0], feed: 0, spindle: 0, sd: null,
-  ov: { feed: 100, rapid: 100, spindle: 100 },
+  ov: { feed: 100, rapid: 100, spindle: 100 }, probe: false,
 }
 
 const sub = (a: Vec, b: Vec) => a.map((v, i) => v - (b[i] ?? 0))
@@ -99,6 +102,8 @@ export function applyStatus(prev: Position, r: StatusReport): Position {
     sd: r.sd ?? null,
     // Carried over, like WCO: most reports leave it out.
     ov: r.ov ?? prev.ov,
+    // NOT carried over: Grbl sends `Pn:` only while an input is on, so its absence is news.
+    probe: !!r.pins && r.pins.includes('P'),
   }
 }
 

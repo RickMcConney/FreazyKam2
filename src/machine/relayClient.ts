@@ -81,9 +81,15 @@ const RELAY_H = 200
  * Centred over the FreazyKam window, so it opens where the user is looking (a
  * page cannot open a window minimised). The browser keeps it on screen.
  */
+function relayPlacement(): { left: number; top: number } {
+  return {
+    left: Math.round(window.screenX + (window.outerWidth - RELAY_W) / 2),
+    top: Math.round(window.screenY + (window.outerHeight - RELAY_H) / 2),
+  }
+}
+
 function relayWindowFeatures(): string {
-  const left = Math.round(window.screenX + (window.outerWidth - RELAY_W) / 2)
-  const top = Math.round(window.screenY + (window.outerHeight - RELAY_H) / 2)
+  const { left, top } = relayPlacement()
   return `popup,width=${RELAY_W},height=${RELAY_H},left=${left},top=${top}`
 }
 
@@ -115,6 +121,7 @@ export class RelayLink {
    */
   open(): Promise<void> {
     window.addEventListener('message', this.onMessage)
+    window.addEventListener('pagehide', this.onPageHide)
     // A small popup rather than a tab, so FreazyKam keeps focus in its own tab.
     // Named, so a second Connect reuses the relay already open.
     let attempt = 0
@@ -123,6 +130,12 @@ export class RelayLink {
       this.dispose()
       return Promise.reject(new Error('The browser blocked the relay window — allow pop-ups for this site'))
     }
+    // The left/top above are not enough: Chrome opened the relay where the last one
+    // had been, however far FreazyKam had moved since. So move it as well — now, while
+    // it is still the blank page it starts as, which is OURS (same origin) until the
+    // controller's page arrives; after that only the relay's own code could move it.
+    // A reused relay window is already the controller's, so this throws and is skipped.
+    try { const { left, top } = relayPlacement(); this.win.moveTo(left, top) } catch { /* not ours */ }
     return new Promise((resolve, reject) => {
       const started = Date.now()
       let loadedAt = 0
@@ -218,12 +231,21 @@ export class RelayLink {
 
   private dispose() {
     window.removeEventListener('message', this.onMessage)
+    window.removeEventListener('pagehide', this.onPageHide)
     if (this.closedPoll) clearInterval(this.closedPoll)
     this.closedPoll = undefined
     this.ready = false
     for (const p of this.pending.values()) { clearTimeout(p.timer); p.resolve({ status: 0, body: RELAY_CLOSED }) }
     this.pending.clear()
   }
+
+  // The relay window outlives a FreazyKam reload unless it is closed here, and the next
+  // Connect then REUSES it (it is named) — and window.open only places a window it
+  // creates, so the relay stayed wherever it was, however far FreazyKam had moved. Only
+  // the relay's own page can move it (as its shrink button does), and that is code on the
+  // controller's flash. So close it on the way out, and every Connect opens a new one
+  // centred over FreazyKam. The link dies with this page anyway.
+  private onPageHide = () => { this.close() }
 
   private onMessage = (e: MessageEvent) => {
     if (e.origin !== this.origin || e.source !== this.win) return

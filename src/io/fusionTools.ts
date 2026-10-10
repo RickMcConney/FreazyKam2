@@ -89,6 +89,7 @@ export function fromFusionLibrary(data: unknown, mintId: () => string): FusionIm
     }
     if (!diameterMM || diameterMM <= 0) { out.skipped.push({ name, why: 'it has no diameter' }); continue }
 
+    const flutes = Math.max(1, Math.round(num(g.NOF) ?? 2))
     const preset = isObj(raw['start-values']) && Array.isArray(raw['start-values'].presets) && isObj(raw['start-values'].presets[0])
       ? raw['start-values'].presets[0] : {}
     const tool: Tool = {
@@ -96,7 +97,7 @@ export function fromFusionLibrary(data: unknown, mintId: () => string): FusionIm
       name,
       type: map.type,
       diameterMM: round(diameterMM),
-      fluteCount: Math.max(1, Math.round(num(g.NOF) ?? 2)),
+      fluteCount: flutes,
       rpm: Math.round(num(preset.n) ?? 18000),
       // A drill has no side feed; ours stores 0 for it, as the default drill does.
       xyFeedMmMin: map.type === 'drill' ? 0 : round((num(preset.v_f) ?? 0) * k),
@@ -111,6 +112,11 @@ export function fromFusionLibrary(data: unknown, mintId: () => string): FusionIm
       ...(vbitAngleDeg !== undefined ? { vbitAngleDeg } : {}),
       ...(cornerRadiusMM !== undefined ? { cornerRadiusMM } : {}),
     }
+    // The maker's chip load is the bit's rating: Fusion's f_z (feed per tooth, in the
+    // record's unit), or the same worked out from their feed, speed and flutes.
+    const vf = num(preset.v_f), n = num(preset.n)
+    const fz = num(preset.f_z) ?? (vf && n ? vf / (n * flutes) : undefined)
+    if (map.type !== 'drill' && fz !== undefined && fz > 0) tool.chipLoadMM = Math.round(fz * k * 1e5) / 1e5
     if (map.type !== 'drill' && tool.xyFeedMmMin === 0) tool.xyFeedMmMin = 1000
     if (map.note) out.notes.push(`${name}: ${map.note}`)
     out.tools.push(tool)

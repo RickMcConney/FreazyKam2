@@ -10,7 +10,7 @@
 // unticked. The pure half lives in settingsMerge.ts.
 
 import { useWorkpieceStore } from '../store/workpieceStore'
-import { useToolStore, DEFAULT_TOOLS, MY_TOOLS, folderOf, withFolder, type Tool } from '../store/toolStore'
+import { useToolStore, DEFAULT_TOOLS, MY_TOOLS, folderOf, withFolder, withRatedChip, type Tool } from '../store/toolStore'
 import { usePostProcessorStore, BUILTIN_PROFILES, type PostProcessorProfile } from '../store/postProcessorStore'
 import { useToolpathStore } from '../store/toolpathStore'
 import { toolIdsOf } from './toolMerge'
@@ -35,7 +35,7 @@ const MACHINE_KEYS = [
   'accelXYMmS2', 'accelZMmS2', 'maxRateZMmMin', 'junctionDeviationMM',
 ] as const
 const STOCK_KEYS = ['widthMM', 'heightMM', 'thicknessMM', 'units', 'origin', 'zOrigin', 'material', 'safeHeightMM'] as const
-const MACHINE_TAB_KEYS = ['address', 'jogStepIndex', 'jogStepIndexZ', 'jogFeedXY', 'jogFeedZ', 'hasHoming'] as const
+const MACHINE_TAB_KEYS = ['address', 'jogStepIndex', 'jogStepIndexZ', 'jogFeedXY', 'jogFeedZ', 'hasHoming', 'macros', 'mapRotation'] as const
 // What uiStore persists (its partialize), and nothing it does not.
 const INTERFACE_KEYS = ['penCurveType', 'lastShapeType', 'timelineOpen', 'pathsView', 'darkMode', 'shapeFromCenter'] as const
 
@@ -120,7 +120,7 @@ function wholeLike<T extends object>(template: T, v: unknown, optional: string[]
 
 const TOOL_TEMPLATE: Tool = { id: '', name: '', type: 'endmill', diameterMM: 0, fluteCount: 0, rpm: 0, xyFeedMmMin: 0, zFeedMmMin: 0, maxDepthMM: 0 }
 // What makes two tools the same tool: exactly what the import brings in, and no more.
-const TOOL_KEYS = [...Object.keys(TOOL_TEMPLATE), 'vbitAngleDeg', 'cornerRadiusMM', 'folder']
+const TOOL_KEYS = [...Object.keys(TOOL_TEMPLATE), 'vbitAngleDeg', 'cornerRadiusMM', 'chipLoadMM', 'folder']
 
 function toolsIn(v: unknown): Tool[] {
   if (!Array.isArray(v)) return []
@@ -128,9 +128,12 @@ function toolsIn(v: unknown): Tool[] {
   for (const raw of v) {
     const t = wholeLike(TOOL_TEMPLATE, raw)
     if (!t) continue
-    const { vbitAngleDeg: angle, cornerRadiusMM: corner, folder } = raw as { vbitAngleDeg?: unknown; cornerRadiusMM?: unknown; folder?: unknown }
+    const { vbitAngleDeg: angle, cornerRadiusMM: corner, chipLoadMM: chip, folder } = raw as { vbitAngleDeg?: unknown; cornerRadiusMM?: unknown; chipLoadMM?: unknown; folder?: unknown }
     let tool = typeof angle === 'number' && Number.isFinite(angle) ? { ...t, vbitAngleDeg: angle } : t
     if (typeof corner === 'number' && Number.isFinite(corner) && corner >= 0) tool = { ...tool, cornerRadiusMM: corner }
+    if (typeof chip === 'number' && Number.isFinite(chip) && chip > 0) tool = { ...tool, chipLoadMM: chip }
+    // A file from before the Chip column: rated from its own numbers, as the library is.
+    tool = withRatedChip(tool)
     out.push(typeof folder === 'string' && folder.trim() ? { ...tool, folder: folder.trim() } : tool)
   }
   return out

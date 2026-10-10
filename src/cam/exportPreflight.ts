@@ -2,7 +2,7 @@ import { useToolpathStore, nothingToCut } from '../store/toolpathStore'
 import { useToolStore } from '../store/toolStore'
 import { usePostProcessorStore } from '../store/postProcessorStore'
 import { useWorkpieceStore, fmtLen, zDatumOffsetMM, machineMotionLimits, MATERIAL_INFO, type Material } from '../store/workpieceStore'
-import { feedsForTool, aimChipLoad } from './feeds'
+import { feedsForTool, aimChipLoad, toolChipCeilingMM } from './feeds'
 import { feedDiameterMM } from './geom'
 import { generateGcodeWithOps, initialToolId } from './gcode'
 import { parseGcode, segTool, toolTypeOf, feedDiameterOf, type ParsedGcode } from '../sim/gcodeParser'
@@ -255,7 +255,7 @@ export function buildExportPreflight(): ExportPreflight {
     const f = feedsForTool(t)
     const flutes = t.fluteCount > 0 ? t.fluteCount : 1
     if (f.rpm <= 0 || f.xyFeedMmMin <= 0) continue
-    const aimFz = aimChipLoad(t.type, feedDiameterMM(t), material, machineRigidity)
+    const aimFz = aimChipLoad(t.type, feedDiameterMM(t), material, machineRigidity, toolChipCeilingMM(t))
     if (aimFz <= 0) continue
     const ratio = (f.xyFeedMmMin / (f.rpm * flutes)) / aimFz
     if (ratio > 1.4) heavyTools.push(t.name)
@@ -397,7 +397,7 @@ export function slowedCuts(
     const type = toolTypeOf(ts)
     if (type === 'drill' || !(ts.spindleRpm > 0) || !(ts.fluteCount > 0)) continue
     const perSec = (ts.spindleRpm * ts.fluteCount) / 60
-    const vRub = 0.75 * aimChipLoad(type, feedDiameterOf(ts), material, rigidity) * perSec
+    const vRub = 0.75 * aimChipLoad(type, feedDiameterOf(ts), material, rigidity, ts.toolChipCeilingMM) * perSec
     if (seg.feedRateMmMin / 60 < vRub) continue
     const L = Math.hypot(seg.x - seg.prevX, seg.y - seg.prevY, seg.z - seg.prevZ)
     const id = opStarts[k].opId

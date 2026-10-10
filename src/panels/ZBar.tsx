@@ -5,22 +5,29 @@
 // the stock and the top. A tool beyond either end pins there with a chevron; the
 // readout beside the tip always says where it really is.
 //
-// The safe height and the depth come from whatever the map is showing: a job off
-// the card says its own (the Z its rapids travel at, its deepest feed move), the
-// design says the stock's safe height and its toolpaths' deepest cut.
+// The safe height and the depth are the loaded job's own (the Z its rapids travel at, its
+// deepest feed move). With no job loaded: Setup's safe height, and no cut depth.
 
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { ChevronUp, ChevronDown } from 'lucide-react'
 import { useMachineStore } from '../machine/machineStore'
 import { useWorkpieceStore, lenValue, zDatumOffsetMM } from '../store/workpieceStore'
-import { useToolpathStore } from '../store/toolpathStore'
 import { useUIStore } from '../store/uiStore'
 import { MATERIAL_COLORS } from '../colors'
 import type { StockBox } from './GoToMap'
 
 export default function ZBar({ stockBox }: { stockBox: StockBox | null }) {
-  // Lined up with the stock on the map, and centred between the Go to box's left
-  // edge and the stock's: px within this column, which only reserves the room.
+  const probeView = useMachineStore((s) => s.probeView)
+  return probeView ? <ProbeZBar stockBox={stockBox} view={probeView} /> : <StockZBar stockBox={stockBox} />
+}
+
+// How far from the Go to panel's left edge the bar's centre must stay: the STOP button there
+// (StopButton: 64 px, 8 px in from the edge), a small gap, and the bar's numbers, which reach
+// about 42 px left of its centre — so the two never overlap.
+const STOP_CLEARANCE_PX = 8 + 64 + 6 + 42
+
+/** Where the bar sits: lined up with the stock on the map, centred left of it. */
+function usePlace(stockBox: StockBox | null) {
   const ref = useRef<HTMLDivElement>(null)
   const [place, setPlace] = useState<{ top: number; height: number; cx: number } | null>(null)
   useLayoutEffect(() => {
@@ -31,33 +38,127 @@ export default function ZBar({ stockBox }: { stockBox: StockBox | null }) {
     setPlace({
       top: stockBox.top - o.top,
       height: stockBox.bottom - stockBox.top,
-      cx: (panel.getBoundingClientRect().left + stockBox.left) / 2 - o.left,
+      // Centred between the panel's left edge and the stock's — but never so far left that
+      // it runs under the STOP button in the panel's bottom-left corner.
+      cx: Math.max((panel.getBoundingClientRect().left + stockBox.left) / 2,
+        panel.getBoundingClientRect().left + STOP_CLEARANCE_PX) - o.left,
     })
   }, [stockBox])
+  return { ref, place }
+}
+
+// While probing, the bar draws what IS known: the stock, with Z0 on its top or bottom as
+// Setup says, and the touch plate lying on the Z0 surface at its thickness — on the stock
+// top, or for a bottom-of-stock origin on the TABLE, flush with the stock's bottom, where it
+// overlaps the stock in this side view. What is NOT known until the bit touches the plate is
+// where the tool is — unless Z is already ✓ zeroed (an earlier probe, or zeroed by hand):
+// then its work Z is known and it is drawn coming down from the start; otherwise it is not
+// drawn while it searches. At the touch its height becomes exactly the plate's top, and
+// from then on it is drawn from there — the back-off and the slow second touch are seen
+// landing on the plate, then the lift clear of it.
+function ProbeZBar({ stockBox, view }: { stockBox: StockBox | null; view: { startZ: number; startWorkZ: number | null; searchMM: number; contactZ: number | null } }) {
+  const { ref, place } = usePlace(stockBox)
+  const toolMZ = useMachineStore((s) => s.position.mpos[2])
+  const toolWZ = useMachineStore((s) => s.position.wpos[2])
+  const zeroedZ = useMachineStore((s) => s.zeroed.z)
+  const plateMM = useMachineStore((s) => s.probePlateMM)
+  const { material, units, zOrigin, thicknessMM } = useWorkpieceStore()
+  const darkMode = useUIStore((s) => s.darkMode)
+  const stockFill = MATERIAL_COLORS[material][darkMode ? 'dark' : 'light']
+  const fmt = (mm: number) => lenValue(mm, units, 1)
+
+  // In work Z as the probe will set it: the stock top at 0 (or its thickness, Z0 on the
+  // bottom). The plate lies on Z0, whichever surface that is, so its top is at the plate.
+  const top = zDatumOffsetMM(zOrigin, thicknessMM), bottom = top - thicknessMM
+  const plateTop = plateMM
+  const onTable = zOrigin === 'bottom'
+  // The tool: once it has touched, the plate's top plus however far it has moved since —
+  // exact. Before that, its work Z, but only if Z is ✓ zeroed — and only while it is still
+  // above the plate. A zero is often a rough one, set near the plate on the way down to
+  // probe, not on the stock top; then the work Z is off by however far, and the tool was
+  // drawn sailing through the plate before the touch snapped it back. Below the plate
+  // without a touch, the zero was evidently not on the stock: the height is unknown again
+  // until the touch.
+  const estimate = view.contactZ === null && zeroedZ ? toolWZ : null
+  const zeroOff = estimate !== null && estimate < plateTop - 0.01
+  const toolZ = view.contactZ !== null ? plateTop + (toolMZ - view.contactZ) : zeroOff ? null : estimate
+  // Where it started, in work Z, when that is known — recorded once by the store, so the
+  // scale stays put as the tool comes down and when the probe sets the new Z0.
+  const startWZ = view.startWorkZ
+  const zMin = bottom
+  const zMax = Math.max(Math.max(plateTop, top) + Math.max(10, plateMM * 1.5), startWZ !== null ? startWZ + 2 : -Infinity)
+  const at = (z: number) => `${((zMax - Math.max(zMin, Math.min(zMax, z))) / (zMax - zMin)) * 100}%`
+  const left = 'absolute right-[calc(50%+14px)] -translate-y-1/2 text-[10px] leading-none whitespace-nowrap tabular-nums'
+  const right = 'absolute left-[calc(50%+14px)] -translate-y-1/2 text-[10px] leading-none whitespace-nowrap'
+  const tick = 'absolute left-1/2 -translate-x-1/2 w-7 border-t'
+  const touching = toolZ !== null && toolZ <= plateTop + 0.01
+  const above = toolZ !== null && toolZ > zMax
+
+  return (
+    <div ref={ref} className="relative w-20 flex-shrink-0 text-gray-600 dark:text-neutral-400">
+      <div className={place ? 'absolute w-20' : 'absolute inset-0'}
+        style={place ? { top: place.top, height: place.height, left: place.cx - 40 } : undefined}>
+        <span className="absolute -top-4 left-1/2 -translate-x-1/2 text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400">Probing</span>
+        {/* The stock, Z0 where Setup puts it, and the plate lying on its top. */}
+        <div className="absolute left-1/2 -translate-x-1/2 w-5 border border-black/40 dark:border-white/40"
+          style={{ top: at(top), bottom: `calc(100% - ${at(bottom)})`, background: stockFill }}
+          title={`Stock: top Z${fmt(top)}, bottom Z${fmt(bottom)} ${units}`} />
+        <span className={left} style={{ top: at(top) }}>{fmt(top)}</span>
+        <span className={left} style={{ top: at(bottom) }}>{fmt(bottom)}</span>
+        <div className="absolute left-1/2 -translate-x-1/2 w-7 z-[1] border border-gray-600 dark:border-neutral-300 bg-gray-400/90 dark:bg-neutral-500/90"
+          style={{ top: at(plateTop), bottom: `calc(100% - ${at(0)})` }}
+          title={`Touch plate, ${fmt(plateMM)} ${units}, ${onTable ? 'on the table beside the stock, flush with its bottom' : 'on the stock top'}`} />
+        <span className={right} style={{ top: at(plateMM / 2) }}>{onTable ? 'Plate (table)' : 'Plate'}</span>
+        <span className={left} style={{ top: at(plateTop) }}>{fmt(plateTop)}</span>
+        {toolZ === null ? (
+          // Where the tool is, nobody knows yet: it is coming down to find out.
+          <span className="absolute left-1/2 -translate-x-1/2 text-center text-[10px] leading-tight italic text-blue-700 dark:text-sky-400"
+            style={{ top: `calc(${at(Math.max(plateTop, top))} - ${zeroOff ? '3' : '2.25'}rem)` }}
+            title={zeroOff
+              ? 'The Z zero was not on the stock top, so the tool\'s height is unknown until it touches the plate'
+              : `Coming down up to ${fmt(view.searchMM)} ${units} to find the plate. The tool's height is unknown until it touches.`}>
+            tool ↓<br />searching{zeroOff && <><br />(Z0 was off)</>}
+          </span>
+        ) : (
+          <>
+            {/* The tool, its tip now known: at the plate's top when touching. */}
+            <div className="absolute left-1/2 -translate-x-1/2 w-4 top-0 pointer-events-none" style={{ height: at(toolZ) }}>
+              <div className={`absolute inset-x-0 top-0 bottom-2 rounded-t-sm ${touching ? 'bg-green-600 dark:bg-green-400' : 'bg-blue-600 dark:bg-sky-400'}`} />
+              <div className={`absolute inset-x-0 bottom-0 h-2 [clip-path:polygon(0_0,100%_0,50%_100%)] ${touching ? 'bg-green-600 dark:bg-green-400' : 'bg-blue-600 dark:bg-sky-400'}`} />
+            </div>
+            {above && <ChevronUp size={14} className="absolute -top-3.5 left-1/2 -translate-x-1/2" />}
+            <span className={`absolute left-[calc(50%+12px)] -translate-y-1/2 z-10 px-1 rounded text-[10px] leading-tight font-mono tabular-nums pointer-events-none ${touching ? 'bg-green-600 text-white dark:bg-green-400 dark:text-neutral-900' : 'bg-blue-600 text-white dark:bg-sky-400 dark:text-neutral-900'}`}
+              style={{ top: at(toolZ) }} title="Tool tip, work Z as the probe is setting it">
+              {touching ? 'touch' : fmt(toolZ)}
+            </span>
+          </>
+        )}
+        <div className={`${tick} border-gray-500 dark:border-neutral-400`} style={{ top: at(0) }} />
+        {top !== 0 && bottom !== 0 && <span className={left} style={{ top: at(0) }}>0</span>}
+      </div>
+    </div>
+  )
+}
+
+function StockZBar({ stockBox }: { stockBox: StockBox | null }) {
+  // Lined up with the stock on the map, and centred between the Go to box's left
+  // edge and the stock's: px within this column, which only reserves the room.
+  const { ref, place } = usePlace(stockBox)
 
   const connected = useMachineStore((s) => s.link === 'connected')
   const zeroedZ = useMachineStore((s) => s.zeroed.z)
   const toolZ = useMachineStore((s) => s.position.wpos[2])
-  const loadedJob = useMachineStore((s) => s.job)
-  const job = useMachineStore((s) => s.mapSource === 'job') ? loadedJob : null
-  const operations = useToolpathStore((s) => s.operations)
+  // The loaded job's own heights; without one, Setup's safe height and no cut depth —
+  // the design is not on the machine until it is sent and loaded.
+  const job = useMachineStore((s) => s.job)
   const { thicknessMM, zOrigin, safeHeightMM, material, units } = useWorkpieceStore()
   const darkMode = useUIStore((s) => s.darkMode)
   const stockFill = MATERIAL_COLORS[material][darkMode ? 'dark' : 'light']
 
   const zOff = zDatumOffsetMM(zOrigin, thicknessMM)
   const top = zOff, bottom = zOff - thicknessMM
-  // Design toolpaths are stored with Z from the stock top; the G-code adds the datum offset.
-  const designDeepest = useMemo(() => {
-    let min = Infinity
-    for (const o of operations) {
-      if (!o.visible || o.status !== 'done') continue
-      for (const s of o.segments) if (!s.rapid && !s.toolChange) min = Math.min(min, s.z)
-    }
-    return Number.isFinite(min) ? min : null
-  }, [operations])
   const safe = (job ? job.preview.safeZ : null) ?? safeHeightMM + zOff
-  const deepest = job ? job.preview.deepestZ : designDeepest === null ? null : designDeepest + zOff
+  const deepest = job ? job.preview.deepestZ : null
   // The stock bottom, level with the map's: scaling to the deepest cut instead made
   // every job look like it cut through. A cut that really does go deeper still shows.
   const zMin = Math.min(bottom, deepest ?? bottom)
