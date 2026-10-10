@@ -29,9 +29,9 @@ toolpath, and closing the form without pressing it leaves things as they were.
 | Field | What to know |
 |---|---|
 | **Tool** | Lists only the tool *types* this operation can use (see [chapter 3](03-stock-and-tools.md#type-decides-where-a-tool-can-be-used)), from My Tools and tools you've used lately. **Browse library…** finds the rest — see [below](#choosing-a-tool-from-another-folder) |
-| **Start** | Where in Z the cut begins — see [below](#start-height) |
+| **Start** | Where in Z the cut begins — see [below](#start-height). Not on Trochoidal, Surface, Inlay or 3D Profile |
 | **Depth** | Total depth of the cut, measured **down from the start height**, not from stock top |
-| **Step down** | How much each pass takes. Left alone it is derived from the tool, material and rigidity, and snapped to a whole division of the depth so the last pass isn't a sliver |
+| **Step Down** | How much each pass takes. Left alone it is derived from the tool, material and rigidity, and snapped to a whole division of the depth so the last pass isn't a sliver |
 | **Direction** | **Climb** or **conventional** |
 | **Stock allowance** | Material left on the wall for a finishing pass. Negative cuts *past* the line |
 | **Ramp in** | Enters on a slope over 2× the tool diameter at 50% feed, instead of plunging straight down |

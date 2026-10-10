@@ -1,6 +1,6 @@
 # 2. The canvas
 
-Chapter 1 drew two circles by typing a radius and clicking. That is the easy case. This
+Chapter 1 drew two circles by typing a diameter and clicking. That is the easy case. This
 chapter is about the rest: getting around a drawing, selecting exactly what you mean,
 moving and sizing things precisely, drawing freehand, and reshaping a path point by
 point.
@@ -364,12 +364,13 @@ would carry the star's own corner out to a sharp tip instead.*
 
 Select one path (or a group) and choose **Linear** or **Circular**.
 
-- **Linear** lays out a **Rows × Cols** grid at the given X and Y spacing. The original
+- **Linear** lays out a **Rows × Cols** grid with an **X Gap** and **Y Gap** between
+  neighbouring copies — the space between them, not centre to centre. The original
   is row 0, column 0 of the grid and stays exactly where it is; the tool adds the rest
   around it.
 - **Circular** arrays copies at a **radius** from the selection's own centre, over a
-  **start/end angle** — 0–360 for a full ring, narrower for an arc. **Items face
-  outward** rotates each copy tangentially, the way spokes point away from a hub, instead
+  **Start° / End°** angle — 0–360 for a full ring, narrower for an arc. **Rotate
+  items** turns each copy tangentially, the way spokes point away from a hub, instead
   of every copy keeping the original's orientation.
 
 A copy is the real shape it was copied from, not a flattened outline — a patterned gear
@@ -381,7 +382,7 @@ than being resurrected by the next edit.
 
 ![A circular pattern of five hearts around a centre point, each one rotated to point outward](images/02-pattern.png)
 
-*Circular, count 5, radius 30 mm, a full 360° ring. With Items face outward checked, each
+*Circular, count 5, radius 30 mm, a full 360° ring. With Rotate items checked, each
 heart is rotated to point away from the centre rather than all five sharing the
 original's orientation.*
 

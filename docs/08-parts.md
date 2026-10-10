@@ -24,13 +24,15 @@ transmit motion at constant ratio, rather than a rounded-tooth shape that looks 
 
 | Field | Meaning |
 |---|---|
-| **Mod** | Module — tooth size. Pitch diameter = module × teeth |
-| **N** | Tooth count |
-| **Prf** | **Involute** for general work, **cycloidal** for clocks |
-| **PA** | Pressure angle (involute) |
-| **Pin** | Mating lantern pinion's pin count (cycloidal) |
-| **Back** | Backlash — play between the flanks |
-| Bore, hub, spokes | The wheel body |
+| **Module** | Tooth size. Pitch diameter = module × teeth |
+| **Teeth** | Tooth count |
+| **Profile** | **Involute** for general work, **Cycloidal (clock)** for clocks |
+| **Pressure** | Pressure angle (involute only) |
+| **Pins**, **Pin Ø** | Mating lantern pinion's pin count and pin size (cycloidal only) |
+| **Back cut**, **Runs**, **Pinion** | Relief on the flank that never drives, which way the wheel turns, and whether to draw the pinion too (cycloidal only) |
+| **Backlash** | Play between the flanks |
+| Bore Ø, Hub Ø, Spokes, Spoke W, Rim | The wheel body |
+| Count #, Pitch ○ | Engrave the tooth count and pitch circle |
 
 The root is cut as a **hobbed trochoid** — the shape an actual hob would leave — so gears
 below the classic minimum tooth count come out **undercut**, exactly as they would in
@@ -203,8 +205,9 @@ The escapement's readout button takes the colour of its worst line. Open it for 
 
 ## Pendulum
 
-Rod, hanging hole and bob, sized from **the beat you want**. Ask for a one-second beat and
-you get a rod of the length that beats in one second.
+Rod, hanging hole and bob. **Length** — hanging hole to bob centre — is the only dimension
+the beat depends on, so the panel shows the beat and period right under it: set the length
+and read off the beat.
 
 ---
 
@@ -232,8 +235,7 @@ anchor and the pendulum — each separately editable.*
 | Group | What you set |
 |---|---|
 | **Pendulum** | Beat, escape-wheel teeth |
-| **Going train** | Minimum pins, great-wheel period |
-| **Wheels** | Max wheel diameter, tooth taper, backlash, pin diameters |
+| **Going train** | Wheels (3 or 4), minimum pins, great-wheel period, max wheel diameter, tooth taper, backlash, pin diameters |
 | **Hour hand** | Motion work (12:1) and its arbor spacing |
 | **Weight drive** | Run time, drop, drum diameter |
 
@@ -277,8 +279,8 @@ Two things about the numbers:
 
 ## Cutting board
 
-Body, juice groove, hand slots or hanging hole, with paddle, cask and carry-handle
-options.
+A **Rectangle**, **Oval** or **Barrel** body, with a juice **Groove**, a hanging **Hole**,
+and a **Handle**: None, Paddle, Side slots or End slot.
 
 **It emits a compound path** — outline, then groove, then slots or hole — because those
 want different tools and different depths. **Double-click it to split** into separate

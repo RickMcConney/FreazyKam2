@@ -129,7 +129,7 @@ You generate the two halves **separately**, from the same drawing:
 | Field | What it does |
 |---|---|
 | **Roughing tool** | End mill that clears the bulk |
-| **Finishing tool** | V-bit or taper that cuts the walls — **the same on both halves** |
+| **Finishing Tool** | V-bit or taper for sloped walls, an end mill for flat ones, or *None — roughing only* — **the same on both halves** |
 | **Inlay depth** | How deep the socket goes |
 | **Glue gap** | Air left under the plug |
 | **Clearance** | Slack around the plug so it isn't a press fit |

@@ -154,12 +154,16 @@ check that a row says what you meant.
 
 | Tool | Offered to |
 |---|---|
-| End mill | Profile, Pocket, Trochoidal, Surface, Inlay, helical drilling |
-| Bull nose | Profile, Pocket, Trochoidal, 3D Profile (finishing and roughing) |
-| Ball nose | Profile, Pocket, Trochoidal, 3D Profile |
-| V-bit | V-Carve, Photo V-Carve, Inlay walls, Profile |
-| Taper end mill | V-Carve, Inlay walls, 3D Profile, Profile |
+| End mill | Profile, Pocket, Trochoidal, Surface, Inlay (roughing and finishing), peck and helical drilling, 3D Profile (roughing), Nest's Shared lines |
+| Bull nose | Profile, Pocket, Trochoidal, peck drilling, 3D Profile (finishing and roughing) |
+| Ball nose | Profile, Pocket, Trochoidal, peck drilling, 3D Profile (finishing and roughing) |
+| V-bit | Profile, V-Carve, Photo V-Carve, Inlay walls, peck drilling |
+| Taper end mill | Profile, V-Carve, Inlay walls, 3D Profile (finishing), peck drilling |
 | Drill | Peck drilling |
+
+Peck drilling lists every tool, since anything can plunge — but it warns for an end mill
+(it must be centre-cutting), a ball nose (round-bottomed hole) and a taper (a cone).
+Surface offers end mills only.
 
 If a cutter you expected isn't in an operation's list, it is the wrong **type** for that
 operation. Max Z does not hide a tool — ask for more depth than it has and the depth
@@ -258,11 +262,11 @@ how deep a pass it takes:
 
 | | Level | Suits |
 |---|---|---|
-| 🐌 | 1 · Hobby | Light rail or 3D-printed frames, belt drive, small routers |
+| 🐌 | 1 · Hobby (light gantry) | Light rail or 3D-printed frames, belt drive, small routers |
 | 🐢 | 2 · Light hobby | An entry aluminium-extrusion machine |
 | 🐇 | 3 · Prosumer | A stiff hobby machine — the default |
-| ⚡ | 4 · Heavy | Steel frame, ballscrews, a real spindle |
-| 🚀 | 5 · Commercial | Industrial machine |
+| ⚡ | 4 · Heavy / industrial | Steel frame, ballscrews, a real spindle |
+| 🚀 | 5 · Commercial CNC | Industrial machine |
 
 Set it honestly. Too high and a flexy gantry chatters, deflects and leaves a wandering
 wall; too low and you spend hours cutting air-light passes. The status bar shows the icon
@@ -270,10 +274,10 @@ at all times so an over-ambitious setting reads "hot" at a glance.
 
 ### Spindle
 
-Set the **min and max RPM** to what your spindle can actually do — routers bottom out
+Set **Min Spindle** and **Max Spindle** to what your spindle can actually do — routers bottom out
 around 10 000. Auto mode picks a speed inside that range.
 
-Then pick your **spindle type**. If you run a trim router rather than a VFD spindle, this
+Then pick your spindle type under **Spindle / Router**. If you run a trim router rather than a VFD spindle, this
 is worth setting: the app knows the published speed charts for the **DeWalt DW6xx /
 DWP611** and the **Makita RT07 / RT0701C**, and translates every RPM into **the dial
 number you actually turn** — `dial 2`, `dial 2.5` — shown in the tool table, the
@@ -282,7 +286,7 @@ what an S-word is.
 
 ### Max feed rate
 
-A hard ceiling, in mm/min. Set it to what your machine can move without losing steps, and
+**Max Feed Rate**, under Machine Motion, is a hard ceiling, in mm/min. Set it to what your machine can move without losing steps, and
 the app will not exceed it.
 
 This one has a consequence worth understanding. Chip load is feed ÷ (RPM × flutes), and

@@ -2,16 +2,24 @@
    Written out by build/docsPlugin.ts, so this is plain CSS at a stable URL —
    the generated pages are outside Vite's module graph and cannot import an asset. */
 
+/* Wider than the landing page's 1120px: the reference pages are mostly tables, and
+   screenshots read better large. Prose keeps a reading measure (below), so only the
+   things that benefit from width take it. Set here, not in site.css, so the header
+   and footer line up with the page body on the docs and nowhere else. */
+:root { --maxw: 1440px; }
+
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
 
-/* ── Three columns: contents, page, on-this-page ─────────────────────────── */
+/* ── Two columns: contents, page ─────────────────────────────────────────────
+   There is no "On this page" column: it repeated the headings already on screen and
+   took 230px from the screenshots. */
 
 .docs-layout {
   display: grid;
-  grid-template-columns: 232px minmax(0, 1fr) 190px;
+  grid-template-columns: 232px minmax(0, 1fr);
   gap: 40px;
   align-items: start;
   padding-top: 32px;
@@ -37,18 +45,32 @@ ul.toc a[aria-current="page"] {
   background: var(--accent-wash); color: var(--accent); font-weight: 600;
 }
 
-.onpage { position: sticky; top: 90px; font-size: 0.86rem; }
-.onpage-title {
-  margin: 0 0 8px; font-size: 0.74rem; font-weight: 700;
-  letter-spacing: 0.09em; text-transform: uppercase; color: var(--fg-faint);
+/* ── Help site: sections, breadcrumb ─────────────────────────────────────── */
+
+ul.toc-sections { list-style: none; margin: 14px 0 0; padding: 0; border-top: 1px solid var(--line); padding-top: 10px; }
+ul.toc-sections > li { margin: 0 0 2px; }
+a.toc-section {
+  display: block; padding: 7px 10px; border-radius: 6px;
+  font-size: 0.9rem; font-weight: 600; color: var(--fg);
 }
-.onpage ul { list-style: none; margin: 0; padding: 0; border-left: 1px solid var(--line); }
-.onpage li { margin: 0; }
-.onpage a {
-  display: block; padding: 5px 0 5px 12px; margin-left: -1px;
-  border-left: 2px solid transparent; color: var(--fg-muted); line-height: 1.35;
+a.toc-section:hover { background: var(--bg-soft); text-decoration: none; }
+li.toc-open > a.toc-section { color: var(--accent); }
+li.toc-open > ul.toc, li.toc-open > details { margin-left: 8px; border-left: 1px solid var(--line); padding-left: 4px; }
+
+details.toc-group > summary {
+  list-style: none; cursor: pointer; padding: 6px 10px; border-radius: 6px;
+  font-size: 0.78rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--fg-faint);
 }
-.onpage a:hover { color: var(--fg); border-left-color: var(--line-firm); text-decoration: none; }
+details.toc-group > summary::-webkit-details-marker { display: none; }
+details.toc-group > summary::before { content: "▸"; display: inline-block; width: 1.1em; transition: transform .15s; }
+details.toc-group[open] > summary::before { transform: rotate(90deg); }
+details.toc-group > summary:hover { color: var(--fg); background: var(--bg-soft); }
+details.toc-group > ul.toc { padding-left: 10px; }
+
+.crumbs { display: flex; gap: 8px; align-items: center; margin: 0 0 10px; font-size: 0.86rem; color: var(--fg-faint); }
+.crumbs a { color: var(--fg-muted); }
+
 
 .toc-toggle {
   display: none; grid-column: 1 / -1;
@@ -108,6 +130,12 @@ ul.toc a[aria-current="page"] {
 .prose h2:hover .anchor, .prose h3:hover .anchor, .anchor:focus-visible { opacity: 1; }
 
 .prose p { margin: 0 0 16px; }
+/* A comfortable line length for running text. Tables, code and images are left to
+   use the full column. */
+.prose > p, .prose > ul, .prose > ol, .prose > blockquote,
+.prose > h1, .prose > h2, .prose > h3, .prose > h4 { max-width: 75ch; }
+/* marked wraps each image in a <p>; that one carries a screenshot, not a line of text. */
+.prose > p:has(> img) { max-width: none; }
 .prose ul, .prose ol { margin: 0 0 16px; padding-left: 24px; }
 .prose li { margin-bottom: 7px; }
 .prose li > ul, .prose li > ol { margin-top: 7px; }
@@ -165,7 +193,6 @@ ul.toc a[aria-current="page"] {
 
 @media (max-width: 1080px) {
   .docs-layout { grid-template-columns: 210px minmax(0, 1fr); gap: 32px; }
-  .onpage { display: none; }
 }
 @media (max-width: 760px) {
   .docs-layout { grid-template-columns: 1fr; gap: 0; padding-top: 20px; }

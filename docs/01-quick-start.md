@@ -140,7 +140,7 @@ Go to the **Draw** tab.
 
 1. Click the **shape button** under DRAW. If it isn't already showing Circle, click the
    chevron beneath it and pick **Circle** from the picker.
-2. Set **Radius** to `50` in the parameters that appear below.
+2. Set **Diameter** to `100` in the parameters that appear below.
 3. Click once in the middle of the stock on the canvas.
 
 The circle is placed at the size you typed, centred on where you clicked. (You could
@@ -149,7 +149,7 @@ interactively.)
 
 Now the recess:
 
-1. With the Circle tool still active, change **Radius** to `40`.
+1. With the Circle tool still active, change **Diameter** to `80`.
 2. Click again on the *same point*. Because a click always centres the shape on the
    cursor, the two circles come out concentric.
 
@@ -168,7 +168,7 @@ reopens the editor that made it.*
 
 <!-- FULL APP · 1600 px wide, downscaled from the 2800 px capture. -->
 
-Click either circle and the Properties panel gives you back **Radius**, not a frozen
+Click either circle and the Properties panel gives you back **Diameter**, not a frozen
 outline — that stays true for the life of the project.
 
 ---
@@ -187,9 +187,9 @@ Find a **6 mm end mill**, or add one with **+**. What matters for this job:
 | RPM / XY Feed / Z Feed | Starting numbers — leave **Auto Feeds & Speeds** on and the app sets them per cut |
 | Max Z | The deepest this tool may ever cut — its usable flute length. Ask for more and the depth field warns *Exceeds tool Max Z* |
 
-**An operation only lists the tool types that can do its job.** Pocket offers end mills
-and ball noses; V-Carve offers V-bits and tapers; Drill offers drills. So if a cutter you
-expected isn't in the list, it is the wrong *type* for that operation — not the wrong
+**An operation only lists the tool types that can do its job.** Pocket offers end mills,
+bull noses and ball noses; V-Carve offers V-bits and tapers; Photo V-Carve offers only
+V-bits. So if a cutter you expected isn't in the list, it is the wrong *type* for that operation — not the wrong
 size. Max Z never hides a tool; it warns you in the depth field instead. (Once you've
 imported a maker's catalogue, its bits are a **Browse library…** away at the bottom of the
 list — see [chapter 4](04-operations.md#choosing-a-tool-from-another-folder).)

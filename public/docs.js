@@ -41,7 +41,8 @@
   function load() {
     if (index) return Promise.resolve(index)
     if (!loading) {
-      loading = fetch('/docs/search-index.json')
+      // Each site (/docs/, /help/) names its own index on <body>.
+      loading = fetch(document.body.getAttribute('data-search-index') || '/docs/search-index.json')
         .then(function (r) { return r.json() })
         .then(function (data) { index = data; return index })
         .catch(function () { index = []; return index })

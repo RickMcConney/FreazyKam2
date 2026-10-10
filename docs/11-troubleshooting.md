@@ -47,17 +47,18 @@ the tool types that can do its job:
 
 | Operation | Offers |
 |---|---|
-| Pocket, Trochoidal | End mill, ball nose |
-| Profile | End mill, ball nose, V-bit, taper |
+| Pocket, Trochoidal | End mill, bull nose, ball nose |
+| Profile | End mill, bull nose, ball nose, V-bit, taper |
 | V-Carve | V-bit, taper |
 | Photo V-Carve | V-bit only |
-| 3D Profile | Ball nose or taper (roughing: ball nose) |
-| Surface | End mill, ball nose |
-| Drill (peck) | Any tool that can plunge |
+| Inlay | Roughing: end mill · finishing: V-bit, taper or end mill |
+| 3D Profile | Finishing: ball nose, bull nose or taper · roughing: ball nose, bull nose or end mill |
+| Surface | End mill |
+| Drill (peck) | Any tool (warns for an end mill, ball nose or taper) |
 | Drill (helical) | End mill |
 
-You may also see the operation say so outright — *"V-Carve requires a V-bit tool"*,
-*"3D Profile requires a ball nose or taper tool"*.
+You may also see the operation say so outright — *"V-Carve requires a V-bit or taper tool"*,
+*"3D Profile needs a ball nose, bull nose or taper tool"*.
 
 **Max Z never hides a tool.** Ask for more depth than a tool has and the depth field warns
 *Exceeds tool Max Z* and leaves the decision to you.

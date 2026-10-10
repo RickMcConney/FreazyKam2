@@ -135,16 +135,17 @@ export default function HelpPanel() {
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-neutral-700 flex-shrink-0">
           <h2 className="text-base font-semibold text-gray-900 dark:text-neutral-100">FreazyKam Help</h2>
           <div className="flex items-center gap-4">
-            {/* This panel is the quick reference; the full task-by-task guide is the
-                site's documentation, which is the same markdown that lives in docs/. */}
+            {/* This panel is the quick reference; the way in to everything longer is the
+                help site (help/*.md, served at /help/) — tutorials, how-to, reference and
+                explanation — which links on to the chapter-by-chapter user guide (/docs/). */}
             <a
-              href="/docs/"
+              href="/help/"
               target="_blank"
               rel="noopener"
               className="flex items-center gap-1.5 text-sm text-blue-600 dark:text-blue-400 hover:underline"
             >
               <BookOpen size={15} />
-              User guide
+              Help &amp; how-to
             </a>
             <button
               onClick={() => setHelpOpen(false)}

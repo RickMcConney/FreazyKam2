@@ -30,6 +30,7 @@ you can see what didn't make it and decide what to do.
 
 | Setting | What it does |
 |---|---|
+| **Shared lines** | Place parts exactly one cutter apart, so neighbours share a cut. Pick the end mill; then cut the sheet with Profile's **Optimize Path** |
 | **Part Gap** | Space between parts. At minimum, leave room for the cutter plus tabs |
 | **Edge Margin** | Space kept clear at the edge of the stock — for clamps, and for the fact that the edge of a board is rarely straight |
 | **Rotation Step** | How freely parts may be turned |

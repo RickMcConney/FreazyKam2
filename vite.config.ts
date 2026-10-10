@@ -49,10 +49,11 @@ const reloadWorkerGraph = {
   },
 }
 
-// The site is three things at one origin (freazykam.com):
+// The site is four things at one origin (freazykam.com):
 //   /       the landing page   — index.html, plain HTML, no React
 //   /app/   the CAM app        — app/index.html, the Vite/React entry
 //   /docs/  the user guide     — rendered from docs/*.md by docsPlugin at build time
+//   /help/  the help pages     — rendered from help/**/*.md by the same plugin
 // `base` is '/' because a custom domain serves from the root; it was '/FreazyKam2/'
 // while the only home was the project page at rickmcconney.github.io.
 export default defineConfig({
