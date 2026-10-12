@@ -13,6 +13,7 @@ import { getBBox, extractCircles, extractRectInfo } from '../canvas/selectionUti
 import { loadImageLuminance } from '../io/imageLuminance'
 import { decodeStlMesh } from '../importers/stlImporter'
 import { effectiveStepDownMM, trochoidalEngagementFraction } from './feeds'
+import { pocketEngagementFraction } from './pocket/strategyIds'
 import { cornerRadiusMM } from './geom'
 import { resolveStartZForOp } from './startHeight'
 import type { GenNote } from './notes'
@@ -126,7 +127,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       return { d: path.d, tabs: tabsForGeneration(id) }
     })
     const result = await runInWorkerFor(opId, 'generateSharedLineProfile', parts, tool, {
-      side: op.side, depthMM: op.depthMM, stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM), direction: op.direction,
+      side: op.side, depthMM: op.depthMM, stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual), direction: op.direction,
       startNear: op.entryHint, rampIn: op.rampIn, safeHeightMM, allowanceMM: op.allowanceMM, startZMM,
     }, machineRates(), { bridgeMaxMM: op.bridgeMaxMM ?? 0 })
     setSegments(opId, result.segments, builtWith)
@@ -136,7 +137,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
     const path = paths.find((p) => p.id === op.pathId)
     if (!path) throw new Error('Source path not found')
     setSegments(opId, await runInWorkerFor(opId, 'generateProfile', path.d, tool, {
-      side: op.side, depthMM: op.depthMM, stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM), direction: op.direction,
+      side: op.side, depthMM: op.depthMM, stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual), direction: op.direction,
       startNear: op.entryHint, rampIn: op.rampIn, safeHeightMM,
       allowanceMM: op.allowanceMM,
       cornerToleranceMM: op.cornerToleranceMM,
@@ -152,7 +153,8 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
     })
     const pocket = await runInWorkerFor(opId, 'generatePocket', boundary.d, tool, {
       strategy: op.strategy ?? 'raster',
-      depthMM: op.depthMM, stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM),
+      depthMM: op.depthMM,
+      stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM, pocketEngagementFraction(op.strategy, op.stepoverPercent), op.stepDownManual),
       stepoverPercent: op.stepoverPercent, direction: op.direction,
       islandDs, angle: op.passAngleDeg, autoAngle: op.autoAngle, startNear: op.entryHint, rampIn: op.rampIn,
       finishAllowanceMM: op.allowanceMM,
@@ -190,7 +192,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
         } as Parameters<typeof updateOperation>[1], { record: false })
       }
       setSegments(opId, generateHelicalDrills(holes, tool, {
-        depthMM: op.depthMM, stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM),
+        depthMM: op.depthMM, stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual),
         startNear: op.entryHint, safeHeightMM, startZMM,
       }), builtWith)
     } else {
@@ -201,14 +203,14 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       // enough.
       const points = circles.length > 0 ? circles.map((c) => ({ x: c.cx, y: c.cy })) : op.points
       setSegments(opId, generatePeckDrill(points, tool, {
-        depthMM: op.depthMM, stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM), startNear: op.entryHint, safeHeightMM, startZMM,
+        depthMM: op.depthMM, stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual), startNear: op.entryHint, safeHeightMM, startZMM,
       }), builtWith)
     }
 
   } else if (op.type === 'surface') {
     setSegments(opId, await runInWorkerFor(opId, 'generateSurface', tool, {
       widthMM: stockW, heightMM: stockH,
-      depthMM: op.depthMM, stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM),
+      depthMM: op.depthMM, stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual),
       stepoverPercent: op.stepoverPercent, passAngleDeg: op.passAngleDeg,
       safeHeightMM,
     }), builtWith)
@@ -291,7 +293,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       roughingCornerRadiusMM: roughingTool?.type === 'bullnose' ? cornerRadiusMM(roughingTool) : undefined,
       roughingStepoverPercent: op.roughingStepoverPercent,
       roughingStepDownMM: roughingTool != null && op.roughingStepDownMM != null
-        ? effectiveStepDownMM(roughingTool, op.roughingStepDownMM, depthMM)
+        ? effectiveStepDownMM(roughingTool, op.roughingStepDownMM, depthMM, undefined, op.stepDownManual)
         : op.roughingStepDownMM,
       roughingStockAllowanceMM: op.roughingStockAllowanceMM,
       roughingRasterAngleDeg: op.roughingRasterAngleDeg,
@@ -321,7 +323,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
     if (!path) throw new Error('Source path not found')
     setSegments(opId, await runInWorkerFor(opId, 'generateTrochoidal', path.d, tool, {
       side: op.side, depthMM: op.depthMM,
-      stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM, trochoidalEngagementFraction(tool, op.trochStepMM)),
+      stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM, trochoidalEngagementFraction(tool, op.trochStepMM), op.stepDownManual),
       direction: op.direction, trochStepMM: op.trochStepMM, trochRadiusMM: op.trochRadiusMM,
       finishingPass: op.finishingPass, rampIn: op.rampIn, startNear: op.entryHint, safeHeightMM,
     }, tabsForGeneration(op.pathId)), builtWith)
@@ -347,7 +349,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
     })
     const inlayParams = {
       angleDeg: op.angleDeg, pocketDepthMM: op.pocketDepthMM,
-      stepDownMM: effectiveStepDownMM(pocketTool, op.stepDownMM, op.pocketDepthMM), stepoverPercent: op.stepoverPercent,
+      stepDownMM: effectiveStepDownMM(pocketTool, op.stepDownMM, op.pocketDepthMM, undefined, op.stepDownManual), stepoverPercent: op.stepoverPercent,
       glueLineMM: op.glueLineMM, clearanceMM: op.clearanceMM,
       rampIn: op.rampIn, mirrorX: op.mirrorX, mirrorAxisX: op.mirrorAxisX,
       islandDs: islandEntries.map((e) => e.d),

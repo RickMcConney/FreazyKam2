@@ -15,6 +15,8 @@ interface TrochoidalFormState {
   side: CutSide
   depthMM: number
   stepDownMM: number
+  /** The step-down was typed over the auto one (see BaseOperation.stepDownManual). */
+  stepDownManual: boolean
   direction: CuttingDirection
   trochStepMM: number
   trochRadiusMM: number
@@ -42,7 +44,7 @@ export function TrochoidalForm({ onClose, editOp }: { onClose: () => void; editO
   const [form, setForm] = useState<TrochoidalFormState>(() => {
     const base = editOp ? {
       toolId: editOp.toolId, side: editOp.side, depthMM: editOp.depthMM,
-      stepDownMM: editOp.stepDownMM, direction: editOp.direction,
+      stepDownMM: editOp.stepDownMM, stepDownManual: editOp.stepDownManual ?? false, direction: editOp.direction,
       trochStepMM: editOp.trochStepMM, trochRadiusMM: editOp.trochRadiusMM,
       finishingPass: editOp.finishingPass, rampIn: editOp.rampIn ?? false,
     } : mergeWithDefaults(load('trochoidal'), {
@@ -51,13 +53,14 @@ export function TrochoidalForm({ onClose, editOp }: { onClose: () => void; editO
       // Default to the full stock thickness; the tool's max Z is only a warning.
       depthMM: thicknessMM > 0 ? thicknessMM : (defaultTool?.maxDepthMM ?? 10),
       stepDownMM: seedStepDownMM(defaultTool),
+      stepDownManual: false,
       direction: 'climb' as CuttingDirection,
       trochStepMM: (defaultTool?.diameterMM ?? 6) * 0.15,
       trochRadiusMM: (defaultTool?.diameterMM ?? 6) * 0.5,
       finishingPass: true,
       rampIn: false,
     }, tools)
-    return { ...base, toolId: pickToolId(base.toolId, cutters) }
+    return { ...base, stepDownManual: editOp ? base.stepDownManual : false, toolId: pickToolId(base.toolId, cutters) }
   })
   const { generating, errorMsg, generate } = useBatchGenerate('trochoidal', 'trochoidal')
   const session = useSessionOps()
@@ -81,6 +84,7 @@ export function TrochoidalForm({ onClose, editOp }: { onClose: () => void; editO
     if (t) setForm((f) => ({
       ...f, toolId,
       stepDownMM: seedStepDownMM(t),
+      stepDownManual: false,
       trochStepMM: parseFloat((t.diameterMM * 0.15).toFixed(3)),
       trochRadiusMM: parseFloat((t.diameterMM * 0.5).toFixed(3)),
     }))
@@ -93,11 +97,11 @@ export function TrochoidalForm({ onClose, editOp }: { onClose: () => void; editO
   async function handleGenerate() {
     if (selectedPaths.length === 0 || !selectedTool) return
     const tool = selectedTool
-    const { toolId, side, depthMM, stepDownMM, direction, trochStepMM, trochRadiusMM, finishingPass, rampIn } = form
+    const { toolId, side, depthMM, stepDownMM, stepDownManual, direction, trochStepMM, trochRadiusMM, finishingPass, rampIn } = form
     const item = (path: ImportedPath, op?: TrochoidalOperation) =>
       ({ key: path.id, op, name: `Trochoidal: ${path.name} (${tool.name})`, fields: { pathId: path.id } })
     await generate({
-      settings: { toolId, side, depthMM, stepDownMM, direction, trochStepMM, trochRadiusMM, finishingPass, rampIn },
+      settings: { toolId, side, depthMM, stepDownMM, stepDownManual, direction, trochStepMM, trochRadiusMM, finishingPass, rampIn },
       items: editOp
         ? [...rev.keep.map(({ op, path }) => item(path, op)), ...rev.add.map((path) => item(path))]
         : selectedPaths.map((path) => item(path)),
@@ -112,6 +116,7 @@ export function TrochoidalForm({ onClose, editOp }: { onClose: () => void; editO
       <ToggleRow label="Cut Side" options={['inside', 'outside', 'centerline'] as CutSide[]} value={form.side} onChange={(v) => up('side', v)} />
       <DepthRow depthMM={form.depthMM} stepDownMM={form.stepDownMM}
         onDepth={(v) => up('depthMM', v)} onStep={(v) => up('stepDownMM', v)}
+        stepManual={form.stepDownManual} onStepManual={(v) => up('stepDownManual', v)}
         maxDepthMM={selectedTool?.maxDepthMM} tool={selectedTool}
         engagementFraction={selectedTool ? trochoidalEngagementFraction(selectedTool, form.trochStepMM) : undefined} />
       <ToggleRow label="Direction" options={['climb', 'conventional'] as CuttingDirection[]} value={form.direction} onChange={(v) => up('direction', v)} />

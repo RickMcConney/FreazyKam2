@@ -2,7 +2,7 @@ import type { AnyOperation, MotionSegment } from '../store/toolpathStore'
 import { BUILD_DATE } from '../version'
 import { perfLog } from '../debug'
 import type { Tool } from '../store/toolStore'
-import type { PostProcessorProfile } from '../store/postProcessorStore'
+import { linksAsRapids, type PostProcessorProfile } from '../store/postProcessorStore'
 import { useWorkpieceStore, zDatumOffsetMM, MM_PER_INCH as MM_PER_IN } from '../store/workpieceStore'
 import { SPINDLE_INFO, spindleDialLabel } from '../store/spindle'
 import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
@@ -173,6 +173,7 @@ const SURFACE_ARC_FIT: ArcFit = { tolMM: 0.05, noiseMM: 0.02 }
 // slow enough that a small Z error or a bit of spring in the machine is survivable.
 const TRAVEL_FEED_FACTOR = 2.5
 
+
 // Simplify the emitted cut moves in two ways so curved and straight passes export
 // compactly. Strategies like profile/trochoidal already arc-fit upstream; this
 // catches the ones (pocket, adaptive, surfacing, …) that only emit flattened
@@ -187,7 +188,7 @@ const TRAVEL_FEED_FACTOR = 2.5
 //
 // Only constant-Z runs at full feed are eligible: a G2/G3 move carries a single
 // feed and the emitter ignores per-segment feedScale on arcs, so any segment with
-// a reduced feedScale (e.g. adaptive2 engagement control) is left untouched to
+// a reduced feedScale (e.g. a slowed bite) is left untouched to
 // preserve its protective feed override. Rapids, travels, plunges/lifts (pure Z
 // moves), tool changes, and segments that already carry an arc pass through
 // verbatim — as do segments a generator marked `exact`, which it has already fitted at a
@@ -403,6 +404,7 @@ export function generateGcodeWithOps(
     // ones were not, which is why "Gcode invalid target" (error 33) only ever
     // showed up on tight corner arcs.
     const coordDecimals = profile.unitMode === 'in' ? 4 : 3
+    const rapidLinks = linksAsRapids(profile)
     const rnd = (n: number) => Number(n.toFixed(coordDecimals))
     // Grbl's tolerance is in mm regardless of the file's unit mode — it converts
     // before checking — so the guard below has to convert back to compare.
@@ -552,14 +554,22 @@ export function generateGcodeWithOps(
         const isPlunge = !xyChanged && seg.z < prevZ
         // A `travel` move rides just above a floor the tool has already cleared — it is
         // repositioning, not cutting, so running it at cutting feed is pure cycle time
-        // (adaptive clearing links between passes constantly). It stays a G1: a G0 is
-        // free to dogleg on many controllers, which at half a millimetre above the floor
-        // could clip a wall. So: a straight line, at a travel feed.
+        // (adaptive clearing links between passes constantly). Where the profile says its
+        // G0 is a straight line (linksAsRapids — Grbl, FluidNC) it is a G0, as CAM programs
+        // normally write links. Elsewhere it stays a G1 at a travel feed: a G0 may dogleg
+        // on those controllers, which half a millimetre above the floor could clip a wall.
         const feedMm = isPlunge ? currentFeeds.plungeMmMin
           : seg.travel ? currentFeeds.xyFeedMmMin * TRAVEL_FEED_FACTOR
           : currentFeeds.xyFeedMmMin
-        const feed = fmtFeed(feedMm * (seg.feedScale ?? 1), profile)
-        lines.push(sub(profile.cutTemplate, { x, y, z, f: feed }))
+        if (seg.travel && rapidLinks) {
+          // A link as a RAPID: what CAM programs normally emit, priced as one by the time
+          // estimate and left unjudged by the simulator's chip gauge. Only where the profile
+          // says its G0 is a straight line (see PostProcessorProfile.linksAsRapids).
+          lines.push(sub(profile.rapidTemplate, { x, y, z }))
+        } else {
+          const feed = fmtFeed(feedMm * (seg.feedScale ?? 1), profile)
+          lines.push(sub(profile.cutTemplate, { x, y, z, f: feed }))
+        }
       }
 
       prevX = seg.x; prevY = seg.y; prevZ = seg.z

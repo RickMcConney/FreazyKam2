@@ -13,15 +13,16 @@ import type {  CuttingDirection, Tool } from '../../store/toolStore'
 
 // 'morph' is the field-based curvilinear spiral (Poisson isotherms, helix entry — cf.
 // Fusion's "Morphed Spiral") — best for chunky pockets and islands.
-// 'adaptive2' is the fast raster-marching constant-engagement engine (./adaptive2);
-// 'hybrid' is that same engine clearing the open core with raster passes first, so the
-// march only pays its steering cost near walls and in tight regions.
+// 'adaptive' is FreeCAD's Adaptive2d constant-engagement clearing, re-plumbed with local
+// tiles so it runs faster than FreeCAD's own C++ (../adaptiveFC, ./adaptiveFC).
+// 'hybrid' (shown as Auto) rasters the open ground and contours round islands.
 // Dropped 2026-07: the offset-ring spiral ('spiral', earlier 'spiralOffset'), which left
 // stock even at 50% stepover. generatePocket regenerates those operations as 'morph', and
-// project load rewrites the stored id — see loadProject. Dropped 2026-09: 'adaptive', the
-// FreeCAD Adaptive2d port (far slower than adaptive2, and hidden from the UI); rewritten
-// to 'adaptive2' the same way.
-export type PocketStrategy = 'raster' | 'contour' | 'morph' | 'adaptive2' | 'hybrid'
+// project load rewrites the stored id — see parseProject. Dropped 2026-10: 'adaptive2', the
+// raster-marching engine, replaced by the FreeCAD algorithm; 'adaptive2' and the interim
+// 'adaptiveFC' are rewritten to 'adaptive' the same way. ('adaptive' was also the id of an
+// earlier, slow FreeCAD port, so the oldest projects come home to the algorithm they had.)
+export type PocketStrategy = 'raster' | 'contour' | 'morph' | 'adaptive' | 'hybrid'
 
 export interface PocketParams {
   /** Run the chosen strategy even where it would normally decline the shape as a poor fit
@@ -84,7 +85,7 @@ export interface TravelSafetyObstacles {
 // every strategy was called once per level and rebuilt its offsets, finishing rings and
 // rest-detection from scratch each time (~95% of contour's runtime was rest detection,
 // recomputed to produce a bit-identical result), and the two strategies that could not
-// afford that — morph and adaptive2 — worked around it with module-level caches keyed
+// afford that — morph and the old raster-marching adaptive — worked around it with module-level caches keyed
 // by a hand-rolled geometry hash. Both caches are gone with the split; so is the chance
 // of a hash collision emitting the wrong toolpath.
 //
@@ -521,6 +522,9 @@ export function emitHelicalRamp(
   return last
 }
 
+/** Steepest descent a helical bore may take — FreeCAD Adaptive's default helix angle. */
+export const HELIX_MAX_RAMP_DEG = 5
+
 // Descend a helical bore about `center` (tool-centre radius `radius`), finishing at
 // `endAngle` on the circle at `toZ`. Integer turns ⇒ the plunge point is also at
 // `endAngle`, so the bore is a clean circle entered and exited at the same place; the
@@ -539,7 +543,11 @@ export function emitHelixBore(
 ): Pt2 {
   const dir = wantCCW ? 1 : -1
   const stepsPerTurn = 28
-  const turns = Math.max(1, Math.ceil(Math.abs(toZ - fromZ) / 1.5))
+  // At most 1.5 mm per turn, and never steeper than HELIX_MAX_RAMP_DEG: a helix squeezed
+  // small by a tight spot would otherwise drop the same 1.5 mm in a fraction of the
+  // circumference — a near-plunge — which matters once adaptive steps down several mm.
+  const pitch = Math.min(1.5, Math.max(0.05, 2 * Math.PI * radius * Math.tan(HELIX_MAX_RAMP_DEG * Math.PI / 180)))
+  const turns = Math.max(1, Math.ceil(Math.abs(toZ - fromZ) / pitch))
   const totalSteps = turns * stepsPerTurn
   const pt = (a: number): Pt2 => [center[0] + Math.cos(a) * radius, center[1] + Math.sin(a) * radius]
   const startPt = pt(endAngle)

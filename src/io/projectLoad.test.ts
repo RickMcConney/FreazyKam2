@@ -77,9 +77,16 @@ describe('parseProject — reads what it can', () => {
     expect((parseProject(data).operations[0] as { strategy: string }).strategy).toBe('morph')
   })
 
-  it('rewrites the dropped Adaptive2d pocket strategy to adaptive2', () => {
+  it('rewrites the dropped raster-marching adaptive, and the interim adaptiveFC id, to adaptive', () => {
+    for (const old of ['adaptive2', 'adaptiveFC']) {
+      const data = { ...good(), operations: [{ ...good().operations[0], strategy: old }] }
+      expect((parseProject(data).operations[0] as { strategy: string }).strategy).toBe('adaptive')
+    }
+  })
+
+  it('keeps an adaptive pocket as adaptive', () => {
     const data = { ...good(), operations: [{ ...good().operations[0], strategy: 'adaptive' }] }
-    expect((parseProject(data).operations[0] as { strategy: string }).strategy).toBe('adaptive2')
+    expect((parseProject(data).operations[0] as { strategy: string }).strategy).toBe('adaptive')
   })
 
   it('reads a v4 X-distance constraint as a polar one', () => {

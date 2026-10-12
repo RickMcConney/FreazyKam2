@@ -93,7 +93,7 @@ function relax(T: Float32Array, inside: Uint8Array, gw: number, gh: number, cell
   }
 }
 
-// Most cells the FINEST field grid may have — the same budget adaptive2 uses for its own.
+// Most cells the FINEST field grid may have — the same budget the old raster-marching adaptive used for its own.
 //
 // THE FINE GRID USED TO HAVE NO BUDGET AT ALL. The coarse-to-fine levels below coarsen only
 // to build the levels UNDER the requested cell; the finest is always the caller's, and the

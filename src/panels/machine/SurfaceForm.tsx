@@ -13,6 +13,8 @@ interface SurfaceFormState {
   toolId: string
   depthMM: number
   stepDownMM: number
+  /** The step-down was typed over the auto one (see BaseOperation.stepDownManual). */
+  stepDownManual: boolean
   stepoverPercent: number
   passAngleDeg: number
 }
@@ -34,16 +36,17 @@ export function SurfaceForm({ onClose, editOp }: { onClose: () => void; editOp?:
   const defaultTool = endMills[0]
   const [form, setForm] = useState<SurfaceFormState>(() => {
     const base = editOp ? {
-      toolId: editOp.toolId, depthMM: editOp.depthMM, stepDownMM: editOp.stepDownMM,
+      toolId: editOp.toolId, depthMM: editOp.depthMM, stepDownMM: editOp.stepDownMM, stepDownManual: editOp.stepDownManual ?? false,
       stepoverPercent: editOp.stepoverPercent, passAngleDeg: editOp.passAngleDeg,
     } : mergeWithDefaults(load('surface'), {
       toolId: defaultTool?.id ?? '',
       depthMM: seedStepDownMM(defaultTool),
       stepDownMM: seedStepDownMM(defaultTool),
+      stepDownManual: false,
       stepoverPercent: 40,
       passAngleDeg: 0,
     }, tools)
-    return { ...base, toolId: pickToolId(base.toolId, endMills) }
+    return { ...base, stepDownManual: editOp ? base.stepDownManual : false, toolId: pickToolId(base.toolId, endMills) }
   })
   const [generating, setGenerating] = useState(false)
   const [errorMsg, reportError, clearError] = useGenerateError()
@@ -53,7 +56,7 @@ export function SurfaceForm({ onClose, editOp }: { onClose: () => void; editOp?:
 
   function handleToolChange(toolId: string) {
     const t = tools.find((x) => x.id === toolId)
-    if (t) setForm((f) => ({ ...f, toolId, stepDownMM: seedStepDownMM(t) }))
+    if (t) setForm((f) => ({ ...f, toolId, stepDownMM: seedStepDownMM(t), stepDownManual: false }))
   }
 
   function up<K extends keyof SurfaceFormState>(k: K, v: SurfaceFormState[K]) {
@@ -66,7 +69,7 @@ export function SurfaceForm({ onClose, editOp }: { onClose: () => void; editOp?:
     setGenerating(true)
     if (editOp) {
       updateOperation(editOp.id, {
-        toolId: form.toolId, depthMM: form.depthMM, stepDownMM: form.stepDownMM,
+        toolId: form.toolId, depthMM: form.depthMM, stepDownMM: form.stepDownMM, stepDownManual: form.stepDownManual,
         stepoverPercent: form.stepoverPercent, passAngleDeg: form.passAngleDeg, status: 'generating',
       } as Partial<AnyOperation>)
       try {
@@ -89,12 +92,13 @@ export function SurfaceForm({ onClose, editOp }: { onClose: () => void; editOp?:
       toolId: form.toolId,
       depthMM: form.depthMM,
       stepDownMM: form.stepDownMM,
+      stepDownManual: form.stepDownManual,
       stepoverPercent: form.stepoverPercent,
       passAngleDeg: form.passAngleDeg,
     })
     if (!existingId) session.remember('surface', opId)
     updateOperation(opId, existingId ? {
-      name, toolId: form.toolId, depthMM: form.depthMM, stepDownMM: form.stepDownMM,
+      name, toolId: form.toolId, depthMM: form.depthMM, stepDownMM: form.stepDownMM, stepDownManual: form.stepDownManual,
       stepoverPercent: form.stepoverPercent, passAngleDeg: form.passAngleDeg, status: 'generating',
     } as Partial<AnyOperation> : { status: 'generating' })
     try {
@@ -142,6 +146,8 @@ export function SurfaceForm({ onClose, editOp }: { onClose: () => void; editOp?:
         stepDownMM={form.stepDownMM}
         onDepth={(v) => up('depthMM', v)}
         onStep={(v) => up('stepDownMM', v)}
+        stepManual={form.stepDownManual}
+        onStepManual={(v) => up('stepDownManual', v)}
         maxDepthMM={selectedTool?.maxDepthMM}
         tool={selectedTool}
       />

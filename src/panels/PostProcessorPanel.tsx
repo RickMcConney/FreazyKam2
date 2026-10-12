@@ -6,6 +6,7 @@ import {
   usePostProcessorStore,
   type PostProcessorProfile,
   type CommentStyle,
+  linksAsRapids,
 } from '../store/postProcessorStore'
 import { templateLongLines, MAX_GCODE_LINE } from '../cam/gcode'
 import { exportPostProcessor, pickSectionFile } from '../io/settingsFile'
@@ -119,6 +120,16 @@ function ProfileEditor({ profile }: { profile: PostProcessorProfile }) {
         <Field label="Cut move" hint="Placeholders: {x} {y} {z} {f}" warn={lengthWarning(profile.cutTemplate, false)}>
           <input type="text" value={profile.cutTemplate} onChange={(e) => up({ cutTemplate: e.target.value })} className={inputCls} />
         </Field>
+      </div>
+
+      <div>
+        <label className="flex items-center gap-2 cursor-pointer select-none">
+          <input type="checkbox" checked={linksAsRapids(profile)} onChange={(e) => up({ linksAsRapids: e.target.checked })} className="accent-blue-500" />
+          <span className="text-body text-gray-700 dark:text-neutral-300">Links as rapids (G0)</span>
+        </label>
+        <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5 ml-6">
+          Stay-down moves over already-cut floor run as G0. Only for a controller whose G0 is a straight line (Grbl, FluidNC) — not one that moves each axis at its own speed (Mach3/4), which can clip a wall.
+        </p>
       </div>
 
       <div>

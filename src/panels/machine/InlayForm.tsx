@@ -1,5 +1,5 @@
 // ─── Inlay form ───────────────────────────────────────────────────────────────
-import { FormShell, PathChip, PathListSection, AutoStepField, GenerateBtn, useSessionOps, toolsOfType, pickToolId, LengthInput, FormError, useGenerateError, discardFailedOps } from './shared'
+import { FormShell, PathChip, PathListSection, StepDownField, GenerateBtn, useSessionOps, toolsOfType, pickToolId, LengthInput, FormError, useGenerateError, discardFailedOps } from './shared'
 import { ToolPicker } from './ToolPicker'
 import { useState } from 'react'
 import { ICON } from '../../theme'
@@ -22,6 +22,8 @@ interface InlayFormState {
   pocketToolId: string
   pocketDepthMM: number
   stepDownMM: number
+  /** The step-down was typed over the auto one (see BaseOperation.stepDownManual). */
+  stepDownManual: boolean
   stepoverPercent: number
   glueLineMM: number
   clearanceMM: number
@@ -72,7 +74,7 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
     const base = editOp ? {
     vbitToolId: editOp.vbitToolId, pocketToolId: editOp.pocketToolId,
     pocketDepthMM: editOp.pocketDepthMM,
-    stepDownMM: editOp.stepDownMM, stepoverPercent: editOp.stepoverPercent,
+    stepDownMM: editOp.stepDownMM, stepDownManual: editOp.stepDownManual ?? false, stepoverPercent: editOp.stepoverPercent,
     glueLineMM: editOp.glueLineMM, clearanceMM: editOp.clearanceMM,
     role: editOp.role, rampIn: editOp.rampIn ?? false, mirrorX: editOp.mirrorX ?? false,
     invert: false,
@@ -81,6 +83,7 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
     pocketToolId: defaultEndmill?.id ?? '',
     pocketDepthMM: 5,
     stepDownMM: seedStepDownMM(defaultEndmill),
+    stepDownManual: false,
     stepoverPercent: 40,
     glueLineMM: 0.2,
     clearanceMM: 0.1,
@@ -92,7 +95,7 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
     // Deliberately not restored from saved defaults: which half of a nested selection is
     // the part is a property of THAT selection, not a preference.
     invert: false,
-  }, tools), invert: false }
+  }, tools), invert: false, stepDownManual: false }
     // "None" is an explicit choice, not a stale id — never coerce it to a real tool.
     return { ...base,
       pocketToolId: pickToolId(base.pocketToolId, endmills),
@@ -195,6 +198,7 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
       angleDeg,
       pocketDepthMM: form.pocketDepthMM,
       stepDownMM: form.stepDownMM,
+      stepDownManual: form.stepDownManual,
       stepoverPercent: form.stepoverPercent,
       glueLineMM: form.glueLineMM,
       clearanceMM: form.clearanceMM,
@@ -407,7 +411,7 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
           value={form.pocketToolId}
           onChange={(id) => {
             const t = tools.find((x) => x.id === id)
-            if (t) up('stepDownMM', seedStepDownMM(t))
+            if (t) { up('stepDownMM', seedStepDownMM(t)); up('stepDownManual', false) }
             up('pocketToolId', id)
           }}
           emptyText="No end mill — add one in the Tool Library" />
@@ -456,15 +460,9 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
           <LengthInput id="inlay-inlay-depth" valueMM={form.pocketDepthMM} minMM={0.5} stepMM={0.5}
             onChangeMM={(v) => up('pocketDepthMM', v)} />
         </div>
-        {autoFeedEnabled && pocketTool ? (
-          <AutoStepField label="Step Down" valueMM={effectiveStepDownMM(pocketTool, form.stepDownMM, form.pocketDepthMM)} />
-        ) : (
-          <div>
-            <label htmlFor="inlay-step-down" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">Step Down</label>
-            <LengthInput id="inlay-step-down" valueMM={form.stepDownMM} minMM={0.1} stepMM={0.5}
-              onChangeMM={(v) => up('stepDownMM', v)} />
-          </div>
-        )}
+        <StepDownField stepDownMM={form.stepDownMM} onStep={(v) => up('stepDownMM', v)} minMM={0.1}
+          autoMM={autoFeedEnabled && pocketTool ? effectiveStepDownMM(pocketTool, form.stepDownMM, form.pocketDepthMM) : null}
+          manual={form.stepDownManual} onManual={(v) => up('stepDownManual', v)} />
       </div>
       {/* Stepover */}
       <div>

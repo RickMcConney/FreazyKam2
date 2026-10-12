@@ -17,6 +17,8 @@ import type { Constraint } from '../store/constraints'
 import { useTimelineStore } from '../timeline/timelineStore'
 import { migrateProvenance } from './migrateProvenance'
 import { mergeProjectTools } from './toolMerge'
+import { currentPocketStrategy } from '../cam/pocket/strategyIds'
+import type { PocketStrategy } from '../cam/pocket/shared'
 import type { ImportedPath } from '../store/pathsStore'
 import type { AnyOperation } from '../store/toolpathStore'
 import type { Tool } from '../store/toolStore'
@@ -135,15 +137,14 @@ export function parseProject(data: unknown): ParsedProject {
   // A newer version's operation type cannot be generated, shown or exported here, and
   // would trip the first switch over op.type that meets it. Leave it out, and say so.
   const known = allOps.filter((op) => op.type in OP_TYPES)
-  // Dropped pocket strategies — the offset-ring spiral (2026-07) and the Adaptive2d port
-  // (2026-09); rewrite the stored id so the operation form shows a valid selection instead
-  // of an empty one.
+  // Dropped pocket strategies — the offset-ring spiral (2026-07) and the raster-marching
+  // adaptive (2026-10, plus the interim 'adaptiveFC' id of its replacement); rewrite the
+  // stored id so the operation form shows a valid selection instead of an empty one.
   const operations = known.map((op) => {
     if (op.type !== 'pocket') return op
     const s = op.strategy as string
-    if (s === 'spiral' || s === 'spiralOffset') return { ...op, strategy: 'morph' as const }
-    if (s === 'adaptive') return { ...op, strategy: 'adaptive2' as const }
-    return op
+    const now = currentPocketStrategy(s)
+    return now === s ? op : { ...op, strategy: now as PocketStrategy }
   })
 
   // v2 and earlier kept a generated path's parameters in the event log rather than on the

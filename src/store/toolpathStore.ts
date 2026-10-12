@@ -52,6 +52,9 @@ interface BaseOperation {
   // the preceding operations every time this one generates, so engraving in a pocket
   // follows that pocket when its depth changes. Absent = auto. See cam/startHeight.ts.
   startFrom?: StartFrom
+  // The user typed their own step-down over the auto-calculated one: `stepDownMM` wins even
+  // with Auto Feeds on. Absent/false = auto decides whenever Auto Feeds is on, as before.
+  stepDownManual?: boolean
   entryHint?: { x: number; y: number }
   // The generation inputs the CURRENT segments were actually built from, stamped by
   // setSegments. It exists so a simulate or export can tell whether regenerating would
@@ -98,7 +101,7 @@ export interface PocketOperation extends BaseOperation {
   stepoverPercent: number
   passAngleDeg: number
   direction: CuttingDirection
-  strategy: 'raster' | 'contour' | 'morph' | 'adaptive2' | 'hybrid'
+  strategy: 'raster' | 'contour' | 'morph' | 'adaptive' | 'hybrid'
   /** Auto pass angle (hybrid only); false pins it to passAngleDeg. */
   autoAngle?: boolean
   rampIn: boolean

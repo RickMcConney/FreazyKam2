@@ -1,5 +1,5 @@
 // ─── 3D Profile form ──────────────────────────────────────────────────────────
-import { FormShell, AutoStepField, GenerateBtn, useSessionOps, toolsOfType, pickToolId, LengthInput, FormError, useGenerateError, discardFailedOps } from './shared'
+import { FormShell, StepDownField, GenerateBtn, useSessionOps, toolsOfType, pickToolId, LengthInput, FormError, useGenerateError, discardFailedOps } from './shared'
 import { ToolPicker } from './ToolPicker'
 import { useState, useEffect, useMemo } from 'react'
 import { NumericInput } from '../../components/NumericInput'
@@ -34,6 +34,9 @@ interface Profile3dFormState {
   roughingToolId: string        // '' = no roughing pass
   roughingStepoverPercent: number
   roughingStepDownMM: number
+  /** The roughing step-down was typed over the auto one (BaseOperation.stepDownManual — the
+   *  roughing pass is this operation's only step-down). */
+  stepDownManual: boolean
   roughingStockAllowanceMM: number
   roughingRasterAngleDeg: number | ''  // '' = auto (finishing angle + 90)
 }
@@ -80,6 +83,7 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
     roughingToolId: editOp.roughingToolId ?? '',
     roughingStepoverPercent: editOp.roughingStepoverPercent ?? 60,
     roughingStepDownMM: editOp.roughingStepDownMM ?? 2,
+    stepDownManual: editOp.stepDownManual ?? false,
     roughingStockAllowanceMM: editOp.roughingStockAllowanceMM ?? 0.3,
     roughingRasterAngleDeg: editOp.roughingRasterAngleDeg ?? '',
   } : mergeWithDefaults(load('profile3d'), {
@@ -98,6 +102,7 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
     roughingToolId: '',
     roughingStepoverPercent: 60,
     roughingStepDownMM: 2,
+    stepDownManual: false,
     roughingStockAllowanceMM: 0.3,
     roughingRasterAngleDeg: '' as number | '',
   }, tools)
@@ -107,6 +112,8 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
     const staleBoundary = base.boundary === 'path' && !paths.some((p) => p.id === base.boundaryPathId)
     return { ...base,
       ...(staleBoundary ? { boundary: 'model' as const, boundaryPathId: '' } : {}),
+      // A new operation starts on auto: a step-down pinned on the last job is not one for this.
+      stepDownManual: editOp ? base.stepDownManual : false,
       toolId: pickToolId(base.toolId, finishTools),
       // '' is "no roughing pass" — an explicit choice, not a stale id.
       roughingToolId: base.roughingToolId === '' ? '' : pickToolId(base.roughingToolId, roughTools) }
@@ -194,6 +201,7 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
       roughingToolId: hasRoughing ? form.roughingToolId : undefined,
       roughingStepoverPercent: hasRoughing ? form.roughingStepoverPercent : undefined,
       roughingStepDownMM: hasRoughing ? form.roughingStepDownMM : undefined,
+      stepDownManual: hasRoughing && form.stepDownManual ? true : undefined,
       roughingStockAllowanceMM: hasRoughing ? form.roughingStockAllowanceMM : undefined,
       roughingRasterAngleDeg: hasRoughing && form.roughingRasterAngleDeg !== '' ? form.roughingRasterAngleDeg : undefined,
     } satisfies Partial<Profile3dOperation>
@@ -336,7 +344,7 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
           <ToolPicker id="p3d-roughing-tool-optional"
             tools={roughTools}
             value={form.roughingToolId}
-            onChange={(id) => up('roughingToolId', id)}
+            onChange={(id) => { up('roughingToolId', id); up('stepDownManual', false) }}
             none={{ value: '', label: '— None (single-pass) —' }} />
         </div>
 
@@ -361,17 +369,10 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
                 )}
               </div>
             </div>
-            {autoFeedEnabled && roughingTool ? (
-              <AutoStepField label="Roughing Step Down" valueMM={effectiveStepDownMM(roughingTool, form.roughingStepDownMM, profile3dDepthMM(form.maxDepthMM, thicknessMM))} />
-            ) : (
-              <div>
-                <label htmlFor="p3d-roughing-step-down" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">
-                  Roughing Step Down
-                </label>
-                <LengthInput id="p3d-roughing-step-down" valueMM={form.roughingStepDownMM} minMM={0.1} maxMM={50} stepMM={0.5}
-                  onChangeMM={(v) => up('roughingStepDownMM', v)} />
-              </div>
-            )}
+            <StepDownField label="Roughing Step Down" stepDownMM={form.roughingStepDownMM}
+              onStep={(v) => up('roughingStepDownMM', v)} minMM={0.1} maxMM={50}
+              autoMM={autoFeedEnabled && roughingTool ? effectiveStepDownMM(roughingTool, form.roughingStepDownMM, profile3dDepthMM(form.maxDepthMM, thicknessMM)) : null}
+              manual={form.stepDownManual} onManual={(v) => up('stepDownManual', v)} />
             <div>
               <label htmlFor="p3d-roughing-angle" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">
                 Roughing Angle

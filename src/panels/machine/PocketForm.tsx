@@ -14,8 +14,9 @@ import type { PocketNote, PocketStrategy } from '../../cam/pocket'
 
 // The strategy toggle's wording, shared with the fallback notice below it: a message naming
 // a strategy by an id that is not the word on the button is no help.
-const STRATEGY_LABELS: Partial<Record<PocketStrategy, string>> = { hybrid: 'auto', adaptive2: 'adaptive' }
+const STRATEGY_LABELS: Partial<Record<PocketStrategy, string>> = { hybrid: 'auto' }
 import { seedStepDownMM } from '../../cam/feeds'
+import { currentPocketStrategy, pocketEngagementFraction } from '../../cam/pocket/strategyIds'
 import { groupPathsByContainment } from './containment'
 import { reviseGroupBatch } from './reviseBatch'
 
@@ -24,6 +25,8 @@ interface PocketFormState {
   strategy: PocketStrategy
   depthMM: number
   stepDownMM: number
+  /** The step-down was typed over the auto one (see BaseOperation.stepDownManual). */
+  stepDownManual: boolean
   stepoverPercent: number
   passAngleDeg: number
   autoAngle: boolean
@@ -67,8 +70,8 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
   const defaultTool = cutters[0]
   const [form, setForm] = useState<PocketFormState>(() => {
     const base = editOp ? {
-    toolId: editOp.toolId, strategy: editOp.strategy ?? 'raster',
-    depthMM: editOp.depthMM, stepDownMM: editOp.stepDownMM,
+    toolId: editOp.toolId, strategy: (currentPocketStrategy(editOp.strategy ?? 'raster') as PocketStrategy),
+    depthMM: editOp.depthMM, stepDownMM: editOp.stepDownMM, stepDownManual: editOp.stepDownManual ?? false,
     stepoverPercent: editOp.stepoverPercent, passAngleDeg: editOp.passAngleDeg,
     autoAngle: editOp.autoAngle ?? true,
     direction: editOp.direction, rampIn: editOp.rampIn ?? false,
@@ -88,6 +91,7 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
     // Default to the full stock thickness; the tool's max Z is only a warning.
     depthMM: thicknessMM > 0 ? thicknessMM : (defaultTool?.maxDepthMM ?? 10),
     stepDownMM: seedStepDownMM(defaultTool),
+    stepDownManual: false,
     stepoverPercent: 40,
     passAngleDeg: 0,
     autoAngle: true,
@@ -102,8 +106,10 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
     // the selection it was chosen for. Replaying an inverted pocket onto an un-nested
     // selection would silently produce no operations at all.
     invert: false,
-  }, tools), startFrom: { mode: 'auto' } as StartFrom, invert: false }
-    return { ...base, toolId: pickToolId(base.toolId, cutters) }
+  }, tools), startFrom: { mode: 'auto' } as StartFrom, invert: false, stepDownManual: false }
+    // Remembered defaults never pass through a project migration, so a retired strategy id
+    // can still come back from them.
+    return { ...base, strategy: currentPocketStrategy(base.strategy) as PocketStrategy, toolId: pickToolId(base.toolId, cutters) }
   })
   const { generating, errorMsg, generate } = useBatchGenerate('pocket', 'pocket')
   // A Generate that SUCCEEDED but not as asked — today, a strategy that declined the shape.
@@ -178,16 +184,16 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
   // 60% of it is asking the marcher for something it will not hold. Auto (hybrid) spends
   // most of its path rastering and contouring, where the number simply IS the stepover: it
   // takes the same name and the same 10–90% range as those two.
-  const adaptiveStrategy = form.strategy === 'adaptive2'
+  const adaptiveStrategy = form.strategy === 'adaptive'
   const autoPassAngle = form.strategy === 'hybrid' && form.autoAngle
 
   function handleToolChange(toolId: string) {
     const t = tools.find((x) => x.id === toolId)
-    if (t) setForm((f) => ({ ...f, toolId, stepDownMM: seedStepDownMM(t) }))
+    if (t) setForm((f) => ({ ...f, toolId, stepDownMM: seedStepDownMM(t), stepDownManual: false }))
   }
 
   function handleStrategyChange(strategy: PocketStrategy) {
-    const adaptive = strategy === 'adaptive2'
+    const adaptive = strategy === 'adaptive'
     setForm((f) => ({
       ...f,
       strategy,
@@ -230,9 +236,9 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
     }
     if (groups.length === 0 || !selectedTool) return
     const tool = selectedTool
-    const { toolId, strategy, depthMM, stepDownMM, stepoverPercent, passAngleDeg, autoAngle, direction, rampIn, allowanceMM, invert, startFrom } = form
+    const { toolId, strategy, depthMM, stepDownMM, stepDownManual, stepoverPercent, passAngleDeg, autoAngle, direction, rampIn, allowanceMM, invert, startFrom } = form
     await generate({
-      settings: { toolId, strategy, depthMM, stepDownMM, stepoverPercent, passAngleDeg, autoAngle, direction, rampIn, allowanceMM, invert, startFrom },
+      settings: { toolId, strategy, depthMM, stepDownMM, stepDownManual, stepoverPercent, passAngleDeg, autoAngle, direction, rampIn, allowanceMM, invert, startFrom },
       // islandIds rides on every write, not only a revision: a kept boundary whose island
       // set changed keeps its operation, and this is the only thing about it that moves.
       items: groups.map(({ boundary, islands, op }) => ({
@@ -269,10 +275,9 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
       {/* 'hybrid' is shown as "Auto" — it picks per area: raster the open ground, contour
           around islands, adaptive on the junctions between them. Listed first as the one to
           reach for by default.
-          'adaptive2' is the raster-marching engine and is what the UI shows as "adaptive"
-          (the id outlived the Adaptive2d port it replaced).
+          'adaptive' is FreeCAD's Adaptive2d algorithm (cam/adaptiveFC).
           The ids are what saved projects store, so they stay as they are. */}
-      <ToggleRow label="Strategy" options={['hybrid', 'raster', 'contour', 'morph', 'adaptive2'] as PocketStrategy[]} value={form.strategy} onChange={handleStrategyChange} labels={STRATEGY_LABELS} />
+      <ToggleRow label="Strategy" options={['hybrid', 'raster', 'contour', 'morph', 'adaptive'] as PocketStrategy[]} value={form.strategy} onChange={handleStrategyChange} labels={STRATEGY_LABELS} />
       <div>
         <label htmlFor="pocket-f1" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">
           {adaptiveStrategy ? 'Engagement' : 'Stepover'} <span className="text-gray-500 dark:text-neutral-400 normal-case">{form.stepoverPercent}%</span>
@@ -314,6 +319,8 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
       <StartRow value={form.startFrom} onChange={(v) => up('startFrom', v)} resolved={startZ} opId={selfOpId} />
       <DepthRow depthMM={form.depthMM} stepDownMM={form.stepDownMM}
         onDepth={(v) => up('depthMM', v)} onStep={(v) => up('stepDownMM', v)}
+        stepManual={form.stepDownManual} onStepManual={(v) => up('stepDownManual', v)}
+        engagementFraction={pocketEngagementFraction(form.strategy, form.stepoverPercent)}
         maxDepthMM={selectedTool?.maxDepthMM} tool={selectedTool} startZMM={startZ.zMM} />
       <ToggleRow label="Direction" options={['climb', 'conventional'] as CuttingDirection[]} value={form.direction} onChange={(v) => up('direction', v)} />
       <div>
@@ -322,8 +329,12 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
           onChangeMM={(v) => up('allowanceMM', v)} />
         <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">Stock left on walls; negative grows the pocket.</p>
       </div>
-      <CheckRow id="pocket-ramp-in" checked={form.rampIn} onChange={(v) => up('rampIn', v)}
-        label="Ramp In" hint="2× dia, 50% feed" />
+      {adaptiveStrategy ? (
+        <p className="text-label text-gray-600 dark:text-neutral-400">Adaptive always enters on a helix — its deeper step down is no place for a plunge.</p>
+      ) : (
+        <CheckRow id="pocket-ramp-in" checked={form.rampIn} onChange={(v) => up('rampIn', v)}
+          label="Ramp In" hint="2× dia, 50% feed" />
+      )}
       <FormNotice msg={noticeMsg} />
       <FormError msg={errorMsg} />
       <GenerateBtn

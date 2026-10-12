@@ -20,6 +20,8 @@ interface DrillFormState {
   drillMode: 'peck' | 'helical'
   depthMM: number
   stepDownMM: number
+  /** The step-down was typed over the auto one (see BaseOperation.stepDownManual). */
+  stepDownManual: boolean
   startFrom: StartFrom
 }
 
@@ -41,16 +43,17 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
   const defaultTool = tools[0]
   const [form, setForm] = useState<DrillFormState>(() => editOp ? {
     toolId: editOp.toolId, drillMode: editOp.drillMode,
-    depthMM: editOp.depthMM, stepDownMM: editOp.stepDownMM,
+    depthMM: editOp.depthMM, stepDownMM: editOp.stepDownMM, stepDownManual: editOp.stepDownManual ?? false,
     startFrom: editOp.startFrom ?? { mode: 'auto' as const },
-  } : mergeWithDefaults(load('drill'), {
+  } : { ...mergeWithDefaults(load('drill'), {
     toolId: defaultTool?.id ?? '',
     drillMode: 'peck' as const,
     startFrom: { mode: 'auto' as const } as StartFrom,
     // Default to the full stock thickness; the tool's max Z is only a warning.
     depthMM: thicknessMM > 0 ? thicknessMM : (defaultTool?.maxDepthMM ?? 10),
     stepDownMM: seedStepDownMM(defaultTool),
-  }, tools))
+    stepDownManual: false,
+  }, tools), stepDownManual: false })
   const { generating, errorMsg, generate } = useBatchGenerate('drill', 'drill')
   const session = useSessionOps()
 
@@ -88,7 +91,7 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
     if (form.drillMode === 'helical') peckToolIdRef.current = form.toolId
     if (id === form.toolId) return
     const t = tools.find((x) => x.id === id)
-    setForm((f) => ({ ...f, toolId: id, ...(t ? { stepDownMM: seedStepDownMM(t) } : {}) }))
+    setForm((f) => ({ ...f, toolId: id, ...(t ? { stepDownMM: seedStepDownMM(t), stepDownManual: false } : {}) }))
   }, [form.drillMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedTool = tools.find((t) => t.id === form.toolId)
@@ -156,7 +159,7 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
 
   function handleToolChange(toolId: string) {
     const t = tools.find((x) => x.id === toolId)
-    if (t) setForm((f) => ({ ...f, toolId, stepDownMM: seedStepDownMM(t) }))
+    if (t) setForm((f) => ({ ...f, toolId, stepDownMM: seedStepDownMM(t), stepDownManual: false }))
   }
 
   function up<K extends keyof DrillFormState>(k: K, v: DrillFormState[K]) {
@@ -178,7 +181,7 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
   async function handleGenerate() {
     if (!selectedTool) return
     const tool = selectedTool
-    const { toolId, depthMM, stepDownMM, startFrom } = form
+    const { toolId, depthMM, stepDownMM, stepDownManual, startFrom } = form
     // The holes of one path, read the way the form's mode reads them — one op per path.
     // The holes ride as FIELDS, not settings: editing a batch rewrites its depth and tool,
     // but every op keeps the holes it was built from.
@@ -223,7 +226,7 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
       batchSession = { ...session, liveOpId: () => undefined }
     }
     await generate({
-      settings: { toolId, depthMM, stepDownMM, startFrom },
+      settings: { toolId, depthMM, stepDownMM, stepDownManual, startFrom },
       items, session: batchSession, editOp, dropIds: rev.drop.map((e) => e.op.id),
     }, form)
     if (!editOp) clearDrillPoints()
@@ -368,6 +371,7 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
       <StartRow value={form.startFrom} onChange={(v) => up('startFrom', v)} resolved={startZ} opId={selfOpId} />
       <DepthRow depthMM={form.depthMM} stepDownMM={form.stepDownMM}
         onDepth={(v) => up('depthMM', v)} onStep={(v) => up('stepDownMM', v)}
+        stepManual={form.stepDownManual} onStepManual={(v) => up('stepDownManual', v)}
         maxDepthMM={selectedTool?.maxDepthMM} tool={selectedTool} startZMM={startZ.zMM} />
       <FormError msg={errorMsg} />
       <GenerateBtn

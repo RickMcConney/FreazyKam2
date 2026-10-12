@@ -2,6 +2,7 @@ import { memo, Fragment } from 'react'
 import { Group, Shape, Circle } from 'react-konva'
 import type { Viewport } from '../CanvasStage'
 import { useToolpathStore, type MotionSegment } from '../../store/toolpathStore'
+import { usePostProcessorStore, linksAsRapids } from '../../store/postProcessorStore'
 import { useToolStore } from '../../store/toolStore'
 import { maxCutRadiusMM } from '../../cam/geom'
 
@@ -140,6 +141,10 @@ export const ToolpathLayer = memo(function ToolpathLayer({ viewport }: Props) {
   // this layer does not draw.
   const operations = useToolpathStore((s) => s.operations)
   const tools = useToolStore((s) => s.tools)
+  // Stay-down links are drawn as what the machine will be sent: rapids when the active
+  // post-processor emits them as G0 (linksAsRapids), the green link style when they go out
+  // as G1 at a travel feed. The segments carry `travel` either way; only the G-code differs.
+  const rapidLinks = usePostProcessorStore((s) => linksAsRapids(s.profiles.find((p) => p.id === s.activeId) ?? s.profiles[0]))
   const { scale } = viewport
 
   const visible = operations.filter((o) => o.visible && o.status === 'done' && o.segments.length > 0)
@@ -185,10 +190,10 @@ export const ToolpathLayer = memo(function ToolpathLayer({ viewport }: Props) {
               <RunStroke
                 key={`${op.id}-t`}
                 runs={travel}
-                stroke="#38a169"
+                stroke={rapidLinks ? '#e53e3e' : '#38a169'}
                 strokeWidth={1.2 / scale}
                 opacity={0.75}
-                dash={[4 * dashScale, 3 * dashScale]}
+                dash={rapidLinks ? [5 * dashScale, 4 * dashScale] : [4 * dashScale, 3 * dashScale]}
               />
             )}
 

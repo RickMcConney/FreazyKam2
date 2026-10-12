@@ -95,6 +95,8 @@ export function heatPieces(seg: SimSegment, toolStates: ToolState[], heat: HeatS
   // Judged exactly as the gauge judges a move: not going down, a tool that cuts sideways,
   // a spindle speed and flutes to divide by.
   if (seg.z < seg.prevZ - 1e-3) return whole(HEAT_NEUTRAL)
+  // A stay-down link (markFeedLinks) cuts nothing — its "chip" is the link feed over air.
+  if (seg.travel) return whole(HEAT_NEUTRAL)
   const ts = segTool(seg, toolStates)
   const type = toolTypeOf(ts)
   if (type === 'drill' || !(ts.spindleRpm > 0) || !(ts.fluteCount > 0)) return whole(HEAT_NEUTRAL)

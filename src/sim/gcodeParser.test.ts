@@ -112,6 +112,31 @@ describe('parseGcode — warnings instead of mis-simulation', () => {
   })
 })
 
+describe('parseGcode — stay-down links run at feed', () => {
+  // Cut at Z-2, then: rise to Z-1.5, move fast, drop back to Z-2 — a link, by its shape.
+  const prog = (rise: string, run: string, drop: string) =>
+    parseGcode(`G21 G90\nG1 X0 Y0 Z-2 F300\nG1 X10 F1000\n${rise}\n${run}\n${drop}\nG1 X40 F1000`)
+  const link = (p: ReturnType<typeof parseGcode>) => p.segments.filter((s) => s.travel)
+
+  it('recognises a small vertical rise, faster moves at that height and a drop back to the same depth', () => {
+    const p = prog('G1 Z-1.5 F300', 'G1 X20 F2500\nG1 X30 Y5 F2500', 'G1 Z-2 F300')
+    expect(link(p).length).toBe(4)                  // rise, two moves, drop
+    expect(p.segments.find((s) => s.x === 40)!.travel).toBeUndefined()
+  })
+
+  it('leaves a tab alone — same shape, but at cutting feed, because it does cut', () => {
+    expect(link(prog('G1 Z-1.5 F300', 'G1 X20 F1000', 'G1 Z-2 F300')).length).toBe(0)
+  })
+
+  it('leaves a lift of more than a millimetre alone', () => {
+    expect(link(prog('G1 Z-0.5 F300', 'G1 X20 F2500', 'G1 Z-2 F300')).length).toBe(0)
+  })
+
+  it('leaves a rise that comes down somewhere else alone', () => {
+    expect(link(prog('G1 Z-1.5 F300', 'G1 X20 F2500', 'G1 Z-3 F300')).length).toBe(0)
+  })
+})
+
 describe('parseGcode — tool state', () => {
   it('reads tool diameter, flutes, and spindle speed into the flyweight table', () => {
     const g = parseGcode('; Tool: 1/4in end mill dia 6.35mm flutes:2\nS18000 M3\nG1 X10 F1000')

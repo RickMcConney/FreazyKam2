@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { generateGcode, generateGcodePerTool, commentLines, MAX_GCODE_LINE, templateLongLines } from './gcode'
 import { parseGcode } from '../sim/gcodeParser'
 import { useWorkpieceStore } from '../store/workpieceStore'
-import { usePostProcessorStore, type PostProcessorProfile } from '../store/postProcessorStore'
+import { usePostProcessorStore, BUILTIN_PROFILES, linksAsRapids, type PostProcessorProfile } from '../store/postProcessorStore'
 import type { Tool } from '../store/toolStore'
 import type { AnyOperation, MotionSegment, ProfileOperation } from '../store/toolpathStore'
 
@@ -740,5 +740,48 @@ describe('the tool\'s rated chip load in the program', () => {
     expect(prog(TOOL)).not.toMatch(/fzmax/)
     const { segments, toolStates } = parseGcode('; dia 1.000mm fzmax:0.005\nG1 X1 Z-1 F100\n; dia 6.000mm\nG1 X2 Z-1 F100')
     expect(toolStates[segments[1].toolStateIdx].toolChipCeilingMM).toBeUndefined()
+  })
+})
+
+describe('stay-down links', () => {
+  // A link rides half a millimetre over floor already cut. As G0 where the controller's
+  // G0 is a straight line; otherwise G1 at a travel feed. Never a comment either way.
+  const segs = [rapid(0, 0, 5), cut(0, 0, -1), cut(10, 0, -1), cut(10, 0, -0.5, { travel: true }),
+    cut(20, 0, -0.5, { travel: true }), cut(20, 0, -1), cut(30, 0, -1)]
+  const linkLines = (g: string) => g.split('\n').filter((l) => / Z-0\.500\b/.test(l))
+
+  it('emits links as G0 when the profile says its G0 is a straight line', () => {
+    const lines = linkLines(gen([makeOp(segs)], { ...POST, linksAsRapids: true }))
+    expect(lines.length).toBe(2)
+    for (const l of lines) { expect(l.startsWith('G0 ')).toBe(true); expect(l).not.toContain('F') }
+  })
+
+  it('emits links as G1 at a travel feed otherwise, and never tags a line with a comment', () => {
+    const g = gen([makeOp(segs)])
+    const lines = linkLines(g)
+    expect(lines.length).toBe(2)
+    for (const l of lines) expect(l.startsWith('G1 ')).toBe(true)
+    expect(g).not.toMatch(/travel/i)
+    expect(gen([makeOp(segs)], { ...POST, linksAsRapids: true })).not.toMatch(/travel/i)
+  })
+
+  it('round-trips: the simulator recognises the G1 links by their shape, and the G0 ones are rapids', () => {
+    const g1 = parseGcode(gen([makeOp(segs)]))
+    expect(g1.segments.filter((s) => s.travel && Math.abs(s.z + 0.5) < 1e-6 && s.prevZ === s.z).length).toBe(1)
+    expect(g1.segments.filter((s) => !s.rapid && !s.travel && s.z < 0 && s.prevZ === s.z).length).toBeGreaterThan(0)
+    const g0 = parseGcode(gen([makeOp(segs)], { ...POST, linksAsRapids: true }))
+    expect(g0.segments.filter((s) => Math.abs(s.z + 0.5) < 1e-6 && s.prevZ === s.z).every((s) => s.rapid)).toBe(true)
+  })
+})
+
+describe('linksAsRapids — which profiles emit links as G0', () => {
+  it('is on for the built-in Grbl presets even when saved before the setting existed, off for a profile the user made', () => {
+    const grbl = BUILTIN_PROFILES.find((p) => p.id === 'grbl-mm')!
+    const { linksAsRapids: _, ...saved } = grbl
+    expect(linksAsRapids(saved as PostProcessorProfile)).toBe(true)
+    const mach3 = BUILTIN_PROFILES.find((p) => p.id === 'mach3-mm')!
+    expect(linksAsRapids(mach3)).toBe(false)               // Mach3 doglegs rapids
+    expect(linksAsRapids({ ...saved, id: 'mine', builtin: false } as PostProcessorProfile)).toBe(false)
+    expect(linksAsRapids({ ...mach3, linksAsRapids: true })).toBe(true)   // the user's own choice wins
   })
 })

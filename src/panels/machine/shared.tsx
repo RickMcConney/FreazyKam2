@@ -4,7 +4,7 @@ import { useMemo, useState, useId } from 'react'
 import { NumericInput } from '../../components/NumericInput'
 import { NUMERIC_HINT } from '../../components/parseNumeric'
 import { ICON } from '../../theme'
-import { AlertCircle, AlertTriangle, Loader2 } from 'lucide-react'
+import { AlertCircle, AlertTriangle, Loader2, RotateCcw } from 'lucide-react'
 import type { Tool, ToolType } from '../../store/toolStore'
 import { ToolPicker } from './ToolPicker'
 import { useWorkpieceStore, fromMM, toMM, fmtLen, lenValue, inchStepFor } from '../../store/workpieceStore'
@@ -344,9 +344,70 @@ export function StartRow({ value, onChange, resolved, opId }: {
   )
 }
 
-export function DepthRow({ depthMM, stepDownMM, onDepth, onStep, maxDepthMM, tool, engagementFraction, startZMM = 0 }: {
+/**
+ * A step-down field that knows about Auto Feeds. Off: a plain field holding the user's value.
+ * On: shows the auto-calculated value, EDITABLE — typing over it pins the typed value for
+ * this operation (`BaseOperation.stepDownManual`), the label turns "(manual)" and an Auto
+ * button puts it back. No trip to Setup to turn Auto Feeds off for every operation just to
+ * change one. Without `onManual` it stays the read-only auto field it used to be.
+ */
+export function StepDownField({ label = 'Step Down', stepDownMM, onStep, autoMM, manual = false, onManual, minMM = 0.01, maxMM }: {
+  label?: string
+  stepDownMM: number
+  onStep: (v: number) => void
+  /** The auto-calculated step-down, or null when Auto Feeds is off (or there is no tool). */
+  autoMM: number | null
+  manual?: boolean
+  onManual?: (manual: boolean) => void
+  minMM?: number
+  maxMM?: number
+}) {
+  const units = useWorkpieceStore((s) => s.units)
+  const id = useId()
+  if (autoMM != null && onManual) {
+    return (
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <label className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider" htmlFor={id}>
+            {label}{' '}
+            {manual
+              ? <span className="text-amber-600 dark:text-amber-500 normal-case">(manual)</span>
+              : <span className="text-blue-500 dark:text-blue-400 normal-case">(auto)</span>}
+          </label>
+          {manual && (
+            <button type="button" onClick={() => onManual(false)}
+              title={`Back to the auto-calculated step down (${fmtLen(autoMM, units)})`}
+              className="flex items-center gap-0.5 text-label text-blue-600 dark:text-blue-400 hover:underline">
+              <RotateCcw size={10} /> Auto
+            </button>
+          )}
+        </div>
+        <LengthInput id={id} valueMM={manual ? stepDownMM : autoMM} minMM={minMM} maxMM={maxMM} stepMM={0.5}
+          onChangeMM={(v) => { onStep(v); if (!manual) onManual(true) }} />
+        {manual && (
+          <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">Auto would use {fmtLen(autoMM, units)}</p>
+        )}
+      </div>
+    )
+  }
+  if (autoMM != null) return <AutoStepField label={label} valueMM={autoMM} />
+  return (
+    <div>
+      <label className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1" htmlFor={id}>{label}</label>
+      <LengthInput id={id} valueMM={stepDownMM} minMM={minMM} maxMM={maxMM} stepMM={0.5} onChangeMM={onStep} />
+    </div>
+  )
+}
+
+export function DepthRow({ depthMM, stepDownMM, onDepth, onStep, stepManual = false, onStepManual, maxDepthMM, tool, engagementFraction, startZMM = 0 }: {
   depthMM: number; stepDownMM: number
   onDepth: (v: number) => void; onStep: (v: number) => void
+  // With Auto Feeds on, typing over the auto step-down pins the typed value for this
+  // operation (`BaseOperation.stepDownManual`) and Auto puts it back — no trip to Setup
+  // to turn Auto Feeds off for every operation just to change one. A form that does not
+  // pass `onStepManual` keeps the read-only auto field.
+  stepManual?: boolean
+  onStepManual?: (manual: boolean) => void
   maxDepthMM?: number
   tool?: Tool
   // Radial engagement (WOC / D); low values (trochoidal) let the auto step-down go deeper.
@@ -371,7 +432,6 @@ export function DepthRow({ depthMM, stepDownMM, onDepth, onStep, maxDepthMM, too
   const pastStockMM = thicknessMM > 0 ? totalDepthMM - thicknessMM : 0
   const cutsPastStock = pastStockMM > 0.001
   const depthId = useId()
-  const stepId = useId()
   return (
     <div className="grid grid-cols-2 gap-2">
       <div>
@@ -390,14 +450,8 @@ export function DepthRow({ depthMM, stepDownMM, onDepth, onStep, maxDepthMM, too
           </p>
         )}
       </div>
-      {autoStepDownMM != null ? (
-        <AutoStepField label="Step Down" valueMM={autoStepDownMM} />
-      ) : (
-        <div>
-          <label className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1" htmlFor={stepId}>Step Down</label>
-          <LengthInput id={stepId} valueMM={stepDownMM} minMM={0.01} stepMM={0.5} onChangeMM={onStep} />
-        </div>
-      )}
+      <StepDownField stepDownMM={stepDownMM} onStep={onStep} autoMM={autoStepDownMM}
+        manual={stepManual} onManual={onStepManual} />
     </div>
   )
 }

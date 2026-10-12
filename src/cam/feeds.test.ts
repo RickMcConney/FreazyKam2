@@ -4,6 +4,7 @@ import {
   feedsForTool, effectiveStepDownMM, seedStepDownMM, trochoidalEngagementFraction,
 } from './feeds'
 import { useWorkpieceStore, MATERIAL_INFO } from '../store/workpieceStore'
+import { pocketEngagementFraction } from './pocket/strategyIds'
 import { maxCutRadiusMM, feedDiameterMM } from './geom'
 import type { Tool } from '../store/toolStore'
 
@@ -384,6 +385,38 @@ describe('effectiveStepDownMM', () => {
     const deep = effectiveStepDownMM({ ...EM6, diameterMM: 6, maxDepthMM: 10 }, 0, 50, 0.05)
     expect(deep).toBeLessThanOrEqual(10)
     expect(deep).toBeGreaterThan(6)   // the boost really did take it past a diameter
+  })
+  it('uses a value the user typed over the auto one, with auto feeds still on', () => {
+    // The override pins ONE operation's step-down without turning Auto Feeds off for all.
+    expect(effectiveStepDownMM(EM6, 7.3, 20)).not.toBe(7.3)          // auto decides…
+    expect(effectiveStepDownMM(EM6, 7.3, 20, undefined, true)).toBe(7.3) // …until typed over
+    expect(effectiveStepDownMM(EM6, 7.3, 20, 0.2, true)).toBe(7.3)   // engagement cannot move it either
+  })
+
+  it('floors a typed-over value like any other — a 0 still cannot loop a generator', () => {
+    expect(effectiveStepDownMM(EM6, 0, 20, undefined, true)).toBe(0.01)
+    expect(effectiveStepDownMM(EM6, -2, 20, undefined, true)).toBe(2)
+  })
+})
+
+describe('pocketEngagementFraction — which pockets may step down as a light cut', () => {
+  it('is the stepover for an adaptive pocket and nothing for every other strategy', () => {
+    // Only adaptive HOLDS its engagement; raster, contour, morph and auto slot their first
+    // pass full width, so letting them step deeper would bury the cutter.
+    expect(pocketEngagementFraction('adaptive', 20)).toBeCloseTo(0.2, 12)
+    for (const s of ['raster', 'contour', 'morph', 'hybrid', undefined]) expect(pocketEngagementFraction(s, 20)).toBeUndefined()
+  })
+
+  it('counts the retired adaptive ids as adaptive', () => {
+    expect(pocketEngagementFraction('adaptive2', 15)).toBeCloseTo(0.15, 12)
+    expect(pocketEngagementFraction('adaptiveFC', 15)).toBeCloseTo(0.15, 12)
+  })
+
+  it('lets an adaptive pocket step down deeper than a raster pocket at the same stepover', () => {
+    const raster = effectiveStepDownMM(EM6, 0, 20, pocketEngagementFraction('raster', 20))
+    const adaptive = effectiveStepDownMM(EM6, 0, 20, pocketEngagementFraction('adaptive', 20))
+    expect(adaptive).toBeGreaterThan(1.5 * raster)
+    expect(adaptive).toBeLessThanOrEqual(EM6.maxDepthMM)
   })
 })
 

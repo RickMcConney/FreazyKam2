@@ -309,9 +309,13 @@ export function feedsForTool(tool: Tool): ToolFeeds {
 
 // Effective step-down for a generator call — used at every toolpath call site.
 // `totalDepthMM` is the operation's intended cut depth (for whole-division).
-// `radialEngagementFraction` (WOC / D) lets low-engagement ops (trochoidal) step deeper;
-// omit it for full-slot operations (profile, etc.) to keep the diameter-bounded depth.
-export function effectiveStepDownMM(tool: Tool, userStepDownMM: number, totalDepthMM: number, radialEngagementFraction?: number): number {
+// `radialEngagementFraction` (WOC / D) lets low-engagement ops (trochoidal, an adaptive
+// pocket) step deeper; omit it for full-slot operations (profile, etc.) to keep the
+// diameter-bounded depth. `manual` = the user typed their own value over the auto one
+// (`BaseOperation.stepDownManual`): it is used as given, Auto Feeds or not — the same
+// floored value Auto Feeds off would use, so a 0 still cannot loop a generator forever.
+export function effectiveStepDownMM(tool: Tool, userStepDownMM: number, totalDepthMM: number, radialEngagementFraction?: number, manual = false): number {
+  if (manual) return Number.isFinite(userStepDownMM) ? Math.max(MIN_STEP_DOWN_MM, Math.abs(userStepDownMM)) : MIN_STEP_DOWN_MM
   return calcForTool(tool, userStepDownMM, totalDepthMM, radialEngagementFraction).stepDownMM
 }
 

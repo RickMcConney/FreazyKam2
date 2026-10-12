@@ -17,6 +17,8 @@ interface ProfileFormState {
   side: CutSide
   depthMM: number
   stepDownMM: number
+  /** The step-down was typed over the auto one (see BaseOperation.stepDownManual). */
+  stepDownManual: boolean
   direction: CuttingDirection
   rampIn: boolean
   allowanceMM: number
@@ -61,7 +63,7 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
   const [form, setForm] = useState<ProfileFormState>(() => {
     const base = editOp ? {
       toolId: editOp.toolId, side: editOp.side, depthMM: editOp.depthMM,
-      stepDownMM: editOp.stepDownMM, direction: editOp.direction, rampIn: editOp.rampIn ?? false,
+      stepDownMM: editOp.stepDownMM, stepDownManual: editOp.stepDownManual ?? false, direction: editOp.direction, rampIn: editOp.rampIn ?? false,
       allowanceMM: editOp.allowanceMM ?? 0,
       // A profile saved before the option existed has none, and stays unrounded.
       roundCorners: (editOp.cornerToleranceMM ?? 0) > 0,
@@ -78,6 +80,7 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
       // thickness rather than the tool's max flute depth.
       depthMM: thicknessMM > 0 ? thicknessMM : (defaultTool?.maxDepthMM ?? 10),
       stepDownMM: seedStepDownMM(defaultTool),
+      stepDownManual: false,
       direction: 'climb' as CuttingDirection,
       rampIn: false,
       allowanceMM: 0,
@@ -88,7 +91,7 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
       bridgeMaxMM: DEFAULT_BRIDGE_MAX_MM,
       // Deliberately not carried over from the saved defaults — see PocketForm.
       startFrom: { mode: 'auto' } as StartFrom,
-    }, tools), startFrom: { mode: 'auto' } as StartFrom }
+    }, tools), startFrom: { mode: 'auto' } as StartFrom, stepDownManual: false }
     return { ...base, toolId: pickToolId(base.toolId, cutters) }
   })
   const { generating, errorMsg, generate } = useBatchGenerate('profile', 'profile')
@@ -165,7 +168,7 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
 
   function handleToolChange(toolId: string) {
     const t = tools.find((x) => x.id === toolId)
-    if (t) setForm((f) => ({ ...f, toolId, stepDownMM: seedStepDownMM(t) }))
+    if (t) setForm((f) => ({ ...f, toolId, stepDownMM: seedStepDownMM(t), stepDownManual: false }))
   }
 
   function up<K extends keyof ProfileFormState>(k: K, v: ProfileFormState[K]) {
@@ -175,13 +178,13 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
   async function handleGenerate() {
     if (selectedPaths.length === 0 || !selectedTool) return
     const tool = selectedTool
-    const { toolId, side, depthMM, stepDownMM, direction, rampIn, allowanceMM, startFrom } = form
+    const { toolId, side, depthMM, stepDownMM, stepDownManual, direction, rampIn, allowanceMM, startFrom } = form
     const cornerToleranceMM = form.roundCorners && side !== 'centerline' && !sharing ? form.cornerToleranceMM : 0
     if (sharing) {
       const [first, ...rest] = selectedPaths
       const bridgeMaxMM = form.bridgeGaps ? form.bridgeMaxMM : 0
       await generate({
-        settings: { toolId, side: 'outside', depthMM, stepDownMM, direction, rampIn, allowanceMM, cornerToleranceMM: 0, sharedLines: true, bridgeMaxMM, startFrom },
+        settings: { toolId, side: 'outside', depthMM, stepDownMM, stepDownManual, direction, rampIn, allowanceMM, cornerToleranceMM: 0, sharedLines: true, bridgeMaxMM, startFrom },
         items: [{
           key: sharedEdit ? editOp!.id : `shared:${selectedPaths.map((p) => p.id).sort().join(',')}`,
           op: sharedEdit ? editOp : undefined,
@@ -197,7 +200,7 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
     const item = (path: ImportedPath, op?: ProfileOperation) =>
       ({ key: path.id, op, name: `Profile: ${path.name} (${tool.name})`, fields: { pathId: path.id } })
     await generate({
-      settings: { toolId, side, depthMM, stepDownMM, direction, rampIn, allowanceMM, cornerToleranceMM, sharedLines: false, bridgeMaxMM: 0, startFrom },
+      settings: { toolId, side, depthMM, stepDownMM, stepDownManual, direction, rampIn, allowanceMM, cornerToleranceMM, sharedLines: false, bridgeMaxMM: 0, startFrom },
       items: converting
         // The sheet becoming one op per part: every part is a new op, and the sheet goes.
         ? selectedPaths.map((path) => item(path))
@@ -216,6 +219,7 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
       <StartRow value={form.startFrom} onChange={(v) => up('startFrom', v)} resolved={startZ} opId={selfOpId} />
       <DepthRow depthMM={form.depthMM} stepDownMM={form.stepDownMM}
         onDepth={(v) => up('depthMM', v)} onStep={(v) => up('stepDownMM', v)}
+        stepManual={form.stepDownManual} onStepManual={(v) => up('stepDownManual', v)}
         maxDepthMM={selectedTool?.maxDepthMM} tool={selectedTool} startZMM={startZ.zMM} />
       {taperHint && (
         <p className="text-label text-gray-500 dark:text-neutral-400 normal-case">{taperHint}</p>

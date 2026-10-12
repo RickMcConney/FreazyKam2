@@ -143,7 +143,8 @@ export default function SimulationPlayer() {
   // light engagement, so judging them as steady-state would falsely read "rubbing".
   const descending = !!curSeg && curSeg.z < curSeg.prevZ - 1e-3
   // Segments are top-referenced (simStore.loadGcode), so below zero is in the material.
-  const cutting = !!curSeg && !curSeg.rapid && !!pos && pos.z < -0.001 && !descending
+  // A stay-down link run at feed (markFeedLinks) cuts nothing either.
+  const cutting = !!curSeg && !curSeg.rapid && !curSeg.travel && !!pos && pos.z < -0.001 && !descending
   // The speed the machine is REALLY moving at this instant (sim/motionPlanner.ts), not the
   // F word: on a short move or into a corner it never gets there, and the chip thins.
   const actualFeed = curSeg ? segFeedAt(curSeg, elapsedTimeS) : 0

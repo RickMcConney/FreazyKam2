@@ -10,6 +10,10 @@ export interface SimSegment {
   prevY: number
   prevZ: number
   rapid: boolean
+  // A stay-down LINK run at feed — recognised by its shape (see markFeedLinks): a small
+  // vertical rise, faster moves at that height, a drop back to the same depth. It rides
+  // over floor already cut, so the chip gauge and the trail's heat map do not judge it.
+  travel?: boolean
   feedRateMmMin: number
   lineIdx: number       // 0-based line index in the gcode text
   durationS: number     // seconds to traverse this segment
@@ -95,6 +99,49 @@ const WORD_RE = /([A-Za-z])\s*(-?\d*\.?\d+)/g
 // (Gating on ';' or '(' instead would be cheaper but not equivalent: the markers are
 // matched anywhere on the line, comment or not.)
 const TOOL_MARKER_HINT = /[ai:]/i
+
+/** The largest lift a feed-rate link is recognised by (mm). Ours lifts 0.5 (MICRO_LIFT_MM). */
+export const LINK_MAX_LIFT_MM = 1.0
+/** A link's moves must run at least this much faster than the cut before it — what tells
+ *  it from a TAB, which has the same rise/run/drop shape but keeps cutting feed (it does
+ *  cut: the first pass below the tab top takes the slice above it). */
+const LINK_FEED_RATIO = 1.2
+
+/**
+ * Mark stay-down links run at FEED (`travel`). A link run as G0 needs nothing — rapids are
+ * never judged — but a profile whose controller doglegs rapids emits its links as G1, and
+ * those used to read as a heavy chip (2.5× feed), painted over the real cuts. The shape is
+ * the generator's own and common elsewhere: a pure vertical rise of at most
+ * LINK_MAX_LIFT_MM from a cutting depth, one or more moves at that height faster than the
+ * cut that came before, and a pure vertical drop back to the same depth. A program that
+ * links at its cutting feed is left alone — judged as cutting, as it always was.
+ */
+export function markFeedLinks(segs: SimSegment[]): void {
+  const E = 1e-6
+  const vertical = (s: SimSegment): boolean => Math.abs(s.x - s.prevX) < E && Math.abs(s.y - s.prevY) < E
+  for (let i = 1; i < segs.length; i++) {
+    const rise = segs[i]
+    if (rise.rapid || !vertical(rise)) continue
+    const lift = rise.z - rise.prevZ
+    if (!(lift > E && lift <= LINK_MAX_LIFT_MM + E)) continue
+    const before = segs[i - 1]
+    if (before.rapid || Math.abs(before.z - rise.prevZ) > E) continue   // not from a cut at that depth
+    let k = i + 1
+    let moved = false, fast = true
+    while (k < segs.length) {
+      const s = segs[k]
+      if (s.rapid || Math.abs(s.z - rise.z) > E || Math.abs(s.prevZ - rise.z) > E || vertical(s)) break
+      moved = true
+      if (s.feedRateMmMin < before.feedRateMmMin * LINK_FEED_RATIO) fast = false
+      k++
+    }
+    if (!moved || !fast || k >= segs.length) continue
+    const drop = segs[k]
+    if (drop.rapid || !vertical(drop) || Math.abs(drop.z - rise.prevZ) > E) continue
+    for (let m = i; m <= k; m++) segs[m].travel = true
+    i = k
+  }
+}
 
 function arcToSegments(
   x0: number, y0: number,
@@ -434,6 +481,7 @@ export function parseGcode(text: string, initialZMM = 5, limits?: MotionLimits):
   }
 
   if (limits) cumT = applyPlan(segs, arcRadius, arcIdOf, stopBefore, limits)
+  markFeedLinks(segs)
 
   return { lines: rawLines, segments: segs, totalTimeS: cumT, toolStates, warnings: [...warnings], units: programUnits }
 }

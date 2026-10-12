@@ -19,6 +19,13 @@ export interface PostProcessorProfile {
   arcCWTemplate: string
   arcCCWTemplate: string
   outputArcs: boolean
+  /** Emit stay-down links (moves over floor already cleared) as G0 rather than G1 at a
+   *  travel feed. Only safe where G0 is a straight, coordinated move — Grbl and FluidNC run
+   *  it through the same planner as G1 — never on a controller that "doglegs" rapids (each
+   *  axis at its own max rate, as Mach3/4 and many industrial controls do), since a bent
+   *  path half a millimetre over the floor can clip a wall. Absent = the factory default for
+   *  a built-in profile, off for any other (see linksAsRapids). */
+  linksAsRapids?: boolean
   /** True for the factory controller presets shipped with the app. User-created
    *  and duplicated profiles omit this. Lets the UI offer "reset to default" and
    *  drives the persist merge that seeds newly-added presets for existing users. */
@@ -39,6 +46,7 @@ const RS274_MOTION = {
 } as const
 
 const GRBL_MM: PostProcessorProfile = {
+  linksAsRapids: true,  // Grbl's G0 is a straight, planned move
   id: 'grbl-mm',
   name: 'Grbl (mm)',
   unitMode: 'mm',
@@ -54,6 +62,7 @@ const GRBL_MM: PostProcessorProfile = {
 }
 
 const GRBL_IN: PostProcessorProfile = {
+  linksAsRapids: true,  // Grbl's G0 is a straight, planned move
   id: 'grbl-in',
   name: 'Grbl (inches)',
   unitMode: 'in',
@@ -65,12 +74,42 @@ const GRBL_IN: PostProcessorProfile = {
   ...RS274_MOTION,
 }
 
+// FluidNC (ESP32: Jackpot, 6-Pack, MKS DLC32 …). Grbl-compatible G-code and the same
+// straight-line, planned G0 — so stay-down links go out as rapids. Two things specific to
+// it are handled for EVERY profile elsewhere: a line over 128 characters aborts the job
+// (MAX_GCODE_LINE, cam/gcode.ts — we stay under 80) and an arc whose two radii disagree is
+// rejected (error 33, the arc-precision guard in cam/gcode.ts). Manual tool change pauses
+// on M0 like the Grbl presets: M6 needs an ATC or tool-change macro configured, which a
+// hobby machine usually is not. With no spindle in the config (a router switched by hand)
+// FluidNC accepts M3/M5 and S words without complaint, so the same spindle lines serve.
+const FLUIDNC_MM: PostProcessorProfile = {
+  linksAsRapids: true,  // FluidNC's G0 is a straight, planned move
+  id: 'fluidnc-mm',
+  name: 'FluidNC (mm)',
+  unitMode: 'mm',
+  commentStyle: 'parenthesis',
+  startGcode: 'G90 (absolute positioning)\nG94 (feed in units per minute)\nG17 (XY plane)',
+  toolChangeGcode: 'M5\nM0',
+  endGcode: 'M5 (spindle off)\nG0 Z10.000 (retract clear of the work)\nG0 X0 Y0 (return to origin)\nM30 (program end)',
+  builtin: true,
+  ...RS274_MOTION,
+}
+
+const FLUIDNC_IN: PostProcessorProfile = {
+  ...FLUIDNC_MM,
+  id: 'fluidnc-in',
+  name: 'FluidNC (inches)',
+  unitMode: 'in',
+  endGcode: 'M5 (spindle off)\nG0 Z0.400 (retract clear of the work)\nG0 X0 Y0 (return to origin)\nM30 (program end)',
+}
+
 // grblHAL is Grbl-compatible but adds an explicit feed-rate mode (G94). For a
 // manual tool change we stop the spindle and M0-pause (resume on operator button)
 // rather than emit a bare M6 — we don't assign tool-table numbers, and M6 without a
 // T word is unreliable across controllers. See follow-up: optional tool numbers +
 // T{n} M6 for ATC / tool-table setups.
 const GRBLHAL_MM: PostProcessorProfile = {
+  linksAsRapids: true,  // Grbl's G0 is a straight, planned move
   id: 'grblhal-mm',
   name: 'grblHAL (mm)',
   unitMode: 'mm',
@@ -136,8 +175,21 @@ const GENERIC_MM: PostProcessorProfile = {
   ...RS274_MOTION,
 }
 
+/** Whether a profile emits stay-down links as G0: its own setting, else its factory preset's
+ *  (a profile saved before the setting existed), else off — the safe answer for a profile
+ *  the user made, whose controller we know nothing about. */
+export function linksAsRapids(p: PostProcessorProfile): boolean {
+  if (p.linksAsRapids !== undefined) return p.linksAsRapids
+  if (!p.builtin) return false
+  return BUILTIN_PROFILES.find((b) => b.id === p.id)?.linksAsRapids ?? false
+}
+
 // Order here is the order shown in the panel sidebar.
+// FluidNC first: it is what this app's own machine panel talks to, and what most of its
+// users run.
 export const BUILTIN_PROFILES: PostProcessorProfile[] = [
+  FLUIDNC_MM,
+  FLUIDNC_IN,
   GRBL_MM,
   GRBL_IN,
   GRBLHAL_MM,
@@ -169,7 +221,9 @@ export const usePostProcessorStore = create<PostProcessorState>()(
   persist(
     (set, get) => ({
       profiles: BUILTIN_PROFILES,
-      activeId: 'grbl-mm',
+      // A NEW install starts on FluidNC; an existing one keeps its choice (the persist merge
+      // only appends presets it has not seeded before).
+      activeId: 'fluidnc-mm',
       seededBuiltinIds: BUILTIN_PROFILES.map((p) => p.id),
 
       setActiveId: (id) => set({ activeId: id }),

@@ -145,7 +145,7 @@ function profilesIn(v: unknown): PostProcessorProfile[] {
   const list = (v as { profiles?: unknown })?.profiles
   const template = usePostProcessorStore.getState().profiles[0]
   if (!Array.isArray(list) || !template) return []
-  return list.map((p) => wholeLike(template, p, ['builtin'])).filter((p): p is PostProcessorProfile => !!p)
+  return list.map((p) => wholeLike(template, p, ['builtin', 'linksAsRapids'])).filter((p): p is PostProcessorProfile => !!p)
 }
 
 /**

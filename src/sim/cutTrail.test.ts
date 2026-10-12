@@ -272,6 +272,21 @@ describe('the chip-load heat map', () => {
     expect(heatPieces(pass, noSpindle, HEAT)).toEqual([[0, 1, HEAT_NEUTRAL]])
   })
 
+  it('does not judge a stay-down link, however fast it runs', () => {
+    // A link rides half a millimetre over floor already cut, faster than the cut. Read as a
+    // cut it is a "heavy" chip — the band painted ON TOP — and on an adaptive pocket the
+    // links drowned the real cuts. The same fast move WITHOUT the link's rise and drop is
+    // still judged, and still heavy.
+    const fast = feed * 2.5
+    const linked = program(`G1 X50 F${feed}\nG1 Z-0.5 F200\nG1 X100 F${fast}\nG1 Z-1 F200`)
+    const plain = program(`G1 X50 F${feed}\nG1 X100 F${fast}`)
+    const lSeg = linked.segments.find((sg) => sg.x === 100 && sg.prevX === 50 && !sg.rapid)!
+    const pSeg = plain.segments.find((sg) => sg.x === 100 && !sg.rapid)!
+    expect(lSeg.travel).toBe(true)
+    expect(heatPieces(lSeg, linked.toolStates, HEAT)).toEqual([[0, 1, HEAT_NEUTRAL]])
+    expect(heatPieces(pSeg, plain.toolStates, HEAT).some(([, , b]) => b === 5)).toBe(true)
+  })
+
   it('colours a program timed without acceleration by its programmed chip, whole', () => {
     const p = parseGcode(`G21 G90\n(Tool: dia 3.000mm flutes:1)\nM3 S18000\nG1 X0 Z-1 F200\nG1 X50 F${feed / 3}`)
     const pass = p.segments.find((sg) => sg.x === 50)!

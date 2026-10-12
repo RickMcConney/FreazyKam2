@@ -26,7 +26,8 @@ import {
 import { planRasterPocket } from './pocket/raster'
 import { planContourPocket } from './pocket/contour'
 import { planFieldSpiralPocket, takeUnsuitableRatio } from './pocket/fieldSpiral'
-import { planAdaptive2Pocket } from './pocket/adaptive2'
+import { planAdaptiveFCPocket } from './pocket/adaptiveFC'
+import { currentPocketStrategy } from './pocket/strategyIds'
 import { planHybridPocket } from './pocket/hybrid'
 
 export type { PocketStrategy, PocketParams } from './pocket/shared'
@@ -35,7 +36,7 @@ const PLANNERS: Record<PocketStrategy, PocketPlanner> = {
   raster: planRasterPocket,
   contour: planContourPocket,
   morph: planFieldSpiralPocket,
-  adaptive2: planAdaptive2Pocket,
+  adaptive: planAdaptiveFCPocket,
   hybrid: planHybridPocket,
 }
 
@@ -111,11 +112,11 @@ export function generatePocket(
 
   // Legacy ids from older saved projects/forms. The offset-ring spiral ('spiral', once
   // 'spiralOffset') was dropped in 2026-07 — it left stock even at 50% stepover — so those
-  // operations regenerate as 'morph', the curvilinear spiral that replaced it. The FreeCAD
-  // Adaptive2d port ('adaptive') was dropped in 2026-09; adaptive2 replaced it.
+  // operations regenerate as 'morph', the curvilinear spiral that replaced it. The
+  // raster-marching adaptive ('adaptive2') and the interim 'adaptiveFC' id regenerate as
+  // 'adaptive', FreeCAD's algorithm, which replaced it in 2026-10.
   const rawStrategy = (params.strategy ?? 'raster') as string
-  const remapped = rawStrategy === 'spiralOffset' || rawStrategy === 'spiral' ? 'morph'
-    : rawStrategy === 'adaptive' ? 'adaptive2' : rawStrategy
+  const remapped = currentPocketStrategy(rawStrategy)
   const strategy: PocketStrategy = remapped in PLANNERS ? (remapped as PocketStrategy) : 'raster'
   const startZ = Math.min(0, params.startZMM ?? 0)
   const zLevels = zPasses(params.depthMM, params.stepDownMM, startZ)
