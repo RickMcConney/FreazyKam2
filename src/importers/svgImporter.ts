@@ -119,7 +119,29 @@ export type PathDefinition = { id: string } & (
   | { kind: 'pattern'; sourceIds: string[]; params: PatternParams }
   | { kind: 'duplicate'; sourceId: string; offsetMM: number }
   | { kind: 'boolean'; op: BooleanOpType; sourceIds: string[] }
+  // Fill-the-stock: copies of the part `sourceIds` nested onto the stock. The
+  // settings are the Nest form's, so the chip reopens it to re-run the fill.
+  // `copy` numbers the copy a path belongs to (2, 3, …; the original is 1): a
+  // part is often several paths — a plate and the text inside it — so the
+  // paths alone cannot say how many parts the fill made.
+  | { kind: 'fill'; sourceIds: string[]; params: FillParams; copy?: number }
 )
+
+/** The Nest settings a fill was made with — what its chip reopens the form on. */
+export interface FillParams {
+  /** Parts on the stock, the original included. 0 = as many as fit. */
+  count: number
+  spacingMM: number
+  marginMM: number
+  /** 0 = parts keep their orientation; otherwise the angle grid step. */
+  rotationStepDeg: number
+  packFrom: 'left' | 'bottom'
+  useHoles: boolean
+  avoidOthers: boolean
+  /** The end mill whose diameter is the gap, when parts share cut lines. */
+  sharedToolId?: string
+  copyToolpaths: boolean
+}
 
 export interface SvgImportResult {
   paths: ImportedPath[]

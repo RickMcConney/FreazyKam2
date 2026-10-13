@@ -12,6 +12,7 @@ import { usePathsStore } from './store/pathsStore'
 import { useToolpathStore } from './store/toolpathStore'
 import { useUIStore } from './store/uiStore'
 import { useTimelineStore } from './timeline/timelineStore'
+import { visibleRectMM } from './store/canvasStore'
 
 declare global {
   interface Window { __fkam?: Record<string, unknown> }
@@ -23,6 +24,8 @@ if (import.meta.env.DEV) {
     ops: () => useToolpathStore.getState(),
     ui: () => useUIStore.getState(),
     timeline: () => useTimelineStore.getState(),
+    /** What the canvas shows, in CNC mm — lets a script (scripts/video) click a CNC point. */
+    view: () => visibleRectMM(),
     /** The element the keyboard is talking to — an INPUT here swallows shortcuts. */
     focus: () => {
       const el = document.activeElement as HTMLElement | null

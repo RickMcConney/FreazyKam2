@@ -149,11 +149,13 @@ interactively.)
 
 Now the recess:
 
-1. With the Circle tool still active, change **Diameter** to `80`.
-2. Click again on the *same point*. Because a click always centres the shape on the
+1. Placing a shape returns you to select, so click the **shape button** again — it now
+   shows Circle.
+2. Change **Diameter** to `80`.
+3. Click again on the *same point*. Because a click always centres the shape on the
    cursor, the two circles come out concentric.
 
-You now have two paths. Press **Escape** to leave the shape tool and return to select.
+You now have two paths, and the app is back in select mode.
 
 > **From centre** is about *dragging*, not clicking. Tick it and a drag grows the shape
 > outward from where it started instead of running corner to corner — drag repeatedly

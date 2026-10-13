@@ -5,7 +5,9 @@
 3. Click a shape.
 4. Type its size in the fields that appear.
 5. **Click** the canvas to place it at that size, or **drag** to size it by eye.
-6. Press **Esc** when done.
+
+Placing a shape returns you to selecting. To draw another, click the shape button again.
+Press **Esc** to put the tool down without placing anything.
 
 ![The shape picker](../../docs/images/01-shapes.png)
 
@@ -13,7 +15,7 @@
 
 - The shape button remembers the last shape. Next time, just click it.
 - Tick **From centre** to drag outward from the middle.
-- Click the same spot twice to get shapes with the same centre.
+- For shapes with the same centre, place one, click the shape button again, and click the same spot.
 - Gear, Escapement, Pendulum and Track ignore dragging. Their size comes from their settings.
 
 ## Change it later

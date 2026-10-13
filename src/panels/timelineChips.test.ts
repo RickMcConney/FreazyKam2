@@ -99,6 +99,53 @@ describe('the object strip', () => {
     expect(chips[1].editPathId).toBe('p1')
   })
 
+  // Thirty copies of a gear are thirty multi-part shapes, each with its own
+  // groupId — which on its own would be thirty chips all reopening one fill.
+  it('gives a fill ONE chip that reopens it, even when every copy is a multi-part shape', () => {
+    const params = {
+      count: 0, spacingMM: 3, marginMM: 3, rotationStepDeg: 90, packFrom: 'left' as const,
+      useHoles: false, avoidOthers: true, copyToolpaths: true,
+    }
+    const fill = (id: string, groupId: string) =>
+      path({ id, groupId, definition: { id: 'df', kind: 'fill' as const, sourceIds: ['teeth', 'bore'], params } })
+    const chips = buildChips([
+      path({ id: 'teeth', groupId: 'gear' }), path({ id: 'bore', groupId: 'gear' }),
+      fill('t2', 'g2'), fill('b2', 'g2'), fill('t3', 'g3'), fill('b3', 'g3'),
+    ], [])
+    expect(chips.map((c) => c.key)).toEqual(['gear', 'def:df'])
+    expect(chips[1].label).toBe('Nest ×3')
+    expect(chips[1].pathIds).toEqual(['teeth', 'bore', 't2', 'b2', 't3', 'b3'])
+    expect(chips[1].editPathId).toBe('t2')
+  })
+
+  it('does not give a fill\'s copies a tab chip each — the original keeps its own', () => {
+    const params = {
+      count: 0, spacingMM: 3, marginMM: 3, rotationStepDeg: 90, packFrom: 'left' as const,
+      useHoles: false, avoidOthers: true, copyToolpaths: true,
+    }
+    const fill = (id: string) => path({ id, definition: { id: 'df', kind: 'fill' as const, sourceIds: ['src'], params } })
+    const tab = (id: string, pathId: string) => ({ id, pathId, t: 0.5, lengthMM: 5, heightMM: 2 })
+    const chips = buildChips([path({ id: 'src' }), fill('c2'), fill('c3')], [], [tab('a', 'src'), tab('b', 'c2'), tab('c', 'c3')])
+    expect(chips.filter((c) => c.form === 'tabs').flatMap((c) => c.pathIds)).toEqual(['src'])
+  })
+
+  // A plate with text inside it is ONE part to the nest but two objects, and
+  // counting objects called a fill of 6 "Nest ×11".
+  it('counts a fill in PARTS, however many paths each part is made of', () => {
+    const params = {
+      count: 3, spacingMM: 3, marginMM: 3, rotationStepDeg: 90, packFrom: 'left' as const,
+      useHoles: false, avoidOthers: true, copyToolpaths: true,
+    }
+    const fill = (id: string, copy: number) =>
+      path({ id, definition: { id: 'df', kind: 'fill' as const, sourceIds: ['plate', 'text'], params, copy } })
+    const chips = buildChips([
+      path({ id: 'plate' }), path({ id: 'text', groupId: 'tg' }),
+      fill('plate2', 2), path({ ...fill('text2', 2), groupId: 'tg2' }),
+      fill('plate3', 3), path({ ...fill('text3', 3), groupId: 'tg3' }),
+    ], [])
+    expect(chips.find((c) => c.key === 'def:df')!.label).toBe('Nest ×3')
+  })
+
   // A group is ONE thing — that is what grouping it meant — so it is one chip,
   // and its members' own chips come back when it is ungrouped.
   it('collapses a user group to one chip standing for every member', () => {

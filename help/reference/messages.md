@@ -44,6 +44,11 @@ label to free that direction.
 |---|---|
 | *Nothing fits on the stock* | Smaller gap or margin, or bigger stock |
 | *…or turn off "Avoid other paths"* | The sheet is already full |
+| *Only N fit on the stock — M short of the K asked for* | The Parts count is more than the stock holds. Smaller gap or margin, or bigger stock |
+| *N toolpaths were not copied — an inlay is cut as a pair…* | Apply the inlay to the copies yourself |
+| *Stopped at N copies — the stock would take more* | A fill makes at most 400 at a time. Select one copy and fill again |
+| *The original part of this nest has been deleted* | Edit Nest rebuilds from the original. Undo the delete, or make a new fill |
+| *The drawing changed while nesting — run Nest again* | Something was edited while the nest was working. Press the button again |
 
 ## Import
 

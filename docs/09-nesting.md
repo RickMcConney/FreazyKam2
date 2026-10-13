@@ -1,7 +1,9 @@
 # 9. Nesting
 
 **Nest** packs the selected parts onto the stock so the least material is wasted. It is a
-Path Tool, not an operation — it moves your geometry and generates no toolpath.
+Path Tool, not an operation — it moves your geometry rather than cutting anything. (The one
+exception: when it fills the stock with copies of a part, it can give each copy the
+toolpaths the part already has. See [Fill stock with copies](#fill-stock-with-copies).)
 
 The goal is not only to fit everything on. It is to leave **what's left over as one
 usable piece**, rather than as scraps between parts.
@@ -35,7 +37,7 @@ you can see what didn't make it and decide what to do.
 | **Edge Margin** | Space kept clear at the edge of the stock — for clamps, and for the fact that the edge of a board is rarely straight |
 | **Rotation Step** | How freely parts may be turned |
 | **Pack From** | Which edge parts pile against, and therefore what shape the offcut is |
-| **Fill stock with copies** | Repeat a single part until no more fit |
+| **Fill stock with copies** | Repeat a single part — as many as fit, or a set number — and optionally copy its toolpaths and tabs to every copy |
 | **Nest inside holes** | Let small parts sit in the holes of larger ones |
 | **Avoid other paths** | Treat unselected paths as ground already taken |
 
@@ -81,9 +83,59 @@ they will pack into the space that's left rather than on top of what's there.
 
 ### Fill stock with copies
 
-Available when exactly one part is selected. Repeats it until no more fit, at the same
-gaps. **Each copy is an object in its own right** — cut it, move it or delete it like any
-other, and the report tells you how many were added.
+Available when exactly one part is selected. A part can be several paths — a plate with
+text engraved inside it nests as one part. Tick the box and two more settings appear:
+
+| Setting | What it does |
+|---|---|
+| **Parts** | How many parts you want on the stock, **counting the original**. Leave it blank to fit as many as the stock will take |
+| **Copy its N toolpaths to every copy** | Shown when the part already has toolpaths. Ticked by default |
+
+The button changes to **Fill Stock**. **Each copy is an object in its own right** — cut it,
+move it or delete it like any other, and the report tells you how many were added.
+
+If you ask for more parts than the stock can hold, it places what fits and says how many
+short it came: *"Only 12 fit on the stock — 4 short of the 16 asked for."*
+
+#### Toolpaths and tabs come with the copies
+
+Set up the toolpaths on one part first, then fill. With **Copy toolpaths** ticked, every
+operation built on the part — a pocket, a drilling, an engraving, an outside profile — is
+copied onto each copy and generated, so you don't have to select the copies and apply them
+again.
+
+- **Edit one, edit them all.** The copies join the original operation's batch, so opening
+  any of them in its form and changing the depth or the tool changes every copy. The
+  Objects strip still shows one chip per operation, not one per copy.
+- **Cut order is kept.** Each operation's copies follow it in the program, so the job runs
+  every pocket, then every profile — the tool isn't changed back and forth for each part.
+- **An Optimize Path profile** is not copied. Instead the copies are added to that one
+  profile, so the whole sheet is routed together and shared lines are cut once.
+- **Inlays are not copied.** An inlay is cut as a matched pair from two boards, so filling
+  one half is not filling the pair. The form tells you when it skipped one; apply the inlay
+  to the copies yourself.
+- An operation that also uses a path **outside** the part (a pocket whose island is a
+  different part, say) is left alone.
+
+**Holding tabs are always copied**, whether or not Copy toolpaths is ticked — they belong to
+the path, the same as when you duplicate it. Each copy's tabs sit in the same places round
+its outline as the original's, even when the copy has been turned.
+
+One **Undo** takes the whole fill back off: the copies, their toolpaths and their tabs.
+
+#### Changing a fill later — the Nest chip
+
+A fill puts one **Nest ×N** chip in the Objects strip, where N is the number of parts on
+the stock, the original included. A part made of several paths counts once.
+
+Click it to open **Edit Nest** with the settings the fill was made with. Change the part
+count, the Pack From edge, the gaps, the rotation — anything — and press **Update Nest**.
+The old copies, and the toolpaths made for them, are replaced by a new fill of the
+original part in one step.
+
+Changes you make to the **original** — its shape, its toolpaths or its tabs — reach the
+copies the next time you press Update Nest. Changes made to a single copy are lost when
+the fill is updated, since that copy is replaced.
 
 ---
 
@@ -108,8 +160,9 @@ Nesting moves your parts. Two things follow:
 
 - **Operations that referenced those paths need regenerating** — they'll be marked amber
   in **Paths → Toolpaths**.
-- **Check your holding tabs.** Tabs travel with the path, but a tab that was in a sensible
-  place before may now be facing a neighbour with 3 mm between them.
+- **Check your holding tabs.** Tabs travel with the path — and are copied onto filled
+  copies — but a tab that was in a sensible place before may now be facing a neighbour with
+  3 mm between them.
 
 ---
 

@@ -98,6 +98,12 @@ export interface NestParams {
    * meaning for a mixed set — which of them would it make more of?
    */
   fill?: boolean
+  /**
+   * With `fill`: stop at this many parts on the stock, the one already there
+   * included. Absent or 0 = as many as will fit. A sheet that holds fewer comes
+   * back with fewer — the count is a ceiling, never a promise.
+   */
+  fillCount?: number
   /** Cell size. Defaults to a size that keeps the grid near a million cells. */
   resolutionMM?: number
   /**
@@ -685,9 +691,15 @@ export function nest(items: NestItem[], params: NestParams): NestResult {
   // full sheet is thousands of placements a dozen times over, and a job with four
   // hundred parts on one sheet is not one a router is about to cut anyway.
   const fill = params.fill === true && prepared.length === 1
-  const fillCap = fill
+  const fitCap = fill
     ? Math.min(FILL_LIMIT, Math.max(1, Math.floor((cols * rows) / Math.max(1, prepared[0].base.mask.cells))))
     : 0
+  // A COUNT THE USER ASKED FOR is a third cap, and the only one that is not a
+  // limitation: stopping at it is the fill doing what it was told, so it must not
+  // come back flagged `fillLimited` the way stopping at FILL_LIMIT does.
+  const wanted = fill && params.fillCount && params.fillCount > 0 ? Math.floor(params.fillCount) : 0
+  const fillCap = wanted > 0 ? Math.min(fitCap, wanted) : fitCap
+  const stoppedAtCount = wanted > 0 && wanted <= fitCap
   function* toPack(): Generator<PreparedItem> {
     if (!fill) { yield* prepared; return }
     const e = prepared[0]
@@ -783,7 +795,7 @@ export function nest(items: NestItem[], params: NestParams): NestResult {
       cursorX = best.ox + 1
       levelH = Math.max(levelH, best.cand.mask.rows)
     }
-    return { placements, unplaced, placedCells, usedCols, usedRows, fillLimited: fill && !refused }
+    return { placements, unplaced, placedCells, usedCols, usedRows, fillLimited: fill && !refused && !stoppedAtCount }
   }
 
   const packPass = (orient: Orient, gridStep: number): PackOutcome => {
@@ -821,7 +833,7 @@ export function nest(items: NestItem[], params: NestParams): NestResult {
       usedCols = Math.max(usedCols, best.ox + best.cand.mask.cols)
       usedRows = Math.max(usedRows, best.oy + best.cand.mask.rows)
     }
-    return { placements, unplaced, placedCells, usedCols, usedRows, fillLimited: fill && !refused }
+    return { placements, unplaced, placedCells, usedCols, usedRows, fillLimited: fill && !refused && !stoppedAtCount }
   }
 
   // More parts on the stock wins outright — a part that has to be cut from a

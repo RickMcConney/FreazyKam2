@@ -5,7 +5,7 @@ import {
   Star, Heart, Pill, Shield, Orbit, Grid3x3, CookingPot, Cog, Snail, Type, PenTool, Copy, Import, SquaresUnite,
   SquareSquare, LayoutGrid, Target, CircleDot, Layers, Box, RefreshCw, FileCode,
   X, Image as ImageIcon, Anchor, Weight, Clock, RectangleEllipsis, VectorSquare, Group, TrainTrack,
-  RulerDimensionLine, Webhook,
+  RulerDimensionLine, Webhook, Blocks,
 } from 'lucide-react'
 import { usePathsStore, clearCorners, outerGroupOf, type ImportedPath } from '../store/pathsStore'
 import { useToolpathStore, pathIdsOf, type AnyOperation } from '../store/toolpathStore'
@@ -96,6 +96,7 @@ function pathVisual(p: ImportedPath): { label: string; Icon: ChipIcon; color?: s
     if (def.kind === 'boolean') return { label: 'Boolean', Icon: SquaresUnite, color: OP_TYPE_COLORS.boolean }
     if (def.kind === 'offset') return { label: 'Offset', Icon: SquareSquare, color: OP_TYPE_COLORS.offset }
     if (def.kind === 'pattern') return { label: 'Pattern', Icon: LayoutGrid, color: OP_TYPE_COLORS.pattern }
+    if (def.kind === 'fill') return { label: 'Nest', Icon: Blocks, color: OP_TYPE_COLORS.nest }
     if (def.kind === 'duplicate') return { label: p.name, Icon: Copy }
   }
   if (p.shapeParams) {
@@ -127,6 +128,35 @@ export function buildChips(
   const seenUserGroup = new Set<string>()
 
   for (const p of paths) {
+    // A FILL IS ONE CHIP however its copies are made up. Each copy is a part in
+    // its own right — a multi-part shape with its own groupId, or a user group —
+    // and either of those would otherwise give every copy a chip, thirty chips
+    // all reopening the same fill. So the fill is asked about FIRST. The chip
+    // stands for the original too: re-running the fill moves it as well.
+    if (p.definition?.kind === 'fill') {
+      const def = p.definition
+      if (seenDef.has(def.id)) continue
+      seenDef.add(def.id)
+      const members = paths.filter((q) => q.definition?.id === def.id)
+      // PARTS, not paths or objects: a part is often several of either (a plate
+      // and the text inside it), so each copy's paths carry its copy number and
+      // the count is of those. Copies made before the number existed fall back
+      // to one per object. The original counts while it is still there.
+      const copies = new Set(members.map((m) => (m.definition?.kind === 'fill' && m.definition.copy)
+        || outerGroupOf(m) || m.groupId || m.id)).size
+      const original = def.sourceIds.some((id) => paths.some((q) => q.id === id)) ? 1 : 0
+      out.push({
+        key: `def:${def.id}`, ...pathVisual(p),
+        label: `Nest \u00d7${copies + original}`,
+        family: 'path',
+        pathIds: [...def.sourceIds.filter((id) => paths.some((q) => q.id === id)), ...members.map((m) => m.id)],
+        editPathId: p.id,
+      })
+      // No tab or corner chips for the copies: they are the original's, copied
+      // by the fill, and thirty of them would bury the strip. The original's own
+      // chips stay with the original.
+      continue
+    }
     // A clock gets a chip of its own, at the position of its first part, which
     // reopens the designer on the spec every part carries. Its wheels keep
     // their own chips too — each is a separately editable shape.

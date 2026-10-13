@@ -32,7 +32,7 @@ import type { Constraint } from './constraints'
  */
 export function ingredientsOf(def: PathDefinition | undefined): string[] {
   if (!def || def.kind === 'duplicate') return []
-  return def.kind === 'pattern' || def.kind === 'boolean' ? def.sourceIds : [def.sourceId]
+  return def.kind === 'pattern' || def.kind === 'boolean' || def.kind === 'fill' ? def.sourceIds : [def.sourceId]
 }
 
 /**
@@ -156,7 +156,7 @@ export function copyPaths(
       copy.definition = {
         ...def,
         id: reissue(def.id, 'def')!,
-        ...(def.kind === 'pattern' || def.kind === 'boolean'
+        ...(def.kind === 'pattern' || def.kind === 'boolean' || def.kind === 'fill'
           ? { sourceIds: def.sourceIds.map((id) => newIdOf.get(id)!) }
           : { sourceId: newIdOf.get((def as { sourceId: string }).sourceId)! }),
       } as PathDefinition

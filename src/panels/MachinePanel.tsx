@@ -5,6 +5,7 @@ import { usePathsStore } from '../store/pathsStore'
 import type { BooleanEditCtx } from './machine/BooleanForm'
 import type { OffsetEditCtx } from './machine/OffsetForm'
 import type { PatternEditCtx } from './machine/PatternForm'
+import type { NestEditCtx } from './machine/NestForm'
 import { OP_TYPE_COLORS } from '../colors'
 import { ICON } from '../theme'
 import { Circle, CircleDot, Target, Layers, Star, SquaresUnite, SquareSquare, LayoutGrid, Blocks, RectangleEllipsis, VectorSquare, Box, RefreshCw, Image as ImageIcon } from 'lucide-react'
@@ -84,7 +85,8 @@ export default function MachinePanel({ fill = false }: { fill?: boolean }) {
   const [editBool, setEditBool] = useState<BooleanEditCtx | null>(null)
   const [editOffset, setEditOffset] = useState<OffsetEditCtx | null>(null)
   const [editPattern, setEditPattern] = useState<PatternEditCtx | null>(null)
-  const clearEditCtx = () => { setEditOpId(null); setEditBool(null); setEditOffset(null); setEditPattern(null) }
+  const [editFill, setEditFill] = useState<NestEditCtx | null>(null)
+  const clearEditCtx = () => { setEditOpId(null); setEditBool(null); setEditOffset(null); setEditPattern(null); setEditFill(null) }
 
   useEffect(() => () => { setMachineFormActive(false); setTabsFormActive(false) }, [setMachineFormActive, setTabsFormActive])
   useEffect(() => { setTabsFormActive(activeForm === 'tabs') }, [activeForm, setTabsFormActive])
@@ -128,6 +130,9 @@ export default function MachinePanel({ fill = false }: { fill?: boolean }) {
     } else if (def.kind === 'pattern') {
       setEditPattern({ defId: def.id })
       startForm('pattern')
+    } else if (def.kind === 'fill') {
+      setEditFill({ defId: def.id })
+      startForm('nest')
     }
   }, [requestEditPathId]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -178,7 +183,7 @@ export default function MachinePanel({ fill = false }: { fill?: boolean }) {
       ) : activeForm === 'pattern' ? (
         <PatternForm key={editPattern?.defId ?? 'new'} onClose={closeForm} editCtx={editPattern ?? undefined} />
       ) : activeForm === 'nest' ? (
-        <NestForm onClose={closeForm} />
+        <NestForm key={editFill?.defId ?? 'new'} onClose={closeForm} editCtx={editFill ?? undefined} />
       ) : activeForm === 'tabs' ? (
         <TabsForm onClose={closeForm} />
       ) : activeForm === 'nodeedit' ? (

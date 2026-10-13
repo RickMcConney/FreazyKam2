@@ -25,8 +25,25 @@ Parts that don't fit are placed beside the stock.
 | Option | Use when |
 |---|---|
 | **Shared lines** | Place parts one cutter apart so neighbours share a cut. Pick the end mill, then use Profile's **Optimize Path** |
-| **Fill stock with copies** | You want as many of one part as fit (button becomes **Fill Stock**) |
+| **Fill stock with copies** | You want many of one part (button becomes **Fill Stock**) — see below |
 | **Nest inside holes** | You want small parts inside big ones (offcut ends up in pieces) |
 | **Avoid other paths** | The sheet already has parts on it |
 
-**Related:** [Nesting for a usable offcut](../explanation/nesting.md)
+## Fill the stock with one part
+
+1. Draw the part and give it its toolpaths and tabs first.
+2. Select just that part (a part can be several paths, such as a plate and the text inside it).
+3. Open **Nest**, tick **Fill stock with copies**.
+4. Set **Parts** to how many you want, counting the original, or leave it blank for as
+   many as fit.
+5. Leave **Copy its toolpaths to every copy** ticked.
+6. Click **Fill Stock**.
+
+Every copy gets the part's toolpaths and tabs. The copied toolpaths share a batch with the
+original, so editing one edits them all. Inlays are not copied, since they're cut as a pair.
+
+To change the fill later, click its **Nest ×N** chip in the Objects strip, change the
+settings in **Edit Nest**, and click **Update Nest**.
+
+**Related:** [Nesting for a usable offcut](../explanation/nesting.md) ·
+[User guide: Fill stock with copies](../../docs/09-nesting.md#fill-stock-with-copies)

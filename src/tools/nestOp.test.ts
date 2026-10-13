@@ -586,3 +586,27 @@ describe('nestIsStale', () => {
     expect(nestIsStale(before, before, ['a', 'b'], true)).toBe(false)
   })
 })
+
+describe('nest — filling the stock to a count', () => {
+  // 100 x 100 stock, 20 mm squares, 1 mm gap and no margin: sixteen fit.
+  const one: NestItem[] = [{ id: 'g0', rings: [rect(0, 0, 20, 20)] }]
+  const fill = { ...PARAMS, marginMM: 0, spacingMM: 1, fill: true }
+
+  it('fills the whole stock when no count is given', () => {
+    const r = nest(one, fill)
+    expect(r.placements.filter((p) => p.onStock)).toHaveLength(16)
+  })
+
+  it('stops at the count asked for, the original included, and does not call that limited', () => {
+    const r = nest(one, { ...fill, fillCount: 5 })
+    expect(r.placements.filter((p) => p.onStock).map((p) => p.id))
+      .toEqual(['g0#0', 'g0#1', 'g0#2', 'g0#3', 'g0#4'])
+    expect(r.fillLimited).toBeUndefined()
+  })
+
+  it('places only what fits when the count asks for more than the stock holds', () => {
+    const r = nest(one, { ...fill, fillCount: 40 })
+    expect(r.placements.filter((p) => p.onStock)).toHaveLength(16)
+    expect(r.fillLimited).toBeUndefined()
+  })
+})

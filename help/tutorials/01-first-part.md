@@ -33,10 +33,11 @@ fly loose. It takes about 10 minutes.
 2. Click the **shape button**. If it doesn't say Circle, click the arrow under it and pick
    **Circle**.
 3. Set **Diameter** to `100`.
-4. Click once in the middle of the stock.
-5. Change **Diameter** to `80`.
-6. Click on **the same spot** again.
-7. Press **Esc**.
+4. Click once in the middle of the stock. The circle is placed, and the app goes back to
+   selecting.
+5. Click the **shape button** again (it now says Circle).
+6. Change **Diameter** to `80`.
+7. Click on **the same spot** again.
 
 You now have two circles, one inside the other.
 

@@ -1,7 +1,7 @@
 // ─── Nest form ────────────────────────────────────────────────────────────────
 import { useMemo, useState } from 'react'
 import { AlertCircle } from 'lucide-react'
-import { FormShell, PathChip, ToggleRow, LengthInput, FormNotice, GenerateBtn, ToolSelector, toolsOfType, pickToolId } from './shared'
+import { FormShell, PathChip, ToggleRow, LengthInput, FormNotice, GenerateBtn, ToolSelector, toolsOfType, pickToolId, CheckRow, FIELD_CLS } from './shared'
 import { useToolStore } from '../../store/toolStore'
 import { ICON } from '../../theme'
 import { useFormDefaultsStore } from '../../store/formDefaultsStore'
@@ -12,9 +12,15 @@ import { useProjectStore } from '../../store/projectStore'
 import { applyTransformStep, placedAngleDeg, type TransformStep } from '../../canvas/selectionUtils'
 import { groupPathsForNesting, nestIsStale, type NestItem } from '../../tools/nestOp'
 import { copyPathsUnderSteps } from '../../tools/pathCopy'
+import { copyOperationsForParts, type PartCopy } from '../../tools/copyOperations'
+import { useToolpathStore, pathIdsOf } from '../../store/toolpathStore'
+import { regenerateMany } from '../../cam/regenerate'
+import { NumericInput } from '../../components/NumericInput'
+import { useTabStore } from '../../store/tabStore'
 import { uid } from '../../uid'
 import { runInWorkerFor } from '../../workers/workerClient'
 import type { PathUpdate } from '../../store/pathsStore'
+import type { FillParams, PathDefinition } from '../../importers/svgImporter'
 
 // How finely a part may be turned. "None" is first because it is the only answer
 // for stock with a grain direction or a figure to keep aligned — nesting is a
@@ -24,6 +30,19 @@ import type { PathUpdate } from '../../store/pathsStore'
 type RotOption = 'none' | '90' | '45' | '15'
 const ROT_STEP: Record<RotOption, number> = { none: 0, '90': 90, '45': 45, '15': 15 }
 const ROT_LABEL: Record<RotOption, string> = { none: 'None', '90': '90°', '45': '45°', '15': '15°' }
+const rotOptionOf = (stepDeg: number): RotOption =>
+  stepDeg === 90 ? '90' : stepDeg === 45 ? '45' : stepDeg === 15 ? '15' : 'none'
+
+/**
+ * Edit mode (Fill chip click): re-run a fill with new settings. Identified by the
+ * DEFINITION id every copy of one fill shares; the original part and the settings
+ * come back off the copies, so the form needs nothing else. The old copies — and the
+ * operations made for them — are replaced in the same edit, and the definition id
+ * is kept so the chip keeps its place in the strip.
+ */
+export interface NestEditCtx {
+  defId: string
+}
 
 interface NestFormState {
   spacingMM: number
@@ -34,6 +53,10 @@ interface NestFormState {
   avoidOthers: boolean
   /** Repeat the one selected part until the stock is full — see canFill. */
   fillStock: boolean
+  /** Parts on the stock after a fill, the original included. 0 = as many as fit. */
+  fillCount: number
+  /** Give every copy the operations the part already has. */
+  copyToolpaths: boolean
   /** Place parts exactly one cutter apart so their outside profiles share lines. */
   sharedLines: boolean
   /** The cutter whose diameter is the gap when `sharedLines` is on. */
@@ -42,7 +65,7 @@ interface NestFormState {
 
 const FALLBACK: NestFormState = {
   spacingMM: 3, marginMM: 3, rotation: '90', packFrom: 'left', useHoles: false,
-  avoidOthers: true, fillStock: false, sharedLines: false, sharedToolId: '',
+  avoidOthers: true, fillStock: false, fillCount: 0, copyToolpaths: true, sharedLines: false, sharedToolId: '',
 }
 
 interface NestReport {
@@ -52,6 +75,11 @@ interface NestReport {
   copies: number
   /** The fill stopped at its copy limit rather than filling the stock. */
   fillLimited: boolean
+  /** A count was asked for and the stock took this many fewer. */
+  fillShort: number
+  /** Operations made for the copies, and the part's operations that could not be copied. */
+  opsCopied: number
+  opsSkipped: number
   usedWidthMM: number
   usedHeightMM: number
   utilization: number
@@ -70,15 +98,39 @@ function placedAngleOf(path: { placement?: TransformStep[] } | undefined): numbe
   return placedAngleDeg(path?.placement)
 }
 
-export function NestForm({ onClose }: { onClose: () => void }) {
-  const selPaths = useSelectedPaths()
+export function NestForm({ onClose, editCtx }: { onClose: () => void; editCtx?: NestEditCtx }) {
+  const livePaths = usePathsStore((s) => s.paths)
+  const selection = useSelectedPaths()
+  // In edit mode the subject is the fill's ORIGINAL part, not the selection (the
+  // chip selects the copies too), and the copies are what will be replaced.
+  const fillCopies = useMemo(
+    () => (editCtx ? livePaths.filter((p) => p.definition?.id === editCtx.defId) : []),
+    [editCtx, livePaths],
+  )
+  const fillDef = fillCopies[0]?.definition
+  const fillParams = fillDef?.kind === 'fill' ? fillDef : null
+  const fillSources = useMemo(
+    () => (fillParams ? fillParams.sourceIds.flatMap((id) => livePaths.filter((p) => p.id === id)) : []),
+    [fillParams, livePaths],
+  )
+  const selPaths = editCtx ? fillSources : selection
   const load = useFormDefaultsStore((s) => s.load)
   const save = useFormDefaultsStore((s) => s.save)
   const units = useWorkpieceStore((s) => s.units)
   const widthMM = useWorkpieceStore((s) => s.widthMM)
   const heightMM = useWorkpieceStore((s) => s.heightMM)
 
-  const [form, setForm] = useState<NestFormState>(() => ({ ...FALLBACK, ...(load('nest') as Partial<NestFormState> | null) }))
+  const [form, setForm] = useState<NestFormState>(() => {
+    const base = { ...FALLBACK, ...(load('nest') as Partial<NestFormState> | null) }
+    if (!fillParams) return base
+    const p = fillParams.params
+    return {
+      ...base, fillStock: true, fillCount: p.count, spacingMM: p.spacingMM, marginMM: p.marginMM,
+      rotation: rotOptionOf(p.rotationStepDeg), packFrom: p.packFrom, useHoles: p.useHoles,
+      avoidOthers: p.avoidOthers, sharedLines: !!p.sharedToolId, sharedToolId: p.sharedToolId ?? base.sharedToolId,
+      copyToolpaths: p.copyToolpaths,
+    }
+  })
   // SHARED LINES: the gap IS the cutter. Two parts exactly one diameter apart have outside
   // cut paths that coincide along facing edges, which is what lets a shared-line profile
   // cut that line once. End mills only — a V-bit's or ball nose's cut width depends on depth.
@@ -100,7 +152,18 @@ export function NestForm({ onClose }: { onClose: () => void }) {
   // to a single part, and a selection that grows past one turns it off rather
   // than leaving a checkbox on that does nothing.
   const canFill = groups.length === 1
-  const filling = canFill && form.fillStock
+  const filling = canFill && (form.fillStock || !!editCtx)
+  // The operations already built on the part — what "copy toolpaths" will carry.
+  // Only those built from the part ALONE: see copyOperationsForParts.
+  const operations = useToolpathStore((s) => s.operations)
+  const partOps = useMemo(() => {
+    if (!canFill) return []
+    const part = new Set(groups[0].ids)
+    return operations.filter((op) => {
+      const ids = pathIdsOf(op)
+      return ids.length > 0 && ids.every((id) => part.has(id))
+    })
+  }, [canFill, groups, operations])
 
   const up = <K extends keyof NestFormState>(k: K, v: NestFormState[K]) =>
     setForm((f) => ({ ...f, [k]: v }))
@@ -117,7 +180,10 @@ export function NestForm({ onClose }: { onClose: () => void }) {
 
   async function runNest() {
     const paths = usePathsStore.getState().paths
-    const selected = new Set(selPaths.map((p) => p.id))
+    // The old copies of a fill being edited are about to go, so they are neither
+    // obstacles nor nested — the new fill is laid out as if they were not there.
+    const replacedIds = fillCopies.map((p) => p.id)
+    const selected = new Set([...selPaths.map((p) => p.id), ...replacedIds])
     // Read BEFORE the await, and the updates below are built from this snapshot:
     // the nest is a transform per part, so it has to be applied to the geometry
     // it was computed from. That also means an edit made to a nested part while the
@@ -166,6 +232,7 @@ export function NestForm({ onClose }: { onClose: () => void }) {
       useHoles: form.useHoles,
       obstacles,
       fill: filling,
+      ...(filling && form.fillCount > 0 ? { fillCount: form.fillCount } : {}),
     })
 
     // THE DRAWING MAY HAVE MOVED ON while the worker ran. Paths are replaced, never
@@ -198,6 +265,19 @@ export function NestForm({ onClose }: { onClose: () => void }) {
     const byId = byIdPre
     const updates: PathUpdate[] = []
     const add: ImportedPath[] = []
+    const partCopies: PartCopy[] = []
+    // WHAT MADE THE COPIES rides on each of them, as a pattern's does: the chip
+    // that reopens this form is found through it, and the settings come back
+    // from it. An edit keeps the id, so the chip stays where it was.
+    const fillParamsNow: FillParams = {
+      count: form.fillCount, spacingMM: form.spacingMM, marginMM: form.marginMM,
+      rotationStepDeg: ROT_STEP[form.rotation], packFrom: form.packFrom, useHoles: form.useHoles,
+      avoidOthers: form.avoidOthers, copyToolpaths: form.copyToolpaths,
+      ...(sharing ? { sharedToolId: sharedTool!.id } : {}),
+    }
+    const definition: PathDefinition | undefined = filling
+      ? { id: editCtx?.defId ?? uid('def'), kind: 'fill', sourceIds: groups[0].ids, params: fillParamsNow }
+      : undefined
     let rotated = false
     for (const pl of result.placements) {
       // `g3` in a plain nest, `g3#7` when filling — the part, and which copy of
@@ -216,9 +296,15 @@ export function NestForm({ onClose }: { onClose: () => void }) {
         // own group, its parameters intact and its parts tied together. Copying
         // the geometry alone would hand the next nest thirty loose grooves.
         const sources = g.ids.flatMap((id) => { const p = byId.get(id); return p ? [p] : [] })
-        for (const c of copyPathsUnderSteps(sources, steps, `${copyN + 1}`)) {
-          add.push({ ...c, id: uid('path-nest') })
-        }
+        const pathIds = new Map<string, string>()
+        copyPathsUnderSteps(sources, steps, `${copyN + 1}`).forEach((c, i) => {
+          const id = uid('path-nest')
+          pathIds.set(sources[i].id, id)
+          add.push({ ...c, id, definition: definition && { ...definition, copy: copyN + 1 } })
+        })
+        // Copies are made from the part as it LAY, so `steps` alone carries each
+        // source path onto its copy — which is what a drill op's points need.
+        partCopies.push({ pathIds, steps })
         continue
       }
       for (const id of g.ids) {
@@ -241,7 +327,7 @@ export function NestForm({ onClose }: { onClose: () => void }) {
         updates.push({ id, d, shapeParams: spilled ? null : shapeParams, transforms: steps })
       }
     }
-    if (updates.length === 0 && add.length === 0) return
+    if (updates.length === 0 && add.length === 0 && replacedIds.length === 0) return
 
     // NESTING THE SAME PARTS TWICE MUST BE ALLOWED TO CHANGE NOTHING, and must
     // SAY so. The nest is decided by the parts' shapes, not by where they happen
@@ -249,7 +335,7 @@ export function NestForm({ onClose }: { onClose: () => void }) {
     // where the first one did — which from the outside is indistinguishable from
     // a button that did not work, and was read as one. Writing it as an edit
     // anyway would be worse: an undo step that undoes nothing visible.
-    const unchanged = add.length === 0 && result.placements.every(
+    const unchanged = add.length === 0 && replacedIds.length === 0 && result.placements.every(
       (pl) => Math.abs(pl.angleDeg) < 1e-6 && Math.abs(pl.dx) < 1e-4 && Math.abs(pl.dy) < 1e-4,
     )
     if (!unchanged) {
@@ -260,17 +346,51 @@ export function NestForm({ onClose }: { onClose: () => void }) {
       usePathsStore.getState().applyPathEdit({
         updates,
         add,
+        // The copies an edited fill replaces go in the same edit, and their
+        // operations with them (applyPathEdit drops what was built on a path).
+        deleteIds: replacedIds,
         gesture: rotated ? 'transform' : 'move',
-        ...(add.length > 0
-          ? { label: 'Fill stock', selectAfter: [...updates.map((u) => u.id), ...add.map((p) => p.id)] }
+        ...(add.length > 0 || replacedIds.length > 0
+          ? { label: editCtx ? 'Update nest' : 'Fill stock', selectAfter: [...updates.map((u) => u.id), ...add.map((p) => p.id)] }
           : {}),
       })
+    }
+    // THE COPIES' OPERATIONS land in the same step as the copies: written raw,
+    // straight after the edit, so the timeline folds them into the snapshot the
+    // edit just recorded and one undo takes paths and toolpaths off together.
+    // HOLDING TABS belong to the path, as Duplicate treats them, so every copy
+    // gets its part's — whatever "copy toolpaths" says. A tab is a fraction of
+    // the way round its path, which a rotate or a move leaves where it was, so
+    // it needs only its own id and the copy's path. Written before the copied
+    // operations generate, so a profile on a copy cuts round its tabs.
+    if (partCopies.length > 0) {
+      const ts = useTabStore.getState()
+      const copiedTabs = partCopies.flatMap((c) => ts.tabs
+        .filter((t) => c.pathIds.has(t.pathId))
+        .map((t) => ({ ...t, id: uid('tab'), pathId: c.pathIds.get(t.pathId)! })))
+      if (copiedTabs.length > 0) ts.replaceTabs([...ts.tabs, ...copiedTabs])
+    }
+    let opsCopied = 0
+    let opsSkipped = 0
+    if (filling && form.copyToolpaths && partCopies.length > 0) {
+      const tp = useToolpathStore.getState()
+      const r = copyOperationsForParts(tp.operations, groups[0].ids, partCopies, uid)
+      opsSkipped = r.skipped.length
+      if (r.created.length > 0 || r.extended.length > 0) {
+        tp.replaceOperations(r.operations)
+        const ids = new Set([...r.created, ...r.extended])
+        regenerateMany(r.operations.filter((op) => ids.has(op.id)))
+        opsCopied = r.created.length
+      }
     }
     setReport({
       placed: onStock.length,
       total: filling ? onStock.length : items.length,
       copies: add.length,
       fillLimited: result.fillLimited === true,
+      fillShort: filling && form.fillCount > 0 && onStock.length < form.fillCount ? form.fillCount - onStock.length : 0,
+      opsCopied,
+      opsSkipped,
       usedWidthMM: result.usedWidthMM,
       usedHeightMM: result.usedHeightMM,
       utilization: result.utilization,
@@ -282,6 +402,7 @@ export function NestForm({ onClose }: { onClose: () => void }) {
         ? 'Already nested — nothing moved'
         : filling
           ? `Filled the stock with ${onStock.length} part${onStock.length === 1 ? '' : 's'} — ${add.length} added`
+            + (opsCopied > 0 ? `, ${opsCopied} toolpath${opsCopied === 1 ? '' : 's'} copied` : '')
           : `Nested ${onStock.length} of ${items.length} part${items.length === 1 ? '' : 's'}`,
       result.unplacedIds.length > 0 ? 'warn' : 'info',
     )
@@ -289,10 +410,10 @@ export function NestForm({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <FormShell title="Nest" onClose={onClose}>
+    <FormShell title={editCtx ? 'Edit Nest' : 'Nest'} onClose={onClose}>
       <div>
         <div className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">
-          Paths{groups.length > 0 && (
+          {editCtx ? 'Original part' : 'Paths'}{groups.length > 0 && (
             <span className="normal-case text-gray-500 dark:text-neutral-400">
               {' '}({selPaths.length} → {groups.length} part{groups.length === 1 ? '' : 's'})
             </span>
@@ -304,7 +425,7 @@ export function NestForm({ onClose }: { onClose: () => void }) {
           </div>
         ) : (
           <p className="text-body text-amber-600 dark:text-amber-400 flex items-center gap-1">
-            <AlertCircle size={ICON.sm} /> Select the paths to nest
+            <AlertCircle size={ICON.sm} /> {editCtx ? 'The original part of this nest has been deleted' : 'Select the paths to nest'}
           </p>
         )}
       </div>
@@ -380,18 +501,46 @@ export function NestForm({ onClose }: { onClose: () => void }) {
 
       {canFill && (
         <div>
-          <div className="flex items-center gap-2">
-            <input type="checkbox" id="nest-fill" checked={form.fillStock}
-              onChange={(e) => up('fillStock', e.target.checked)} className="accent-blue-500" />
-            <label htmlFor="nest-fill" className="text-body text-gray-700 dark:text-neutral-300 cursor-pointer"
-              title="Repeat the selected part until no more will fit">
-              Fill stock with copies
-            </label>
-          </div>
+          {/* An edited fill IS a fill: there is no unticking it from here — that
+              is deleting the chip. */}
+          {!editCtx && (
+            <div className="flex items-center gap-2">
+              <input type="checkbox" id="nest-fill" checked={form.fillStock}
+                onChange={(e) => up('fillStock', e.target.checked)} className="accent-blue-500" />
+              <label htmlFor="nest-fill" className="text-body text-gray-700 dark:text-neutral-300 cursor-pointer"
+                title="Repeat the selected part until no more will fit">
+                Fill stock with copies
+              </label>
+            </div>
+          )}
+          {filling && (
+            <div className="mt-1.5 space-y-1.5">
+              <div className="flex items-center gap-2">
+                <label htmlFor="nest-count" className="text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider w-16 shrink-0">
+                  Parts
+                </label>
+                <NumericInput id="nest-count" value={form.fillCount > 0 ? form.fillCount : 2} min={2} step={1} integer
+                  isEmpty={form.fillCount <= 0} placeholder="as many as fit"
+                  onEmpty={() => up('fillCount', 0)}
+                  onChange={(v) => up('fillCount', Math.max(2, Math.round(v)))}
+                  title="How many parts on the stock, the original included — leave blank to fill it"
+                  className={FIELD_CLS} />
+              </div>
+              {partOps.length > 0 && (
+                <CheckRow id="nest-copy-ops" checked={form.copyToolpaths}
+                  onChange={(v) => up('copyToolpaths', v)}
+                  label={`Copy its ${partOps.length} toolpath${partOps.length === 1 ? '' : 's'} to every copy`} />
+              )}
+            </div>
+          )}
           <p className="text-label text-gray-600 dark:text-neutral-400 normal-case mt-1">
-            As many copies of the part as the stock will take, at the same gaps.
-            Each copy is an object in its own right — cut it, move it or delete it
+            {form.fillCount > 0
+              ? `${form.fillCount} of the part, the original included, at the same gaps — fewer if the stock will not take them.`
+              : 'As many copies of the part as the stock will take, at the same gaps.'}
+            {' '}Each copy is an object in its own right — cut it, move it or delete it
             like any other.
+            {filling && partOps.length > 0 && form.copyToolpaths
+              && ' Copied toolpaths join the original\'s batch, so editing one edits them all.'}
           </p>
         </div>
       )}
@@ -421,6 +570,7 @@ export function NestForm({ onClose }: { onClose: () => void }) {
             ? 'Already nested'
             : report.copies > 0
               ? `Filled the stock with ${report.placed} parts — ${report.copies} added`
+                + (report.opsCopied > 0 ? `, with ${report.opsCopied} toolpath${report.opsCopied === 1 ? '' : 's'}` : '')
               : `Nested ${report.placed} of ${report.total}`} into{' '}
           {fmtLen(report.usedWidthMM, units, 1)} × {fmtLen(report.usedHeightMM, units, 1)} —
           parts cover {(report.utilization * 100).toFixed(0)}% of the stock.
@@ -430,6 +580,10 @@ export function NestForm({ onClose }: { onClose: () => void }) {
       <FormNotice msg={
         report && report.fillLimited
           ? `Stopped at ${report.placed} copies — the stock would take more. Select one of them and fill again for another batch.`
+          : report && report.fillShort > 0
+            ? `Only ${report.placed} fit on the stock — ${report.fillShort} short of the ${report.placed + report.fillShort} asked for.`
+          : report && report.opsSkipped > 0
+            ? `${report.opsSkipped} toolpath${report.opsSkipped === 1 ? ' was' : 's were'} not copied — an inlay is cut as a pair, so apply it to the copies yourself.`
           : report && report.unplaced > 0
             ? `${report.unplaced} part${report.unplaced === 1 ? '' : 's'} would not fit — parked to the right of the stock.`
             : null} />
@@ -440,7 +594,7 @@ export function NestForm({ onClose }: { onClose: () => void }) {
       )}
 
       <GenerateBtn disabled={!canApply || running} generating={running} onClick={handleNest}
-        label={filling ? 'Fill Stock' : 'Nest on Stock'}
+        label={editCtx ? 'Update Nest' : filling ? 'Fill Stock' : 'Nest on Stock'}
         title={widthMM > 0 && heightMM > 0 ? `Stock ${fmtLen(widthMM, units, 1)} × ${fmtLen(heightMM, units, 1)}` : 'Set the stock size first'} />
     </FormShell>
   )

@@ -178,4 +178,4 @@ The button reads **Generate Female Toolpath** or **Generate Male Toolpath**.
 | **Pattern** | Mode: linear (Rows, Cols, X Gap, Y Gap) · circular (Count, Radius, Start°, End°, Rotate items) | Apply Pattern |
 | **Tabs** | Count · Height · Length | Apply Tabs |
 | **Corners** | Corner Treatment: Outer Round · Inner Round · Chamfer · Dogbone · None · Radius (**Tool Radius** for Dogbone) | Apply to All Corners / Apply to N Selected Corners |
-| **Nest** | Shared lines (+ end mill) · Part Gap · Edge Margin · Rotation Step: None · 90° · 45° · 15° · Pack From: Left Edge · Bottom Edge · Fill stock with copies · Nest inside holes · Avoid other paths | Nest on Stock (Fill Stock when filling) |
+| **Nest** | Shared lines (+ end mill) · Part Gap · Edge Margin · Rotation Step: None · 90° · 45° · 15° · Pack From: Left Edge · Bottom Edge · Fill stock with copies (+ Parts, Copy toolpaths) · Nest inside holes · Avoid other paths | Nest on Stock (Fill Stock when filling; Update Nest from a Nest chip) |
