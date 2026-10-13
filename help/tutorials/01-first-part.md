@@ -3,6 +3,8 @@
 You will make a **coaster**: a 100 mm disc with a 3 mm recess, held by tabs so it can't
 fly loose. It takes about 10 minutes.
 
+> **Prefer to watch?** [This tutorial as a 4-minute video](https://youtu.be/XWXQmcoXm5g), narrated, with captions.
+
 > **Stuck?** The finished project is [`01-circles.fkam`](../../docs/01-circles.fkam).
 > Open it with the toolbar's **Open** button to compare.
 

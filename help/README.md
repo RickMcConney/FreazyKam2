@@ -10,7 +10,7 @@ Nothing to install, nothing uploaded.
 ## New here?
 
 **[Make your first part](tutorials/01-first-part.md)**: a coaster, from a blank screen to a
-G-code file, in about 10 minutes.
+G-code file, in about 10 minutes. Or [watch it as a 4-minute video](https://youtu.be/XWXQmcoXm5g).
 
 ---
 
@@ -30,7 +30,7 @@ G-code file, in about 10 minutes.
 
 Follow these from start to finish. Each one makes one thing.
 
-1. [Make your first part](tutorials/01-first-part.md): a coaster with a recess and tabs
+1. [Make your first part](tutorials/01-first-part.md): a coaster with a recess and tabs ([video](https://youtu.be/XWXQmcoXm5g))
 2. [Carve a picture in 3D](tutorials/02-carve-a-picture.md): a relief plaque from a greyscale image
 3. [Run your first job on the machine](tutorials/03-first-cut.md): FluidNC over WiFi
 

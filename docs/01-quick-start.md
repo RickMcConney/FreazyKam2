@@ -8,6 +8,9 @@ It is a small job, but it uses every part of the app you will use on every job a
 it — stock setup, the tool library, two operations, the simulator, and export. Allow
 about twenty minutes.
 
+> **Prefer to watch first?** The same coaster is a [4-minute video](https://youtu.be/XWXQmcoXm5g), narrated, with
+> captions. This chapter goes into more detail on each step.
+
 > **What you need:** a browser. Nothing to install, no account. Work is saved to your
 > own computer as a `.fkam` file when you ask for it.
 >
