@@ -108,3 +108,16 @@ describe('copyPaths', () => {
     expect(pasted.d).toBe(p.d)
   })
 })
+
+describe('copyPaths — the drawing\'s own grouping', () => {
+  // Shared ids would tie a copied part to its original in the nest.
+  it('gives the copies source groups and a source element of their own, still shared among them', () => {
+    const a = path({ id: 'a', sourceGroups: ['g1'], sourceElement: 'e1' })
+    const b = path({ id: 'b', sourceGroups: ['g1'], sourceElement: 'e1' })
+    const { paths: out } = copyPaths([a, b], [], [], DUPLICATE)
+    expect(out[0].sourceGroups).toEqual(out[1].sourceGroups)
+    expect(out[0].sourceGroups).not.toEqual(['g1'])
+    expect(out[0].sourceElement).toBe(out[1].sourceElement)
+    expect(out[0].sourceElement).not.toBe('e1')
+  })
+})

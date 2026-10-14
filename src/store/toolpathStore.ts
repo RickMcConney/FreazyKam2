@@ -275,6 +275,9 @@ interface ToolpathState {
   // order given; ops[0] is the one a chip click opens for editing.
   addOperations: (ops: AddPayload[], opts?: { record?: boolean }) => string[]
   updateOperation: (id: string, updates: Partial<AnyOperation>, opts?: { record?: boolean }) => void
+  // Several ops at once, in ONE store write — recorded exactly as that many updateOperation
+  // calls would be. A batch Generate writes its settings this way (see derived batches).
+  updateOperations: (entries: { id: string; updates: Partial<AnyOperation> }[], opts?: { record?: boolean }) => void
   deleteOperation: (id: string) => void
   // Recorded variants of replaceOperations for user-facing reorder /
   // group-delete (PathsPanel). replaceOperations itself stays raw — it's for
@@ -468,6 +471,73 @@ function recordOpReplacement(anchorId: string, deleteIds: string[], created: Any
   }
 }
 
+// ─── Derived batches ──────────────────────────────────────────────────────────
+//
+// A Generate over a big selection writes each operation's toolpath as it lands, and every
+// one of those writes re-renders everything that draws the program: the canvas toolpath
+// layer repaints EVERY finished toolpath, the Toolpaths list and the Objects strip rebuild
+// a row per op. Over 577 single-stroke labels that was ~1150 repaints, each bigger than the
+// last — quadratic in the batch, while the CAM work for the lot took 99 ms.
+//
+// So while a batch runs, the DERIVED writes (segments, status, entry hint — never a
+// setting) go to a buffer that is written in one store update every FLUSH_MS, and once
+// more when the batch ends. The canvas still fills in as it goes, a few times a second.
+// Anything that reads an operation's derived state DURING the batch must read it through
+// `withPending` — `entryHintAt` chains each op to where the one before it finished, and
+// `generateOperation` reads the entry hint it was just given.
+//
+// abortGeneration FLUSHES rather than discards: an undo first refreshes the cursor's
+// snapshot from the live stores, so results flushed just before it are filed with the
+// state they were generated from, and a load or New Project replaces them anyway.
+const FLUSH_MS = 200
+let pending: Map<string, Partial<AnyOperation>> | null = null
+let batchDepth = 0
+let flushTimer: ReturnType<typeof setTimeout> | null = null
+
+/** Start buffering derived writes. Nests; pair every call with `endDerivedBatch`. */
+export function beginDerivedBatch(): void {
+  batchDepth++
+  if (!pending) pending = new Map()
+}
+
+/** Write everything buffered, and stop buffering once the outermost batch ends. */
+export function endDerivedBatch(): void {
+  batchDepth = Math.max(0, batchDepth - 1)
+  flushDerived()
+  if (batchDepth === 0) pending = null
+}
+
+/** Write everything buffered now, in one store update. */
+export function flushDerived(): void {
+  if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }
+  if (!pending || pending.size === 0) return
+  const patches = pending
+  pending = new Map()
+  useToolpathStore.setState((s) => ({
+    operations: s.operations.map((o) => {
+      const p = patches.get(o.id)
+      return p ? { ...o, ...p } as AnyOperation : o
+    }),
+  }))
+}
+
+/**
+ * Buffer a derived write to `id` if a batch is running. False when none is, and the caller
+ * writes it itself. Only DERIVED_OP_KEYS belong here — a setting must be recorded.
+ */
+export function bufferDerived(id: string, patch: Partial<AnyOperation>): boolean {
+  if (!pending) return false
+  pending.set(id, { ...pending.get(id), ...patch } as Partial<AnyOperation>)
+  if (!flushTimer) flushTimer = setTimeout(flushDerived, FLUSH_MS)
+  return true
+}
+
+/** `op` as it will be once the buffer is written. */
+export function withPending<T extends AnyOperation>(op: T): T {
+  const p = pending?.get(op.id)
+  return p ? { ...op, ...p } as T : op
+}
+
 export const useToolpathStore = create<ToolpathState>()((set, get) => ({
   operations: [],
 
@@ -484,26 +554,36 @@ export const useToolpathStore = create<ToolpathState>()((set, get) => ({
     return created.map((o) => o.id)
   },
 
-  updateOperation: (id, updates, opts) => {
-    const opType = get().operations.find((o) => o.id === id)?.type
-    set((s) => ({ operations: s.operations.map((o) => o.id === id ? { ...o, ...updates } as AnyOperation : o) }))
+  updateOperation: (id, updates, opts) => get().updateOperations([{ id, updates }], opts),
+
+  updateOperations: (entries, opts) => {
+    if (entries.length === 0) return
+    const byId = new Map(entries.map((e) => [e.id, e.updates]))
+    const typeOf = new Map(get().operations.filter((o) => byId.has(o.id)).map((o) => [o.id, o.type]))
+    set((s) => ({ operations: s.operations.map((o) => {
+      const u = byId.get(o.id)
+      return u ? { ...o, ...u } as AnyOperation : o
+    }) }))
     if (opts?.record === false) return
-    const recordable = { ...updates } as Record<string, unknown>
-    for (const k of DERIVED_OP_KEYS) delete recordable[k]
-    if (Object.keys(recordable).length > 0) {
+    let edited = false
+    for (const { id, updates } of entries) {
+      const recordable = { ...updates } as Record<string, unknown>
+      for (const k of DERIVED_OP_KEYS) delete recordable[k]
+      if (Object.keys(recordable).length === 0) continue
+      edited = true
       // A settings edit joins the op's defining step (usually its op.add) while that is
       // the latest step — changing a just-made pocket's depth is an argument edit to
       // that call. An op defined further back gets an op.update of its own, so the edit
       // is its own undo step (see joinsTip in timelineStore).
       const tl = useTimelineStore.getState()
       if (!tl.joinsTip([{ op: id }])) {
-        tl.record({ kind: 'op.update', opId: id, opType, updates: recordable as Partial<SerializedOperation> })
+        tl.record({ kind: 'op.update', opId: id, opType: typeOf.get(id), updates: recordable as Partial<SerializedOperation> })
       }
-      // A settings edit here can move this op's floor (depth, boundary, islands, its own
-      // start reference), which is a change to everything sitting ON that floor. Derived
-      // writes returned above, so this only runs for real edits.
-      get().revalidateStartHeights()
     }
+    // A settings edit here can move this op's floor (depth, boundary, islands, its own
+    // start reference), which is a change to everything sitting ON that floor. Derived
+    // writes are skipped above, so this only runs for real edits — once for the lot.
+    if (edited) get().revalidateStartHeights()
   },
 
   deleteOperation: (id) => {
@@ -590,7 +670,8 @@ export const useToolpathStore = create<ToolpathState>()((set, get) => ({
   // is the current state, as before. A caller that generates without applying op.entryHint
   // must clear it first.
   setSegments: (id, segments, builtWith) => {
-    const cur = get().operations.find((o) => o.id === id)
+    const found = get().operations.find((o) => o.id === id)
+    const cur = found && withPending(found)
     // The surface these segments are cut from NOW. Recorded because it is derived from the
     // OTHER operations: reorder them, or change the depth of one, and this op's start
     // height silently becomes something else. Comparing the two is the only way to know.
@@ -602,6 +683,7 @@ export const useToolpathStore = create<ToolpathState>()((set, get) => ({
     }
     const drifted = generatedWith.startZMM !== undefined
       && Math.abs(generatedWith.startZMM - startZNow) >= 1e-9
+    if (bufferDerived(id, { segments, status: drifted ? 'needs-update' : 'done', errorMessage: undefined, generatedWith } as Partial<AnyOperation>)) return
     set((s) => ({
       operations: s.operations.map((o) =>
         o.id === id
@@ -618,12 +700,15 @@ export const useToolpathStore = create<ToolpathState>()((set, get) => ({
   // automatic regeneration has no form open and goes to the status bar instead (see
   // regenerate.ts). `errorMessage` is kept either way — the operations strip shows it on
   // the row, which is where a failure is fixed or thrown away.
-  setError: (id, error) =>
+  setError: (id, error) => {
+    // Nothing buffered for this op may land on top of its failure.
+    pending?.delete(id)
     set((s) => ({
       operations: s.operations.map((o) =>
         o.id === id ? { ...o, status: 'error', errorMessage: error, segments: [] } as AnyOperation : o
       ),
-    })),
+    }))
+  },
 
   cancelGenerating: () =>
     set((s) => ({

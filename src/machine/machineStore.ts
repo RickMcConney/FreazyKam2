@@ -1022,13 +1022,16 @@ export const useMachineStore = create<MachineState>()(
           set({ sdBusy: 'Generating G-code…', sdError: null })
           const project = useProjectStore.getState().name
           const base = asciiFileName(project === 'Untitled Project' ? 'design' : project, 'design')
-          const { operations, toolsById, profile } = await buildGcodeInputs()
+          // The ACTIVE sheet, when a nest spread the parts over several (cam/sheets) — named
+          // so the card says which board it is for.
+          const { operations, toolsById, profile, sheet, sheets } = await buildGcodeInputs()
           if (!operations.some((o) => o.visible && o.status === 'done' && o.segments.length > 0)) {
             set({ sdBusy: null, sdError: 'The design has no toolpaths to send — generate some first' })
             return
           }
-          const gcode = generateGcode(operations, toolsById, base, profile)
-          const name = `${base}.nc`
+          const program = sheets > 1 ? `${base}_sheet${sheet + 1}` : base
+          const gcode = generateGcode(operations, toolsById, program, profile)
+          const name = `${program}.nc`
           const file = new File([gcode], name, { type: 'text/plain' })
           set({ sdBusy: `Uploading ${name}…` })
           const r = await link.http({

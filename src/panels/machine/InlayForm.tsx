@@ -1,5 +1,5 @@
 // ─── Inlay form ───────────────────────────────────────────────────────────────
-import { FormShell, PathChip, PathListSection, StepDownField, GenerateBtn, useSessionOps, toolsOfType, pickToolId, LengthInput, FormError, useGenerateError, discardFailedOps } from './shared'
+import { FormShell, PathChip, PathListSection, StepDownField, GenerateBtn, useSessionOps, toolsOfType, pickToolId, LengthInput, FormError, FormNotice, useGenerateError, discardFailedOps } from './shared'
 import { ToolPicker } from './ToolPicker'
 import { useState } from 'react'
 import { ICON } from '../../theme'
@@ -14,7 +14,7 @@ import { isWorkCancelled } from '../../workers/workerClient'
 import { generateOperation, showGenNotes } from '../../cam/opJob'
 import { effectiveStepDownMM, seedStepDownMM } from '../../cam/feeds'
 import { includedAngleDeg, isVCutter } from '../../cam/geom'
-import { groupPathsByContainment } from './containment'
+import { groupPathsByContainment, skipOpenPaths, skippedOpenMsg } from './containment'
 import { getMultiBBox } from '../../canvas/selectionUtils'
 
 interface InlayFormState {
@@ -48,7 +48,8 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
   // Individual selectors, not whole-store destructuring — see DrillForm.
   const tools = useToolStore((s) => s.tools)
   const paths = usePathsStore((s) => s.paths)
-  const selPaths = useSelectedPaths()
+  // Open paths are left out rather than failing the inlay they land in — see skipOpenPaths.
+  const { closed: selPaths, skipped: skippedOpen } = skipOpenPaths(useSelectedPaths())
   const addOperations = useToolpathStore((s) => s.addOperations)
   const updateOperation = useToolpathStore((s) => s.updateOperation)
   const replaceGeneratedOperations = useToolpathStore((s) => s.replaceGeneratedOperations)
@@ -549,6 +550,7 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
           </label>
         </div>
       )}
+      {!editOp && <FormNotice msg={skippedOpenMsg(skippedOpen, 'an inlay')} />}
       <FormError msg={errorMsg} />
       <GenerateBtn disabled={!canGenerate} generating={generating} onClick={handleGenerate}
         title={groups.length > 1 ? `Creates ${groups.length * (finishIsNone ? 1 : 2)} operations` : undefined}

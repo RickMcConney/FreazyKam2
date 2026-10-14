@@ -1,7 +1,8 @@
 // ─── Nest form ────────────────────────────────────────────────────────────────
 import { useMemo, useState } from 'react'
-import { AlertCircle } from 'lucide-react'
-import { FormShell, PathChip, ToggleRow, LengthInput, FormNotice, GenerateBtn, ToolSelector, toolsOfType, pickToolId, CheckRow, FIELD_CLS } from './shared'
+import { AlertCircle, Loader2, Square } from 'lucide-react'
+import { useGenProgressStore } from '../../store/genProgressStore'
+import { FormShell, PathChip, PathListSection, ToggleRow, LengthInput, FormNotice, GenerateBtn, ToolSelector, toolsOfType, pickToolId, CheckRow, FIELD_CLS } from './shared'
 import { useToolStore } from '../../store/toolStore'
 import { ICON } from '../../theme'
 import { useFormDefaultsStore } from '../../store/formDefaultsStore'
@@ -18,7 +19,7 @@ import { regenerateMany } from '../../cam/regenerate'
 import { NumericInput } from '../../components/NumericInput'
 import { useTabStore } from '../../store/tabStore'
 import { uid } from '../../uid'
-import { runInWorkerFor } from '../../workers/workerClient'
+import { runInWorkerFor, cancelWork, isWorkCancelled } from '../../workers/workerClient'
 import type { PathUpdate } from '../../store/pathsStore'
 import type { FillParams, PathDefinition } from '../../importers/svgImporter'
 
@@ -34,6 +35,23 @@ const rotOptionOf = (stepDeg: number): RotOption =>
   stepDeg === 90 ? '90' : stepDeg === 45 ? '45' : stepDeg === 15 ? '15' : 'none'
 
 /**
+ * FINE ROTATION IS FOR SMALL NESTS. Every finer step multiplies the orientations each
+ * part is tried in (4 at 90°, 8 at 45°, 24 at 15°) and adds a coarser grid to the
+ * multi-start besides, while the material it saves over 90° is small — on the
+ * 127-part Charizard nest onto half sheets, 45° took 12.9 s against 6.0 s at 90° and
+ * used the same three sheets. So past this many parts only None and 90° are offered, and
+ * a saved 45° or 15° nests at 90° without being forgotten: the next small project still
+ * opens on it.
+ *
+ * NESTING IN BATCHES IS NOT A FASTER WAY ROUND IT — measured. Batches of 30 with the
+ * earlier batches as obstacles were SLOWER at both 90° and 45° (8.1 / 10.9 s against 6.0
+ * at 90°; 13.7 / 19.6 against 12.9 at 45°) and saved no sheet: every batch starts again at
+ * sheet 1 and searches the full early sheets, which is exactly the cost the row check
+ * took out of one big nest, and every batch re-runs the multi-start.
+ */
+const FINE_ROTATION_MAX_PARTS = 30
+
+/**
  * Edit mode (Fill chip click): re-run a fill with new settings. Identified by the
  * DEFINITION id every copy of one fill shares; the original part and the settings
  * come back off the copies, so the form needs nothing else. The old copies — and the
@@ -44,6 +62,9 @@ export interface NestEditCtx {
   defId: string
 }
 
+/** The worker key a nest runs under — what its Stop button cancels (see cancelWork). */
+const NEST_JOB = 'nest'
+
 interface NestFormState {
   spacingMM: number
   marginMM: number
@@ -51,6 +72,8 @@ interface NestFormState {
   packFrom: 'left' | 'bottom'
   useHoles: boolean
   avoidOthers: boolean
+  /** Carry what will not fit onto more sheets of the same stock, laid out below it. */
+  multiSheet: boolean
   /** Repeat the one selected part until the stock is full — see canFill. */
   fillStock: boolean
   /** Parts on the stock after a fill, the original included. 0 = as many as fit. */
@@ -65,7 +88,7 @@ interface NestFormState {
 
 const FALLBACK: NestFormState = {
   spacingMM: 3, marginMM: 3, rotation: '90', packFrom: 'left', useHoles: false,
-  avoidOthers: true, fillStock: false, fillCount: 0, copyToolpaths: true, sharedLines: false, sharedToolId: '',
+  avoidOthers: true, multiSheet: true, fillStock: false, fillCount: 0, copyToolpaths: true, sharedLines: false, sharedToolId: '',
 }
 
 interface NestReport {
@@ -84,6 +107,8 @@ interface NestReport {
   usedHeightMM: number
   utilization: number
   unplaced: number
+  /** Sheets of stock the nest used (cam/sheets) — more than one only with `multiSheet`. */
+  sheets: number
   /** The nest came out where everything already was — see runNest. */
   unchanged: boolean
 }
@@ -141,12 +166,16 @@ export function NestForm({ onClose, editCtx }: { onClose: () => void; editCtx?: 
   const [error, setError] = useState<string | null>(null)
   const [report, setReport] = useState<NestReport | null>(null)
   const [running, setRunning] = useState(false)
+  const progress = useGenProgressStore((s) => s.byOp[NEST_JOB])
 
   // What will actually be moved as one piece — a gear's parts, a user group, a
   // plate and the holes drawn inside it. Worth showing before the button is
   // pressed: "9 paths → 4 parts" is the whole of what the user needs to check.
   const groups = useMemo(() => groupPathsForNesting(selPaths), [selPaths])
   const canApply = groups.length > 0 && widthMM > 0 && heightMM > 0
+  const fineRotation = groups.length <= FINE_ROTATION_MAX_PARTS
+  // What this nest turns parts by: the setting, held to 90° on a big nest (see above).
+  const rotation: RotOption = !fineRotation && (form.rotation === '45' || form.rotation === '15') ? '90' : form.rotation
   // ONE PART, or "as many as will fit" has no answer — which of a mixed set
   // would it make more of? So the option appears only when the selection comes
   // to a single part, and a selection that grows past one turns it off rather
@@ -174,7 +203,11 @@ export function NestForm({ onClose, editCtx }: { onClose: () => void; editCtx?: 
     if (!canApply) return
     setRunning(true)
     runNest()
-      .catch((e) => setError(e instanceof Error ? e.message : 'Nesting failed'))
+      .catch((e) => {
+        // Stopped by the user: the drawing is untouched, which is all there is to say.
+        if (isWorkCancelled(e)) { useUIStore.getState().showStatus('Nest stopped — nothing moved'); return }
+        setError(e instanceof Error ? e.message : 'Nesting failed')
+      })
       .finally(() => setRunning(false))
   }
 
@@ -221,19 +254,24 @@ export function NestForm({ onClose, editCtx }: { onClose: () => void; editCtx?: 
     // that is the browser's "page unresponsive" dialog, which is exactly what it
     // put up. Nothing here touches the DOM or the stores, so it moves across
     // whole: rings in, transforms out.
-    const result = await runInWorkerFor(undefined, 'nest', items, {
+    const nestParams = {
       sheetWidthMM: widthMM,
       sheetHeightMM: heightMM,
       spacingMM: gapMM,
       marginMM: form.marginMM,
       ...(sharing ? { snapGapMM: gapMM } : {}),
-      rotationStepDeg: ROT_STEP[form.rotation],
+      rotationStepDeg: ROT_STEP[rotation],
       packFrom: form.packFrom,
       useHoles: form.useHoles,
       obstacles,
       fill: filling,
       ...(filling && form.fillCount > 0 ? { fillCount: form.fillCount } : {}),
-    })
+    }
+    // MORE SHEETS for what will not fit on one (tools/nestOp nestSheets) — never for a
+    // fill, which is one part repeated across one sheet.
+    const result = filling || !form.multiSheet
+      ? { ...(await runInWorkerFor(NEST_JOB, 'nest', items, nestParams)), sheets: 1 }
+      : await runInWorkerFor(NEST_JOB, 'nestSheets', items, nestParams)
 
     // THE DRAWING MAY HAVE MOVED ON while the worker ran. Paths are replaced, never
     // mutated, so a nested part that is not the same object any more was edited — a
@@ -271,7 +309,7 @@ export function NestForm({ onClose, editCtx }: { onClose: () => void; editCtx?: 
     // from it. An edit keeps the id, so the chip stays where it was.
     const fillParamsNow: FillParams = {
       count: form.fillCount, spacingMM: form.spacingMM, marginMM: form.marginMM,
-      rotationStepDeg: ROT_STEP[form.rotation], packFrom: form.packFrom, useHoles: form.useHoles,
+      rotationStepDeg: ROT_STEP[rotation], packFrom: form.packFrom, useHoles: form.useHoles,
       avoidOthers: form.avoidOthers, copyToolpaths: form.copyToolpaths,
       ...(sharing ? { sharedToolId: sharedTool!.id } : {}),
     }
@@ -395,6 +433,7 @@ export function NestForm({ onClose, editCtx }: { onClose: () => void; editCtx?: 
       usedHeightMM: result.usedHeightMM,
       utilization: result.utilization,
       unplaced: result.unplacedIds.length,
+      sheets: result.sheets,
       unchanged,
     })
     useUIStore.getState().showStatus(
@@ -403,7 +442,8 @@ export function NestForm({ onClose, editCtx }: { onClose: () => void; editCtx?: 
         : filling
           ? `Filled the stock with ${onStock.length} part${onStock.length === 1 ? '' : 's'} — ${add.length} added`
             + (opsCopied > 0 ? `, ${opsCopied} toolpath${opsCopied === 1 ? '' : 's'} copied` : '')
-          : `Nested ${onStock.length} of ${items.length} part${items.length === 1 ? '' : 's'}`,
+          : `Nested ${onStock.length} of ${items.length} part${items.length === 1 ? '' : 's'}`
+            + (result.sheets > 1 ? ` on ${result.sheets} sheets` : ''),
       result.unplacedIds.length > 0 ? 'warn' : 'info',
     )
     save('nest', form)
@@ -411,24 +451,17 @@ export function NestForm({ onClose, editCtx }: { onClose: () => void; editCtx?: 
 
   return (
     <FormShell title={editCtx ? 'Edit Nest' : 'Nest'} onClose={onClose}>
-      <div>
-        <div className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">
-          {editCtx ? 'Original part' : 'Paths'}{groups.length > 0 && (
-            <span className="normal-case text-gray-500 dark:text-neutral-400">
-              {' '}({selPaths.length} → {groups.length} part{groups.length === 1 ? '' : 's'})
-            </span>
-          )}
-        </div>
-        {selPaths.length > 0 ? (
-          <div className="space-y-0.5 max-h-40 overflow-y-auto">
-            {selPaths.map((p) => <PathChip key={p.id} path={p} />)}
-          </div>
-        ) : (
-          <p className="text-body text-amber-600 dark:text-amber-400 flex items-center gap-1">
-            <AlertCircle size={ICON.sm} /> {editCtx ? 'The original part of this nest has been deleted' : 'Select the paths to nest'}
+      {selPaths.length > 0 ? (
+        groups.length > 0 && (
+          <p className="text-label text-gray-600 dark:text-neutral-400">
+            {selPaths.length} path{selPaths.length === 1 ? '' : 's'} → {groups.length} part{groups.length === 1 ? '' : 's'}
           </p>
-        )}
-      </div>
+        )
+      ) : (
+        <p className="text-body text-amber-600 dark:text-amber-400 flex items-center gap-1">
+          <AlertCircle size={ICON.sm} /> {editCtx ? 'The original part of this nest has been deleted' : 'Select the paths to nest'}
+        </p>
+      )}
 
       <div>
         <div className="flex items-center gap-2">
@@ -471,18 +504,19 @@ export function NestForm({ onClose, editCtx }: { onClose: () => void; editCtx?: 
 
       <div>
         <ToggleRow label="Rotation Step"
-          options={['none', '90', '45', '15'] as const}
+          options={fineRotation ? (['none', '90', '45', '15'] as const) : (['none', '90'] as const)}
           labels={ROT_LABEL}
-          value={form.rotation}
+          value={rotation}
           onChange={(v) => up('rotation', v)} />
         {/* "45°" reads as a LIMIT — up to 45° — and it is not one; it is the step
             of the grid of orientations a part may be turned to, so 45° allows a
             half turn and 15° allows everything 45° does. Said in the panel
             because the difference decides whether the setting looks broken. */}
         <p className="text-label text-gray-600 dark:text-neutral-400 normal-case mt-1">
-          {form.rotation === 'none'
+          {rotation === 'none'
             ? 'Parts are turned back to the way they were drawn — for stock with a grain to follow.'
-            : `Parts may be turned to any multiple of ${ROT_LABEL[form.rotation]}. Finer steps pack a little tighter and take longer.`}
+            : `Parts may be turned to any multiple of ${ROT_LABEL[rotation]}. Finer steps pack a little tighter and take longer.`}
+          {!fineRotation && ` 45° and 15° are offered for up to ${FINE_ROTATION_MAX_PARTS} parts — on ${groups.length} they take several times as long for little material saved.`}
         </p>
       </div>
 
@@ -562,6 +596,16 @@ export function NestForm({ onClose, editCtx }: { onClose: () => void; editCtx?: 
             Avoid other paths
           </label>
         </div>
+        {!filling && (
+          <div className="flex items-center gap-2">
+            <input type="checkbox" id="nest-sheets" checked={form.multiSheet}
+              onChange={(e) => up('multiSheet', e.target.checked)} className="accent-blue-500" />
+            <label htmlFor="nest-sheets" className="text-body text-gray-700 dark:text-neutral-300 cursor-pointer"
+              title="Parts that will not fit go onto more sheets of the same stock, laid out below it. Each sheet is simulated and exported on its own.">
+              Use more sheets
+            </label>
+          </div>
+        )}
       </div>
 
       {report && (
@@ -571,9 +615,10 @@ export function NestForm({ onClose, editCtx }: { onClose: () => void; editCtx?: 
             : report.copies > 0
               ? `Filled the stock with ${report.placed} parts — ${report.copies} added`
                 + (report.opsCopied > 0 ? `, with ${report.opsCopied} toolpath${report.opsCopied === 1 ? '' : 's'}` : '')
-              : `Nested ${report.placed} of ${report.total}`} into{' '}
-          {fmtLen(report.usedWidthMM, units, 1)} × {fmtLen(report.usedHeightMM, units, 1)} —
-          parts cover {(report.utilization * 100).toFixed(0)}% of the stock.
+              : `Nested ${report.placed} of ${report.total}`}
+          {report.sheets > 1
+            ? ` on ${report.sheets} sheets — the first is ${(report.utilization * 100).toFixed(0)}% covered.`
+            : <> into {fmtLen(report.usedWidthMM, units, 1)} × {fmtLen(report.usedHeightMM, units, 1)} — parts cover {(report.utilization * 100).toFixed(0)}% of the stock.</>}
           {report.unchanged && ' This is the same arrangement, so nothing moved.'}
         </p>
       )}
@@ -585,7 +630,9 @@ export function NestForm({ onClose, editCtx }: { onClose: () => void; editCtx?: 
           : report && report.opsSkipped > 0
             ? `${report.opsSkipped} toolpath${report.opsSkipped === 1 ? ' was' : 's were'} not copied — an inlay is cut as a pair, so apply it to the copies yourself.`
           : report && report.unplaced > 0
-            ? `${report.unplaced} part${report.unplaced === 1 ? '' : 's'} would not fit — parked to the right of the stock.`
+            ? `${report.unplaced} part${report.unplaced === 1 ? '' : 's'} would not fit`
+              + (report.sheets > 1 || form.multiSheet ? ' even on an empty sheet' : '')
+              + ' — parked above the stock.'
             : null} />
       {error && (
         <p className="text-body text-red-600 dark:text-red-400 flex items-start gap-1.5">
@@ -593,9 +640,38 @@ export function NestForm({ onClose, editCtx }: { onClose: () => void; editCtx?: 
         </p>
       )}
 
-      <GenerateBtn disabled={!canApply || running} generating={running} onClick={handleNest}
-        label={editCtx ? 'Update Nest' : filling ? 'Fill Stock' : 'Nest on Stock'}
-        title={widthMM > 0 && heightMM > 0 ? `Stock ${fmtLen(widthMM, units, 1)} × ${fmtLen(heightMM, units, 1)}` : 'Set the stock size first'} />
+      {/* A nest of a hundred-odd parts at fine rotation runs for a while, and the only way
+          to stop a worker mid-solve is to terminate it — cancelWork stops this nest and
+          nothing else generating alongside it. Nothing has been applied until it returns,
+          so a stopped nest leaves the drawing exactly as it was. */}
+      {running ? (
+        <div className="flex gap-1.5">
+          {/* The bar: parts placed so far, and where the nest has got to (tools/nestOp
+              nestSheets). Its own entry in the progress store, keyed by the nest's job. */}
+          <div className="relative flex-1 min-w-0 py-1.5 rounded text-body font-medium bg-blue-600 text-white overflow-hidden flex items-center justify-center">
+            {progress && (
+              <span aria-hidden className="absolute inset-y-0 left-0 bg-blue-400/60 transition-[width] duration-150 ease-linear"
+                style={{ width: `${Math.round(progress.frac * 100)}%` }} />
+            )}
+            <span className="relative flex items-center gap-1.5 truncate">
+              <Loader2 size={ICON.sm} className="animate-spin shrink-0" />
+              {progress ? `${progress.label ? `${progress.label} · ` : ''}${Math.round(progress.frac * 100)}%` : 'Nesting…'}
+            </span>
+          </div>
+          <button onClick={() => cancelWork(NEST_JOB)} title="Stop this nest — nothing in the drawing moves"
+            className="shrink-0 px-2.5 py-1.5 rounded text-body font-medium bg-red-600 hover:bg-red-500 text-white transition-colors flex items-center gap-1.5">
+            <Square size={ICON.sm} className="fill-current" />Stop
+          </button>
+        </div>
+      ) : (
+        <GenerateBtn disabled={!canApply} generating={false} onClick={handleNest}
+          label={editCtx ? 'Update Nest' : filling ? 'Fill Stock' : 'Nest on Stock'}
+          title={widthMM > 0 && heightMM > 0 ? `Stock ${fmtLen(widthMM, units, 1)} × ${fmtLen(heightMM, units, 1)}` : 'Set the stock size first'} />
+      )}
+      {/* Below the button, where every form keeps its path list (PathListSection). */}
+      <PathListSection count={selPaths.length}>
+        {selPaths.map((p) => <PathChip key={p.id} path={p} label={editCtx ? 'original' : undefined} />)}
+      </PathListSection>
     </FormShell>
   )
 }

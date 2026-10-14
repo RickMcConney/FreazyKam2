@@ -183,6 +183,34 @@ export function cancelAllWork(): number {
   return cancelled.length
 }
 
+/**
+ * Abandon the queued and in-flight jobs submitted under `key` — and only those, so a Stop
+ * in one form does not take every other generation down with it (cancelAllWork is for
+ * an undo or a new project, where everything in flight is wrong). In-flight workers are
+ * terminated as cancelAllWork does, the only real abort. Rejects with WORK_CANCELLED,
+ * synchronously. Returns how many jobs were stopped.
+ */
+export function cancelWork(key: string): number {
+  const cancelled: Job[] = []
+  for (let i = queue.length - 1; i >= 0; i--) {
+    if (queue[i].key === key) cancelled.push(...queue.splice(i, 1))
+  }
+  for (let i = slots.length - 1; i >= 0; i--) {
+    const slot = slots[i]
+    if (slot.job?.key !== key) continue
+    cancelled.push(slot.job)
+    slot.worker.terminate()
+    slots.splice(i, 1)
+  }
+  activeKeys.delete(key)
+  for (const job of cancelled) {
+    emitProgress({ opId: job.key, fn: job.fn, frac: 1, done: true })
+    job.reject(new Error(WORK_CANCELLED))
+  }
+  pump()
+  return cancelled.length
+}
+
 function submit(key: string | undefined, fn: string, args: unknown[]): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const t0 = performance.now()

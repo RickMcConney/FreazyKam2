@@ -9,7 +9,7 @@ import { parseNumeric, NUMERIC_HINT } from '../components/parseNumeric'
 import { useWorkpieceStore, fromMM, toMM } from '../store/workpieceStore'
 import { getMultiBBox, placedAngleDeg, type TransformStep } from '../canvas/selectionUtils'
 import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
-import { spirographLoops, SPIRO_RATIO_RANGE, scaleShapeParams, type ShapeParams } from '../shapes/shapeGenerators'
+import { spirographLoops, SPIRO_RATIO_RANGE, scaleShapeParams, isScaleLocked, type ShapeParams } from '../shapes/shapeGenerators'
 import { loadFont, isFontLoaded, SINGLE_LINE_FONT_FAMILY } from '../shapes/textGenerator'
 import { carriedPinion, gearDims, gearHubOf, gearLabel, gearMesh, gearRimW, gearRotationSense, gearSpokeW, pinionDims, pinionLabel, TOOTH_LABEL_SIZE } from '../shapes/gearGenerator'
 import { hubGrownWhy } from '../shapes/spokedWheel'
@@ -31,11 +31,13 @@ const ConstraintsSection = memo(ConstraintsSectionBase)
 
 const fieldCls = 'flex-1 bg-gray-50 dark:bg-neutral-900 border border-gray-400 dark:border-neutral-600 rounded px-1.5 py-0.5 text-body text-gray-800 dark:text-neutral-200 font-mono w-0 focus:outline-none focus:border-blue-500'
 const labelCls = 'text-gray-600 dark:text-neutral-400 text-label w-5 flex-shrink-0'
+// For a label spelled out in full (Rotate, Scale) rather than a letter or two.
+const wideLabelCls = 'text-gray-600 dark:text-neutral-400 text-label flex-shrink-0'
 
-function ReadField({ label, value, units }: { label: string; value: string; units?: string }) {
+function ReadField({ label, value, units, wide }: { label: string; value: string; units?: string; wide?: boolean }) {
   return (
     <div className="flex items-center gap-1.5">
-      <span className={labelCls}>{label}</span>
+      <span className={wide ? wideLabelCls : labelCls}>{label}</span>
       <span className={fieldCls + ' tabular-nums'}>{value}</span>
       <UnitLabel>{units}</UnitLabel>
     </div>
@@ -136,44 +138,60 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 // A path with no parameters has no placement and no way to know: `baseAngle` is
 // 0 for it and the field behaves exactly as it always did.
 function RotationField({ liveAngle, baseAngle, onApply }: { liveAngle: number | null; baseAngle: number; onApply: (deg: number) => void }) {
-  const shown = String(+baseAngle.toFixed(2))
+  if (liveAngle !== null) {
+    return <ReadField label="Rotate" wide value={(baseAngle + liveAngle).toFixed(1)} units="°" />
+  }
+  return <CommitField label="Rotate" unit="°" value={baseAngle} step={1} onCommit={(v) => onApply(v - baseAngle)} />
+}
+
+// A field that acts only on Enter or blur, never per keystroke — for a value
+// whose every intermediate state would be a real edit: an angle (typing 45
+// would turn 4° first) or a scale percentage (typing 100 would scale to 1%
+// first, and a shape clamped at 1% does not come back). `onCommit` gets the
+// typed value only when it differs from `value`.
+function CommitField({ label, unit, value, step, min, title, onCommit }: {
+  label: string
+  unit: string
+  value: number
+  step: number
+  min?: number
+  title?: string
+  onCommit: (v: number) => void
+}) {
+  const shown = String(+value.toFixed(2))
   const [text, setText] = useState(shown)
   // Guard against double-commit: Enter calls commit() then blur() which re-triggers onBlur.
   const committedRef = useRef(false)
-  // Follows the shape: after a canvas rotate lands, the field must read the new
-  // angle rather than whatever was last typed into it.
+  // Follows the shape: after a canvas gesture lands, the field must read the new
+  // value rather than whatever was last typed into it.
   useEffect(() => { setText(shown) }, [shown])
-  // WHO A TYPED ANGLE TURNS, frozen while the box is dirty — the same trap
-  // NumericInput has, and worse here because the field applies a DELTA. Canvas
+  // WHO A TYPED VALUE LANDS ON, frozen while the box is dirty — the same trap
+  // NumericInput has, and worse here because the callers apply a DELTA. Canvas
   // selection changes on mousedown and the blur that commits arrives after it,
-  // by which point this render carries the newly clicked shape's baseAngle and
-  // onApply; the resync effect above cannot save it, being a passive effect
+  // by which point this render carries the newly clicked shape's value and
+  // onCommit; the resync effect above cannot save it, being a passive effect
   // React runs in a later task. So an angle typed against one shape turned the
   // next one clicked. Untouched box (text === shown) re-arms it.
-  const target = useRef({ baseAngle, onApply })
-  if (text === shown) target.current = { baseAngle, onApply }
+  const target = useRef({ value, onCommit })
+  if (text === shown) target.current = { value, onCommit }
 
   // `parseNumeric`, never `parseFloat` — this field is hand-rolled rather than a
-  // NumericInput (it applies a DELTA and must not fire while a rotation is being typed),
-  // which is exactly how it came to be the one angle box that took neither a fraction nor
-  // an `=` formula. parseFloat also read '1/2' as 1, i.e. a 1° turn where half a degree
+  // NumericInput (it must not fire while a value is being typed), which is exactly
+  // how the angle box came to be the one that took neither a fraction nor an `=`
+  // formula. parseFloat also read '1/2' as 1, i.e. a 1° turn where half a degree
   // was asked for.
   function commit(currentText: string) {
     if (committedRef.current) return
     committedRef.current = true
     const v = parseNumeric(currentText)
-    const { baseAngle: from, onApply: apply } = target.current
-    if (v !== null && Math.abs(v - from) > 0.0001) apply(v - from)
+    const { value: from, onCommit: apply } = target.current
+    if (v !== null && (min === undefined || v >= min) && Math.abs(v - from) > 0.0001) apply(v)
     setText(shown)
   }
 
-  if (liveAngle !== null) {
-    return <ReadField label="∠" value={(baseAngle + liveAngle).toFixed(1)} units="°" />
-  }
-
   return (
-    <div className="flex items-center gap-1.5">
-      <span className={labelCls}>∠</span>
+    <div className="flex items-center gap-1.5" title={title}>
+      <span className={wideLabelCls}>{label}</span>
       <input
         type="text"
         inputMode="decimal"
@@ -186,13 +204,13 @@ function RotationField({ liveAngle, baseAngle, onApply }: { liveAngle: number | 
           if (e.key === 'Escape') { committedRef.current = true; setText(shown); e.currentTarget.blur() }
           // A nudge resolves whatever is in the box first, so stepping from '=45/2' steps
           // from 22.5 — the same reading NumericInput's stepper takes.
-          if (e.key === 'ArrowUp') { e.preventDefault(); setText(String((parseNumeric(e.currentTarget.value) ?? 0) + 1)) }
-          if (e.key === 'ArrowDown') { e.preventDefault(); setText(String((parseNumeric(e.currentTarget.value) ?? 0) - 1)) }
+          if (e.key === 'ArrowUp') { e.preventDefault(); setText(String((parseNumeric(e.currentTarget.value) ?? 0) + step)) }
+          if (e.key === 'ArrowDown') { e.preventDefault(); setText(String((parseNumeric(e.currentTarget.value) ?? 0) - step)) }
         }}
         className={fieldCls}
         title={NUMERIC_HINT}
       />
-      <UnitLabel>°</UnitLabel>
+      <UnitLabel>{unit}</UnitLabel>
     </div>
   )
 }
@@ -1012,6 +1030,14 @@ export default function PropertiesPanel() {
     return Math.abs(first) < 1e-9 ? 0 : first
   }, [selectedPaths])
 
+  // How big the selection stands against the size it was made at — see
+  // ImportedPath.scalePct. Paths scaled apart have no one answer: null.
+  const scalePct = useMemo(() => {
+    const pcts = selectedPaths.map((p) => p.scalePct ?? 100)
+    if (pcts.length === 0) return 100
+    return pcts.every((v) => Math.abs(v - pcts[0]) < 1e-6) ? pcts[0] : null
+  }, [selectedPaths])
+
   if (selectedPaths.length === 0) return null
   if (!bbox) return null
 
@@ -1048,6 +1074,21 @@ export default function PropertiesPanel() {
     if (!bbox || bbox.width === 0 || bbox.height === 0) return
     const sx = w / bbox.width, sy = h / bbox.height
     applyTransform({ kind: 'scale', sx, sy, ax: bbox.minX, ay: bbox.maxY }, 'scale')
+  }
+
+  // ABSOLUTE, like W/H: the typed number is the size to stand AT, as a percent of
+  // the original, so 100 undoes any run of earlier scales. Uniform, so a shape
+  // keeps its parameters (a circle stays a circle with a new radius). Anchored
+  // the way a typed W/H is — the top-left corner — unless the selection is set
+  // to resize from its centre. A mixed selection takes the typed value as a
+  // factor of its current size, there being no single "from" to undo.
+  function applyScalePct(pct: number) {
+    if (!bbox || !(pct > 0)) return
+    const s = pct / (scalePct ?? 100)
+    const fromCentre = selectedPaths.every((p) => p.fromCenter)
+    const ax = fromCentre ? (bbox.minX + bbox.maxX) / 2 : bbox.minX
+    const ay = fromCentre ? (bbox.minY + bbox.maxY) / 2 : bbox.maxY
+    applyTransform({ kind: 'scale', sx: s, sy: s, ax, ay }, 'scale')
   }
 
   function applyRotation(angle: number) {
@@ -1156,6 +1197,14 @@ export default function PropertiesPanel() {
         const posX = displayBBox!.minX + displayBBox!.width / 2
         const posY = displayBBox!.minY + displayBBox!.height / 2
         const live = liveRotationAngle !== null || liveBBox !== null
+        // The resize in flight, read off the two boxes as W/H are. Only a UNIFORM
+        // one moves the percentage — the bake records nothing for a stretch, so
+        // the readout must not promise a number that will not stick.
+        const liveScalePct = (() => {
+          if (scalePct === null || !liveBBox || bbox.width === 0 || bbox.height === 0) return scalePct
+          const sx = liveBBox.width / bbox.width, sy = liveBBox.height / bbox.height
+          return Math.abs(sx - sy) < 1e-6 * Math.max(1, sx) ? scalePct * sx : scalePct
+        })()
         return (
           <>
             {params && <SectionLabel>Transform</SectionLabel>}
@@ -1178,14 +1227,19 @@ export default function PropertiesPanel() {
                 <EditField label="H" valueMM={displayBBox!.height} units={units}
                   onChange={(v) => applyResize(displayBBox!.width, v)} />
               </>))}
+              {/* Rotate under W, Scale under H. */}
+              <RotationField liveAngle={liveRotationAngle} baseAngle={placedAngle} onApply={applyRotation} />
+              {/* Hidden for a mechanism whose size its parameters set — the
+                  canvas gives those no resize handles either (SCALE_LOCKED_SHAPES). */}
+              {!selectedPaths.some((p) => isScaleLocked(p.shapeParams)) && (live
+                ? <ReadField label="Scale" wide value={liveScalePct === null ? '—' : String(+liveScalePct.toFixed(2))} units="%" />
+                : <CommitField label="Scale" unit="%" value={scalePct ?? 100} step={5} min={0.01}
+                    title="Scale X and Y together, as a percent of the original size — type 100 to put it back"
+                    onCommit={applyScalePct} />)}
             </div>
           </>
         )
       })()}
-
-      <div className="mt-1.5">
-        <RotationField liveAngle={liveRotationAngle} baseAngle={placedAngle} onApply={applyRotation} />
-      </div>
 
       <div className="mt-1.5 flex gap-1.5">
         <button

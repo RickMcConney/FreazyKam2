@@ -1,5 +1,5 @@
 // ─── Pattern form ─────────────────────────────────────────────────────────────
-import { FormShell, PathChip, ToggleRow, GenerateBtn } from './shared'
+import { FormShell, PathChip, PathListSection, ToggleRow, GenerateBtn } from './shared'
 import { useState } from 'react'
 import { NumericInput } from '../../components/NumericInput'
 import { ICON } from '../../theme'
@@ -151,20 +151,11 @@ export function PatternForm({ onClose, editCtx }: { onClose: () => void; editCtx
 
   return (
     <FormShell title={editCtx ? 'Edit Pattern' : 'Pattern'} onClose={onClose}>
-      <div>
-        <div className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">
-          {editCtx ? 'Source paths' : 'Paths'}
-        </div>
-        {canApply ? (
-          <div className="space-y-0.5">
-            {selectedPaths.map((p) => <PathChip key={p.id} path={p} label={editCtx ? 'source' : 'selected'} />)}
-          </div>
-        ) : (
-          <p className="text-body text-amber-600 dark:text-amber-400 flex items-center gap-1">
-            <AlertCircle size={ICON.sm} /> {editCtx ? 'Source paths no longer exist' : 'Select a path first'}
-          </p>
-        )}
-      </div>
+      {!canApply && (
+        <p className="text-body text-amber-600 dark:text-amber-400 flex items-center gap-1">
+          <AlertCircle size={ICON.sm} /> {editCtx ? 'Source paths no longer exist' : 'Select a path first'}
+        </p>
+      )}
       <ToggleRow label="Mode" options={['linear', 'circular'] as const} value={form.mode} onChange={(v) => setForm((f) => ({ ...f, mode: v }))} />
       {form.mode === 'linear' ? (
         <div className="grid grid-cols-2 gap-2">
@@ -208,6 +199,12 @@ export function PatternForm({ onClose, editCtx }: { onClose: () => void; editCtx
       )}
       {error && <p className="text-body text-red-600 dark:text-red-400 flex items-start gap-1.5"><AlertCircle size={ICON.sm} className="mt-0.5 shrink-0" />{error}</p>}
       <GenerateBtn disabled={!canApply} generating={false} onClick={handleApply} label={editCtx ? 'Update Pattern' : 'Apply Pattern'} />
+      {/* Below the button, where every form keeps its path list (PathListSection). */}
+      {canApply && (
+        <PathListSection count={selectedPaths.length}>
+          {selectedPaths.map((p) => <PathChip key={p.id} path={p} label={editCtx ? 'source' : 'selected'} />)}
+        </PathListSection>
+      )}
     </FormShell>
   )
 }

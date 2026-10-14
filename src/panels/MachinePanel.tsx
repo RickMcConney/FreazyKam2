@@ -10,6 +10,7 @@ import { OP_TYPE_COLORS } from '../colors'
 import { ICON } from '../theme'
 import { Circle, CircleDot, Target, Layers, Star, SquaresUnite, SquareSquare, LayoutGrid, Blocks, RectangleEllipsis, VectorSquare, Box, RefreshCw, Image as ImageIcon } from 'lucide-react'
 import { useUIStore } from '../store/uiStore'
+import { SelectionKindsBar } from './machine/SelectionKindsBar'
 
 // Exported for reuse (TimelinePanel chips use the same per-op icons as this menu)
 export const InlayIcon = ({ size = 24 }: { size?: number }) => (
@@ -156,6 +157,7 @@ export default function MachinePanel({ fill = false }: { fill?: boolean }) {
 
   return (
     <div className={fill ? 'flex-1 overflow-y-auto' : ''}>
+      <SelectionKindsBar />
       {activeForm === 'menu' ? (
         <AddOperationMenu onSelect={openForm} />
       ) : activeForm === 'profile' ? (

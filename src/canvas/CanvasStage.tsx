@@ -1,3 +1,6 @@
+import { SheetLabelLayer } from './layers/SheetLabelLayer'
+import { sheetGridExtent } from '../cam/sheets'
+import { useSheetCount } from './useSheetCount'
 import { ptSegDistSq, pointInPolygon } from '../cam/geom'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRefState } from './useRefState'
@@ -130,20 +133,26 @@ const ZOOM_BUTTON_STEP = 1.4
 // treatment as the simulator's floating controls, which sit over the same canvas.
 const ZOOM_BTN_CLASS = 'bg-gray-50/95 dark:bg-neutral-900/95 hover:bg-gray-200 dark:hover:bg-neutral-800 border border-gray-400 dark:border-neutral-700 rounded p-1.5 text-gray-600 dark:text-neutral-300 transition-colors'
 
-function fitViewport(sw: number, sh: number, ww: number, wh: number): Viewport {
+// Fits a box of CNC mm to the drawing area — the stock, or every sheet of a multi-sheet
+// nest (cam/sheets `sheetGridExtent`), whose box starts left of or below the origin.
+function fitViewport(sw: number, sh: number, box: { minX: number; minY: number; maxX: number; maxY: number }): Viewport {
   const uw = sw - RULER_W
   const uh = sh - RULER_H
+  const ww = box.maxX - box.minX
+  const wh = box.maxY - box.minY
   const scale = Math.min(uw / ww, uh / wh) * FIT_MARGIN
   return {
     scale,
-    x: RULER_W + (uw - ww * scale) / 2,
-    y: RULER_H + uh - (uh - wh * scale) / 2,
+    x: RULER_W + (uw - ww * scale) / 2 - box.minX * scale,
+    y: RULER_H + uh - (uh - wh * scale) / 2 + box.minY * scale,
   }
 }
 
 // Smallest zoom (px/mm) the wheel may reach, so the view can't shrink to a speck.
 //
-// Sized off whichever is larger, the table or the WORKPIECE: a workpiece can legitimately
+// Sized off whichever is larger, the table or the WORKPIECE — and the workpiece is EVERY
+// SHEET when a nest has spread the parts over several (cam/sheets): sized off the stock
+// alone, a grid of sheets could never be seen at once. a workpiece can legitimately
 // be set bigger than the configured table limits, and clamping to the table alone made it
 // impossible to zoom out far enough to see all of it. The slack factor then lets the view
 // pull back past a bare fit — without it the floor sat above the zoom the Fit button
@@ -552,6 +561,12 @@ export default function CanvasStage() {
   // machine settings (tofix.md H3).
   const widthMM = useWorkpieceStore((s) => s.widthMM)
   const heightMM = useWorkpieceStore((s) => s.heightMM)
+  // Every sheet, when a nest spread the parts over several: what Fit frames and how far the
+  // wheel may zoom out (see minZoomScale).
+  const sheets = useSheetCount()
+  const sheetBox = useMemo(() => sheetGridExtent(sheets, { widthMM, heightMM }), [sheets, widthMM, heightMM])
+  const sheetBoxRef = useRef(sheetBox)
+  sheetBoxRef.current = sheetBox
   // Written, never subscribed: the cursor changes on every mouse move, and a subscription
   // here re-ran this whole component each time. Whatever follows the cursor subscribes
   // for itself (ConstraintLayerLive, PenLengthOverlay).
@@ -983,18 +998,19 @@ export default function CanvasStage() {
   useEffect(() => {
     if (size.width > 100 && !didFitRef.current) {
       didFitRef.current = true
-      setViewport(fitViewport(size.width, size.height, widthMM, heightMM))
+      setViewport(fitViewport(size.width, size.height, sheetBox))
     }
-  }, [size, widthMM, heightMM, setViewport])
+  }, [size, sheetBox, setViewport])
 
   useEffect(() => {
     if (fitRequest === 0 || size.width <= 100) return
-    setViewport(fitViewport(size.width, size.height, widthMM, heightMM))
+    setViewport(fitViewport(size.width, size.height, sheetBoxRef.current))
+    // The stock size stays a dependency: a new stock re-fits, as it always has.
   }, [fitRequest, size, widthMM, heightMM, setViewport])
 
   const fitToWorkpiece = useCallback(() => {
-    setViewport(fitViewport(size.width, size.height, widthMM, heightMM))
-  }, [size, widthMM, heightMM, setViewport])
+    setViewport(fitViewport(size.width, size.height, sheetBox))
+  }, [size, sheetBox, setViewport])
 
   useEffect(() => {
     const onDown = (e: KeyboardEvent) => {
@@ -1138,8 +1154,9 @@ export default function CanvasStage() {
   const zoomBy = useCallback((factor: number, anchor?: { x: number; y: number }) => {
     // Cap zoom-out so the table/workpiece can't shrink to a speck; see minZoomScale.
     const wp = useWorkpieceStore.getState()
+    const box = sheetBoxRef.current
     const minScale = minZoomScale(size.width, size.height,
-      wp.tableLimitWidthMM, wp.tableLimitHeightMM, wp.widthMM, wp.heightMM)
+      wp.tableLimitWidthMM, wp.tableLimitHeightMM, box.maxX - box.minX, box.maxY - box.minY)
     const midX = RULER_W + (size.width - RULER_W) / 2
     const midY = RULER_H + (size.height - RULER_H) / 2
     const sel = anchor ? null : selectionBBoxRef.current
@@ -2745,6 +2762,7 @@ export default function CanvasStage() {
         {/* Layer 2: Screen-space overlay — origin indicator, selection outline, rulers. */}
         <Layer listening={false}>
           <OriginLayer viewport={viewport} />
+          <SheetLabelLayer viewport={viewport} />
           {/* COMMITTED DIMENSIONS ARE HIDDEN WHILE ANYTHING IS BEING DRAGGED. One
               is drawn from the baked `d`, which does not change until mouse-up,
               so mid-drag it would hang behind at the old positions while the

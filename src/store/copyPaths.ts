@@ -143,6 +143,10 @@ export function copyPaths(
       // Every level is remapped, so copies come out nested exactly as the originals are —
       // and as their OWN groups, or copying a group grew the thing being copied.
       userGroups: p.userGroups?.map((g) => reissue(g, 'ugroup')!),
+      // The same for the drawing's own grouping: a copy is its own part, or the nest would
+      // tie it to the original it was copied from.
+      sourceGroups: p.sourceGroups?.map((g) => reissue(g, 'srcg')!),
+      sourceElement: reissue(p.sourceElement, 'srcel'),
       definition: undefined,
     }
 

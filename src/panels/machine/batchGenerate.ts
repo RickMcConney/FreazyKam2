@@ -13,10 +13,11 @@
 // (`npx vite-node scripts/batch-generate.mts`); `useBatchGenerate` in shared.tsx is the
 // React wrapper.
 
-import { useToolpathStore, type AddPayload, type AnyOperation } from '../../store/toolpathStore'
+import { useToolpathStore, beginDerivedBatch, endDerivedBatch, bufferDerived, type AddPayload, type AnyOperation } from '../../store/toolpathStore'
 import { useUIStore } from '../../store/uiStore'
 import { isWorkCancelled } from '../../workers/workerClient'
 import { generateOperation, showGenNotes } from '../../cam/opJob'
+import { stopsSoFar } from '../../workers/abortGeneration'
 import { entryHintAt } from '../../cam/startOptimizer'
 
 /** One thing to cut: a path, or a boundary with its islands. */
@@ -76,6 +77,8 @@ export async function runBatchGenerate(a: BatchGenerateArgs): Promise<void> {
   const store = () => useToolpathStore.getState()
   const run = a.run ?? ((id: string) => generateOperation(id).then(({ notes }) => showGenNotes(notes)))
   const createdIds: string[] = []
+  let batching = false
+  const stopsAtStart = stopsSoFar()
   try {
     // (op id, fields to write before generating) in cut order.
     let jobs: { opId: string; write: Record<string, unknown> }[]
@@ -111,9 +114,15 @@ export async function runBatchGenerate(a: BatchGenerateArgs): Promise<void> {
       const existing = a.items.map((it) => a.session.liveOpId(it.key))
       const payloads = a.items.flatMap((it, i) => existing[i] ? [] : [newPayload(a, it)])
       const replace = a.replace ?? []
+      // Paths ADDED to the selection after this form already generated JOIN that batch:
+      // it is still one decision, and the Objects strip draws one chip per batch — a
+      // second addOperations here gave the same five profiles two chips, "×2" and "×3".
+      const anchor = existing.find((id) => id !== undefined)
       const newIds = replace.length > 0
         ? store().replaceGeneratedOperations({ anchorId: replace[0].opId, deleteIds: replace.map((r) => r.opId), add: payloads })
-        : store().addOperations(payloads)
+        : anchor && payloads.length > 0
+          ? store().reviseBatchPaths({ anchorId: anchor, deleteIds: [], add: payloads })
+          : store().addOperations(payloads)
       if (replace.length > 0) a.session.forget(replace.map((r) => r.key))
       let next = 0
       jobs = a.items.map((it, i) => {
@@ -126,9 +135,28 @@ export async function runBatchGenerate(a: BatchGenerateArgs): Promise<void> {
       })
     }
 
-    for (const { opId, write } of jobs) {
-      // Chain to where the previous operation finishes, at generation time.
-      store().updateOperation(opId, { ...write, entryHint: entryHintAt(opId), status: 'generating' } as Partial<AnyOperation>)
+    // ONE store write for the whole batch's settings and status, and the toolpaths as a
+    // derived batch (toolpathStore): writing each op as it went repainted every toolpath on
+    // the canvas once per op, which over a few hundred labels was most of the Generate.
+    // Writing every op's settings up front changes nothing a generation reads — an op's
+    // start height looks only at the ops BEFORE it, whose settings it always saw written.
+    const live = new Set(store().operations.map((o) => o.id))
+    jobs = jobs.filter((j) => live.has(j.opId))
+    store().updateOperations(jobs.map(({ opId, write }) =>
+      ({ id: opId, updates: { ...write, status: 'generating' } as Partial<AnyOperation> })))
+    beginDerivedBatch()
+    batching = true
+    for (const { opId } of jobs) {
+      // Stopped while no job was in a worker to be terminated: what has not started yet
+      // is left needs-update, exactly as a stop mid-job leaves it.
+      if (stopsSoFar() !== stopsAtStart) {
+        const left = jobs.slice(jobs.findIndex((j) => j.opId === opId)).map((j) => ({ id: j.opId, updates: { status: 'needs-update' } as Partial<AnyOperation> }))
+        store().updateOperations(left, { record: false })
+        break
+      }
+      // Chain to where the previous operation finishes, at generation time — read through
+      // the buffer, since that op's toolpath may not have been written yet.
+      bufferDerived(opId, { entryHint: entryHintAt(opId) })
       try {
         // Generated from the settings just written — the same call an automatic
         // regenerate makes (cam/opJob), so the two cannot drift.
@@ -139,6 +167,7 @@ export async function runBatchGenerate(a: BatchGenerateArgs): Promise<void> {
       }
     }
   } finally {
+    if (batching) endDerivedBatch()
     discardFailedOps(createdIds)
   }
 }

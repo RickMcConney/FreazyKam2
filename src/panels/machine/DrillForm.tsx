@@ -329,31 +329,9 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
                 : <div className="text-gray-500 dark:text-neutral-400 text-label">Re-read from the source path{editBatch.length > 1 ? 's' : ''} on every regenerate.</div>}
             </div>
           ) : selectedHoles.length > 0 ? (
-            <div className="space-y-0.5">
-              {selectedHoles.map(({ path, holes }, hi) => {
-                // Every subpath of one path is one operation, so the sizes it spans
-                // matter: a set that mixes diameters bores each at its own radius.
-                const dias = [...new Set(holes.map((h) => +(h.radiusMM * 2).toFixed(2)))]
-                const r0 = Math.max(0, holes[0].radiusMM - (selectedTool?.diameterMM ?? 0) / 2)
-                return (
-                  <div key={path.id} className="text-body text-gray-800 dark:text-neutral-200 bg-gray-100 dark:bg-neutral-800 rounded px-2 py-1">
-                    <div className="flex items-center gap-1.5">
-                      {/* Cut order — the order the paths were picked in. */}
-                      {selectedHoles.length > 1 && (
-                        <span className="flex-shrink-0 tabular-nums text-gray-500 dark:text-neutral-400">{hi + 1}.</span>
-                      )}
-                      <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: path.color }} />
-                      {path.name}
-                      {holes.length > 1 && <span className="text-gray-500 dark:text-neutral-400 text-label">×{holes.length}</span>}
-                    </div>
-                    <div className="text-gray-500 dark:text-neutral-400 text-label mt-0.5">
-                      Hole Ø {dias.length === 1 ? fmtLen(holes[0].radiusMM * 2, units) : dias.map((v) => fmtLen(v, units)).join(', ')}
-                      {r0 > 0 ? ` · Toolpath Ø ${fmtLen(r0 * 2, units)}` : ' · center-drill (tool wider than hole)'}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
+            // The circles themselves are listed under the Generate button, where every form
+            // keeps its path list, so the button is not pushed off the bottom by a long one.
+            null
           ) : (
             <p className="text-body text-amber-600 dark:text-amber-400 flex items-center gap-1">
               <AlertCircle size={ICON.sm} /> Select one or more circular paths first
@@ -380,6 +358,34 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
         onClick={handleGenerate}
         label={generateLabel(!!editOp, updating)}
       />
+      {/* Helical, new: the selected circles, in cut order. */}
+      {!editOp && form.drillMode === 'helical' && (
+        <PathListSection count={selectedHoles.length}>
+          {selectedHoles.map(({ path, holes }, hi) => {
+            // Every subpath of one path is one operation, so the sizes it spans
+            // matter: a set that mixes diameters bores each at its own radius.
+            const dias = [...new Set(holes.map((h) => +(h.radiusMM * 2).toFixed(2)))]
+            const r0 = Math.max(0, holes[0].radiusMM - (selectedTool?.diameterMM ?? 0) / 2)
+            return (
+              <div key={path.id} className="text-body text-gray-800 dark:text-neutral-200 bg-gray-100 dark:bg-neutral-800 rounded px-2 py-1">
+                <div className="flex items-center gap-1.5">
+                  {/* Cut order — the order the paths were picked in. */}
+                  {selectedHoles.length > 1 && (
+                    <span className="flex-shrink-0 tabular-nums text-gray-500 dark:text-neutral-400">{hi + 1}.</span>
+                  )}
+                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: path.color }} />
+                  {path.name}
+                  {holes.length > 1 && <span className="text-gray-500 dark:text-neutral-400 text-label">×{holes.length}</span>}
+                </div>
+                <div className="text-gray-500 dark:text-neutral-400 text-label mt-0.5">
+                  Hole Ø {dias.length === 1 ? fmtLen(holes[0].radiusMM * 2, units) : dias.map((v) => fmtLen(v, units)).join(', ')}
+                  {r0 > 0 ? ` · Toolpath Ø ${fmtLen(r0 * 2, units)}` : ' · center-drill (tool wider than hole)'}
+                </div>
+              </div>
+            )
+          })}
+        </PathListSection>
+      )}
       {/* Which paths this batch bores, and what the selection would change about that.
           Below the button, where every other form puts its path list. */}
       {editOp && rev.keep.length + rev.add.length + rev.drop.length > 0 && (

@@ -1,5 +1,5 @@
 // ─── V-Carve form ────────────────────────────────────────────────────────────
-import { FormShell, ToolSelector, GenerateBtn, useSessionOps, StartRow, useStartZ, toolsOfType, pickToolId, LengthInput, FormError, useBatchGenerate, generateLabel, NoPathBanner, BatchPathList } from './shared'
+import { FormShell, ToolSelector, GenerateBtn, useSessionOps, StartRow, useStartZ, toolsOfType, pickToolId, LengthInput, FormError, FormNotice, useBatchGenerate, generateLabel, NoPathBanner, BatchPathList } from './shared'
 import { type StartFrom } from '../../cam/startHeight'
 import { useState } from 'react'
 import { ICON } from '../../theme'
@@ -11,7 +11,7 @@ import { usePathsStore } from '../../store/pathsStore'
 import { useSelectedPathsInOrder } from '../../store/pathsStore'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 import { includedAngleDeg, isVCutter, tipBallRadiusMM, toolRadiusAtHeight } from '../../cam/geom'
-import { groupPathsByContainment } from './containment'
+import { groupPathsByContainment, skipOpenPaths, skippedOpenMsg } from './containment'
 import { reviseGroupBatch } from './reviseBatch'
 
 interface VCarveFormState {
@@ -27,7 +27,8 @@ export function VCarveForm({ onClose, editOp }: { onClose: () => void; editOp?: 
   // PICK ORDER, not z-order: operations are cut in the order they were created
   // (see cam/startOptimizer), so the order the paths were clicked in IS the order the
   // machine will run them. Selecting three circles 1, 2, 3 cuts them 1, 2, 3.
-  const selPaths = useSelectedPathsInOrder()
+  // Open paths are left out rather than failing the carve they land in — see skipOpenPaths.
+  const { closed: selPaths, skipped: skippedOpen } = skipOpenPaths(useSelectedPathsInOrder())
   const operations = useToolpathStore((s) => s.operations)
   const load = useFormDefaultsStore((s) => s.load)
   const thicknessMM = useWorkpieceStore((s) => s.thicknessMM)
@@ -143,6 +144,7 @@ export function VCarveForm({ onClose, editOp }: { onClose: () => void; editOp?: 
           Cuts at most {fmtLen(selectedTool ? 2 * toolRadiusAtHeight(selectedTool, form.maxDepthMM) : 0, units)} wide at full depth.
         </p>
       </div>
+      <FormNotice msg={skippedOpenMsg(skippedOpen, 'a v-carve')} />
       <FormError msg={errorMsg} />
       <GenerateBtn
         disabled={groups.length === 0 || !selectedTool || generating || form.maxDepthMM <= 0 || !isVCutter(selectedTool)}

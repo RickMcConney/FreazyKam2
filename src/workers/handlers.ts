@@ -19,7 +19,7 @@ import type { Tool } from '../store/toolStore'
 import { generateInlayFemale, generateInlayMale } from '../cam/inlay'
 import { generateTrochoidal } from '../cam/trochoidal'
 import { generateSurface } from '../cam/surfacing'
-import { nest } from '../tools/nestOp'
+import { nest, nestSheets } from '../tools/nestOp'
 
 // Clear, run, drain: a note left over from a job that threw must not be reported against
 // the next one. Pocket, v-carve and inlay are the generators that can skip part of what
@@ -61,6 +61,7 @@ export const handlers = {
   // that running it on the UI thread put up the browser's "page unresponsive"
   // dialog mid-nest.
   nest,
+  nestSheets,
 } as const
 
 export type WorkerHandlers = typeof handlers

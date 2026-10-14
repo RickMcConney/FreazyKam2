@@ -5,7 +5,7 @@
 // d string never evicted, so the module-level map grew with every transform
 // bake for the app's lifetime — tofix.md H2.) Size cap covers deleted paths.
 import { pointInPolygon, interiorPoint } from '../../cam/geom'
-import { flattenPath } from '../../cam/pathFlattener'
+import { flattenPath, isOpenSubpath } from '../../cam/pathFlattener'
 import type { ImportedPath } from '../../store/pathsStore'
 
 // ALL subpaths are kept, not just the first: a compound path (text, a glyph with
@@ -13,7 +13,7 @@ import type { ImportedPath } from '../../store/pathsStore'
 // happened to come first, so its bbox and containment tests described one letter
 // instead of the whole object.
 const flattenCache = new Map<string, { d: string; subs: [number, number][][] }>()
-function flattenCached(p: ImportedPath): [number, number][][] {
+export function flattenCached(p: ImportedPath): [number, number][][] {
   const entry = flattenCache.get(p.id)
   if (entry && entry.d === p.d) return entry.subs
   if (flattenCache.size > 500) flattenCache.clear()
@@ -25,12 +25,47 @@ function flattenCached(p: ImportedPath): [number, number][][] {
 // Even-odd containment against a compound path: inside when an odd number of its
 // subpaths contain the point, so a point sitting in a glyph's counter reads as
 // OUTSIDE the glyph rather than inside it.
-function insideCompound(x: number, y: number, subs: [number, number][][]): boolean {
+export function insideCompound(x: number, y: number, subs: [number, number][][]): boolean {
   let crossings = 0
   for (const sub of subs) {
     if (sub.length >= 3 && pointInPolygon(x, y, sub)) crossings++
   }
   return crossings % 2 === 1
+}
+
+// ─── Open paths in a mixed selection ──────────────────────────────────────────
+
+/** Does this path draw a stroke anywhere — a subpath whose ends do not meet? Such a path
+ *  bounds no region, so an area cut (pocket, v-carve, inlay, a sided profile) refuses it. */
+export function isOpenPath(p: ImportedPath): boolean {
+  return flattenCached(p).some((sp) => sp.length >= 2 && isOpenSubpath(sp))
+}
+
+/**
+ * Take the open paths out of a selection headed for an area cut.
+ *
+ * A sheet of parts with a single-stroke label inside each one is the everyday case: the
+ * labels are open, so one of them read as an island (or a boundary) failed that part's
+ * operation, and selecting the parts meant picking every label back out by hand. Dropping
+ * them is safe — the cut refuses an open path rather than machining it, so skipping it
+ * cuts exactly what would have been cut had the user deselected it — and the form says how
+ * many it skipped.
+ *
+ * A selection that is ALL open is returned whole: there is nothing left to cut, and the
+ * generator's own refusal is what says why and names the cut that does work on a stroke.
+ */
+export function skipOpenPaths<T extends ImportedPath>(paths: T[]): { closed: T[]; skipped: number } {
+  const closed = paths.filter((p) => !isOpenPath(p))
+  if (closed.length === 0) return { closed: paths, skipped: 0 }
+  return { closed, skipped: paths.length - closed.length }
+}
+
+/** The form's notice for `skipOpenPaths`; `cut` names the operation ("a pocket"). */
+export function skippedOpenMsg(skipped: number, cut: string): string | null {
+  if (skipped === 0) return null
+  return skipped === 1
+    ? `1 open path in the selection is skipped — ${cut} needs closed shapes.`
+    : `${skipped} open paths in the selection are skipped — ${cut} needs closed shapes.`
 }
 
 // ─── Containment grouping ─────────────────────────────────────────────────────

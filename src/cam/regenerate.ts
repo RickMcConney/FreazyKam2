@@ -1,5 +1,5 @@
 import { isWorkCancelled } from '../workers/workerClient'
-import { useToolpathStore, refsPathId, type AnyOperation } from '../store/toolpathStore'
+import { useToolpathStore, refsPathId, beginDerivedBatch, endDerivedBatch, type AnyOperation } from '../store/toolpathStore'
 import { useToolStore } from '../store/toolStore'
 import { useSimStore } from '../store/simStore'
 import { useUIStore } from '../store/uiStore'
@@ -80,11 +80,18 @@ export function regenerateAll(): void {
  * of the slowest jobs in the app, on two threads, computing the same thing. The second is
  * dropped here; the first marks and writes its partner (see regenerateOperation).
  */
+//
+// The results are written as a DERIVED BATCH (toolpathStore): moving a sheet of labelled
+// parts regenerates hundreds of ops, and writing each as it lands repainted the whole
+// program on the canvas once per op.
 export function regenerateMany(ops: AnyOperation[]): void {
   const submitted = new Set<string>()
+  const runs: Promise<void>[] = []
+  beginDerivedBatch()
   for (const op of ops) {
     if (op.type === 'inlay' && op.linkedOpId && submitted.has(op.linkedOpId)) continue
     submitted.add(op.id)
-    void regenerateOperation(op.id)
+    runs.push(regenerateOperation(op.id))
   }
+  void Promise.allSettled(runs).then(endDerivedBatch)
 }

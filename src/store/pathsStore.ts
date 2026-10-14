@@ -63,6 +63,9 @@ interface PathsState {
   deleteGroup: (groupId: string) => void
   toggleVisibility: (id: string) => void
   toggleGroupVisibility: (groupId: string) => void
+  // Show or hide a set of paths at once — a source folder in the paths list. Not recorded,
+  // as no visibility toggle is.
+  setPathsVisible: (ids: string[], visible: boolean) => void
   toggleGroupCollapsed: (groupId: string) => void
   selectPath: (id: string | null, extend?: boolean) => void
   setSelectedIds: (ids: string[]) => void
@@ -239,6 +242,16 @@ function dropConstraintsTouching(ids: string[]): Constraint[] {
   return kept
 }
 
+// The factor the UNIFORM scales in `steps` multiply a size by. A stretch (sx ≠ sy)
+// has no single percentage, so it leaves the record alone rather than inventing one.
+export function uniformScaleOf(steps: TransformStep[]): number {
+  let f = 1
+  for (const s of steps) {
+    if (s.kind === 'scale' && Math.abs(Math.abs(s.sx) - Math.abs(s.sy)) < 1e-9) f *= Math.abs(s.sx)
+  }
+  return f
+}
+
 /**
  * One path, with one update applied.
  *
@@ -337,6 +350,15 @@ function applyUpdateToPath(p: ImportedPath, upd: PathUpdate): ImportedPath {
     newPath.corners = transformCorners(p.corners, upd.transforms)
   } else if (p.corners && upd.d !== p.d) {
     newPath.corners = undefined
+  }
+  // Every gesture that scales comes through here — the Scale field, a typed W/H,
+  // a corner drag — so the record of how big the object stands is kept here too.
+  if (upd.transforms?.length) {
+    const f = uniformScaleOf(upd.transforms)
+    if (f !== 1) {
+      const pct = (p.scalePct ?? 100) * f
+      newPath.scalePct = Math.abs(pct - 100) < 1e-6 ? undefined : pct
+    }
   }
   if (upd.name !== undefined) {
     newPath.name = upd.name
@@ -570,6 +592,11 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
     const groupPaths = s.paths.filter((p) => inGroup(p, groupId))
     const allVisible = groupPaths.every((p) => p.visible)
     return { paths: s.paths.map((p) => inGroup(p, groupId) ? { ...p, visible: !allVisible } : p) }
+  }),
+
+  setPathsVisible: (ids, visible) => set((s) => {
+    const idSet = new Set(ids)
+    return { paths: s.paths.map((p) => idSet.has(p.id) && p.visible !== visible ? { ...p, visible } : p) }
   }),
 
   toggleGroupCollapsed: (groupId) => set((s) => {

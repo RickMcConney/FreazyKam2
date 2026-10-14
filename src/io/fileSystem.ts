@@ -118,11 +118,13 @@ export async function triggerGcodeExport(): Promise<void> {
   useSaveDialogStore.getState().openSaveDialog('gcode')
 }
 
-// Export one G-code file per tool/spindle speed. On Chromium the user picks a
-// folder (one prompt) and all files are written into it; elsewhere each file is
-// downloaded in turn. The directory picker is opened first so the click's
-// user-activation is still live before the async toolpath optimization.
-export async function triggerGcodeExportSplit(prefix?: string): Promise<void> {
+// Export a SET of G-code files: one per sheet of stock when a nest spread the parts over
+// several (cam/sheets — each moved so its corner is the machine origin), and within each
+// sheet one per tool/spindle speed when `byTool`. On Chromium the user picks a folder (one
+// prompt) and all files are written into it; elsewhere each file is downloaded in turn.
+// The directory picker is opened first so the click's user-activation is still live
+// before the async toolpath optimization.
+export async function triggerGcodeExportSplit(prefix?: string, byTool = true): Promise<void> {
   const baseName = sanitizeFileName(prefix?.trim() || useProjectStore.getState().name || 'gcode')
   const dirPicker = getDirPicker()
   let dir: FsDirHandle | null = null
@@ -135,8 +137,16 @@ export async function triggerGcodeExportSplit(prefix?: string): Promise<void> {
     }
   }
 
-  const { operations, toolsById, profile } = await buildGcodeInputs()
-  const files = generateGcodePerTool(operations, toolsById, baseName, profile)
+  const files: { filename: string; gcode: string }[] = []
+  const { sheets } = await buildGcodeInputs(0)
+  for (let k = 0; k < sheets; k++) {
+    const { operations, toolsById, profile } = await buildGcodeInputs(k)
+    // A sheet whose parts were all moved off it has nothing to cut, and no file.
+    if (!operations.some((o) => o.visible && o.status === 'done' && o.type !== 'gcode' && o.segments.length > 0)) continue
+    const name = sheets > 1 ? `${baseName}_sheet${k + 1}` : baseName
+    if (byTool) files.push(...generateGcodePerTool(operations, toolsById, name, profile))
+    else files.push({ filename: name, gcode: generateGcode(operations, toolsById, name, profile) })
+  }
   if (files.length === 0) return
 
   if (dir) {

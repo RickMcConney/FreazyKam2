@@ -17,7 +17,7 @@ import type { PocketNote, PocketStrategy } from '../../cam/pocket'
 const STRATEGY_LABELS: Partial<Record<PocketStrategy, string>> = { hybrid: 'auto' }
 import { seedStepDownMM } from '../../cam/feeds'
 import { currentPocketStrategy, pocketEngagementFraction } from '../../cam/pocket/strategyIds'
-import { groupPathsByContainment } from './containment'
+import { groupPathsByContainment, skipOpenPaths, skippedOpenMsg } from './containment'
 import { reviseGroupBatch } from './reviseBatch'
 
 interface PocketFormState {
@@ -48,7 +48,9 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
   // PICK ORDER, not z-order: operations are cut in the order they were created
   // (see cam/startOptimizer), so the order the paths were clicked in IS the order the
   // machine will run them. Selecting three circles 1, 2, 3 cuts them 1, 2, 3.
-  const selPaths = useSelectedPathsInOrder()
+  // Open paths in the selection (a label inside each part) are left out rather than failing
+  // the pocket they land in — see skipOpenPaths.
+  const { closed: selPaths, skipped: skippedOpen } = skipOpenPaths(useSelectedPathsInOrder())
   // Region picking is on for as long as the form is open: a click inside an area the
   // drawn lines enclose makes a closed path of it and selects it, while a click on a line
   // still selects that path (cam/regionPick.ts, CanvasStage). Only an idle canvas is taken
@@ -335,6 +337,7 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
         <CheckRow id="pocket-ramp-in" checked={form.rampIn} onChange={(v) => up('rampIn', v)}
           label="Ramp In" hint="2× dia, 50% feed" />
       )}
+      <FormNotice msg={skippedOpenMsg(skippedOpen, 'a pocket')} />
       <FormNotice msg={noticeMsg} />
       <FormError msg={errorMsg} />
       <GenerateBtn

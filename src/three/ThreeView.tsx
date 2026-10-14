@@ -1,3 +1,6 @@
+import { opSheet, sheetOffset } from '../cam/sheets'
+import { currentSheet, pathSheet } from '../canvas/useSheetCount'
+import { useUIStore } from '../store/uiStore'
 import { useEffect, useRef, useState } from 'react'
 import { perfLog } from '../debug'
 import * as THREE from 'three'
@@ -641,7 +644,8 @@ export default function ThreeView() {
       rebuildWorkpiece(refs)
       // Toolpaths and shape outlines are drawn on the stock top, so a new thickness moves
       // them too — they used to stay floating at the old height.
-      if (s.thicknessMM !== p.thicknessMM) { rebuildToolpaths(refs); rebuildShapes(refs) }
+      // A new stock size moves every sheet after the first (cam/sheets) too.
+      if (s.thicknessMM !== p.thicknessMM || s.heightMM !== p.heightMM || s.widthMM !== p.widthMM) { rebuildToolpaths(refs); rebuildShapes(refs) }
       // Only a new stock SIZE re-frames the view.
       if (sized) fitCamera(refs)
       wake()
@@ -665,6 +669,14 @@ export default function ThreeView() {
     const unsubPaths = usePathsStore.subscribe((s, p) => {
       if (s.paths === p.paths) return   // a selection change draws nothing here
       rebuildShapes(refs)
+      // A part dragged onto another sheet takes its toolpath with it.
+      rebuildToolpaths(refs)
+      wake()
+    })
+    const unsubSheet = useUIStore.subscribe((s, p) => {
+      if (s.activeSheet === p.activeSheet) return
+      rebuildShapes(refs)
+      rebuildToolpaths(refs)
       wake()
     })
 
@@ -681,7 +693,7 @@ export default function ThreeView() {
       window.removeEventListener('focus', onVisible)
       ro.disconnect()
       setWoodTextureListener(null)
-      unsubWP(); unsubTP(); unsubSim(); unsubPaths()
+      unsubWP(); unsubTP(); unsubSim(); unsubPaths(); unsubSheet()
       if (refs.heightfield) refs.heightfield.dispose()
       if (refs.toolMesh) disposeObject3D(refs.toolMesh)
       // The decoded model is shared (decodeStlMesh) and plain arrays; only the baked geometry is ours.
@@ -891,6 +903,13 @@ function rebuildShapes(refs: SceneRefs) {
   const paths = usePathsStore.getState().paths
   const T = useWorkpieceStore.getState().thicknessMM
   const surfaceY = T + 0.15
+  // ONE SHEET ON THE STOCK, like the program the simulator plays (cam/sheets): the active
+  // sheet's shapes moved up onto it, every other sheet's left out. Drawn where they lie,
+  // sheet 1's outlines stayed on the stock whichever sheet was being simulated.
+  const stock = useWorkpieceStore.getState()
+  const sheet = currentSheet()
+  // CNC (x, y) → three (x, −y): moving a sheet's corner to the stock's is −offset in each.
+  const at = sheetOffset(sheet, stock)
 
   // Prune deleted STL paths from the geometry cache
   const stlPathIds = new Set(paths.filter(p => p.stlSrc).map(p => p.id))
@@ -903,6 +922,7 @@ function rebuildShapes(refs: SceneRefs) {
 
   for (const path of paths) {
     if (!path.visible || path.hidden) continue
+    if (pathSheet(path, stock) !== sheet) continue
 
     if (path.stlSrc && path.stlModelBounds) {
       let cached = refs.stlGeoCache.get(path.id)
@@ -927,6 +947,7 @@ function rebuildShapes(refs: SceneRefs) {
         side: THREE.DoubleSide,
       }))
       mesh.userData.cachedGeo = true
+      mesh.position.set(-at.x, 0, at.y)
       refs.shapesGroup.add(mesh)
       continue
     }
@@ -937,9 +958,9 @@ function rebuildShapes(refs: SceneRefs) {
       if (pts.length < 2) continue
       const positions = new Float32Array(pts.length * 3)
       for (let i = 0; i < pts.length; i++) {
-        positions[i * 3]     = pts[i][0]
+        positions[i * 3]     = pts[i][0] - at.x
         positions[i * 3 + 1] = surfaceY
-        positions[i * 3 + 2] = -pts[i][1]
+        positions[i * 3 + 2] = -(pts[i][1] - at.y)
       }
       const geo = new THREE.BufferGeometry()
       geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
@@ -1076,6 +1097,12 @@ function disposeToolpathLine(line: THREE.LineSegments) {
 function rebuildToolpaths(refs: SceneRefs) {
   const ops = useToolpathStore.getState().operations
   const T = useWorkpieceStore.getState().thicknessMM
+  // The active sheet's toolpaths only, lifted onto the stock (see rebuildShapes). The cached
+  // line keeps its geometry where the op lies; only its POSITION moves it.
+  const stock = useWorkpieceStore.getState()
+  const sheet = currentSheet()
+  // CNC (x, y) → three (x, −y): moving a sheet's corner to the stock's is −offset in each.
+  const at = sheetOffset(sheet, stock)
   const cache = refs.toolpathLines
   const keep = new Set<string>()
   const shown: THREE.LineSegments[] = []
@@ -1085,7 +1112,7 @@ function rebuildToolpaths(refs: SceneRefs) {
     let entry = cache.get(op.id)
     const valid = !!entry && entry.segments === op.segments && entry.T === T
     if (valid) keep.add(op.id)
-    if (!op.visible) continue
+    if (!op.visible || opSheet(op, stock) !== sheet) continue
     if (!valid) {
       if (entry) disposeToolpathLine(entry.line)
       const line = buildToolpathLine(op.segments, T, op.color)
@@ -1097,6 +1124,7 @@ function rebuildToolpaths(refs: SceneRefs) {
       ;(entry!.line.material as THREE.LineBasicMaterial).color.set(op.color)
       entry!.color = op.color
     }
+    entry!.line.position.set(-at.x, 0, at.y)
     shown.push(entry!.line)
   }
 

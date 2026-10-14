@@ -1,5 +1,5 @@
 import { regenerateOperation } from './regenerate'
-import { useToolpathStore, type AnyOperation } from '../store/toolpathStore'
+import { useToolpathStore, withPending, type AnyOperation } from '../store/toolpathStore'
 import { useWorkpieceStore } from '../store/workpieceStore'
 import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
 import { usePathsStore } from '../store/pathsStore'
@@ -50,7 +50,10 @@ export function entryHintAt(opId: string): XY | undefined {
   let cx = org.x, cy = org.y
   let havePredecessor = false
 
-  for (const op of operations) {
+  // Through the batch buffer: inside a batch Generate the op just before this one has
+  // finished, but its toolpath may not have been written to the store yet.
+  for (const stored of operations) {
+    const op = withPending(stored)
     if (op.id === opId) return havePredecessor ? { x: cx, y: cy } : undefined
     if (op.status !== 'done') continue
     const e = exitOf(op, cx, cy)

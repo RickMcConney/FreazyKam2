@@ -1,6 +1,7 @@
 // ─── Trochoidal form ──────────────────────────────────────────────────────────
-import { FormShell, ToolSelector, ToggleRow, DepthRow, GenerateBtn, useSessionOps, toolsOfType, pickToolId, LengthInput, FormError, useBatchGenerate, generateLabel, NoPathBanner, CheckRow, BatchPathList } from './shared'
+import { FormShell, ToolSelector, ToggleRow, DepthRow, GenerateBtn, useSessionOps, toolsOfType, pickToolId, LengthInput, FormError, FormNotice, useBatchGenerate, generateLabel, NoPathBanner, CheckRow, BatchPathList } from './shared'
 import { reviseBatch } from './reviseBatch'
+import { skipOpenPaths, skippedOpenMsg } from './containment'
 import { useState } from 'react'
 import { useToolStore, type CuttingDirection } from '../../store/toolStore'
 import { useToolpathStore, batchOf, type CutSide, type TrochoidalOperation } from '../../store/toolpathStore'
@@ -31,7 +32,7 @@ export function TrochoidalForm({ onClose, editOp }: { onClose: () => void; editO
   // PICK ORDER, not z-order: operations are cut in the order they were created
   // (see cam/startOptimizer), so the order the paths were clicked in IS the order the
   // machine will run them. Selecting three circles 1, 2, 3 cuts them 1, 2, 3.
-  const selPaths = useSelectedPathsInOrder()
+  const allSelPaths = useSelectedPathsInOrder()
   const operations = useToolpathStore((s) => s.operations)
   const load = useFormDefaultsStore((s) => s.load)
   const thicknessMM = useWorkpieceStore((s) => s.thicknessMM)
@@ -62,6 +63,12 @@ export function TrochoidalForm({ onClose, editOp }: { onClose: () => void; editO
     }, tools)
     return { ...base, stepDownManual: editOp ? base.stepDownManual : false, toolId: pickToolId(base.toolId, cutters) }
   })
+  // A sided cut needs an interior to be on a side of, so open paths in the selection (a
+  // label inside each part) are left out rather than failing their operations — see
+  // skipOpenPaths. A centerline cut follows a stroke, so it keeps them.
+  const { closed: selPaths, skipped: skippedOpen } = form.side === 'centerline'
+    ? { closed: allSelPaths, skipped: 0 }
+    : skipOpenPaths(allSelPaths)
   const { generating, errorMsg, generate } = useBatchGenerate('trochoidal', 'trochoidal')
   const session = useSessionOps()
 
@@ -139,6 +146,7 @@ export function TrochoidalForm({ onClose, editOp }: { onClose: () => void; editO
         label="Ramp In" hint="spiral down over 2× dia, 50% feed" />
       <CheckRow id="troch-finishing" checked={form.finishingPass} onChange={(v) => up('finishingPass', v)}
         label="Finishing pass" hint="clean sweep after loops" />
+      <FormNotice msg={skippedOpenMsg(skippedOpen, `an ${form.side} trochoidal cut`)} />
       <FormError msg={errorMsg} />
       <GenerateBtn
         disabled={selectedPaths.length === 0 || !selectedTool || generating || form.depthMM <= 0}

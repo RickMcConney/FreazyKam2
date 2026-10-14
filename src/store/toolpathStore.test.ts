@@ -3,7 +3,10 @@
 // stores and history; only regeneration is stubbed (it would reach for the worker pool).
 // See pathsStore.test.ts for why the clock is faked and every action is `step()`-ped.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { useToolpathStore, batchOf, nothingToCut, type AnyOperation, type AddPayload } from './toolpathStore'
+import { useToolpathStore, batchOf, nothingToCut, beginDerivedBatch, endDerivedBatch, bufferDerived, withPending, type AnyOperation, type AddPayload } from './toolpathStore'
+import { entryHintAt } from '../cam/startOptimizer'
+import { runBatchGenerate } from '../panels/machine/batchGenerate'
+import { abortGeneration } from '../workers/abortGeneration'
 import { usePathsStore, type ImportedPath } from './pathsStore'
 import { useToolStore } from './toolStore'
 import { useWorkpieceStore } from './workpieceStore'
@@ -303,6 +306,130 @@ describe('program order and visibility', () => {
 // An inlay half whose partner cuts everything (thin text) is EMPTY BY DESIGN, and every
 // report on empty operations — the export check, the chip, the project audit — asks this
 // before calling it missing.
+// A Generate over 577 single-stroke labels repainted every toolpath on the canvas once per
+// op, because each op's toolpath was its own store write. Inside a derived batch the
+// toolpaths are buffered and written together.
+describe('derived batches', () => {
+  const countWrites = () => {
+    let n = 0
+    const unsub = useToolpathStore.subscribe((s, p) => { if (s.operations !== p.operations) n++ })
+    return { count: () => n, unsub }
+  }
+
+  it('holds toolpaths back until the batch ends, then writes them in one store update', () => {
+    const ids = T().addOperations([pocket('a'), pocket('b'), pocket('c')])
+    const w = countWrites()
+    beginDerivedBatch()
+    for (const id of ids) T().setSegments(id, SEGS)
+    expect(w.count()).toBe(0)
+    expect(ids.map((id) => get(id).status)).toEqual(['pending', 'pending', 'pending'])
+    // …while anything reading through the buffer already sees them.
+    expect(ids.map((id) => withPending(get(id)).status)).toEqual(['done', 'done', 'done'])
+    endDerivedBatch()
+    expect(w.count()).toBe(1)
+    expect(ids.map((id) => get(id).status)).toEqual(['done', 'done', 'done'])
+    w.unsub()
+  })
+
+  it('lets a failure stand over a toolpath buffered for the same op', () => {
+    const [id] = T().addOperations([pocket('a')])
+    beginDerivedBatch()
+    T().setSegments(id, SEGS)
+    T().setError(id, 'boom')
+    endDerivedBatch()
+    expect(get(id)).toMatchObject({ status: 'error', errorMessage: 'boom', segments: [] })
+  })
+
+  // The cut order chains each op to where the one before it finished; inside a batch that
+  // one has finished but is not in the store yet.
+  it('chains the entry hint to a predecessor whose toolpath is still buffered', () => {
+    const [a, b] = T().addOperations([pocket('a'), pocket('b')])
+    beginDerivedBatch()
+    T().setSegments(a, [{ x: 0, y: 0, z: -3, rapid: false }, { x: 42, y: 17, z: 5, rapid: true }])
+    expect(entryHintAt(b)).toEqual({ x: 42, y: 17 })
+    endDerivedBatch()
+  })
+
+  it('stops buffering only when the outermost of two nested batches ends', () => {
+    const [id] = T().addOperations([pocket('a')])
+    beginDerivedBatch()
+    beginDerivedBatch()
+    endDerivedBatch()
+    expect(bufferDerived(id, { status: 'done' })).toBe(true)
+    endDerivedBatch()
+    expect(bufferDerived(id, { status: 'done' })).toBe(false)
+  })
+
+  it('makes a batch Generate of many paths a handful of store writes, not one per op', async () => {
+    usePathsStore.setState({ paths: Array.from({ length: 60 }, (_, i) => path(`p${i}`, rectD(i * 12, 0, 10, 10))) })
+    const w = countWrites()
+    const hints: unknown[] = []
+    await runBatchGenerate({
+      type: 'pocket',
+      settings: { toolId: 't', depthMM: 3, stepDownMM: 3, stepoverPercent: 40, passAngleDeg: 0, direction: 'climb', strategy: 'raster', rampIn: false, islandIds: [] },
+      items: Array.from({ length: 60 }, (_, i) => ({ key: `p${i}`, name: `p${i}`, fields: { pathId: `p${i}` } })),
+      session: { liveOpId: () => undefined, remember: () => {}, forget: () => {} },
+      run: async (id) => {
+        hints.push(withPending(get(id)).entryHint)
+        const i = opIds().indexOf(id)
+        T().setSegments(id, [{ x: i * 12, y: 0, z: -3, rapid: false }, { x: i * 12 + 10, y: 10, z: 5, rapid: true }])
+      },
+      onError: () => {},
+    })
+    expect(ops().every((o) => o.status === 'done')).toBe(true)
+    // add, settings + status, final flush — and nothing per op.
+    expect(w.count()).toBeLessThanOrEqual(4)
+    // Each op still starts from where the one before it finished.
+    expect(hints.slice(1, 4)).toEqual([{ x: 10, y: 10 }, { x: 22, y: 10 }, { x: 34, y: 10 }])
+    w.unsub()
+  })
+})
+
+// Profile two paths, select three more in the same form and Generate again: the Objects
+// strip drew "Profile ×2" and "Profile ×3" for what was one set of five.
+describe('a re-Generate that adds paths', () => {
+  it('puts the added paths in the batch the form already made, so the program shows one set', async () => {
+    usePathsStore.setState({ paths: ['a', 'b', 'c', 'd', 'e'].map((id, i) => path(id, rectD(i * 20, 0, 10, 10))) })
+    const by = new Map<string, string>()
+    const session = { liveOpId: (k: string) => by.get(k), remember: (k: string, id: string) => { by.set(k, id) }, forget: () => {} }
+    const gen = (keys: string[]) => runBatchGenerate({
+      type: 'pocket',
+      settings: { toolId: 't', depthMM: 3, stepDownMM: 3, stepoverPercent: 40, passAngleDeg: 0, direction: 'climb', strategy: 'raster', rampIn: false, islandIds: [] },
+      items: keys.map((k) => ({ key: k, name: k, fields: { pathId: k } })),
+      session, run: async (id) => T().setSegments(id, SEGS), onError: () => {},
+    })
+    await gen(['a', 'b'])
+    await gen(['a', 'b', 'c', 'd', 'e'])
+    expect(ops()).toHaveLength(5)
+    expect(new Set(ops().map((o) => o.batchId)).size).toBe(1)
+    expect(batchOf(ops()[0], ops())).toHaveLength(5)
+  })
+})
+
+// The forms' Stop is abortGeneration. Pressed while a job is in a worker it terminates it;
+// pressed BETWEEN jobs (the start optimizer, a photo decoding) there is nothing to
+// terminate, and the loop has to see it for itself or it carries on to the next op.
+describe('Stop between jobs', () => {
+  it('ends the Generate before its next operation, leaving the rest to regenerate', async () => {
+    usePathsStore.setState({ paths: ['a', 'b', 'c', 'd'].map((id, i) => path(id, rectD(i * 20, 0, 10, 10))) })
+    const ran: string[] = []
+    await runBatchGenerate({
+      type: 'pocket',
+      settings: { toolId: 't', depthMM: 3, stepDownMM: 3, stepoverPercent: 40, passAngleDeg: 0, direction: 'climb', strategy: 'raster', rampIn: false, islandIds: [] },
+      items: ['a', 'b', 'c', 'd'].map((k) => ({ key: k, name: k, fields: { pathId: k } })),
+      session: { liveOpId: () => undefined, remember: () => {}, forget: () => {} },
+      run: async (id) => {
+        ran.push(id)
+        T().setSegments(id, SEGS)
+        if (ran.length === 2) abortGeneration()   // nothing in a worker to terminate
+      },
+      onError: () => {},
+    })
+    expect(ran).toHaveLength(2)
+    expect(ops().map((o) => o.status)).toEqual(['done', 'done', 'needs-update', 'needs-update'])
+  })
+})
+
 describe('nothingToCut', () => {
   const seg = { x: 0, y: 0, z: -1, rapid: false }
   const half = (id: string, linkedOpId: string | undefined, segments: unknown[], over: Record<string, unknown> = {}) =>

@@ -4,9 +4,98 @@
 // which shows them in true program order. They once lived in the bottom half of this
 // panel, grouped by tool id regardless of their actual order — so a list running A, B, A
 // drew two tidy groups while the machine performed three tool changes.
+import { useState } from 'react'
 import { ICON } from '../theme'
 import { Eye, EyeOff, Trash2, Layers, ChevronRight, ChevronDown, FolderOpen, Folder, Image, Box } from 'lucide-react'
-import { usePathsStore, groupKeyOf, outerGroupOf } from '../store/pathsStore'
+import { usePathsStore, groupKeyOf, outerGroupOf, type ImportedPath } from '../store/pathsStore'
+import { sourceTree, type SourceItem } from './sourceTree'
+
+const iconBtn = 'opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-gray-300 dark:hover:bg-neutral-600 text-gray-500 dark:text-neutral-400 hover:text-gray-800 dark:hover:text-neutral-200 transition-opacity'
+const deleteBtn = 'opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-900/40 text-gray-500 dark:text-neutral-400 hover:text-red-400 transition-opacity'
+
+/** One path inside a folder. */
+function MemberRow({ p }: { p: ImportedPath }) {
+  const selected = usePathsStore((s) => s.selectedIds.includes(p.id))
+  const onlySelected = usePathsStore((s) => s.selectedIds.length === 1)
+  const { selectPath, toggleVisibility, deletePath } = usePathsStore.getState()
+  return (
+    <li
+      className={[
+        'flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer group',
+        selected ? 'bg-blue-600/20 text-blue-300' : 'hover:bg-gray-300/50 dark:hover:bg-neutral-700/50',
+      ].join(' ')}
+      onClick={(e) => selectPath(selected && onlySelected ? null : p.id, e.shiftKey)}
+    >
+      <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: p.color }} />
+      <span className="flex-1 text-body truncate text-gray-800 dark:text-neutral-200">{p.name}</span>
+      <button title={p.visible ? 'Hide path' : 'Show path'}
+        onClick={(e) => { e.stopPropagation(); toggleVisibility(p.id) }} className={iconBtn}>
+        {p.visible ? <Eye size={ICON.sm} /> : <EyeOff size={ICON.sm} />}
+      </button>
+      <button title="Delete path" onClick={(e) => { e.stopPropagation(); deletePath(p.id) }} className={deleteBtn}>
+        <Trash2 size={ICON.sm} />
+      </button>
+    </li>
+  )
+}
+
+/**
+ * The inside of an import folder: the file's own groups as folders (see sourceTree). They
+ * start CLOSED — a sheet of 127 parts open would bury everything below it — and clicking
+ * the name selects the whole part, which is the everyday reason to look for one here.
+ */
+function SourceItems({ items, open, onToggle }: {
+  items: SourceItem[]
+  open: ReadonlySet<string>
+  onToggle: (id: string) => void
+}) {
+  const selectedIds = usePathsStore((s) => s.selectedIds)
+  const { setSelectedIds, setPathsVisible, applyPathEdit } = usePathsStore.getState()
+  return (
+    <ul className="ml-5 space-y-0.5 mt-0.5">
+      {items.map((it) => {
+        if (it.kind === 'path') return <MemberRow key={it.path.id} p={it.path} />
+        const isOpen = open.has(it.id)
+        const ids = it.paths.map((p) => p.id)
+        const allVisible = it.paths.every((p) => p.visible)
+        const anySelected = ids.some((id) => selectedIds.includes(id))
+        return (
+          <li key={it.id}>
+            <div
+              className={[
+                'flex items-center gap-1 px-1 py-1 rounded cursor-pointer group select-none',
+                anySelected ? 'bg-blue-600/10' : 'hover:bg-gray-300/50 dark:hover:bg-neutral-700/50',
+              ].join(' ')}
+              title="Click to select this group's paths; shift-click to add them"
+              onClick={(e) => setSelectedIds(e.shiftKey
+                ? [...selectedIds, ...ids.filter((id) => !selectedIds.includes(id))]
+                : ids)}
+            >
+              <button title={isOpen ? 'Collapse' : 'Expand'}
+                onClick={(e) => { e.stopPropagation(); onToggle(it.id) }}
+                className="text-gray-600 dark:text-neutral-400 flex-shrink-0">
+                {isOpen ? <ChevronDown size={ICON.sm} /> : <ChevronRight size={ICON.sm} />}
+              </button>
+              <span className="text-gray-600 dark:text-neutral-400 flex-shrink-0">
+                {isOpen ? <FolderOpen size={ICON.sm} /> : <Folder size={ICON.sm} />}
+              </span>
+              <span className="flex-1 text-body truncate text-gray-700 dark:text-neutral-300" title={it.name}>{it.name}</span>
+              <span className="text-xs text-gray-600 dark:text-neutral-400 flex-shrink-0 mr-1">{it.paths.length}</span>
+              <button title={allVisible ? 'Hide group' : 'Show group'}
+                onClick={(e) => { e.stopPropagation(); setPathsVisible(ids, !allVisible) }} className={iconBtn}>
+                {allVisible ? <Eye size={ICON.sm} /> : <EyeOff size={ICON.sm} />}
+              </button>
+              <button title="Delete group" onClick={(e) => { e.stopPropagation(); applyPathEdit({ deleteIds: ids }) }} className={deleteBtn}>
+                <Trash2 size={ICON.sm} />
+              </button>
+            </div>
+            {isOpen && <SourceItems items={it.items} open={open} onToggle={onToggle} />}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
 
 export default function PathsPanel() {
   const {
@@ -15,6 +104,13 @@ export default function PathsPanel() {
     toggleGroupVisibility, toggleGroupCollapsed, deleteGroup,
     showPath,
   } = usePathsStore()
+  // Which of the file's own groups are open — closed unless opened, and per session.
+  const [openSource, setOpenSource] = useState<ReadonlySet<string>>(new Set())
+  const toggleSource = (id: string) => setOpenSource((s) => {
+    const next = new Set(s)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    return next
+  })
   // Separate grouped vs ungrouped paths; preserve original order within groups
   const groupOrder: string[] = []
   const groupMap = new Map<string, typeof paths>()
@@ -99,38 +195,8 @@ export default function PathsPanel() {
                   </button>
                 </div>
 
-                {/* Member paths */}
-                {!collapsed && (
-                  <ul className="ml-5 space-y-0.5 mt-0.5">
-                    {members.map((p) => (
-                      <li
-                        key={p.id}
-                        className={[
-                          'flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer group',
-                          selectedIds.includes(p.id) ? 'bg-blue-600/20 text-blue-300' : 'hover:bg-gray-300/50 dark:hover:bg-neutral-700/50',
-                        ].join(' ')}
-                        onClick={(e) => selectPath(selectedIds.includes(p.id) && selectedIds.length === 1 ? null : p.id, e.shiftKey)}
-                      >
-                        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: p.color }} />
-                        <span className="flex-1 text-body truncate text-gray-800 dark:text-neutral-200">{p.name}</span>
-                        <button
-                          title={p.visible ? 'Hide path' : 'Show path'}
-                          onClick={(e) => { e.stopPropagation(); toggleVisibility(p.id) }}
-                          className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-gray-300 dark:hover:bg-neutral-600 text-gray-500 dark:text-neutral-400 hover:text-gray-800 dark:hover:text-neutral-200 transition-opacity"
-                        >
-                          {p.visible ? <Eye size={ICON.sm} /> : <EyeOff size={ICON.sm} />}
-                        </button>
-                        <button
-                          title="Delete path"
-                          onClick={(e) => { e.stopPropagation(); deletePath(p.id) }}
-                          className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-900/40 text-gray-500 dark:text-neutral-400 hover:text-red-400 transition-opacity"
-                        >
-                          <Trash2 size={ICON.sm} />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                {/* Member paths, in the file's own groups where it had any */}
+                {!collapsed && <SourceItems items={sourceTree(members)} open={openSource} onToggle={toggleSource} />}
               </li>
             )
           })}

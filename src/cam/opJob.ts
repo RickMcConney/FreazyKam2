@@ -1,7 +1,7 @@
 import { generatePeckDrill, generateHelicalDrills, type HoleSpec } from './drill'
 import { perfLog } from '../debug'
 import { runInWorkerFor } from '../workers/workerClient'
-import { useToolpathStore } from '../store/toolpathStore'
+import { useToolpathStore, withPending } from '../store/toolpathStore'
 import { usePathsStore } from '../store/pathsStore'
 import { useToolStore, type Tool } from '../store/toolStore'
 import { useWorkpieceStore } from '../store/workpieceStore'
@@ -98,8 +98,11 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
   const { safeHeightMM, widthMM: stockW, heightMM: stockH } = useWorkpieceStore.getState()
   const notes: GenNote[] = []
 
-  const op = operations.find((o) => o.id === opId)
-  if (!op) return { notes }
+  // Through the batch buffer, which is where a batch Generate puts the entry hint it has
+  // just worked out for this op (see derived batches in toolpathStore).
+  const found = operations.find((o) => o.id === opId)
+  if (!found) return { notes }
+  const op = withPending(found)
   const tool = tools.find((t) => t.id === op.toolId)
   if (!tool) return { notes }
 

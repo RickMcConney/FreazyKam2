@@ -4,7 +4,9 @@ import { useMemo, useState, useId } from 'react'
 import { NumericInput } from '../../components/NumericInput'
 import { NUMERIC_HINT } from '../../components/parseNumeric'
 import { ICON } from '../../theme'
-import { AlertCircle, AlertTriangle, Loader2, RotateCcw } from 'lucide-react'
+import { AlertCircle, AlertTriangle, Loader2, RotateCcw, Square } from 'lucide-react'
+import { abortGeneration } from '../../workers/abortGeneration'
+import { useUIStore } from '../../store/uiStore'
 import type { Tool, ToolType } from '../../store/toolStore'
 import { ToolPicker } from './ToolPicker'
 import { useWorkpieceStore, fromMM, toMM, fmtLen, lenValue, inchStepFor } from '../../store/workpieceStore'
@@ -516,6 +518,17 @@ export function useGenerateError(): [string | null, (opId: string, err: unknown)
 // `onClick` receives the mouse event so a form can read modifiers — PocketForm uses
 // alt-click to force a strategy the shape would otherwise decline. Handlers that take no
 // argument stay assignable, so the other forms are unaffected.
+/**
+ * The form's Generate button, which IS its progress bar while it runs — and, beside it, a
+ * STOP. A long generation (a 3D profile, an adaptive pocket, a few hundred labels) was
+ * stoppable only by undoing or opening another project, which nobody would look for.
+ *
+ * Stop is `abortGeneration`, the same abort undo uses: the workers are terminated (the
+ * only real stop — a solve never yields), operations that finished keep their
+ * toolpaths, and the one cut short is left NEEDS-UPDATE rather than failed — the user
+ * stopped it, nothing went wrong — and the form still remembers it, so Generate picks it
+ * back up. Every generate loop already treats the cancel as a stop, not a failure.
+ */
 export function GenerateBtn({ disabled, generating, onClick, label = 'Generate Toolpath', title }: { disabled: boolean; generating: boolean; onClick: (e: React.MouseEvent) => void; label?: string; title?: string }) {
   // Progress is only published once a generation has been running long enough to be worth
   // showing (see genProgressStore); short ones keep the plain spinner.
@@ -523,9 +536,9 @@ export function GenerateBtn({ disabled, generating, onClick, label = 'Generate T
   const stage = useGenProgressStore((s) => s.label)
   const showBar = generating && pct !== null
 
-  return (
-    <button onClick={onClick} disabled={disabled} title={title}
-      className="relative w-full py-1.5 rounded text-body font-medium bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1.5 overflow-hidden">
+  const main = (
+    <button onClick={onClick} disabled={disabled || generating} title={title}
+      className="relative flex-1 min-w-0 py-1.5 rounded text-body font-medium bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1.5 overflow-hidden">
       {/* Fill behind the label, so the button itself is the progress bar. */}
       {showBar && (
         <span
@@ -534,8 +547,8 @@ export function GenerateBtn({ disabled, generating, onClick, label = 'Generate T
           style={{ width: `${Math.round(pct * 100)}%` }}
         />
       )}
-      <span className="relative flex items-center gap-1.5">
-        {generating && <Loader2 size={ICON.sm} className="animate-spin" />}
+      <span className="relative flex items-center gap-1.5 truncate">
+        {generating && <Loader2 size={ICON.sm} className="animate-spin shrink-0" />}
         {generating
           ? showBar
             ? `${stage ? `${stage} · ` : ''}${Math.round(pct * 100)}%`
@@ -543,6 +556,17 @@ export function GenerateBtn({ disabled, generating, onClick, label = 'Generate T
           : label}
       </span>
     </button>
+  )
+  if (!generating) return <div className="flex">{main}</div>
+  return (
+    <div className="flex gap-1.5">
+      {/* Generating is not disabled-looking: it is the progress, so it stays at full colour. */}
+      <div className="flex-1 min-w-0 flex [&>button:disabled]:opacity-100 [&>button:disabled]:cursor-default">{main}</div>
+      <button onClick={() => { if (abortGeneration() === 0) useUIStore.getState().showStatus('Generation stopped') }} title="Stop generating — finished toolpaths are kept; the rest are left to regenerate"
+        className="shrink-0 px-2.5 py-1.5 rounded text-body font-medium bg-red-600 hover:bg-red-500 text-white transition-colors flex items-center gap-1.5">
+        <Square size={ICON.sm} className="fill-current" />Stop
+      </button>
+    </div>
   )
 }
 

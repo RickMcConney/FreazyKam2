@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { importDxf, describeSkipped } from './dxfImporter'
 import { getBBox } from '../canvas/selectionUtils'
+import { PATH_COLOR } from '../colors'
+import { readableColor } from './layers'
 
 // Minimal R12-style DXF: an ENTITIES section with the given entities, $INSUNITS=4 (mm).
 function dxf(...entities: string[][]): string {
@@ -222,5 +224,76 @@ describe('importDxf — reports what it leaves out', () => {
     expect(paths).toHaveLength(1)
     expect(skipped).toEqual({ text: 2, point: 1 })
     expect(describeSkipped(skipped)).toBe('2 text, 1 point')
+  })
+})
+
+// ─── Layers ─────────────────────────────────────────────────────────────────
+
+// The same entity, on another layer (group code 8 is the fourth item of each builder).
+const on = (entity: string[], layer: string) => entity.map((v, i) => (i === 3 ? layer : v))
+
+describe('importDxf — layers', () => {
+  it('tags each path with its layer, and draws two layers in two colours', () => {
+    const { paths } = importDxf(dxf(on(square(0, 0), 'CUT_OUTER'), on(square(2, 2), 'CUT_INNER')), 'g')
+    expect(paths.map((p) => p.layer)).toEqual(['CUT_OUTER', 'CUT_INNER'])
+    expect(paths[0].color).not.toBe(paths[1].color)
+  })
+
+  it('leaves a one-layer file in the ordinary path colour', () => {
+    const { paths } = importDxf(dxf(on(square(0, 0), 'PARTS'), on(square(20, 0), 'PARTS')), 'g')
+    expect(paths.map((p) => p.layer)).toEqual(['PARTS', 'PARTS'])
+    expect(paths[0].color).toBe(PATH_COLOR)
+  })
+
+  // A label stroke drawn as LINEs that happens to touch the part outline must not be
+  // stitched into it: the two would come out as one path neither layer can claim.
+  it('stitches loose lines within a layer, never across two', () => {
+    const { paths } = importDxf(dxf(on(line(0, 0, 10, 0), 'A'), on(line(10, 0, 10, 10), 'B')), 'g')
+    expect(paths.map((p) => p.layer).sort()).toEqual(['A', 'B'])
+  })
+
+  it('gives a block entity on layer 0 the layer of the INSERT that places it — every cell of an array', () => {
+    const { paths } = importDxf(dxfWithBlocks(
+      [{ name: 'PART', entities: [square(0, 0), on(square(2, 2), 'HOLES')] }],
+      [on(insert('PART', 0, 0, { cols: 3, colGap: 20 }), 'CUT_OUTER')]), 'g')
+    expect(paths.map((p) => p.layer)).toEqual(['CUT_OUTER', 'HOLES', 'CUT_OUTER', 'HOLES', 'CUT_OUTER', 'HOLES'])
+  })
+})
+
+// A file whose TABLES section gives each named layer an ACI colour (1 red, 5 blue, 3 green).
+function dxfWithLayerTable(layers: [string, number][], entities: string[][]): string {
+  const head = ['0', 'SECTION', '2', 'HEADER', '9', '$INSUNITS', '70', '4', '0', 'ENDSEC']
+  const tables = ['0', 'SECTION', '2', 'TABLES', '0', 'TABLE', '2', 'LAYER', '70', `${layers.length}`,
+    ...layers.flatMap(([name, aci]) => ['0', 'LAYER', '2', name, '70', '0', '62', `${aci}`, '6', 'CONTINUOUS']),
+    '0', 'ENDTAB', '0', 'ENDSEC']
+  const ent = ['0', 'SECTION', '2', 'ENTITIES', ...entities.flat(), '0', 'ENDSEC', '0', 'EOF']
+  return [...head, ...tables, ...ent].join('\n')
+}
+
+describe('importDxf — layer colours and source groups', () => {
+  // The Charizard DXF: CUT_OUTER red, CUT_INNER blue, LABELS green in its LAYER table, and
+  // the import drew them in the app's palette instead.
+  it('draws each layer in the colour its LAYER table gives it', () => {
+    const { paths } = importDxf(dxfWithLayerTable([['CUT_OUTER', 1], ['CUT_INNER', 5]],
+      [on(square(0, 0), 'CUT_OUTER'), on(square(2, 2), 'CUT_INNER')]), 'g')
+    expect(paths.map((p) => p.color)).toEqual([readableColor('#ff0000'), readableColor('#0000ff')])
+  })
+
+  it('makes every placed block a source group of its own — each cell of an array too', () => {
+    const { paths } = importDxf(dxfWithBlocks(
+      [{ name: 'PART', entities: [square(0, 0), square(2, 2)] }],
+      [insert('PART', 0, 0, { cols: 2, colGap: 20 })]), 'g')
+    const groups = paths.map((p) => p.sourceGroups?.join('/'))
+    expect(groups[0]).toBe(groups[1])
+    expect(groups[2]).toBe(groups[3])
+    expect(groups[0]).not.toBe(groups[2])
+    expect(paths.every((p) => p.sourceGroups?.length === 1)).toBe(true)
+  })
+
+  it('stitches loose lines within one placed block, never into the next one', () => {
+    const { paths } = importDxf(dxfWithBlocks(
+      [{ name: 'L', entities: [line(0, 0, 10, 0)] }],
+      [insert('L', 0, 0), insert('L', 10, 0)]), 'g')
+    expect(paths).toHaveLength(2)
   })
 })

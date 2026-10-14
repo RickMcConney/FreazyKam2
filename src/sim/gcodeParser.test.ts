@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseGcode, segTool, lineAt, lineStartsOf } from './gcodeParser'
+import { parseGcode, segTool, lineAt, lineStartsOf, formatSimTime } from './gcodeParser'
 
 const last = <T,>(a: T[]) => a[a.length - 1]
 
@@ -158,5 +158,14 @@ describe('lineAt — the viewer reads a line without the program being split', (
       const starts = lineStartsOf(text)
       expect(Array.from(starts, (_, i) => lineAt(text, starts, i))).toEqual(parseGcode(text).lines)
     }
+  })
+})
+
+describe('formatSimTime', () => {
+  it('reads hh:mm:ss, hours always shown so the clock keeps one width', () => {
+    expect(formatSimTime(0)).toBe('00:00:00')
+    expect(formatSimTime(192.7)).toBe('00:03:12')
+    expect(formatSimTime(4512)).toBe('01:15:12')
+    expect(formatSimTime(36000)).toBe('10:00:00')
   })
 })

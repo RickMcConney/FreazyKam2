@@ -1,5 +1,5 @@
 // ─── Offset form ──────────────────────────────────────────────────────────────
-import { FormShell, PathChip, ToggleRow, GenerateBtn, LengthInput, CheckRow } from './shared'
+import { FormShell, PathChip, PathListSection, ToggleRow, GenerateBtn, LengthInput, CheckRow } from './shared'
 import { useMemo, useState } from 'react'
 import { ICON } from '../../theme'
 import { AlertCircle } from 'lucide-react'
@@ -158,20 +158,11 @@ export function OffsetForm({ onClose, editCtx }: { onClose: () => void; editCtx?
 
   return (
     <FormShell title={editCtx ? 'Edit Offset' : 'Offset'} onClose={onClose}>
-      <div>
-        <div className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">
-          {editCtx ? 'Source paths' : 'Paths'}
-        </div>
-        {canApply ? (
-          <div className="space-y-0.5">
-            {sourcePaths.map((p) => <PathChip key={p.id} path={p} label={editCtx ? 'source' : 'selected'} />)}
-          </div>
-        ) : (
-          <p className="text-body text-amber-600 dark:text-amber-400 flex items-center gap-1">
-            <AlertCircle size={ICON.sm} /> {editCtx ? 'Source or result paths no longer exist' : 'Select a path first'}
-          </p>
-        )}
-      </div>
+      {!canApply && (
+        <p className="text-body text-amber-600 dark:text-amber-400 flex items-center gap-1">
+          <AlertCircle size={ICON.sm} /> {editCtx ? 'Source or result paths no longer exist' : 'Select a path first'}
+        </p>
+      )}
       <div>
         <label htmlFor="offset-distance" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">Distance</label>
         <LengthInput id="offset-distance" valueMM={form.distanceMM} stepMM={0.5}
@@ -209,6 +200,12 @@ export function OffsetForm({ onClose, editCtx }: { onClose: () => void; editCtx?
       )}
       {error && <p className="text-body text-red-600 dark:text-red-400 flex items-start gap-1.5"><AlertCircle size={ICON.sm} className="mt-0.5 shrink-0" />{error}</p>}
       <GenerateBtn disabled={!canApply} generating={false} onClick={handleApply} label={editCtx ? 'Update Offset' : 'Apply Offset'} />
+      {/* Below the button, where every form keeps its path list (PathListSection). */}
+      {canApply && (
+        <PathListSection count={sourcePaths.length}>
+          {sourcePaths.map((p) => <PathChip key={p.id} path={p} label={editCtx ? 'source' : 'selected'} />)}
+        </PathListSection>
+      )}
     </FormShell>
   )
 }

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { nest, groupPathsForNesting, nestIsStale, type NestItem, type NestParams, type NestPlacement } from './nestOp'
+import { nest, nestSheets, __nestInternals, groupPathsForNesting, nestIsStale, type NestItem, type NestParams, type NestPlacement } from './nestOp'
 import type { Pt2 } from '../cam/pathFlattener'
+import { sheetOfPoint, sheetOffset } from '../cam/sheets'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -158,8 +159,11 @@ describe('nest', () => {
     const fits = r.placements.find((p) => p.id === 'fits')!
     expect(huge.onStock).toBe(false)
     expect(fits.onStock).toBe(true)
-    // Wholly off the 100 mm stock, so it is visibly not in the job.
-    expect(bbox(place(items[0].rings[0], huge)).minX).toBeGreaterThanOrEqual(100)
+    // Wholly off the 100 mm stock, so it is visibly not in the job — ABOVE it, since to
+    // the right is where more sheets go (cam/sheets), and there it would read as on one.
+    const hb = bbox(place(items[0].rings[0], huge))
+    expect(hb.minY).toBeGreaterThanOrEqual(100)
+    expect(sheetOfPoint((hb.minX + hb.maxX) / 2, (hb.minY + hb.maxY) / 2, { widthMM: 100, heightMM: 100 })).toBe(0)
     expect(boxGap(
       bbox(place(items[0].rings[0], huge)),
       bbox(place(items[1].rings[0], fits)),
@@ -177,7 +181,7 @@ describe('nest', () => {
     expect(r.unplacedIds.sort()).toEqual(['a', 'b'])
     const boxes = r.placements.map((pl) => bbox(place(items.find((i) => i.id === pl.id)!.rings[0], pl)))
     expect(boxGap(boxes[0], boxes[1])).toBeGreaterThan(0)
-    for (const b of boxes) expect(b.minX).toBeGreaterThanOrEqual(100)
+    for (const b of boxes) expect(b.minY).toBeGreaterThanOrEqual(100)
   })
 
   it('turns a part to make it fit when rotation is allowed, and cannot when it is not', () => {
@@ -441,6 +445,42 @@ describe('nest', () => {
 // ─── Grouping ─────────────────────────────────────────────────────────────────
 
 describe('groupPathsForNesting', () => {
+  // THE DRAWING'S OWN GROUPING (sourceGroups / sourceElement), as the importers keep it.
+  // A file can group "all the holes" across a sheet; trusting that would weld every part.
+  it('splits a source group whose pieces do not touch, so each hole still goes with its own part', () => {
+    const groups = groupPathsForNesting([
+      { id: 'a', d: rectD(0, 0, 40, 40) },
+      { id: 'b', d: rectD(60, 0, 40, 40) },
+      { id: 'ha', d: rectD(10, 10, 5, 5), sourceGroups: ['holes'] },
+      { id: 'hb', d: rectD(70, 10, 5, 5), sourceGroups: ['holes'] },
+    ])
+    expect(groups.map((g) => g.ids.sort()).sort()).toEqual([['a', 'ha'], ['b', 'hb']])
+  })
+
+  // A label beside its part, not inside it, with letters that do not touch each other.
+  it("never splits one drawn element: a label's strokes travel together", () => {
+    const groups = groupPathsForNesting([
+      // In a part group too, which on its own is split wherever its pieces do not touch.
+      { id: 'one', d: 'M 0 0 L 0 6', sourceGroups: ['part'], sourceElement: 'lbl' },
+      { id: 'zero', d: 'M 10 0 L 14 0 L 14 6 L 10 6 Z', sourceGroups: ['part'], sourceElement: 'lbl' },
+    ])
+    expect(groups).toHaveLength(1)
+  })
+
+  // scratch/Charizard_50MB_sheet01.svg: the importer splits each single-stroke label into
+  // one path per stroke, and the slash through every 0 is a straight two-point line. It has
+  // no interior to probe, so it joined nothing and was nested off on its own into some
+  // small gap, while the rest of the label rode with the part.
+  it('keeps a straight two-point stroke inside a part with that part', () => {
+    const groups = groupPathsForNesting([
+      { id: 'part', d: rectD(0, 0, 60, 40) },
+      { id: 'zero', d: 'M 20 10 L 24 10 L 24 18 L 20 18 Z' },
+      { id: 'slash', d: 'M 20.5 10.5 L 23.5 17.5' },
+      { id: 'dash', d: 'M 30 14 L 34 14' },
+    ])
+    expect(groups.map((g) => g.ids.sort())).toEqual([['dash', 'part', 'slash', 'zero']])
+  })
+
   it('splits a multi-part shape into pieces where its parts stand apart', () => {
     // An escapement: the wheel and its bore are one blank, the pallets and their
     // arbor hole are another, and nesting the two as one wastes everything in
@@ -608,5 +648,131 @@ describe('nest — filling the stock to a count', () => {
     const r = nest(one, { ...fill, fillCount: 40 })
     expect(r.placements.filter((p) => p.onStock)).toHaveLength(16)
     expect(r.fillLimited).toBeUndefined()
+  })
+})
+
+// ─── More than one sheet ──────────────────────────────────────────────────────
+
+describe('nestSheets', () => {
+  // 100×100 stock with a 1 mm margin takes nine 30 mm squares (3 × 3), no more.
+  const STOCK = { widthMM: 100, heightMM: 100 }
+  const sheetOf = (items: NestItem[], p: NestPlacement) => {
+    const b = bbox(place(items.find((i) => i.id === p.id)!.rings[0], p))
+    return sheetOfPoint((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2, STOCK)
+  }
+
+  it('carries what will not fit onto sheets below, each part inside its own sheet', () => {
+    const items = squares(20, 30)
+    const r = nestSheets(items, PARAMS)
+    expect(r.unplacedIds).toEqual([])
+    expect(r.sheets).toBe(3)
+    for (const p of r.placements) {
+      const b = bbox(place(items.find((i) => i.id === p.id)!.rings[0], p))
+      const o = sheetOffset(p.sheet!, STOCK)
+      expect(b.minY).toBeGreaterThanOrEqual(o.y)
+      expect(b.maxY).toBeLessThanOrEqual(o.y + 100)
+      expect(b.minX).toBeGreaterThanOrEqual(o.x)
+      expect(b.maxX).toBeLessThanOrEqual(o.x + 100)
+      expect(sheetOf(items, p)).toBe(p.sheet)
+    }
+  })
+
+  it('fills the sheets in order: the first full, the last with the remainder', () => {
+    const r = nestSheets(squares(20, 30), PARAMS)
+    const count = (k: number) => r.placements.filter((p) => p.sheet === k).length
+    expect([count(0), count(1), count(2)]).toEqual([9, 9, 2])
+  })
+
+  it('stays on one sheet when everything fits, exactly as a plain nest does', () => {
+    const items = squares(5, 30)
+    expect(nestSheets(items, PARAMS).placements).toEqual(nest(items, PARAMS).placements)
+  })
+
+  // Without the stop, a part no sheet can hold would ask for sheet after sheet.
+  it('parks a part too big for any sheet beside the stock, and stops', () => {
+    const items = [...squares(10, 30), { id: 'big', rings: [rect(900, 900, 150, 150)] }]
+    const r = nestSheets(items, PARAMS)
+    expect(r.unplacedIds).toEqual(['big'])
+    expect(r.sheets).toBe(2)
+    expect(r.placements.find((p) => p.id === 'big')?.onStock).toBe(false)
+  })
+
+  it('packs round what already stands on a lower sheet', () => {
+    // A 98 mm block filling the second sheet leaves room there for nothing.
+    const o = sheetOffset(1, STOCK)
+    const block = [[rect(o.x + 1, o.y + 1, 98, 98)]]
+    const r = nestSheets(squares(12, 30), { ...PARAMS, obstacles: block })
+    expect(r.placements.filter((p) => p.sheet === 1)).toHaveLength(0)
+    expect(r.placements.filter((p) => p.sheet === 2)).toHaveLength(3)
+  })
+})
+
+// ─── The row check that rules out heights (rowsCanHold) ───────────────────────
+// A pruning step is invisible when it is right — the nest comes out identical, only
+// faster — so it is pinned here directly: one cell too strict and nests quietly get worse
+// with every other test still green.
+
+describe('ruling out a height before the sweep', () => {
+  const { BitGrid, rowNeedOf, rowsCanHold } = __nestInternals
+  const mask = (rows: number[][]) => ({ cols: 40, rows: rows.length, runs: rows, cells: 0 })
+
+  it("measures a row's longest clear run, across word boundaries and to the last column", () => {
+    const g = new BitGrid(70, 3)
+    expect(g.longestFreeRun(0)).toBe(70)
+    g.setRange(0, 10, 12)          // clear 0–9 (10) and 13–69 (57)
+    expect(g.longestFreeRun(0)).toBe(57)
+    g.setRange(0, 40, 40)          // 13–39 (27) and 41–69 (29), the last across two words
+    expect(g.longestFreeRun(0)).toBe(29)
+    g.setRange(1, 0, 69)
+    expect(g.longestFreeRun(1)).toBe(0)
+  })
+
+  it('lets a span through a run of EXACTLY its length, and not one a cell shorter', () => {
+    const g = new BitGrid(100, 4)
+    for (let r = 0; r < 4; r++) { g.setRange(r, 0, 59); g.setRange(r, 98, 99) }   // clear 60–97: 38
+    expect(rowsCanHold(g, rowNeedOf(mask([[0, 37], [0, 37]])), 0)).toBe(true)
+    expect(rowsCanHold(g, rowNeedOf(mask([[0, 37], [0, 38]])), 0)).toBe(false)
+  })
+
+  it('judges a row by its widest span, not by its cells all told', () => {
+    // Two spans of 20 with a gap fit a sheet row whose clear runs are 25 and 25.
+    const g = new BitGrid(60, 1)
+    g.setRange(0, 25, 34)
+    expect(rowsCanHold(g, rowNeedOf(mask([[0, 19, 30, 49]])), 0)).toBe(true)
+  })
+
+  it('sees a write: a row ruled in is ruled out once a part lands across its gap', () => {
+    const g = new BitGrid(50, 1)
+    const need = rowNeedOf(mask([[0, 29]]))
+    expect(rowsCanHold(g, need, 0)).toBe(true)
+    g.setRange(0, 20, 20)
+    expect(rowsCanHold(g, need, 0)).toBe(false)
+  })
+})
+
+// ─── Progress ─────────────────────────────────────────────────────────────────
+
+describe('nest progress', () => {
+  // The reporter the worker installs (cam/progress); throttling would drop most of a fast
+  // test's reports, so the reports are read off a reporter installed here instead.
+  const record = async (run: () => void) => {
+    const { setProgressReporter } = await import('../cam/progress')
+    const seen: { frac: number; label?: string }[] = []
+    setProgressReporter((frac, label) => seen.push({ frac, label }))
+    try { run() } finally { setProgressReporter(null) }
+    return seen
+  }
+
+  it('only ever rises, says which sheet it is on, and ends at 100%', async () => {
+    const seen = await record(() => nestSheets(squares(20, 30), PARAMS))
+    expect(seen.length).toBeGreaterThan(2)
+    for (let i = 1; i < seen.length; i++) expect(seen[i].frac).toBeGreaterThanOrEqual(seen[i - 1].frac)
+    expect(seen[seen.length - 1].frac).toBe(1)
+    expect(seen.some((s) => s.label?.startsWith('Sheet 3'))).toBe(true)
+  })
+
+  it('reports a plain one-sheet nest too', async () => {
+    const seen = await record(() => nest(squares(5, 30), PARAMS))
+    expect(seen[seen.length - 1].frac).toBe(1)
   })
 })

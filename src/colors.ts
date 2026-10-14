@@ -5,6 +5,11 @@ import type { Material } from './store/workpieceStore'
 // All imported paths and created shapes share one color.
 export const PATH_COLOR = '#60a5fa'  // blue-400
 
+// One per layer of an import that has several (importers/layers.ts), in order of first
+// appearance. The first is PATH_COLOR so a layer reads as "the usual" path; the rest are
+// mid-tone hues that hold up on both the light and the dark canvas.
+export const LAYER_COLORS = ['#60a5fa', '#f87171', '#fbbf24', '#34d399', '#c084fc', '#f472b6', '#22d3ee', '#a3e635']
+
 // ─── Material colors (single source of truth) ───────────────────────────────
 // One entry per material, used by both renderers:
 //   light / dark — 2D canvas fill (Konva), picked per active theme

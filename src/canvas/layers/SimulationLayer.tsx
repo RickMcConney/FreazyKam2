@@ -9,6 +9,9 @@ import { CutTrail, effectiveCutWidthAt, heatPieces, type FrustumSeg, type HeatSp
 import { TrailRaster, cutBBox, type TrailBBox } from '../../sim/trailRaster'
 import { SPINDLE_VIS_RPS } from '../../sim/spindleVis'
 import { originWorldXY } from '../layers/WorkpieceLayer'
+import { sheetOffset } from '../../cam/sheets'
+import { useSheetCount } from '../useSheetCount'
+import { useUIStore } from '../../store/uiStore'
 
 interface Props {
   viewport: Viewport
@@ -153,8 +156,16 @@ export const SimulationLayer = memo(function SimulationLayer({ viewport }: Props
   const rigidity = useWorkpieceStore((s) => s.machineRigidity)
   const heat = useMemo<HeatSpec>(() => ({ material, rigidity }), [material, rigidity])
   const org = originWorldXY(origin, widthMM, heightMM)
-  const ox = org.x
-  const oy = org.y
+  // ON THE SHEET BEING SIMULATED (cam/sheets): a generated program is ONE sheet moved to
+  // the machine origin, so on the canvas — which shows every sheet where it lies — its trail
+  // belongs back down on that sheet's parts, not painted over the first sheet's. An
+  // imported G-code file is its own program, in its own coordinates, and stays put.
+  const sheets = useSheetCount()
+  const activeSheet = Math.min(useUIStore((s) => s.activeSheet), sheets - 1)
+  const generated = useSimStore((s) => s.autoReload)
+  const sheetAt = generated ? sheetOffset(activeSheet, { widthMM, heightMM }) : { x: 0, y: 0 }
+  const ox = org.x + sheetAt.x
+  const oy = org.y + sheetAt.y
 
   // Where the trail image has to reach. Grown by the widest cut in the program so a
   // stroke at the edge isn't clipped in half.

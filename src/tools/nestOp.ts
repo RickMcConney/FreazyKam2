@@ -1,3 +1,5 @@
+import { reportProgress } from '../cam/progress'
+import { sheetOffset } from '../cam/sheets'
 // ─── Nesting ──────────────────────────────────────────────────────────────────
 //
 // Arrange parts on the stock so as little material as possible is wasted.
@@ -139,6 +141,8 @@ export interface NestPlacement {
    * has to be somewhere the user can see it is not on the stock.
    */
   onStock: boolean
+  /** Which sheet of stock it went on (cam/sheets), from `nestSheets`. 0 = the stock. */
+  sheet?: number
 }
 
 export interface NestResult {
@@ -170,17 +174,46 @@ class BitGrid {
   readonly rows: number
   private readonly wpr: number
   private readonly bits: Uint32Array
+  /** Each row's longest run of clear cells, or -1 once a write has made it stale. */
+  private readonly freeRun: Int32Array
 
   constructor(cols: number, rows: number) {
     this.cols = cols
     this.rows = rows
     this.wpr = (cols + 31) >> 5
     this.bits = new Uint32Array(this.wpr * rows)
+    this.freeRun = new Int32Array(rows).fill(-1)
+  }
+
+  /**
+   * The longest run of clear cells anywhere in row r — worked out when first asked for
+   * after a write, so a placement costs only the rows it actually touched. See
+   * `rowsCanHold` for why it is wanted.
+   */
+  longestFreeRun(r: number): number {
+    const cached = this.freeRun[r]
+    if (cached >= 0) return cached
+    const base = r * this.wpr
+    let best = 0, cur = 0
+    for (let w = 0; w < this.wpr; w++) {
+      // Bits past the last column are never set (setRange clips), so the last word is
+      // only as wide as the columns it holds.
+      const width = w === this.wpr - 1 ? this.cols - (w << 5) : 32
+      const v = this.bits[base + w]
+      if (v === 0) { cur += width; continue }
+      for (let b = 0; b < width; b++) {
+        if ((v >>> b) & 1) { if (cur > best) best = cur; cur = 0 } else cur++
+      }
+    }
+    if (cur > best) best = cur
+    this.freeRun[r] = best
+    return best
   }
 
   /** Set columns [a,b] (inclusive) of row r. Out-of-range parts are clipped away. */
   setRange(r: number, a: number, b: number): void {
     if (r < 0 || r >= this.rows) return
+    this.freeRun[r] = -1
     const c0 = a < 0 ? 0 : a
     const c1 = b > this.cols - 1 ? this.cols - 1 : b
     if (c1 < c0) return
@@ -583,7 +616,12 @@ function orderCandidates(cands: Candidate[], orient: Orient, grid: number): Cand
  * as a solid front from the origin corner and whatever is left over is one
  * contiguous piece of stock rather than a scatter of unusable gaps.
  */
-export function nest(items: NestItem[], params: NestParams): NestResult {
+/**
+ * `onPass` hears each finished pass of the multi-start, as (done, total) — what a caller
+ * running several nests (`nestSheets`) builds its progress from. Left out, the nest reports
+ * its own progress to the worker (cam/progress), which is what a plain Nest shows.
+ */
+export function nest(items: NestItem[], params: NestParams, onPass?: (done: number, total: number) => void): NestResult {
   // PACKING FROM THE LEFT IS PACKING FROM THE BOTTOM OF A TRANSPOSED SHEET, and
   // that is the whole implementation. A column sweep written directly is 10-20x
   // slower than the row sweep, because the skip hint in `fitOrSkip` is an x hint
@@ -857,10 +895,18 @@ export function nest(items: NestItem[], params: NestParams): NestResult {
             || (pass.usedRows === champ.usedRows && pass.usedCols < champ.usedCols)))
 
   let better: PackOutcome | null = null
-  for (const gridStep of angleGrids(params.rotationStepDeg)) {
+  const grids = angleGrids(params.rotationStepDeg)
+  const totalPasses = grids.length * orients.length * 2
+  let passesDone = 0
+  const passDone = onPass ?? ((d: number, t: number) => reportProgress(d / t, 'Nesting'))
+  for (const gridStep of grids) {
     for (const orient of orients) {
-      for (const pass of [packPass(orient, gridStep), shelfPass(orient, gridStep)]) {
+      // One pass at a time, so each can be reported as it finishes — `beats` is pure, so
+      // comparing in between changes nothing about which wins.
+      for (const runPass of [() => packPass(orient, gridStep), () => shelfPass(orient, gridStep)]) {
+        const pass = runPass()
         if (beats(pass, better)) better = pass
+        passDone(++passesDone, totalPasses)
       }
     }
     // Everything is on the stock, so no coarser grid can place more and the
@@ -874,7 +920,7 @@ export function nest(items: NestItem[], params: NestParams): NestResult {
     // through a test written directly against it here, and then types everything
     // after the loop as unreachable. Reading it into a fresh binding is enough.
     const champ: PackOutcome | null = better
-    if (!fill && champ && champ.unplaced.length === 0) break
+    if (!fill && champ && champ.unplaced.length === 0) { passDone(totalPasses, totalPasses); break }
   }
   const { placements, unplaced, placedCells, usedCols, usedRows, fillLimited } = better!
 
@@ -909,17 +955,18 @@ export function nest(items: NestItem[], params: NestParams): NestResult {
   }
 
   // ── Parking ────────────────────────────────────────────────────────────────
-  // Whatever would not fit goes in rows off the right-hand END of the stock, in
-  // the order it was tried. Off the stock rather than tucked into a corner of it,
-  // because the one thing the user has to be able to see is that these parts are
-  // not in the job; laid out rather than piled up, so they can be dealt with one
-  // at a time; and in REAL coordinates rather than packed ones, so they land in
-  // the same place whichever edge the nest grew from.
+  // Whatever would not fit goes in rows ABOVE the stock, in the order it was tried.
+  // Off the stock rather than tucked into a corner of it, because the one thing the
+  // user has to be able to see is that these parts are not in the job; laid out rather
+  // than piled up, so they can be dealt with one at a time; and in REAL coordinates
+  // rather than packed ones, so they land in the same place whichever edge the nest grew
+  // from. Above, not to the right: the right is where more sheets go (cam/sheets), and a
+  // part parked there would be read as on one of them.
   const realW = params.sheetWidthMM
   const gutter = Math.max(params.marginMM, 10)
   const gap = Math.max(params.spacingMM, 2)
-  let px = realW + gutter
-  let py = 0
+  let px = 0
+  let py = params.sheetHeightMM + gutter
   let shelf = 0
   for (const entry of unplaced) {
     const rings = realRings.get(entry.item.id)
@@ -938,7 +985,7 @@ export function nest(items: NestItem[], params: NestParams): NestResult {
     if (!bb) continue
     const w = bb.maxX - bb.minX
     const h = bb.maxY - bb.minY
-    if (px > realW + gutter && px + w > realW + gutter + realW) { px = realW + gutter; py += shelf + gap; shelf = 0 }
+    if (px > 0 && px + w > realW) { px = 0; py += shelf + gap; shelf = 0 }
     out.push({ id: entry.item.id, angleDeg, pivotX, pivotY, dx: px - bb.minX, dy: py - bb.minY, onStock: false })
     px += w + gap
     shelf = Math.max(shelf, h)
@@ -953,6 +1000,83 @@ export function nest(items: NestItem[], params: NestParams): NestResult {
     usedHeightMM: usedH,
     ...(fillLimited ? { fillLimited: true } : {}),
   }
+}
+
+/**
+ * NEST ONTO AS MANY SHEETS AS IT TAKES. Whatever does not fit on the stock is nested again
+ * onto a fresh sheet of the same size in the grid beside and below it (cam/sheets), and so
+ * on: sheet 1 is packed as full as it can be, then sheet 2, the last holding the
+ * remainder. Each sheet is the single-sheet `nest` at the origin, its placements moved by
+ * the sheet's offset afterwards.
+ *
+ * Obstacles are moved by MINUS the same offset for each sheet, which puts the paths already
+ * on that sheet onto its grid and every other sheet's off it (a sheet is W × H and the
+ * pitch is that plus the gap, so nothing from a neighbour can reach). A part that does not fit even
+ * an empty sheet stops the run — another sheet would not take it either — and is parked
+ * beside the stock as `nest` parks it. Never with `fill`, which is one part on one sheet.
+ */
+export function nestSheets(items: NestItem[], params: NestParams, maxSheets = 100): NestResult & { sheets: number } {
+  // PROGRESS IS PARTS PLACED, the one total known up front — how many sheets it will take
+  // is not. Within a sheet the bar runs, pass by pass, toward the parts that sheet is
+  // EXPECTED to take: its area over the remaining parts' mean area, at the packing the
+  // sheets so far achieved (75% until one has finished). Never backwards.
+  const N = items.length
+  const W = params.sheetWidthMM, Hs = params.sheetHeightMM
+  const areaOf = new Map(items.map((i) => {
+    const b = ringsBBox(usableRings(i.rings))
+    return [i.id, b ? (b.maxX - b.minX) * (b.maxY - b.minY) : 0] as const
+  }))
+  let shown = 0
+  let placedSoFar = 0
+  let fillSoFar = 0.75
+  const sheetProgress = (sheetIndex: number, remaining: string[]) => {
+    const mean = remaining.reduce((s, id) => s + (areaOf.get(id) ?? 0), 0) / Math.max(1, remaining.length)
+    const expected = Math.min(remaining.length, Math.max(1, Math.floor((W * Hs * fillSoFar) / Math.max(1e-9, mean))))
+    return (done: number, total: number) => {
+      const f = N > 0 ? (placedSoFar + expected * (done / total)) / N : 1
+      shown = Math.max(shown, Math.min(0.99, f))
+      reportProgress(shown, `Sheet ${sheetIndex + 1} · ${placedSoFar} of ${N} placed`)
+    }
+  }
+  const placedArea = (ids: string[]) => ids.reduce((s, id) => s + (areaOf.get(id) ?? 0), 0)
+  const first = nest(items, params, sheetProgress(0, items.map((i) => i.id)))
+  if (params.fill || first.unplacedIds.length === 0) { reportProgress(1, 'Done'); return { ...first, sheets: 1 } }
+  const stock = { widthMM: params.sheetWidthMM, heightMM: params.sheetHeightMM }
+  const H = params.sheetHeightMM
+  const byId = new Map(items.map((i) => [i.id, i]))
+  const placements: NestPlacement[] = first.placements.filter((p) => p.onStock).map((p) => ({ ...p, sheet: 0 }))
+  let left = first.unplacedIds
+  let last = first
+  let sheets = 1
+  const onFirst = placements.map((p) => p.id)
+  placedSoFar = onFirst.length
+  fillSoFar = Math.min(0.95, Math.max(0.3, placedArea(onFirst) / (W * Hs)))
+  while (left.length > 0 && sheets < maxSheets) {
+    const off = sheetOffset(sheets, stock)
+    const obstacles = params.obstacles?.map((rs) => translateRings(rs, -off.x, -off.y))
+    const r = nest(left.map((id) => byId.get(id)!), { ...params, obstacles }, sheetProgress(sheets, left))
+    last = r
+    const on = r.placements.filter((p) => p.onStock)
+    if (on.length === 0) {
+      // A sheet that took nothing is the end only if it was EMPTY. One already covered
+      // by other paths says nothing about the next, which may be bare.
+      const occupied = (obstacles ?? []).some((rs) => {
+        const bb = ringsBBox(usableRings(rs))
+        return !!bb && bb.maxY > 0 && bb.minY < H && bb.maxX > 0 && bb.minX < params.sheetWidthMM
+      })
+      if (!occupied) break
+      sheets++
+      continue
+    }
+    for (const p of on) placements.push({ ...p, dx: p.dx + off.x, dy: p.dy + off.y, sheet: sheets })
+    left = r.unplacedIds
+    placedSoFar += on.length
+    sheets++
+  }
+  // What no sheet would take, parked where `nest` parked it — beside the stock.
+  if (left.length > 0) placements.push(...last.placements.filter((p) => !p.onStock))
+  reportProgress(1, 'Done')
+  return { ...first, placements, unplacedIds: left, sheets }
 }
 
 function maskAtAngle(
@@ -982,6 +1106,45 @@ function maskAtAngle(
  * layouts a row sweep misses is offering the part the other way UP (see `Orient`),
  * which is cheap and does win.
  */
+/**
+ * Each mask row's widest single span, and the rows in order of it, widest first. A span
+ * is cells that must ALL be clear side by side, so it can only sit in a run of clear cells
+ * at least as long — see `rowsCanHold`.
+ */
+interface RowNeed { need: Int32Array; order: number[] }
+const rowNeeds = new WeakMap<Mask, RowNeed>()
+function rowNeedOf(mask: Mask): RowNeed {
+  let rn = rowNeeds.get(mask)
+  if (rn) return rn
+  const need = new Int32Array(mask.rows)
+  for (let r = 0; r < mask.rows; r++) {
+    const row = mask.runs[r]
+    for (let i = 0; i < row.length; i += 2) need[r] = Math.max(need[r], row[i + 1] - row[i] + 1)
+  }
+  const order = Array.from({ length: mask.rows }, (_, r) => r).filter((r) => need[r] > 0)
+  order.sort((a, b) => need[b] - need[a])
+  rn = { need, order }
+  rowNeeds.set(mask, rn)
+  return rn
+}
+
+/**
+ * WHETHER ANY X AT ALL COULD TAKE THE MASK AT HEIGHT `oy`: every mask row needs a run of
+ * clear cells in its sheet row at least as long as its widest span. A NECESSARY condition
+ * only — passing it says nothing, and the sweep then tests for real — but failing it rules
+ * the whole row out in a few lookups, widest span first since that is the likeliest to fail.
+ *
+ * This is what pays for a full sheet. A part that will not go on scans EVERY row to find
+ * that out, and on a 127-part nest onto half sheets those failed searches were 22 s of 27
+ * (2,959 of them, ~7 ms each): once a sheet is mostly packed, the gaps between parts are
+ * narrower than most of what is left, and nearly every row is ruled out here. It skips
+ * only rows no placement could use, so the nest is exactly the one it always was.
+ */
+function rowsCanHold(grid: BitGrid, rn: RowNeed, oy: number): boolean {
+  for (const r of rn.order) if (grid.longestFreeRun(oy + r) < rn.need[r]) return false
+  return true
+}
+
 function findSpot(
   grid: BitGrid, mask: Mask,
   cMin: number, cMax: number, rMin: number, rMax: number,
@@ -991,7 +1154,9 @@ function findSpot(
   const oyMax = rMax - mask.rows + 1
   if (oxMax < cMin || oyMax < rMin) return null
   const oyLimit = beat ? Math.min(oyMax, beat.oy) : oyMax
+  const rn = rowNeedOf(mask)
   for (let oy = rMin; oy <= oyLimit; oy++) {
+    if (!rowsCanHold(grid, rn, oy)) continue
     const oxLimit = beat && oy === beat.oy ? Math.min(oxMax, beat.ox - 1) : oxMax
     let ox = cMin
     while (ox <= oxLimit) {
@@ -1012,6 +1177,8 @@ export interface NestablePath {
   groupId?: string
   userGroups?: string[]
   shapePart?: string
+  sourceGroups?: string[]
+  sourceElement?: string
 }
 
 export interface NestGroup {
@@ -1021,7 +1188,7 @@ export interface NestGroup {
 }
 
 type Box = NonNullable<ReturnType<typeof ringsBBox>>
-interface Member { id: string; rings: Pt2[][]; box: Box | null }
+interface Member { id: string; rings: Pt2[][]; box: Box | null; element?: string }
 
 const toGroup = (ms: Member[]): NestGroup => ({
   ids: ms.map((m) => m.id),
@@ -1057,6 +1224,15 @@ const toGroup = (ms: Member[]): NestGroup => ({
 function splitIntoPieces(ms: Member[]): Member[][] {
   const parent = ms.map((_, i) => i)
   const find = (i: number): number => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i] } return i }
+  // One drawn element is never split, whatever its footprint: a label's letters need not
+  // touch each other to be one label.
+  const firstOfElement = new Map<string, number>()
+  ms.forEach((m, i) => {
+    if (m.element === undefined) return
+    const j = firstOfElement.get(m.element)
+    if (j === undefined) firstOfElement.set(m.element, i)
+    else parent[find(i)] = find(j)
+  })
   const boxed = ms.filter((m) => m.box)
   if (ms.length > 1 && boxed.length > 0) {
     const minX = Math.min(...boxed.map((m) => m.box!.minX))
@@ -1126,19 +1302,29 @@ function splitIntoPieces(ms: Member[]): Member[][] {
 export function groupPathsForNesting(paths: NestablePath[], tolerance = 0.1): NestGroup[] {
   const members: Member[] = paths.map((p) => {
     const rings = usableRings(flattenPath(p.d, tolerance))
-    return { id: p.id, rings, box: ringsBBox(rings) }
+    return { id: p.id, rings, box: ringsBBox(rings), element: p.sourceElement }
   })
+
+  // THE DRAWING'S OWN GROUPING (`sourceGroups`): a part drawn as a <g>, or a DXF block
+  // INSERT. It is SPLIT by footprint like a multi-part shape and never trusted whole: a
+  // file can as easily group "all the holes" across a sheet, or wrap the whole drawing in
+  // one <g>, and trusting either would weld unrelated parts into one rigid blob. So it
+  // joins only pieces that actually touch (a stroke crossing the outline, a feature
+  // overlapping it) — containment below does the rest, as without it. What it cannot be
+  // wrong about is ONE DRAWN ELEMENT (`sourceElement`), which splitIntoPieces keeps whole.
 
   const keyed = new Map<string, { members: Member[]; splittable: boolean }>()
   members.forEach((m, i) => {
     const p = paths[i]
     const shapeKey = p.shapePart !== undefined ? p.groupId : undefined
+    const sourceKey = p.sourceGroups?.[0]
     // A user group wins over the shape's own key, and is never split — the user
-    // has said in as many words that these things go together.
-    const key = p.userGroups?.[0] ?? shapeKey ?? p.id
+    // has said in as many words that these things go together. One drawn element (a
+    // label split into its strokes) is never split either.
+    const key = p.userGroups?.[0] ?? shapeKey ?? sourceKey ?? p.sourceElement ?? p.id
     let entry = keyed.get(key)
     if (!entry) {
-      entry = { members: [], splittable: !p.userGroups?.length && shapeKey !== undefined }
+      entry = { members: [], splittable: !p.userGroups?.length && (shapeKey !== undefined || sourceKey !== undefined) }
       keyed.set(key, entry)
     }
     entry.members.push(m)
@@ -1146,7 +1332,12 @@ export function groupPathsForNesting(paths: NestablePath[], tolerance = 0.1): Ne
 
   const groups: NestGroup[] = [...keyed.values()].flatMap((e) =>
     (e.splittable ? splitIntoPieces(e.members) : [e.members]).map(toGroup))
-  const probes = groups.map((g) => interiorPoint(g.rings))
+  // A straight two-point stroke — the slash through a label's 0, a dash, a short stem of
+  // single-stroke text, any DXF LINE — has no interior for `interiorPoint` to find (it
+  // needs three points to make a ring), and without a probe it joined nothing and was
+  // nested as a part of its own, while the longer strokes of the same label found an
+  // interior span and rode with their part. A point ON the stroke stands for it.
+  const probes = groups.map((g) => interiorPoint(g.rings) ?? strokePoint(g.rings))
   const areas = groups.map((g) => {
     const bb = ringsBBox(g.rings)
     return bb ? (bb.maxX - bb.minX) * (bb.maxY - bb.minY) : 0
@@ -1187,6 +1378,12 @@ export function groupPathsForNesting(paths: NestablePath[], tolerance = 0.1): Ne
   return [...merged.values()]
 }
 
+/** The middle of the first segment of a stroke — what a shape with no interior is tested by. */
+function strokePoint(rings: Pt2[][]): Pt2 | null {
+  const r = rings.find((x) => x.length >= 2)
+  return r ? [(r[0][0] + r[1][0]) / 2, (r[0][1] + r[1][1]) / 2] : null
+}
+
 /** Inside the material of a ring set, by the even-odd rule SVG and CAM both fill with. */
 function insideEvenOdd(x: number, y: number, rings: Pt2[][]): boolean {
   let crossings = 0
@@ -1224,3 +1421,6 @@ export function nestIsStale<P extends { id: string }>(
     return !!a && !!b && a !== b
   })
 }
+
+/** For tests only: the pieces of the placement search too small to reach through `nest`. */
+export const __nestInternals = { BitGrid, rowNeedOf, rowsCanHold }

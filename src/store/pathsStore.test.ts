@@ -292,6 +292,38 @@ describe('bakePathsStep — every gesture bake, dragged or typed', () => {
 
 })
 
+describe('a path remembers how big it stands against its original size', () => {
+  const scale = (s: number, sy = s) => bakePathsStep(['a'], { kind: 'scale', sx: s, sy, ax: 0, ay: 0 }, 'scale')
+
+  it('compounds uniform scales, so 50% then ×2 is back to 100% and the record is gone', async () => {
+    await load({ paths: [path('a')] })
+    scale(0.5); await step()
+    expect(S().paths[0].scalePct).toBeCloseTo(50)
+    scale(2); await step()
+    expect(S().paths[0].scalePct).toBeUndefined()
+    expect(getBBox(S().paths[0].d)!.width).toBeCloseTo(10)
+  })
+
+  it('leaves the record alone for a stretch, which has no single percentage', async () => {
+    await load({ paths: [path('a', { scalePct: 50 })] })
+    scale(2, 1); await step()
+    expect(S().paths[0].scalePct).toBe(50)
+  })
+
+  it('counts a mirrored uniform scale by its size, not its sign', async () => {
+    await load({ paths: [path('a')] })
+    scale(-1.5, 1.5); await step()
+    expect(S().paths[0].scalePct).toBeCloseTo(150)
+  })
+
+  it('undoes the record with the scale', async () => {
+    await load({ paths: [path('a')] })
+    scale(0.5); await step()
+    await undo()
+    expect(S().paths[0].scalePct).toBeUndefined()
+  })
+})
+
 describe('a corner treatment is a recipe that lives as long as its outline', () => {
   const treated = () => path('a', {
     d: 'M 0 0 L 8 0 L 10 2 L 10 10 L 0 10 Z',

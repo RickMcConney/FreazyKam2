@@ -129,6 +129,9 @@ interface UIState {
   // The edit form was opened from the Toolpaths list, so closing it goes back there
   // rather than leaving the user on the Draw tab. Any other edit request clears it.
   returnToToolpaths: boolean
+  // Which sheet of stock (cam/sheets, 0-based) the simulator plays and the machine panel
+  // runs, when a nest has spread the parts over several. The export writes every sheet.
+  activeSheet: number
   // Ask MachinePanel to open a generator form (boolean/offset/pattern) in edit
   // mode for a GENERATED PATH — the object carries the parameters (see
   // ImportedPath.definition), so the form is opened on the thing rather than on
@@ -191,6 +194,7 @@ interface UIState {
   setPathsView: (v: 'paths' | 'toolpaths') => void
   setRequestEditOpId: (id: string | null) => void
   setReturnToToolpaths: (v: boolean) => void
+  setActiveSheet: (k: number) => void
   setRequestEditPathId: (id: string | null) => void
   setRequestMachineForm: (form: string | null) => void
   flashProperties: () => void
@@ -271,6 +275,7 @@ export const useUIStore = create<UIState>()(
   pathsView: 'paths' as const,
   requestEditOpId: null,
   returnToToolpaths: false,
+  activeSheet: 0,
   requestEditPathId: null,
   requestMachineForm: null,
   propertiesFlashSeq: 0,
@@ -325,6 +330,7 @@ export const useUIStore = create<UIState>()(
   // consumer's clear (null) must leave the flag alone, or it is gone before the form opens.
   setRequestEditOpId: (id) => set(id ? { requestEditOpId: id, returnToToolpaths: false } : { requestEditOpId: null }),
   setReturnToToolpaths: (v) => set({ returnToToolpaths: v }),
+  setActiveSheet: (k) => set({ activeSheet: Math.max(0, Math.floor(k)) }),
   setRequestEditPathId: (id) => set({ requestEditPathId: id }),
   setRequestMachineForm: (form) => set({ requestMachineForm: form }),
   flashProperties: () => set((s) => ({ propertiesFlashSeq: s.propertiesFlashSeq + 1 })),

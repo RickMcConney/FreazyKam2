@@ -33,6 +33,9 @@ export default function ExportPreflightDialog({
   const RigIcon = rig.Icon
   const hasWarnings = warnings.length > 0
   const canSplit = job.tools.length > 1
+  // A program over several sheets of stock is ALWAYS written one file per sheet (each moved
+  // to the machine origin — see cam/sheets); one file would cut sheet 2 off the board.
+  const multiSheet = job.sheets > 1
   const projectName = useProjectStore((s) => s.name)
   const [splitByTool, setSplitByTool] = useState(false)
   // Only the split export names its own files: it writes a whole set into a folder the
@@ -157,7 +160,12 @@ export default function ExportPreflightDialog({
 
         {/* Footer */}
         <div className="flex flex-col gap-2 px-5 py-3 border-t border-gray-200 dark:border-neutral-700 flex-shrink-0">
-          {canSplit && splitByTool && (
+          {multiSheet && (
+            <p className="text-[13px] text-gray-600 dark:text-neutral-400">
+              The parts are on {job.sheets} sheets: one file per sheet, each cut from the sheet's own corner{canSplit && splitByTool ? ', and one per tool within it' : ''}.
+            </p>
+          )}
+          {(multiSheet || (canSplit && splitByTool)) && (
             <div className="flex items-center gap-2">
               <label htmlFor="export-file-prefix" className="text-[13px] text-gray-600 dark:text-neutral-400 whitespace-nowrap">File prefix</label>
               <input
@@ -168,7 +176,7 @@ export default function ExportPreflightDialog({
                 autoFocus
                 className="flex-1 min-w-0 text-sm bg-gray-100 dark:bg-neutral-700 text-gray-900 dark:text-neutral-100 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
-              <span className="text-[12px] text-gray-600 dark:text-neutral-400 font-mono whitespace-nowrap">_A_tool.gcode</span>
+              <span className="text-[12px] text-gray-600 dark:text-neutral-400 font-mono whitespace-nowrap">{multiSheet ? '_sheet1' : ''}{canSplit && splitByTool ? '_A_tool' : ''}.gcode</span>
             </div>
           )}
           <div className="flex items-center justify-between gap-3">
@@ -195,7 +203,7 @@ export default function ExportPreflightDialog({
                 disabled={!report.hasToolpaths}
                 className="px-3 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors"
               >
-                {splitByTool && canSplit ? `Export ${job.tools.length} files` : hasWarnings ? 'Export anyway' : 'Export'}
+                {multiSheet ? `Export ${job.sheets} sheets` : splitByTool && canSplit ? `Export ${job.tools.length} files` : hasWarnings ? 'Export anyway' : 'Export'}
               </button>
             </div>
           </div>

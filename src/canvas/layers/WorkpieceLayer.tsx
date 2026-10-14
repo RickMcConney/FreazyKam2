@@ -4,6 +4,8 @@ import type { Viewport } from '../CanvasStage'
 import { useWorkpieceStore, type OriginPosition } from '../../store/workpieceStore'
 import { useUIStore } from '../../store/uiStore'
 import { MATERIAL_COLORS } from '../../colors'
+import { sheetOffset } from '../../cam/sheets'
+import { useSheetCount } from '../useSheetCount'
 
 // In Y-up CNC space: top = high Y (back of machine), bottom = low Y (front)
 // With layer scaleY=-scale, world Y=0 appears at screen bottom of workpiece,
@@ -35,16 +37,34 @@ export const WorkpieceLayer = memo(function WorkpieceLayer({ viewport }: Props) 
   const { scale } = viewport
   const darkMode = useUIStore((s) => s.darkMode)
   const fill = MATERIAL_COLORS[material][darkMode ? 'dark' : 'light']
+  // MORE SHEETS, when a nest spread the parts over several (cam/sheets): each the stock's
+  // size, in a grid beside and below it — numbered by SheetLabelLayer, above the drawing.
+  // The one the simulator and machine panel are on is drawn like the stock; the others
+  // thinner and fainter — NOT dashed: a dash
+  // pattern is laid along the whole outline however little of it is on screen, and zoomed
+  // in on a 4 × 8 ft sheet that is thousands of dashes per sheet on every pan and zoom
+  // frame, which a single, undashed sheet never paid.
+  const sheets = useSheetCount()
+  const active = Math.min(useUIStore((s) => s.activeSheet), sheets - 1)
 
   return (
     <Group listening={false}>
-      <Rect
-        x={0} y={0}
-        width={widthMM} height={heightMM}
-        stroke={fill}
-        strokeWidth={4 / scale}
-        fill="transparent"
-      />
+      {Array.from({ length: sheets }, (_, k) => {
+        const { x, y } = sheetOffset(k, { widthMM, heightMM })
+        return (
+          <Group key={k}>
+            <Rect
+              x={x} y={y}
+              width={widthMM} height={heightMM}
+              stroke={fill}
+              strokeWidth={(k === active ? 4 : 2) / scale}
+              opacity={k === active ? 1 : 0.55}
+              perfectDrawEnabled={false}
+              fill="transparent"
+            />
+          </Group>
+        )
+      })}
     </Group>
   )
 }

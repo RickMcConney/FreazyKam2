@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { groupPathsByContainment } from './containment'
+import { groupPathsByContainment, skipOpenPaths, isOpenPath } from './containment'
 import type { ImportedPath } from '../../store/pathsStore'
 
 const mk = (id: string, d: string): ImportedPath =>
@@ -80,5 +80,40 @@ describe('groupPathsByContainment', () => {
     const a = mk('a', 'M 0 0 L 40 0 L 40 40 L 0 40 Z')
     const b = mk('b', 'M 20 20 L 60 20 L 60 60 L 20 60 Z')
     expect(groupPathsByContainment([a, b]).map((g) => g.boundary.id)).toEqual(['a', 'b'])
+  })
+})
+
+// A sheet of parts, each with a single-stroke label inside it: the everyday mixed selection.
+const PART_A = 'M 0 0 L 50 0 L 50 30 L 0 30 Z'
+const LABEL_A = 'M 10 10 L 20 20 L 30 10'
+const PART_B = 'M 60 0 L 110 0 L 110 30 L 60 30 Z'
+const LABEL_B = 'M 70 10 L 90 10'
+
+describe('skipOpenPaths', () => {
+  it('reads a path as open when any drawn subpath has ends that do not meet', () => {
+    expect(isOpenPath(mk('a', PART_A))).toBe(false)
+    expect(isOpenPath(mk('l', LABEL_A))).toBe(true)
+    expect(isOpenPath(mk('mixed', `${PART_A} ${LABEL_A}`))).toBe(true)
+  })
+
+  it('drops the open labels from a mixed selection and counts them', () => {
+    const { closed, skipped } = skipOpenPaths([
+      mk('a', PART_A), mk('la', LABEL_A), mk('b', PART_B), mk('lb', LABEL_B),
+    ])
+    expect(closed.map((p) => p.id)).toEqual(['a', 'b'])
+    expect(skipped).toBe(2)
+  })
+
+  // Without the skip, the label groups as an island of its part and the pocket refuses it.
+  it('leaves each part a boundary with no open island once the labels are skipped', () => {
+    const { closed } = skipOpenPaths([mk('a', PART_A), mk('la', LABEL_A), mk('b', PART_B), mk('lb', LABEL_B)])
+    expect(groupPathsByContainment(closed).map((g) => [g.boundary.id, g.islands.length]))
+      .toEqual([['a', 0], ['b', 0]])
+  })
+
+  it('returns an all-open selection whole so the cut can say why it refuses', () => {
+    const { closed, skipped } = skipOpenPaths([mk('la', LABEL_A), mk('lb', LABEL_B)])
+    expect(closed.map((p) => p.id)).toEqual(['la', 'lb'])
+    expect(skipped).toBe(0)
   })
 })

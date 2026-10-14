@@ -11,6 +11,7 @@ import { useToolpathStore } from '../store/toolpathStore'
 import { useWorkpieceStore } from '../store/workpieceStore'
 import { useSimStore } from '../store/simStore'
 import { generateGcode } from '../cam/gcode'
+import { SheetPicker } from './SheetPicker'
 import { buildGcodeInputs } from '../io/gcodeExport'
 import { useSaveDialogStore } from '../store/saveDialogStore'
 import { triggerProjectSave, triggerGcodeExport, triggerGcodeExportSplit } from '../io/fileSystem'
@@ -265,6 +266,7 @@ export default function Toolbar() {
           label={hasToolpaths ? 'Simulate G-code' : 'Simulate G-code (no toolpaths)'}
           onClick={handleSimulate}
         />
+        <SheetPicker />
         <Sep />
 
 
@@ -313,7 +315,11 @@ export default function Toolbar() {
         <ExportPreflightDialog
           report={preflight}
           onCancel={() => setPreflight(null)}
-          onConfirm={(splitByTool, prefix) => { setPreflight(null); void (splitByTool ? triggerGcodeExportSplit(prefix) : triggerGcodeExport()) }}
+          onConfirm={(splitByTool, prefix) => {
+            const sheets = preflight.job.sheets
+            setPreflight(null)
+            void (splitByTool || sheets > 1 ? triggerGcodeExportSplit(prefix, splitByTool) : triggerGcodeExport())
+          }}
         />
       )}
 

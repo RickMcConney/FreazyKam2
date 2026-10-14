@@ -2,6 +2,7 @@ import DxfParser from 'dxf-parser'
 import { perfLog } from '../debug'
 import type { ImportedPath } from '../store/pathsStore'
 import { PATH_COLOR } from '../colors'
+import { colorByLayer } from './layers'
 import { uid } from '../uid'
 import { getMultiBBox, translateD } from '../canvas/selectionUtils'
 import { parseD, stringifyD, applyMat, type Mat6 } from './svgImporter'
@@ -458,11 +459,27 @@ export function importDxf(
   const skip = (label: string) => { skipped[label] = (skipped[label] ?? 0) + 1 }
   const sc = (v: number) => v * toMM
 
-  // LINE and partial ARC edges collected for stitching into connected paths
-  const edges: Edge[] = []
-  const pushPath = (d: string, name: string) => {
+  // LINE and partial ARC edges collected for stitching into connected paths — per LAYER
+  // and per INSERT, so a label's stroke is never stitched onto the part outline it happens
+  // to touch, and one part's edges never onto the next part's.
+  const edgeSets = new Map<string, { layer?: string; groups: string[]; groupNames: string[]; edges: Edge[] }>()
+  let layer: string | undefined
+  // The INSERTs the current entity sits in, outermost first (ImportedPath.sourceGroups),
+  // and the names of the blocks they place.
+  let groups: string[] = []
+  let groupNames: string[] = []
+  const addEdge = (e: Edge) => {
+    const key = `${layer ?? ''}\u0000${groups.join(',')}`
+    const set = edgeSets.get(key)
+    if (set) set.edges.push(e); else edgeSets.set(key, { layer, groups, groupNames, edges: [e] })
+  }
+  const pushPath = (d: string, name: string, onLayer = layer, inGroups = groups, inNames = groupNames) => {
     if (!d.trim()) return
-    paths.push({ id: uid('dxf-path'), name: `${name} ${++_pathCounter}`, d, visible: true, color: PATH_COLOR, groupId, groupName })
+    paths.push({
+      id: uid('dxf-path'), name: `${name} ${++_pathCounter}`, d, visible: true, color: PATH_COLOR, groupId, groupName,
+      ...(onLayer === undefined ? {} : { layer: onLayer }),
+      ...(inGroups.length ? { sourceGroups: inGroups, sourceGroupNames: inNames } : {}),
+    })
   }
 
   // `m` is where this list of entities lands: identity for the file's own entities, an
@@ -470,16 +487,22 @@ export function importDxf(
   // was and only then carried through `m`, so a file with no blocks and no mirrored
   // entities imports byte-for-byte as before.
   let expanded = 0
-  const collect = (entities: DxfAny[], m: Mat6, depth: number) => {
+  // `inherited` is the layer of the INSERT placing these entities: by the DXF convention a
+  // block entity drawn on layer 0 takes on the layer it is inserted on.
+  const collect = (entities: DxfAny[], m: Mat6, depth: number, inherited?: string, inGroups: string[] = [], inNames: string[] = []) => {
     for (const entity of entities) {
+      groups = inGroups
+      groupNames = inNames
       if (depth > 0 && ++expanded > MAX_BLOCK_ENTITIES) { skip('block expansion over the limit'); return }
+      const own = (entity as { layer?: string }).layer?.trim()
+      layer = own && !(own === '0' && inherited) ? own : inherited ?? (own || undefined)
       // This entity's own frame: its object coordinate system, then where the list lands.
-      let own = m
+      let ocs = m
       if (OCS_TYPES.has(entity.type)) {
         const n = normalOf(entity as unknown as Record<string, unknown>)
         if (Math.abs(n.x) > 1e-6 || Math.abs(n.y) > 1e-6) { skip(`${skipLabel(entity.type)} (tilted)`); continue }
         const flipped = n.z < 0 || (entity.type === 'CIRCLE' && !!entity.handle && flippedCircles.has(entity.handle))
-        if (flipped) own = mul(m, OCS_FLIP)
+        if (flipped) ocs = mul(m, OCS_FLIP)
       }
       try {
         switch (entity.type) {
@@ -489,37 +512,37 @@ export function importDxf(
             if (!p0 || !p1) continue
             // Skip zero-length segments
             if (Math.abs(p0.x - p1.x) < 1e-9 && Math.abs(p0.y - p1.y) < 1e-9) continue
-            edges.push(mapEdge({ kind: 'L', x1: sc(p0.x), y1: sc(p0.y), x2: sc(p1.x), y2: sc(p1.y) }, own)!)
+            addEdge(mapEdge({ kind: 'L', x1: sc(p0.x), y1: sc(p0.y), x2: sc(p1.x), y2: sc(p1.y) }, ocs)!)
             continue  // handled via stitchEdges below
           }
           case 'LWPOLYLINE': {
             const e = entity as import('dxf-parser').LwpolylineEntity
             if (e.vertices.length < 2) continue
-            pushPath(mapD(polyToD(e.vertices.map((v) => ({ x: sc(v.x), y: sc(v.y), bulge: v.bulge })), e.shape), own),
+            pushPath(mapD(polyToD(e.vertices.map((v) => ({ x: sc(v.x), y: sc(v.y), bulge: v.bulge })), e.shape), ocs),
               e.shape ? 'Closed Polyline' : 'Polyline')
             continue
           }
           case 'POLYLINE': {
             const e = entity as import('dxf-parser').PolylineEntity
             if (e.vertices.length < 2) continue
-            pushPath(mapD(polyToD(e.vertices.map((v) => ({ x: sc(v.x), y: sc(v.y), bulge: v.bulge })), e.shape), own), 'Polyline')
+            pushPath(mapD(polyToD(e.vertices.map((v) => ({ x: sc(v.x), y: sc(v.y), bulge: v.bulge })), e.shape), ocs), 'Polyline')
             continue
           }
           case 'ARC': {
             const e = entity as import('dxf-parser').ArcEntity
             const edge = arcEdge(sc(e.center.x), sc(e.center.y), sc(e.radius), e.startAngle, e.endAngle)
             if (edge) {
-              const moved = mapEdge(edge, own)
-              if (moved) edges.push(moved)
-              else pushPath(mapD(edgeToD(edge), own), 'Arc')  // squashed by a non-uniform scale
+              const moved = mapEdge(edge, ocs)
+              if (moved) addEdge(moved)
+              else pushPath(mapD(edgeToD(edge), ocs), 'Arc')  // squashed by a non-uniform scale
               continue  // handled via stitchEdges below
             }
-            pushPath(mapD(circleToD(sc(e.center.x), sc(e.center.y), sc(e.radius)), own), 'Circle')
+            pushPath(mapD(circleToD(sc(e.center.x), sc(e.center.y), sc(e.radius)), ocs), 'Circle')
             continue
           }
           case 'CIRCLE': {
             const e = entity as import('dxf-parser').CircleEntity
-            pushPath(mapD(circleToD(sc(e.center.x), sc(e.center.y), sc(e.radius)), own), 'Circle')
+            pushPath(mapD(circleToD(sc(e.center.x), sc(e.center.y), sc(e.radius)), ocs), 'Circle')
             continue
           }
           case 'ELLIPSE': {
@@ -529,7 +552,7 @@ export function importDxf(
               sc(e.majorAxisEndPoint.x), sc(e.majorAxisEndPoint.y),
               e.axisRatio,
               e.startAngle, e.endAngle,
-            ), own), 'Ellipse')
+            ), ocs), 'Ellipse')
             continue
           }
           case 'SPLINE': {
@@ -539,7 +562,7 @@ export function importDxf(
               e.degree,
               e.knots,
               e.closed,
-            ), own), 'Spline')
+            ), ocs), 'Spline')
             continue
           }
           case 'INSERT': {
@@ -555,10 +578,14 @@ export function importDxf(
             const place = mul(translate(sc(e.position.x), sc(e.position.y)), [cos, sin, -sin, cos, 0, 0])
             const fromBase = mul([sx, 0, 0, sy, 0, 0], translate(-sc(base.x), -sc(base.y)))
             const cols = Math.max(1, e.columnCount ?? 1), rows = Math.max(1, e.rowCount ?? 1)
+            // Captured: each cell's entities reset `layer` as they go.
+            const insertLayer = layer
             for (let r = 0; r < rows; r++) {
               for (let c = 0; c < cols; c++) {
                 const cell = translate(sc(c * (e.columnSpacing ?? 0)), sc(r * (e.rowSpacing ?? 0)))
-                collect(block.entities ?? [], mul(own, mul(place, mul(cell, fromBase))), depth + 1)
+                // Every cell is a part of its own, so every cell is a group of its own.
+                collect(block.entities ?? [], mul(ocs, mul(place, mul(cell, fromBase))), depth + 1, insertLayer,
+                  [...inGroups, uid('srcg')], [...inNames, e.name])
               }
             }
             continue
@@ -572,8 +599,9 @@ export function importDxf(
   }
   collect(dxf.entities ?? [], IDENTITY, 0)
 
-  // Stitch collected LINE and ARC edges into connected paths
-  for (const d of stitchEdges(edges)) pushPath(d, 'Path')
+  // Stitch collected LINE and ARC edges into connected paths, each layer on its own
+  for (const set of edgeSets.values()) for (const d of stitchEdges(set.edges)) pushPath(d, 'Path', set.layer, set.groups, set.groupNames)
+  colorByLayer(paths, layerTableColors(dxf))
 
   // Translate all paths so the group bbox center lands on centerMM (workpiece center)
   if (centerMM && paths.length > 0) {
@@ -590,6 +618,18 @@ export function importDxf(
   }
 
   return { paths, needsUnitsPrompt, groupId, skipped }
+}
+
+/** Each layer's colour from the file's LAYER table, as '#rrggbb' (dxf-parser has already
+ *  turned the colour index into RGB). */
+function layerTableColors(dxf: unknown): Map<string, string> {
+  const layers = (dxf as { tables?: { layer?: { layers?: Record<string, { color?: number }> } } })
+    .tables?.layer?.layers ?? {}
+  const out = new Map<string, string>()
+  for (const [name, l] of Object.entries(layers)) {
+    if (typeof l.color === 'number' && l.color >= 0) out.set(name, '#' + l.color.toString(16).padStart(6, '0'))
+  }
+  return out
 }
 
 type DxfAny = import('dxf-parser').DxfEntity & { handle?: string }

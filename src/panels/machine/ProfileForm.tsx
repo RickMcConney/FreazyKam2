@@ -1,6 +1,8 @@
 // ─── Profile form ─────────────────────────────────────────────────────────────
-import { FormShell, ToolSelector, ToggleRow, DepthRow, GenerateBtn, useSessionOps, StartRow, useStartZ, toolsOfType, pickToolId, LengthInput, FormError, useBatchGenerate, generateLabel, NoPathBanner, CheckRow, BatchPathList } from './shared'
+import { FormShell, ToolSelector, ToggleRow, DepthRow, GenerateBtn, useSessionOps, StartRow, useStartZ, toolsOfType, pickToolId, LengthInput, FormError, FormNotice, useBatchGenerate, generateLabel, NoPathBanner, CheckRow, BatchPathList } from './shared'
 import { reviseBatch } from './reviseBatch'
+import { skipOpenPaths, skippedOpenMsg } from './containment'
+import { outermostPaths } from './selectionKinds'
 import { type StartFrom, profileCutMarginMM } from '../../cam/startHeight'
 import { useState } from 'react'
 import { useToolStore, type CuttingDirection } from '../../store/toolStore'
@@ -49,7 +51,7 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
   // PICK ORDER, not z-order: operations are cut in the order they were created
   // (see cam/startOptimizer), so the order the paths were clicked in IS the order the
   // machine will run them. Selecting three circles 1, 2, 3 cuts them 1, 2, 3.
-  const selPaths = useSelectedPathsInOrder()
+  const allSelPaths = useSelectedPathsInOrder()
   const operations = useToolpathStore((s) => s.operations)
   const load = useFormDefaultsStore((s) => s.load)
   const thicknessMM = useWorkpieceStore((s) => s.thicknessMM)
@@ -94,6 +96,18 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
     }, tools), startFrom: { mode: 'auto' } as StartFrom, stepDownManual: false }
     return { ...base, toolId: pickToolId(base.toolId, cutters) }
   })
+  // A sided cut needs an interior to be on a side of, so open paths in the selection (a
+  // label inside each part) are left out rather than failing their operations — see
+  // skipOpenPaths. A centerline cut follows a stroke, so it keeps them.
+  const { closed: sidedPaths, skipped: skippedOpen } = form.side === 'centerline'
+    ? { closed: allSelPaths, skipped: 0 }
+    : skipOpenPaths(allSelPaths)
+  // And an OUTSIDE cut goes round the part, not round its holes and lettering: cutting
+  // outside a hole widens it by a tool diameter, which is never what selecting a whole
+  // part meant. The Select Only bar is how to cut the inner paths on purpose.
+  const { outer: selPaths, skipped: skippedInner } = form.side === 'outside'
+    ? outermostPaths(sidedPaths)
+    : { outer: sidedPaths, skipped: 0 }
   const { generating, errorMsg, generate } = useBatchGenerate('profile', 'profile')
   const session = useSessionOps()
 
@@ -291,6 +305,10 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
       )}
       <CheckRow id="profile-ramp-in" checked={form.rampIn} onChange={(v) => up('rampIn', v)}
         label="Ramp In" hint="2× dia, 50% feed" />
+      <FormNotice msg={skippedInner === 0
+        ? skippedOpenMsg(skippedOpen, `an ${form.side} profile`)
+        : `${skippedInner + skippedOpen} paths skipped (${skippedInner} inside other shapes${skippedOpen ? `, ${skippedOpen} open` : ''}) — `
+          + 'an outside profile cuts round the outermost closed shapes. Use Select Only to cut the rest.'} />
       <FormError msg={errorMsg} />
       <GenerateBtn
         disabled={selectedPaths.length === 0 || !selectedTool || generating || form.depthMM <= 0}

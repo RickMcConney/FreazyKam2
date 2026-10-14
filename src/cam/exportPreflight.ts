@@ -1,3 +1,4 @@
+import { opsAtSheetOrigins, programSheetCount } from './sheets'
 import { useToolpathStore, nothingToCut } from '../store/toolpathStore'
 import { useToolStore } from '../store/toolStore'
 import { usePostProcessorStore } from '../store/postProcessorStore'
@@ -38,6 +39,8 @@ export interface ExportPreflight {
   stock: { widthMM: number; heightMM: number; thicknessMM: number }
   job: {
     operationCount: number
+    /** How many sheets of stock the program spans — the export writes one file per sheet. */
+    sheets: number
     tools: PreflightTool[]
     spindleSpeeds: number[]
     extents: { minX: number; maxX: number; minY: number; maxY: number; minZ: number; maxZ: number } | null
@@ -51,7 +54,12 @@ export interface ExportPreflight {
 // Mirrors the operation filter used by generateGcode so the report matches the
 // file that will actually be written.
 export function buildExportPreflight(): ExportPreflight {
-  const { operations } = useToolpathStore.getState()
+  // Each operation in the frame it is CUT in — its own sheet's (cam/sheets). Judged where
+  // it lies on the canvas, every part below the first sheet reads as off the stock.
+  const stored = useToolpathStore.getState().operations
+  const stock = useWorkpieceStore.getState()
+  const operations = opsAtSheetOrigins(stored, stock)
+  const sheets = programSheetCount(stored, stock)
   const { tools } = useToolStore.getState()
   const toolsById = Object.fromEntries(tools.map((t) => [t.id, t]))
   const profile = usePostProcessorStore.getState().getActiveProfile()
@@ -357,6 +365,7 @@ export function buildExportPreflight(): ExportPreflight {
     stock: { widthMM, heightMM, thicknessMM },
     job: {
       operationCount: doneOps.length,
+      sheets,
       tools: toolList,
       spindleSpeeds,
       extents,

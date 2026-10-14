@@ -1,3 +1,4 @@
+import { useUIStore } from '../store/uiStore'
 import { generateGcode } from '../cam/gcode'
 import { buildGcodeInputs } from '../io/gcodeExport'
 import { useProjectStore } from '../store/projectStore'
@@ -45,6 +46,9 @@ function programKey(ops: AnyOperation[]): unknown[] {
     key.push(op.id, op.name, op.toolId, op.segments,
       op.type === 'profile3d' ? op.roughingToolId : undefined)
   }
+  // Which sheet is playing is part of the program too, when a nest spread the parts over
+  // several (cam/sheets): choosing another is choosing another program.
+  if (key.length > 0) key.push('sheet', useUIStore.getState().activeSheet)
   return key
 }
 
@@ -105,6 +109,7 @@ async function rebuild(): Promise<void> {
 /** Install the subscriptions. Returns an unsubscribe for React's effect cleanup. */
 export function installSimAutoReload(): () => void {
   const unsubOps = useToolpathStore.subscribe(schedule)
+  const unsubSheet = useUIStore.subscribe((u, p) => { if (u.activeSheet !== p.activeSheet) schedule() })
   // Every load — ours, the Simulate button, an imported .gcode file — is the point the
   // player's contents match the program, so it defines what "unchanged" means from here.
   const unsubSim = useSimStore.subscribe((s, prev) => {
@@ -129,6 +134,7 @@ export function installSimAutoReload(): () => void {
   })
   return () => {
     unsubOps()
+    unsubSheet()
     unsubSim()
     unsubMotion()
     if (retimer) clearTimeout(retimer)

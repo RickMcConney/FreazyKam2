@@ -12,6 +12,7 @@ import type { CornerTreatmentType } from '../tools/cornerTreatment'
 import type { ClockSpec } from '../shapes/clockTrain'
 import { PATH_COLOR } from '../colors'
 import { splitCompoundPath } from '../canvas/nodeUtils'
+import { normalizeColor, colorByLayer } from './layers'
 import { uid } from '../uid'
 import { round4 } from '../util/num'
 
@@ -90,6 +91,27 @@ export interface ImportedPath {
   // that has been turned. It also lets an IMPORTED outline carry it, which has
   // no params at all.
   fromCenter?: boolean
+  // What the drawing's author tagged this path as: a DXF layer name, an Inkscape layer's
+  // label, or an SVG stroke colour ('#rrggbb'). Absent when the file said nothing. The
+  // Select Only bar offers it; see importers/layers.ts.
+  layer?: string
+  // How the drawing GROUPED this path: the containers it sat in — an SVG <g> or <use>, a
+  // DXF INSERT — outermost first, one id per INSTANCE (two inserts of one block are two
+  // groups). Source structure only: selection, the strip and the paths list ignore it,
+  // since a user group is what changes those. The nest reads it to keep a part together.
+  sourceGroups?: string[]
+  // What the file CALLED each of those groups, index for index — an SVG group's <title>
+  // or id, a DXF block's name; '' where it named nothing. The paths list's folders.
+  sourceGroupNames?: string[]
+  // One drawn element the importer split into several paths — a compound SVG <path>, such
+  // as a label's strokes. The nest keeps them together; Select Only reads them as one label.
+  sourceElement?: string
+  // How big this object stands against the size it was made at, in percent
+  // (absent = 100). What the Properties panel's Scale field states, so a part
+  // scaled to 50% can be put back by typing 100 rather than by remembering 200.
+  // Only UNIFORM scales count (`uniformScaleOf`) — a stretch has no single
+  // percentage — and `d` cannot recover it, so it has to be recorded.
+  scalePct?: number
   definition?: PathDefinition
   // Corner treatments as a RECIPE over the untreated outline, not as baked
   // geometry: `d` is `applyCornerTreatments(baseD, treatments)`, so re-editing a
@@ -384,6 +406,59 @@ export function svgVisibilityHidden(get: (name: string) => string | null): boole
   return /(?:^|;)\s*visibility\s*:\s*(?:hidden|collapse)\s*(?:;|!|$)/.test(get('style') ?? '')
 }
 
+// ── Layers ────────────────────────────────────────────────────────────────────
+
+export interface Ink { layer?: string; stroke?: string; fill?: string; groups?: string[]; groupNames?: string[] }
+
+const INKSCAPE_NS = 'http://www.inkscape.org/namespaces/inkscape'
+
+/** A presentation attribute, or the same property in the element's `style`. */
+function styleProp(el: Element, name: string): string | null {
+  const m = new RegExp(`(?:^|;)\\s*${name}\\s*:\\s*([^;!]+)`).exec(el.getAttribute('style') ?? '')
+  return m ? m[1].trim() : el.getAttribute(name)
+}
+
+/**
+ * What `el` inherits: the innermost Inkscape layer it sits in, and its stroke and fill as
+ * the cascade gives them (a property left unset is inherited; `none` is a value, and
+ * clears it).
+ */
+export function inkOf(el: Element, parent: Ink): Ink {
+  const ink = { ...parent }
+  const mode = el.getAttribute('inkscape:groupmode') ?? el.getAttributeNS(INKSCAPE_NS, 'groupmode')
+  if (mode === 'layer') {
+    const label = (el.getAttribute('inkscape:label') ?? el.getAttributeNS(INKSCAPE_NS, 'label') ?? el.getAttribute('id') ?? '').trim()
+    if (label) ink.layer = label
+  }
+  for (const k of ['stroke', 'fill'] as const) {
+    const raw = styleProp(el, k)
+    if (raw === null || raw.trim() === 'inherit') continue
+    const c = normalizeColor(raw)
+    if (c) ink[k] = c
+    else delete ink[k]
+  }
+  return ink
+}
+
+/** The tag for a path: its layer when it is in one, else its stroke, else its fill. */
+export const inkLayer = (ink: Ink): string | undefined => ink.layer ?? ink.stroke ?? ink.fill
+const layerOf = (layer: string | undefined) => layer === undefined ? {} : { layer }
+const groupsOf = (ink: Ink) => ink.groups?.length ? { sourceGroups: ink.groups, sourceGroupNames: ink.groupNames } : {}
+
+/** Open a new source group inside `ink`'s chain. */
+function enterGroup(ink: Ink, name: string): void {
+  ink.groups = [...(ink.groups ?? []), uid('srcg')]
+  ink.groupNames = [...(ink.groupNames ?? []), name]
+}
+
+/** What a group calls itself: its <title>, else its id, else its Inkscape label. */
+function svgGroupName(el: Element): string {
+  for (const c of Array.from(el.children)) {
+    if (c.tagName.toLowerCase().replace(/^.*:/, '') === 'title' && c.textContent?.trim()) return c.textContent.trim()
+  }
+  return (el.getAttribute('id') ?? el.getAttribute('inkscape:label') ?? el.getAttributeNS(INKSCAPE_NS, 'label') ?? '').trim()
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 export interface ImportOptions {
   ppi?: number
@@ -462,15 +537,20 @@ export function importSvg(svgText: string, options?: ImportOptions | number, gro
   // Built on the first <use>, so a file without any never walks the document for ids.
   let idMap: Map<string, Element> | null = null
 
-  // `depth` bounds <use> chains, which may reference each other in a cycle.
-  function processElement(el: Element, parentMat: Mat6, depth = 0) {
+  // `depth` bounds <use> chains, which may reference each other in a cycle. `ink` is what
+  // the element inherits that says what it is for: an Inkscape layer, a stroke, a fill.
+  function processElement(el: Element, parentMat: Mat6, depth = 0, parentInk: Ink = {}) {
     const tag = el.tagName.toLowerCase().replace(/^.*:/, '')
     const get = (n: string) => el.getAttribute(n)
     if (svgDisplayNone(get)) return
     const elMat = matMul(parentMat, parseSvgTransform(el.getAttribute('transform')))
+    const ink = inkOf(el, parentInk)
+    // A group the author drew is a source group — one per element, so a group drawn twice
+    // by <use> is two. An Inkscape layer is a LAYER (inkOf), not a group of things.
+    if ((tag === 'g' || tag === 'a') && ink.layer === parentInk.layer) enterGroup(ink, svgGroupName(el))
 
     if (tag === 'g' || tag === 'svg' || tag === 'a') {
-      for (const child of el.children) processElement(child, elMat, depth)
+      for (const child of el.children) processElement(child, elMat, depth, ink)
       return
     }
 
@@ -495,10 +575,11 @@ export function importSvg(svgText: string, options?: ImportOptions | number, gro
       if (!ref) return
       const num = (n: string) => parseFloat(el.getAttribute(n) ?? '0') || 0
       const useMat = matMul(elMat, [1, 0, 0, 1, num('x'), num('y')])
+      enterGroup(ink, svgGroupName(ref))
       if (ref.tagName.toLowerCase().replace(/^.*:/, '') === 'symbol') {
-        for (const child of ref.children) processElement(child, useMat, depth + 1)
+        for (const child of ref.children) processElement(child, useMat, depth + 1, ink)
       } else {
-        processElement(ref, useMat, depth + 1)
+        processElement(ref, useMat, depth + 1, ink)
       }
       return
     }
@@ -533,24 +614,26 @@ export function importSvg(svgText: string, options?: ImportOptions | number, gro
           const crossD = `M${round4(cx - ARM)},${round4(cy)} L${round4(cx + ARM)},${round4(cy)} M${round4(cx)},${round4(cy - ARM)} L${round4(cx)},${round4(cy + ARM)}`
           const id = uid('path')
           const name = baseName || `Marker ${++pathCounter}`
-          paths.push({ id, name, d: crossD, visible: true, color: PATH_COLOR, groupId, groupName })
+          paths.push({ id, name, d: crossD, visible: true, color: PATH_COLOR, groupId, groupName, ...layerOf(inkLayer(ink)), ...groupsOf(ink) })
         }
         return
       }
 
       const d = stringifyD(withGlobal)
+      const layer = inkLayer(ink)
       const baseName = el.getAttribute('id') || el.getAttribute('inkscape:label') || null
       const subDs = splitCompoundPath(d)
       if (subDs.length > 1) {
+        const sourceElement = uid('srcel')
         subDs.forEach((subD, i) => {
           const id = uid('path')
           const name = baseName ? `${baseName} ${i + 1}` : `Path ${++pathCounter}`
-          paths.push({ id, name, d: subD, visible: true, color: PATH_COLOR, groupId, groupName })
+          paths.push({ id, name, d: subD, visible: true, color: PATH_COLOR, groupId, groupName, ...layerOf(layer), ...groupsOf(ink), sourceElement })
         })
       } else {
         const id = uid('path')
         const name = baseName || `Path ${++pathCounter}`
-        paths.push({ id, name, d, visible: true, color: PATH_COLOR, groupId, groupName })
+        paths.push({ id, name, d, visible: true, color: PATH_COLOR, groupId, groupName, ...layerOf(layer), ...groupsOf(ink) })
       }
     } catch {
       // skip malformed elements
@@ -558,7 +641,8 @@ export function importSvg(svgText: string, options?: ImportOptions | number, gro
   }
 
   const svgMat = parseSvgTransform(svg.getAttribute('transform'))
-  for (const child of svg.children) processElement(child, svgMat)
+  for (const child of svg.children) processElement(child, svgMat, 0, inkOf(svg, {}))
+  colorByLayer(paths)
 
   return { paths, needsPpiPrompt, svgWidthMM: widthMM, svgHeightMM: heightMM, groupId }
 }

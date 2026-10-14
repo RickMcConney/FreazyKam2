@@ -89,6 +89,7 @@ export function copyPathsUnderSteps(
       clockPart: src.clockPart,
       clockSpec: src.clockSpec,
       fromCenter: src.fromCenter,
+      scalePct: src.scalePct,
       // Radii ride through untouched: neither caller scales, so every corner is
       // still the corner it was, cut to the same radius, on a base outline that
       // has moved with the copy.

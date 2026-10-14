@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { runInWorkerFor, cancelAllWork, isWorkCancelled, __setWorkerFactoryForTests } from './workerClient'
+import { runInWorkerFor, cancelAllWork, cancelWork, isWorkCancelled, __setWorkerFactoryForTests } from './workerClient'
 
 // The public signature ties `fn` to a real handler and its argument types; these
 // tests only exercise scheduling, so they go through one loosened alias rather
@@ -169,5 +169,35 @@ describe('worker pool cancellation', () => {
   it('reports nothing to cancel when the pool is idle', () => {
     makeFakePool()
     expect(cancelAllWork()).toBe(0)
+  })
+})
+
+// The Nest form's Stop: it must stop the nest and nothing else — a toolpath generating
+// alongside it is not the user's to lose for pressing Stop on a different form.
+describe('cancelling one key', () => {
+  it('stops that key\'s in-flight and queued jobs and leaves every other one running', async () => {
+    const pool = makeFakePool()
+    const nest = run('nest', 'nestSheets')
+    const queuedNest = run('nest', 'nestSheets')
+    const other = run('opA', 'gen')
+    expect(cancelWork('nest')).toBe(2)
+    await expect(nest).rejects.toSatisfy(isWorkCancelled)
+    await expect(queuedNest).rejects.toSatisfy(isWorkCancelled)
+    const otherJob = pool.dispatched().find((d) => d.p.fn === 'gen')!
+    expect(otherJob.w.terminated).toBe(false)
+    pool.complete(otherJob.p.id, 'still here')
+    await expect(other).resolves.toBe('still here')
+  })
+
+  it('frees the key, so the same job can be started again at once', async () => {
+    const pool = makeFakePool()
+    const first = run('nest', 'nestSheets')
+    cancelWork('nest')
+    await expect(first).rejects.toSatisfy(isWorkCancelled)
+    const second = run('nest', 'nestSheets')
+    const live = pool.dispatched().filter((d) => !d.w.terminated)
+    expect(live).toHaveLength(1)
+    pool.complete(live[0].p.id, 'ok')
+    await expect(second).resolves.toBe('ok')
   })
 })

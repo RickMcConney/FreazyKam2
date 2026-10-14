@@ -1,5 +1,5 @@
 import { cancelAllWork } from './workerClient'
-import { useToolpathStore } from '../store/toolpathStore'
+import { useToolpathStore, flushDerived } from '../store/toolpathStore'
 import { useUIStore } from '../store/uiStore'
 
 // Stop everything the generation pool is doing and leave the store consistent.
@@ -13,7 +13,19 @@ import { useUIStore } from '../store/uiStore'
 // rejects the promises immediately, but the `catch` blocks awaiting them run a microtask
 // later, so flipping the statuses here happens first and those catches (which skip
 // cancellations, see isWorkCancelled) leave it alone.
+// How many times generation has been stopped. A Stop pressed while a generate loop is
+// BETWEEN jobs — awaiting the start optimizer, decoding a photo — finds nothing in a worker
+// to terminate, so the loop would carry straight on to its next operation. Loops read this
+// before each job instead (`stopsSoFar`) and stop if it has moved.
+let stops = 0
+/** The stop count now — compare a later reading to see whether Stop was pressed between. */
+export const stopsSoFar = () => stops
+
 export function abortGeneration(): number {
+  stops++
+  // Toolpaths a batch has finished but not yet written go in first, against the state they
+  // were generated from — an undo files them in the snapshot it is leaving.
+  flushDerived()
   const stopped = cancelAllWork()
   if (stopped === 0) return 0
   useToolpathStore.getState().cancelGenerating()

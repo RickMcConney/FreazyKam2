@@ -586,8 +586,10 @@ export function interpolatePos(
   }
 }
 
+/** The simulation clock: `hh:mm:ss`, hours always shown — a job running past the hour
+ *  read as `75:12` in minutes, and a fixed width keeps the readout from jumping. */
 export function formatSimTime(s: number): string {
-  const m = Math.floor(s / 60)
-  const ss = Math.floor(s % 60)
-  return `${m}:${ss.toString().padStart(2, '0')}`
+  const t = Math.max(0, Math.floor(s))
+  const two = (n: number) => n.toString().padStart(2, '0')
+  return `${two(Math.floor(t / 3600))}:${two(Math.floor((t % 3600) / 60))}:${two(t % 60)}`
 }
