@@ -12,12 +12,13 @@
 // only while the selection is still the one the bar made: select anything else and the bar
 // reads the new selection afresh. Chosen buttons combine as a UNION, across both rows.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { RotateCcw } from 'lucide-react'
 import { usePathsStore, type ImportedPath } from '../../store/pathsStore'
 import { ICON } from '../../theme'
 import { layerLabel } from '../../importers/layers'
-import { classifyPaths, PATH_KIND_ORDER, type PathKind } from './selectionKinds'
+import { classifyPaths, narrowingHolds, PATH_KIND_ORDER, type PathKind } from './selectionKinds'
+import { isListSelection } from './pathExclusion'
 
 const KIND_LABEL: Record<PathKind, string> = { outline: 'Outlines', hole: 'Holes', label: 'Labels', other: 'Other' }
 const KIND_HINT: Record<PathKind, string> = {
@@ -35,7 +36,6 @@ const layerKey = (p: ImportedPath): Key => `layer:${p.layer ?? ''}`
 interface Narrowed { base: string[]; applied: string[]; keys: Key[] }
 interface Button { key: Key; label: string; hint: string; count: number; swatch?: string }
 
-const sameIds = (a: string[], b: string[]) => a.length === b.length && a.every((id, i) => id === b[i])
 
 const btnCls = (on: boolean) => [
   'flex items-center justify-center gap-1 px-2 py-1 text-body rounded border transition-colors grow',
@@ -49,15 +49,24 @@ export function SelectionKindsBar() {
   const selectedIds = usePathsStore((s) => s.selectedIds)
   const setSelectedIds = usePathsStore((s) => s.setSelectedIds)
   const [narrow, setNarrow] = useState<Narrowed | null>(null)
-  const narrowed = narrow !== null && sameIds(selectedIds, narrow.applied)
+  const narrowed = narrow !== null && narrowingHolds(selectedIds, narrow.applied, isListSelection(selectedIds))
   // The selection moved on without the bar: forget the one it narrowed.
   useEffect(() => { if (narrow && !narrowed) setNarrow(null) }, [narrow, narrowed])
 
   const sourceIds = narrowed ? narrow.base : selectedIds
+  // THE SELECTED PATH OBJECTS, kept as the same array until one of them changes. Paths are
+  // replaced, never mutated, so identity says exactly when a selected path was edited; keyed
+  // on the whole `paths` array instead, an edit to ANY path — a drag ending, a nest landing —
+  // re-ran the classifier (O(n²) in the selection) over 890 untouched paths on the
+  // Charizard sheet.
+  const byId = useMemo(() => new Map(paths.map((p) => [p.id, p])), [paths])
+  const lastSource = useRef<ImportedPath[]>([])
+  const fresh = sourceIds.flatMap((id) => byId.get(id) ?? [])
+  const source = fresh.length === lastSource.current.length && fresh.every((p, i) => p === lastSource.current[i])
+    ? lastSource.current
+    : (lastSource.current = fresh)
+  const kinds = useMemo(() => classifyPaths(source), [source])
   const { live, keysOf, layerRow, kindRow } = useMemo(() => {
-    const byId = new Map(paths.map((p) => [p.id, p]))
-    const source = sourceIds.flatMap((id) => byId.get(id) ?? [])
-    const kinds = classifyPaths(source)
     const keysOf = new Map(source.map((p) => [p.id, [layerKey(p), kindKey(kinds.get(p.id)!)]]))
 
     const layers = new Map<Key, Button>()
@@ -84,7 +93,7 @@ export function SelectionKindsBar() {
     const layerRow = [...layers.values()].sort((a, b) =>
       (a.key === 'layer:' ? 1 : 0) - (b.key === 'layer:' ? 1 : 0) || firstAt.get(a.key)! - firstAt.get(b.key)!)
     return { live: source.map((p) => p.id), keysOf, layerRow, kindRow }
-  }, [paths, sourceIds])
+  }, [paths, source, kinds])
 
   const rows = [layerRow, kindRow].filter((r) => r.length >= 2)
   if (!narrowed && rows.length === 0) return null

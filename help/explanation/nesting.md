@@ -31,6 +31,12 @@ Finer steps pack tighter but take longer. On plywood or MDF use 15°. Where grai
 Fits small parts inside big ones. Saves material, but the offcut ends up in pieces.
 Worth it on expensive stock.
 
+## More sheets
+
+With **Use more sheets**, what won't fit goes onto another board the same size, then
+another. Sheet 1 is packed fullest; the last holds what's left. You can also add a sheet by
+dragging a part off the stock to the right or below it.
+
 ## Reading the report
 
 *Nested 9 of 9 into 73.8 × 146.8 mm — parts cover 16 % of the stock.*

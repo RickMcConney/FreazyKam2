@@ -9,9 +9,8 @@ import { CutTrail, effectiveCutWidthAt, heatPieces, type FrustumSeg, type HeatSp
 import { TrailRaster, cutBBox, type TrailBBox } from '../../sim/trailRaster'
 import { SPINDLE_VIS_RPS } from '../../sim/spindleVis'
 import { originWorldXY } from '../layers/WorkpieceLayer'
-import { sheetOffset } from '../../cam/sheets'
-import { useSheetCount } from '../useSheetCount'
-import { useUIStore } from '../../store/uiStore'
+import { cellOffset } from '../../cam/sheets'
+import { useActiveSheet, simProgramIsStale } from '../useSheets'
 
 interface Props {
   viewport: Viewport
@@ -160,10 +159,14 @@ export const SimulationLayer = memo(function SimulationLayer({ viewport }: Props
   // the machine origin, so on the canvas — which shows every sheet where it lies — its trail
   // belongs back down on that sheet's parts, not painted over the first sheet's. An
   // imported G-code file is its own program, in its own coordinates, and stays put.
-  const sheets = useSheetCount()
-  const activeSheet = Math.min(useUIStore((s) => s.activeSheet), sheets - 1)
+  // Placed by the sheet the program was BUILT for (simStore `sheet`), and hidden while that
+  // is not the active one: a sheet change reaches the program only after simAutoReload's
+  // rebuild, and placed by the active sheet the old program flashed onto the new sheet.
+  const { cell: activeCell } = useActiveSheet()
   const generated = useSimStore((s) => s.autoReload)
-  const sheetAt = generated ? sheetOffset(activeSheet, { widthMM, heightMM }) : { x: 0, y: 0 }
+  const programCell = useSimStore((s) => s.sheet)
+  const stale = simProgramIsStale(programCell, generated, activeCell)
+  const sheetAt = generated ? cellOffset(programCell, { widthMM, heightMM }) : { x: 0, y: 0 }
   const ox = org.x + sheetAt.x
   const oy = org.y + sheetAt.y
 
@@ -175,7 +178,7 @@ export const SimulationLayer = memo(function SimulationLayer({ viewport }: Props
     return cutBBox(segments, ox, oy, widest / 2 + 1)
   }, [segments, toolStates, ox, oy])
 
-  if (!gcode || segments.length === 0) return null
+  if (!gcode || segments.length === 0 || stale) return null
 
   const curSegIdx = getCurrentSegIdx(segments, elapsedTimeS)
   const pos = interpolatePos(segments, elapsedTimeS)

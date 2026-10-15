@@ -1,6 +1,6 @@
 import { SheetLabelLayer } from './layers/SheetLabelLayer'
-import { sheetGridExtent } from '../cam/sheets'
-import { useSheetCount } from './useSheetCount'
+import { layoutExtent } from '../cam/sheets'
+import { useSheetLayout } from './useSheets'
 import { ptSegDistSq, pointInPolygon } from '../cam/geom'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRefState } from './useRefState'
@@ -134,7 +134,7 @@ const ZOOM_BUTTON_STEP = 1.4
 const ZOOM_BTN_CLASS = 'bg-gray-50/95 dark:bg-neutral-900/95 hover:bg-gray-200 dark:hover:bg-neutral-800 border border-gray-400 dark:border-neutral-700 rounded p-1.5 text-gray-600 dark:text-neutral-300 transition-colors'
 
 // Fits a box of CNC mm to the drawing area — the stock, or every sheet of a multi-sheet
-// nest (cam/sheets `sheetGridExtent`), whose box starts left of or below the origin.
+// nest (cam/sheets `layoutExtent`), whose box starts left of or below the origin.
 function fitViewport(sw: number, sh: number, box: { minX: number; minY: number; maxX: number; maxY: number }): Viewport {
   const uw = sw - RULER_W
   const uh = sh - RULER_H
@@ -563,8 +563,8 @@ export default function CanvasStage() {
   const heightMM = useWorkpieceStore((s) => s.heightMM)
   // Every sheet, when a nest spread the parts over several: what Fit frames and how far the
   // wheel may zoom out (see minZoomScale).
-  const sheets = useSheetCount()
-  const sheetBox = useMemo(() => sheetGridExtent(sheets, { widthMM, heightMM }), [sheets, widthMM, heightMM])
+  const sheets = useSheetLayout()
+  const sheetBox = useMemo(() => layoutExtent(sheets, { widthMM, heightMM }), [sheets, widthMM, heightMM])
   const sheetBoxRef = useRef(sheetBox)
   sheetBoxRef.current = sheetBox
   // Written, never subscribed: the cursor changes on every mouse move, and a subscription

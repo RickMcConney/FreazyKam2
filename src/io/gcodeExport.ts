@@ -3,7 +3,8 @@ import { useToolpathStore, type AnyOperation } from '../store/toolpathStore'
 import { usePostProcessorStore, type PostProcessorProfile } from '../store/postProcessorStore'
 import { generateGcode, downloadGcode } from '../cam/gcode'
 import { optimizeStartPoints } from '../cam/startOptimizer'
-import { opsOnSheet, programSheetCount } from '../cam/sheets'
+import { opsOnCell, STOCK_CELL, type Cell } from '../cam/sheets'
+import { sheetIndex, sheetLayoutNow } from '../canvas/useSheets'
 import { useWorkpieceStore } from '../store/workpieceStore'
 import { useUIStore } from '../store/uiStore'
 
@@ -16,28 +17,53 @@ import { useUIStore } from '../store/uiStore'
 // on the import side. Used by the download, native-save, per-tool-split and
 // simulate paths — don't re-derive it at a call site.
 //
-// ONE SHEET AT A TIME. When a nest has spread the parts over several sheets of stock
+// ONE SHEET AT A TIME. When the parts are spread over several sheets of stock
 // (cam/sheets), a G-code program is ONE of them — the operations on it, moved so its corner
-// is the machine origin. `sheet` picks which (default: the active sheet, which the
-// simulator and the machine panel follow); `sheets` says how many there are. A single-
-// sheet project is returned untouched.
-export async function buildGcodeInputs(sheet?: number): Promise<{
+// is the machine origin. `sheet` is an index into the sheet layout (default: the active
+// sheet, which the simulator and the machine panel follow); `sheets` says how many there
+// are. A sheet with nothing to cut gives an empty list — never another sheet's program. A
+// single-sheet project is returned untouched.
+//
+// Two steps, so a caller that wants every sheet (the export) optimizes ONCE and builds
+// each sheet from the same state of the program: `prepareProgram`, then `programForSheet`.
+export interface PreparedProgram {
+  all: AnyOperation[]
+  toolsById: Record<string, Tool>
+  profile: PostProcessorProfile
+  cells: Cell[]
+}
+
+export interface SheetProgram {
   operations: AnyOperation[]
   toolsById: Record<string, Tool>
   profile: PostProcessorProfile
   sheet: number
+  cell: Cell
   sheets: number
-}> {
+}
+
+export async function prepareProgram(): Promise<PreparedProgram> {
   await optimizeStartPoints()
   const { tools } = useToolStore.getState()
-  const toolsById = Object.fromEntries(tools.map((t) => [t.id, t]))
-  const profile = usePostProcessorStore.getState().getActiveProfile()
-  const all = useToolpathStore.getState().operations
-  const stock = useWorkpieceStore.getState()
-  const sheets = programSheetCount(all, stock)
-  if (sheets === 1) return { operations: all, toolsById, profile, sheet: 0, sheets }
-  const k = Math.min(sheets - 1, sheet ?? useUIStore.getState().activeSheet)
-  return { operations: opsOnSheet(all, k, stock), toolsById, profile, sheet: k, sheets }
+  return {
+    all: useToolpathStore.getState().operations,
+    toolsById: Object.fromEntries(tools.map((t) => [t.id, t])),
+    profile: usePostProcessorStore.getState().getActiveProfile(),
+    cells: sheetLayoutNow(),
+  }
+}
+
+export function programForSheet(p: PreparedProgram, sheet?: number): SheetProgram {
+  const { all, toolsById, profile, cells } = p
+  const sheets = cells.length
+  if (sheets === 1) return { operations: all, toolsById, profile, sheet: 0, cell: STOCK_CELL, sheets }
+  const k = Math.max(0, Math.min(sheets - 1, sheet ?? sheetIndex(cells, useUIStore.getState().activeSheet)))
+  const cell = cells[k]
+  return { operations: opsOnCell(all, cell, useWorkpieceStore.getState()), toolsById, profile, sheet: k, cell, sheets }
+}
+
+export async function buildGcodeInputs(sheet?: number): Promise<SheetProgram> {
+  return programForSheet(await prepareProgram(), sheet)
 }
 
 // Generate Grbl G-code for the current toolpaths and download it as `<fileName>.gcode`.

@@ -6,6 +6,9 @@
 
 It opens showing the finished part. Play starts from bare stock.
 
+On [several sheets](use-several-sheets.md), it plays the one picked in the toolbar's
+**◀ Sheet 1 of 3 ▶** picker.
+
 ![The 3D simulation](../../docs/images/01-sim-3d.png)
 
 ## Controls

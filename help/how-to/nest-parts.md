@@ -18,7 +18,8 @@
 
 ![Nine parts nested to the left](../../docs/images/09-nest.png)
 
-Parts that don't fit are placed beside the stock.
+Parts that don't fit go onto more sheets of the same stock (**Use more sheets**, on by
+default). Untick it and they're parked above the stock instead.
 
 ## More options
 
@@ -28,6 +29,7 @@ Parts that don't fit are placed beside the stock.
 | **Fill stock with copies** | You want many of one part (button becomes **Fill Stock**) — see below |
 | **Nest inside holes** | You want small parts inside big ones (offcut ends up in pieces) |
 | **Avoid other paths** | The sheet already has parts on it |
+| **Use more sheets** | The parts won't all fit on one board — see [Work on several sheets](use-several-sheets.md) |
 
 ## Fill the stock with one part
 

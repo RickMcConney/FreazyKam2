@@ -4,7 +4,9 @@ import { sanitizeFileName } from './filename'
 import { useProjectStore } from '../store/projectStore'
 import { useSaveDialogStore } from '../store/saveDialogStore'
 import { generateGcode, generateGcodePerTool, downloadGcode } from '../cam/gcode'
-import { buildGcodeInputs } from './gcodeExport'
+import { buildGcodeInputs, prepareProgram, programForSheet } from './gcodeExport'
+import { sheetProgramName } from '../cam/sheets'
+import { reachesProgram } from '../cam/programOps'
 
 // ─── File System Access API (Chromium only) — minimal local typing ──────────
 // We type just what we use so this compiles regardless of the TS DOM lib version.
@@ -138,12 +140,14 @@ export async function triggerGcodeExportSplit(prefix?: string, byTool = true): P
   }
 
   const files: { filename: string; gcode: string }[] = []
-  const { sheets } = await buildGcodeInputs(0)
+  // Optimized ONCE, so every sheet's file is built from the same state of the program.
+  const prepared = await prepareProgram()
+  const sheets = prepared.cells.length
   for (let k = 0; k < sheets; k++) {
-    const { operations, toolsById, profile } = await buildGcodeInputs(k)
-    // A sheet whose parts were all moved off it has nothing to cut, and no file.
-    if (!operations.some((o) => o.visible && o.status === 'done' && o.type !== 'gcode' && o.segments.length > 0)) continue
-    const name = sheets > 1 ? `${baseName}_sheet${k + 1}` : baseName
+    const { operations, toolsById, profile } = programForSheet(prepared, k)
+    // A sheet with nothing to cut (parts with no toolpath yet) gets no file.
+    if (!operations.some(reachesProgram)) continue
+    const name = sheetProgramName(baseName, k, sheets)
     if (byTool) files.push(...generateGcodePerTool(operations, toolsById, name, profile))
     else files.push({ filename: name, gcode: generateGcode(operations, toolsById, name, profile) })
   }

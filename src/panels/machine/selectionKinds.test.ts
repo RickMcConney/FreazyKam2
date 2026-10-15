@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { classifyPaths, outermostPaths } from './selectionKinds'
+import { classifyPaths, narrowingHolds, outermostPaths } from './selectionKinds'
 import type { ImportedPath } from '../../store/pathsStore'
 
 const mk = (id: string, d: string): ImportedPath =>
@@ -106,5 +106,25 @@ describe('outermostPaths', () => {
 
   it('treats holes selected on their own as outermost', () => {
     expect(outermostPaths([mk('h1', circleD(10, 10, 2)), mk('h2', circleD(20, 10, 2))]).skipped).toBe(0)
+  })
+})
+
+// Review L3: narrow to Labels, then click one label out in the form's path list — the bar
+// must still be narrowed, with ↺ All to put the whole selection back.
+describe('when Select Only still counts as narrowed', () => {
+  const applied = ['a', 'b', 'c']
+  it('while the selection is exactly what it narrowed to', () => {
+    expect(narrowingHolds(['a', 'b', 'c'], applied, false)).toBe(true)
+  })
+  it('after the form\'s path list clicks paths out of it, or back in', () => {
+    expect(narrowingHolds(['a', 'c'], applied, true)).toBe(true)
+    expect(narrowingHolds([], applied, true)).toBe(true)
+  })
+  it('not when the path list brings in a path from outside it', () => {
+    expect(narrowingHolds(['a', 'b', 'c', 'x'], applied, true)).toBe(false)
+  })
+  // A click on the canvas is a new selection, even when it lands on a narrowed path.
+  it('not when anything else changes the selection, even to a part of it', () => {
+    expect(narrowingHolds(['a'], applied, false)).toBe(false)
   })
 })

@@ -12,6 +12,7 @@ import { useWorkpieceStore } from '../store/workpieceStore'
 import { useSimStore } from '../store/simStore'
 import { generateGcode } from '../cam/gcode'
 import { SheetPicker } from './SheetPicker'
+import { reachesProgram } from '../cam/programOps'
 import { buildGcodeInputs } from '../io/gcodeExport'
 import { useSaveDialogStore } from '../store/saveDialogStore'
 import { triggerProjectSave, triggerGcodeExport, triggerGcodeExportSplit } from '../io/fileSystem'
@@ -176,7 +177,7 @@ export default function Toolbar() {
     const imported = loadImportedGcode()
     if (imported.length > 0) {
       const all = useToolpathStore.getState().operations
-      if (all.some((o) => o.type !== 'gcode' && o.visible && o.status === 'done')) {
+      if (all.some(reachesProgram)) {
         const what = imported.length === 1 ? imported[0].filename : `${imported.length} imported G-code files`
         useUIStore.getState().showStatus(
           `Simulating ${what} on its own — hide imported G-code to simulate the other operations`, 'info')
@@ -185,11 +186,11 @@ export default function Toolbar() {
       if (cur !== '2d' && cur !== '3d') setWorkspaceTab('2d')
       return
     }
-    const { operations: ops, toolsById, profile } = await buildGcodeInputs()
+    const { operations: ops, toolsById, profile, cell } = await buildGcodeInputs()
     const gcode = generateGcode(ops, toolsById, name, profile)
     // Load only — the sim opens on the finished part (loadGcode parks the clock at the
     // end). Play is what rewinds and runs it.
-    useSimStore.getState().loadGcode(gcode)
+    useSimStore.getState().loadGcode(gcode, { sheet: cell })
     const cur = useUIStore.getState().workspaceTab
     if (cur !== '2d' && cur !== '3d') setWorkspaceTab('2d')
   }

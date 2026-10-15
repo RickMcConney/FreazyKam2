@@ -5,6 +5,8 @@ import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
 import { usePathsStore } from '../store/pathsStore'
 import { useToolStore } from '../store/toolStore'
 import { resolveStartZForOp } from './startHeight'
+import { cellKey, cellOffset, opCell, type Cell } from './sheets'
+import { pathCell } from '../canvas/useSheets'
 
 // Chain the operations so each one starts near where the previous finished, cutting the
 // rapid between them. The entry point is an input to generation, not something that can be
@@ -36,29 +38,79 @@ function exitOf(op: AnyOperation, fromX: number, fromY: number): XY {
   return { x: nearX, y: nearY }
 }
 
+// ─── The chain ─────────────────────────────────────────────────────────────────────
+//
+// ONE WALK, used by both `entryHintAt` and `optimizeStartPoints`: the second exists to find
+// every op NOT generated with the hint the first would have given it, so the two must agree
+// exactly, and as two hand-kept copies of one loop they could only drift.
+//
+// A CURSOR PER SHEET (cam/sheets). Each sheet is its own program, cut from its own corner,
+// so an op chains to the one before it ON ITS SHEET, and the first op on a sheet has no
+// predecessor. One chain through every sheet handed the first part of sheet 2 the place
+// sheet 1 finished — a different board, in a frame the machine never sees.
+//
+// An op's sheet comes from its SOURCE PATH, because the hint is asked for before the op is
+// generated and a new op has no toolpath to say where it is; an op with no path (surfacing,
+// a hand-placed peck) goes by its toolpath.
+
+type Cursor = XY & { havePredecessor: boolean }
+
+function chainWalker() {
+  const wp = useWorkpieceStore.getState()
+  const org = originWorldXY(wp.origin, wp.widthMM, wp.heightMM)
+  const pathsById = new Map(usePathsStore.getState().paths.map((p) => [p.id, p]))
+  const cursors = new Map<string, Cursor>()
+  const cellOf = (op: AnyOperation): Cell => {
+    const pathId = 'pathId' in op ? (op.pathId as string | undefined) : undefined
+    const path = pathId ? pathsById.get(pathId) : undefined
+    return path ? pathCell(path, wp) : opCell(op, wp)
+  }
+  const cursorOf = (op: AnyOperation): Cursor => {
+    const cell = cellOf(op)
+    const key = cellKey(cell)
+    let c = cursors.get(key)
+    if (!c) {
+      // The chain starts at the machine origin, which on another sheet is that sheet's
+      // corner-relative origin — where the program for it will put the tool.
+      const off = cellOffset(cell, wp)
+      c = { x: org.x + off.x, y: org.y + off.y, havePredecessor: false }
+      cursors.set(key, c)
+    }
+    return c
+  }
+  return {
+    /** The hint `op` should be generated with: where the op before it on its sheet left the
+     *  tool, or nothing when it is the first there. */
+    hintFor(op: AnyOperation): XY | undefined {
+      const c = cursorOf(op)
+      return c.havePredecessor ? { x: c.x, y: c.y } : undefined
+    },
+    /** `op` is in the program (done): the tool on its sheet is now where it leaves. */
+    pass(op: AnyOperation): void {
+      const c = cursorOf(op)
+      const e = exitOf(op, c.x, c.y)
+      c.x = e.x; c.y = e.y; c.havePredecessor = true
+    },
+  }
+}
+
 /**
- * The entry hint for `opId`: where the operation before it in cut order finished.
+ * The entry hint for `opId`: where the operation before it in cut order, on the same sheet,
+ * finished.
  *
  * Undefined when nothing precedes it — the first operation has no predecessor to chain to,
  * and hinting it at the workpiece origin would only drag its start toward a corner for no
  * reason. Call this before generating an operation and pass the result as `startNear`.
  */
 export function entryHintAt(opId: string): XY | undefined {
-  const { operations } = useToolpathStore.getState()
-  const { widthMM, heightMM, origin } = useWorkpieceStore.getState()
-  const org = originWorldXY(origin, widthMM, heightMM)
-  let cx = org.x, cy = org.y
-  let havePredecessor = false
-
+  const chain = chainWalker()
   // Through the batch buffer: inside a batch Generate the op just before this one has
   // finished, but its toolpath may not have been written to the store yet.
-  for (const stored of operations) {
+  for (const stored of useToolpathStore.getState().operations) {
     const op = withPending(stored)
-    if (op.id === opId) return havePredecessor ? { x: cx, y: cy } : undefined
+    if (op.id === opId) return chain.hintFor(op)
     if (op.status !== 'done') continue
-    const e = exitOf(op, cx, cy)
-    cx = e.x; cy = e.y
-    havePredecessor = true
+    chain.pass(op)
   }
   return undefined
 }
@@ -69,11 +121,8 @@ const sameHint = (a: XY | undefined, b: XY | undefined): boolean =>
     : Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6
 
 export async function optimizeStartPoints(): Promise<void> {
-  const { widthMM, heightMM, origin } = useWorkpieceStore.getState()
-  const { safeHeightMM } = useWorkpieceStore.getState()
-  const org = originWorldXY(origin, widthMM, heightMM)
-  let cx = org.x, cy = org.y
-  let havePredecessor = false
+  const { widthMM, heightMM, safeHeightMM } = useWorkpieceStore.getState()
+  const chain = chainWalker()
 
   const operations = useToolpathStore.getState().operations
 
@@ -98,16 +147,14 @@ export async function optimizeStartPoints(): Promise<void> {
       if (stale) await regenerateOperation(op.id)
       const updated = useToolpathStore.getState().operations.find((o) => o.id === op.id)
       if (updated?.status !== 'done') continue
-      const e = exitOf(updated, cx, cy)
-      cx = e.x; cy = e.y
-      havePredecessor = true
+      chain.pass(updated)
       continue
     }
 
     // Exactly the hint entryHintAt would have produced for this operation, so an operation
     // generated through that path matches and is left alone.
     const want = {
-      entryHint: havePredecessor ? { x: cx, y: cy } : undefined,
+      entryHint: chain.hintFor(op),
       safeHeightMM,
     }
 
@@ -134,8 +181,6 @@ export async function optimizeStartPoints(): Promise<void> {
     // Still not done (its tool was deleted, or the regenerate failed): it is not in the
     // program, so it is not where the tool leaves from either.
     if (updated?.status !== 'done') continue
-    const e = exitOf(updated, cx, cy)
-    cx = e.x; cy = e.y
-    havePredecessor = true
+    chain.pass(updated)
   }
 }

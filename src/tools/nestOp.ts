@@ -1,5 +1,5 @@
 import { reportProgress } from '../cam/progress'
-import { sheetOffset } from '../cam/sheets'
+import { cellOffset, nestCell } from '../cam/sheets'
 // ─── Nesting ──────────────────────────────────────────────────────────────────
 //
 // Arrange parts on the stock so as little material as possible is wasted.
@@ -141,7 +141,8 @@ export interface NestPlacement {
    * has to be somewhere the user can see it is not on the stock.
    */
   onStock: boolean
-  /** Which sheet of stock it went on (cam/sheets), from `nestSheets`. 0 = the stock. */
+  /** Which sheet of stock it went on, from `nestSheets`: the k-th in FILL order, on the
+   *  grid cell `nestCell(k)` (cam/sheets). 0 = the stock. */
   sheet?: number
 }
 
@@ -1004,10 +1005,11 @@ export function nest(items: NestItem[], params: NestParams, onPass?: (done: numb
 
 /**
  * NEST ONTO AS MANY SHEETS AS IT TAKES. Whatever does not fit on the stock is nested again
- * onto a fresh sheet of the same size in the grid beside and below it (cam/sheets), and so
- * on: sheet 1 is packed as full as it can be, then sheet 2, the last holding the
- * remainder. Each sheet is the single-sheet `nest` at the origin, its placements moved by
- * the sheet's offset afterwards.
+ * onto a fresh sheet of the same size beside or below it, and so on: sheet 1 is packed as
+ * full as it can be, then sheet 2, the last holding the remainder. The k-th sheet goes on
+ * grid cell `nestCell(k)` (cam/sheets) — square order, so four sheets are 2 × 2, not three
+ * in a row and one under. Each sheet is the single-sheet `nest` at the origin, its
+ * placements moved by the sheet's offset afterwards.
  *
  * Obstacles are moved by MINUS the same offset for each sheet, which puts the paths already
  * on that sheet onto its grid and every other sheet's off it (a sheet is W × H and the
@@ -1052,7 +1054,7 @@ export function nestSheets(items: NestItem[], params: NestParams, maxSheets = 10
   placedSoFar = onFirst.length
   fillSoFar = Math.min(0.95, Math.max(0.3, placedArea(onFirst) / (W * Hs)))
   while (left.length > 0 && sheets < maxSheets) {
-    const off = sheetOffset(sheets, stock)
+    const off = cellOffset(nestCell(sheets, stock), stock)
     const obstacles = params.obstacles?.map((rs) => translateRings(rs, -off.x, -off.y))
     const r = nest(left.map((id) => byId.get(id)!), { ...params, obstacles }, sheetProgress(sheets, left))
     last = r

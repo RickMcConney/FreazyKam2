@@ -201,11 +201,10 @@ export function OffsetForm({ onClose, editCtx }: { onClose: () => void; editCtx?
       {error && <p className="text-body text-red-600 dark:text-red-400 flex items-start gap-1.5"><AlertCircle size={ICON.sm} className="mt-0.5 shrink-0" />{error}</p>}
       <GenerateBtn disabled={!canApply} generating={false} onClick={handleApply} label={editCtx ? 'Update Offset' : 'Apply Offset'} />
       {/* Below the button, where every form keeps its path list (PathListSection). */}
-      {canApply && (
-        <PathListSection count={sourcePaths.length}>
-          {sourcePaths.map((p) => <PathChip key={p.id} path={p} label={editCtx ? 'source' : 'selected'} />)}
-        </PathListSection>
-      )}
+      {/* Not gated on canApply: with every path clicked out, the list is how they come back. */}
+      <PathListSection count={sourcePaths.length} toggle={!editCtx}>
+        {sourcePaths.map((p) => <PathChip key={p.id} path={p} label={editCtx ? 'source' : 'selected'} />)}
+      </PathListSection>
     </FormShell>
   )
 }

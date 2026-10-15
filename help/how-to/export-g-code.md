@@ -13,6 +13,9 @@
 
 The file goes to your downloads folder.
 
+On [several sheets](use-several-sheets.md)? You get one file per sheet, each cut from its
+own sheet's corner.
+
 ![The G-code review](../../docs/images/01-export-preflight.png)
 
 ## FluidNC user?

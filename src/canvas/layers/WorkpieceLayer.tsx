@@ -4,8 +4,8 @@ import type { Viewport } from '../CanvasStage'
 import { useWorkpieceStore, type OriginPosition } from '../../store/workpieceStore'
 import { useUIStore } from '../../store/uiStore'
 import { MATERIAL_COLORS } from '../../colors'
-import { sheetOffset } from '../../cam/sheets'
-import { useSheetCount } from '../useSheetCount'
+import { cellKey, cellOffset } from '../../cam/sheets'
+import { useActiveSheet } from '../useSheets'
 
 // In Y-up CNC space: top = high Y (back of machine), bottom = low Y (front)
 // With layer scaleY=-scale, world Y=0 appears at screen bottom of workpiece,
@@ -44,15 +44,14 @@ export const WorkpieceLayer = memo(function WorkpieceLayer({ viewport }: Props) 
   // pattern is laid along the whole outline however little of it is on screen, and zoomed
   // in on a 4 × 8 ft sheet that is thousands of dashes per sheet on every pan and zoom
   // frame, which a single, undashed sheet never paid.
-  const sheets = useSheetCount()
-  const active = Math.min(useUIStore((s) => s.activeSheet), sheets - 1)
+  const { cells, index: active } = useActiveSheet()
 
   return (
     <Group listening={false}>
-      {Array.from({ length: sheets }, (_, k) => {
-        const { x, y } = sheetOffset(k, { widthMM, heightMM })
+      {cells.map((cell, k) => {
+        const { x, y } = cellOffset(cell, { widthMM, heightMM })
         return (
-          <Group key={k}>
+          <Group key={cellKey(cell)}>
             <Rect
               x={x} y={y}
               width={widthMM} height={heightMM}

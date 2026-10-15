@@ -559,7 +559,8 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
           : `${updating ? 'Update' : 'Generate'} ${form.role === 'female' ? 'Female' : 'Male'} Toolpath`} />
       {/* Below the button — see PathListSection. Islands keep their label because that
           is a real distinction; nothing else needs one. */}
-      <PathListSection count={groups.reduce((n, g) => n + 1 + g.islands.length + (isMale && g.field ? 1 : 0), 0)}>
+      <PathListSection count={groups.reduce((n, g) => n + 1 + g.islands.length + (isMale && g.field ? 1 : 0), 0)}
+        toggle={!editOp}>
         {groups.map(({ boundary, islands, field }) => (
           <div key={boundary.id} className="space-y-0.5">
             <PathChip path={boundary} />

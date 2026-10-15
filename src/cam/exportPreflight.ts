@@ -1,4 +1,6 @@
 import { opsAtSheetOrigins, programSheetCount } from './sheets'
+import { reachesProgram } from './programOps'
+import { sheetLayoutNow } from '../canvas/useSheets'
 import { useToolpathStore, nothingToCut } from '../store/toolpathStore'
 import { useToolStore } from '../store/toolStore'
 import { usePostProcessorStore } from '../store/postProcessorStore'
@@ -39,8 +41,11 @@ export interface ExportPreflight {
   stock: { widthMM: number; heightMM: number; thicknessMM: number }
   job: {
     operationCount: number
-    /** How many sheets of stock the program spans — the export writes one file per sheet. */
+    /** How many sheets of stock there are (cam/sheets) — more than one, and the export
+     *  writes one file per sheet that has something to cut. */
     sheets: number
+    /** How many of them have something to cut — the files that export writes. */
+    sheetsWithCuts: number
     tools: PreflightTool[]
     spindleSpeeds: number[]
     extents: { minX: number; maxX: number; minY: number; maxY: number; minZ: number; maxZ: number } | null
@@ -59,7 +64,8 @@ export function buildExportPreflight(): ExportPreflight {
   const stored = useToolpathStore.getState().operations
   const stock = useWorkpieceStore.getState()
   const operations = opsAtSheetOrigins(stored, stock)
-  const sheets = programSheetCount(stored, stock)
+  const sheets = sheetLayoutNow().length
+  const sheetsWithCuts = programSheetCount(stored, stock)
   const { tools } = useToolStore.getState()
   const toolsById = Object.fromEntries(tools.map((t) => [t.id, t]))
   const profile = usePostProcessorStore.getState().getActiveProfile()
@@ -76,9 +82,7 @@ export function buildExportPreflight(): ExportPreflight {
   const nS = (n: number) => (n === 1 ? '' : 's')
   const nIsAre = (n: number) => (n === 1 ? 'is' : 'are')
 
-  const doneOps = operations.filter(
-    (o) => o.visible && o.status === 'done' && o.segments.length > 0 && o.type !== 'gcode'
-  )
+  const doneOps = operations.filter(reachesProgram)
 
   // Distinct tools in order of first use (roughing tool first for 3D profiles).
   const usedToolIds: string[] = []
@@ -301,7 +305,12 @@ export function buildExportPreflight(): ExportPreflight {
         text: `The machine slows below a cutting chip on part of ${slowed.length} operation${nS(slowed.length)} (${list} of the cut) — ` +
           `corners and short moves it cannot reach full feed on, with the spindle still at full speed. ` +
           (plastic ? `In ${MATERIAL_INFO[material].label} that is where it melts. ` : `That is where it burns. `) +
-          `Lower the RPM, raise the controller's acceleration or junction deviation, or blow the chips clear.`,
+          // FIXES IN THE JOB, NEVER IN THE MACHINE. Acceleration and junction deviation are
+          // the controller's tuning — set for what the machine can actually do — and raising
+          // them to save a cut buys lost steps, ringing or a crash. Chip load is
+          // feed ÷ (RPM × flutes), so at the slower real feed it comes back with less RPM or
+          // fewer flutes; chips cleared away cannot rub and reheat.
+          `Lower the RPM, use a tool with fewer flutes, or blow the chips clear.`,
       })
     }
   }
@@ -366,6 +375,7 @@ export function buildExportPreflight(): ExportPreflight {
     job: {
       operationCount: doneOps.length,
       sheets,
+      sheetsWithCuts,
       tools: toolList,
       spindleSpeeds,
       extents,

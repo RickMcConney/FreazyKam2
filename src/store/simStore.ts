@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { parseGcode, getCurrentSegIdx, lineStartsOf, type SimSegment, type ToolState } from '../sim/gcodeParser'
 import { useWorkpieceStore, zDatumOffsetMM, machineMotionLimits } from './workpieceStore'
 import { useUIStore } from './uiStore'
+import { STOCK_CELL, type Cell } from '../cam/sheets'
 
 export type SimSpeed = 1 | 5 | 20 | 100
 
@@ -34,10 +35,14 @@ interface SimState {
   // See sim/simAutoReload.ts — this flag is the "controls are showing" test, kept in the
   // store because `invalidateSim` blanks `gcode` while the toolpaths regenerate.
   autoReload: boolean
+  // The sheet of stock a generated program was built for (cam/sheets) — the stock for an
+  // ordinary drawing. The trail is drawn on THIS sheet, and hidden while it is not the
+  // active one: a sheet change reaches the program only after simAutoReload rebuilds it,
+  // and until then the loaded program is still the previous sheet's.
+  sheet: Cell
 
-  // `autoReload: false` marks a program the app did not generate (an imported .gcode
-  // file) — regenerating operations can't rebuild it, so it must not arm the auto-reload.
-  loadGcode: (text: string, opts?: { autoReload?: boolean }) => void
+  // Two kinds of program, and the options say which — see LoadGcodeOpts.
+  loadGcode: (text: string, opts: LoadGcodeOpts) => void
   play: () => void
   pause: () => void
   stop: () => void
@@ -54,10 +59,22 @@ interface SimState {
   currentLineIdx: () => number
 }
 
+/**
+ * What `loadGcode` is told about the program it loads — required, and one of two shapes:
+ *  - `{ autoReload: false }`: a program the app did NOT generate (an imported .gcode file).
+ *    Regenerating operations can't rebuild it, so it must not arm the auto-reload, and it is
+ *    in its own coordinates, so it belongs to no sheet.
+ *  - `{ sheet }`: a program the app GENERATED, for that sheet of stock (cam/sheets). The
+ *    views draw it there, and hide it while another sheet is on show. REQUIRED rather than
+ *    defaulted: a caller that forgot it got the stock, and on a multi-sheet job that program
+ *    was then hidden as another sheet's — no error, just a simulation that never appeared.
+ */
+export type LoadGcodeOpts = { autoReload: false } | { autoReload?: true; sheet: Cell }
+
 // Fresh arrays per call — the cleared state is handed to consumers, not shared.
 const emptyProgram = (): Partial<SimState> => ({
   gcode: '', lineStarts: new Uint32Array(0), segments: [], toolStates: [],
-  totalTimeS: 0, elapsedTimeS: 0, playing: false, genZOff: 0, programUnits: 'mm',
+  totalTimeS: 0, elapsedTimeS: 0, playing: false, genZOff: 0, programUnits: 'mm', sheet: STOCK_CELL,
 })
 
 export const useSimStore = create<SimState>()((set, get) => ({
@@ -73,6 +90,7 @@ export const useSimStore = create<SimState>()((set, get) => ({
   programUnits: 'mm',
   genZOff: 0,
   autoReload: false,
+  sheet: STOCK_CELL,
 
   loadGcode: (text, opts) => {
     const { zOrigin, thicknessMM, safeHeightMM } = useWorkpieceStore.getState()
@@ -103,7 +121,8 @@ export const useSimStore = create<SimState>()((set, get) => ({
       elapsedTimeS: parsed.totalTimeS,
       playing: false,
       genZOff,
-      autoReload: opts?.autoReload !== false,
+      autoReload: opts.autoReload !== false,
+      sheet: 'sheet' in opts ? opts.sheet : STOCK_CELL,
     })
   },
 

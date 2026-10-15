@@ -1,4 +1,6 @@
 import { useUIStore } from '../store/uiStore'
+import { cellKey, sameCell } from '../cam/sheets'
+import { reachesProgram } from '../cam/programOps'
 import { generateGcode } from '../cam/gcode'
 import { buildGcodeInputs } from '../io/gcodeExport'
 import { useProjectStore } from '../store/projectStore'
@@ -41,14 +43,13 @@ const SETTLE_MS = 200
 function programKey(ops: AnyOperation[]): unknown[] {
   const key: unknown[] = []
   for (const op of ops) {
-    if (!op.visible || op.status !== 'done' || op.segments.length === 0) continue
-    if (op.type === 'gcode') continue
+    if (!reachesProgram(op)) continue
     key.push(op.id, op.name, op.toolId, op.segments,
       op.type === 'profile3d' ? op.roughingToolId : undefined)
   }
   // Which sheet is playing is part of the program too, when a nest spread the parts over
   // several (cam/sheets): choosing another is choosing another program.
-  if (key.length > 0) key.push('sheet', useUIStore.getState().activeSheet)
+  if (key.length > 0) key.push('sheet', cellKey(useUIStore.getState().activeSheet))
   return key
 }
 
@@ -90,13 +91,13 @@ async function rebuild(): Promise<void> {
 
   building = true
   try {
-    const { operations, toolsById, profile } = await buildGcodeInputs()
+    const { operations, toolsById, profile, cell } = await buildGcodeInputs()
     // buildGcodeInputs awaits optimizeStartPoints, which can regenerate operations whose
     // entry point moved. If it did, that store write has re-scheduled us and the ops it
     // started are in flight — drop this build rather than emitting a half-generated one.
     if (operations.some((o) => o.status === 'pending' || o.status === 'generating')) return
     const gcode = generateGcode(operations, toolsById, useProjectStore.getState().name, profile)
-    useSimStore.getState().loadGcode(gcode)
+    useSimStore.getState().loadGcode(gcode, { sheet: cell })
   } catch {
     // A failed rebuild is not worth a status message: the operations panel already shows
     // whatever went wrong with the operation, and the player simply stays as it was.
@@ -109,7 +110,7 @@ async function rebuild(): Promise<void> {
 /** Install the subscriptions. Returns an unsubscribe for React's effect cleanup. */
 export function installSimAutoReload(): () => void {
   const unsubOps = useToolpathStore.subscribe(schedule)
-  const unsubSheet = useUIStore.subscribe((u, p) => { if (u.activeSheet !== p.activeSheet) schedule() })
+  const unsubSheet = useUIStore.subscribe((u, p) => { if (!sameCell(u.activeSheet, p.activeSheet)) schedule() })
   // Every load — ours, the Simulate button, an imported .gcode file — is the point the
   // player's contents match the program, so it defines what "unchanged" means from here.
   const unsubSim = useSimStore.subscribe((s, prev) => {
@@ -129,7 +130,7 @@ export function installSimAutoReload(): () => void {
     retimer = setTimeout(() => {
       retimer = null
       const sim = useSimStore.getState()
-      if (sim.gcode) sim.loadGcode(sim.gcode, { autoReload: sim.autoReload })
+      if (sim.gcode) sim.loadGcode(sim.gcode, sim.autoReload ? { sheet: sim.sheet } : { autoReload: false })
     }, SETTLE_MS)
   })
   return () => {

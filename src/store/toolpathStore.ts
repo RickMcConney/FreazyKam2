@@ -532,6 +532,28 @@ export function bufferDerived(id: string, patch: Partial<AnyOperation>): boolean
   return true
 }
 
+// What a generation PRODUCES — the part of a buffered patch that a newer status write
+// supersedes. The entry hint is not in it: that is an input the batch buffered before the
+// op ran, and generation still reads it through `withPending`.
+const RESULT_KEYS = ['segments', 'status', 'errorMessage', 'generatedWith'] as const
+
+/**
+ * A status written straight to the store is newer than any RESULT still buffered for that
+ * op, so the result must not land on top of it. Without this a toolpath finished in a batch
+ * and flushed up to 200 ms later overwrote the `generating` of a regenerate the user's edit
+ * had started meanwhile — and if that regenerate was then stopped, `cancelGenerating` (which
+ * only settles `generating` ops) passed the op by, leaving it `done` with the toolpath of its
+ * OLD settings, which is what would export.
+ */
+function supersedeBufferedResult(id: string): void {
+  const p = pending?.get(id)
+  if (!p) return
+  const rest = { ...p } as Record<string, unknown>
+  for (const k of RESULT_KEYS) delete rest[k]
+  if (Object.keys(rest).length > 0) pending!.set(id, rest as Partial<AnyOperation>)
+  else pending!.delete(id)
+}
+
 /** `op` as it will be once the buffer is written. */
 export function withPending<T extends AnyOperation>(op: T): T {
   const p = pending?.get(op.id)
@@ -559,6 +581,7 @@ export const useToolpathStore = create<ToolpathState>()((set, get) => ({
   updateOperations: (entries, opts) => {
     if (entries.length === 0) return
     const byId = new Map(entries.map((e) => [e.id, e.updates]))
+    for (const { id, updates } of entries) if ('status' in updates) supersedeBufferedResult(id)
     const typeOf = new Map(get().operations.filter((o) => byId.has(o.id)).map((o) => [o.id, o.type]))
     set((s) => ({ operations: s.operations.map((o) => {
       const u = byId.get(o.id)

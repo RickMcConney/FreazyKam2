@@ -1,5 +1,5 @@
 // ─── Drill form ───────────────────────────────────────────────────────────────
-import { FormShell, PathChip, PathListSection, PathRevisionHint, ToolSelector, DepthRow, GenerateBtn, useSessionOps, StartRow, useStartZ, toolsOfType, pickToolId, FormError, useBatchGenerate, generateLabel } from './shared'
+import { FormShell, PathChip, PathListSection, PathRevisionHint, usePathToggle, ExcludedAfter, useExcludedPathIds, ToolSelector, DepthRow, GenerateBtn, useSessionOps, StartRow, useStartZ, toolsOfType, pickToolId, FormError, useBatchGenerate, generateLabel } from './shared'
 import type { BatchItem } from './batchGenerate'
 import { reviseBatch } from './reviseBatch'
 import { useState, useEffect, useRef } from 'react'
@@ -137,6 +137,10 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
   const rev = reviseBatch(editPairs, (e) => e.path, pathBatch ? selectionHoles.map((h) => h.path) : [])
   const holesFor = (pathId: string) => selectionHoles.find((h) => h.path.id === pathId)?.holes ?? []
   const revisedCount = rev.keep.length + rev.add.length
+  // Members clicked out in the path list stay in their own row there (ExcludedAfter); only
+  // the ones taken out on the canvas join the removed rows at the end.
+  const excludedIds = useExcludedPathIds()
+  const dropRows = rev.drop.filter(({ path }) => !excludedIds.has(path.id))
 
   // The holes one op stored. `helicalHoles` is the list; the singular fields are what
   // an op saved before that list carries.
@@ -360,14 +364,14 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
       />
       {/* Helical, new: the selected circles, in cut order. */}
       {!editOp && form.drillMode === 'helical' && (
-        <PathListSection count={selectedHoles.length}>
+        <PathListSection count={selectedHoles.length} toggle>
           {selectedHoles.map(({ path, holes }, hi) => {
             // Every subpath of one path is one operation, so the sizes it spans
             // matter: a set that mixes diameters bores each at its own radius.
             const dias = [...new Set(holes.map((h) => +(h.radiusMM * 2).toFixed(2)))]
             const r0 = Math.max(0, holes[0].radiusMM - (selectedTool?.diameterMM ?? 0) / 2)
             return (
-              <div key={path.id} className="text-body text-gray-800 dark:text-neutral-200 bg-gray-100 dark:bg-neutral-800 rounded px-2 py-1">
+              <HoleRow key={path.id} pathId={path.id}>
                 <div className="flex items-center gap-1.5">
                   {/* Cut order — the order the paths were picked in. */}
                   {selectedHoles.length > 1 && (
@@ -381,7 +385,7 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
                   Hole Ø {dias.length === 1 ? fmtLen(holes[0].radiusMM * 2, units) : dias.map((v) => fmtLen(v, units)).join(', ')}
                   {r0 > 0 ? ` · Toolpath Ø ${fmtLen(r0 * 2, units)}` : ' · center-drill (tool wider than hole)'}
                 </div>
-              </div>
+              </HoleRow>
             )
           })}
         </PathListSection>
@@ -389,7 +393,7 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
       {/* Which paths this batch bores, and what the selection would change about that.
           Below the button, where every other form puts its path list. */}
       {editOp && rev.keep.length + rev.add.length + rev.drop.length > 0 && (
-        <PathListSection count={revisedCount}>
+        <PathListSection count={revisedCount} toggle listed={dropRows.map(({ path }) => path.id)}>
           {rev.keep.map(({ op, path }, i) => (
             <PathChip key={path.id} path={path} index={revisedCount > 1 ? i + 1 : undefined}
               label={`×${holesOf(op)?.length ?? op.points.length}`} />
@@ -399,7 +403,7 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
             <PathChip key={p.id} path={p} state="added" index={revisedCount > 1 ? rev.keep.length + i + 1 : undefined}
               label={`×${holesFor(p.id).length}`} />
           ))}
-          {rev.drop.map(({ op, path }) => (
+          {dropRows.map(({ op, path }) => (
             <PathChip key={path.id} path={path} state="removed" label={`×${holesOf(op)?.length ?? op.points.length}`} />
           ))}
           {pathBatch && <PathRevisionHint added={rev.add.length} removed={rev.drop.length} />}
@@ -407,4 +411,17 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
       )}
     </FormShell>
   )
+}
+
+// One helical hole in the new-batch list: the PathChip look with its sizes underneath, and
+// the same click to take it out of the selection (see PathListSection).
+function HoleRow({ pathId, children }: { pathId: string; children: React.ReactNode }) {
+  const toggle = usePathToggle(pathId)
+  return (<>
+    <div className={`text-body text-gray-800 dark:text-neutral-200 bg-gray-100 dark:bg-neutral-800 rounded px-2 py-1 ${toggle.className}`}
+      {...toggle.props}>
+      {children}
+    </div>
+    <ExcludedAfter id={pathId} />
+  </>)
 }

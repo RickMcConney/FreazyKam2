@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { nest, nestSheets, __nestInternals, groupPathsForNesting, nestIsStale, type NestItem, type NestParams, type NestPlacement } from './nestOp'
 import type { Pt2 } from '../cam/pathFlattener'
-import { sheetOfPoint, sheetOffset } from '../cam/sheets'
+import { cellOfPoint, cellOffset, nestCell, STOCK_CELL } from '../cam/sheets'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -163,7 +163,7 @@ describe('nest', () => {
     // the right is where more sheets go (cam/sheets), and there it would read as on one.
     const hb = bbox(place(items[0].rings[0], huge))
     expect(hb.minY).toBeGreaterThanOrEqual(100)
-    expect(sheetOfPoint((hb.minX + hb.maxX) / 2, (hb.minY + hb.maxY) / 2, { widthMM: 100, heightMM: 100 })).toBe(0)
+    expect(cellOfPoint((hb.minX + hb.maxX) / 2, (hb.minY + hb.maxY) / 2, { widthMM: 100, heightMM: 100 })).toEqual(STOCK_CELL)
     expect(boxGap(
       bbox(place(items[0].rings[0], huge)),
       bbox(place(items[1].rings[0], fits)),
@@ -656,24 +656,24 @@ describe('nest — filling the stock to a count', () => {
 describe('nestSheets', () => {
   // 100×100 stock with a 1 mm margin takes nine 30 mm squares (3 × 3), no more.
   const STOCK = { widthMM: 100, heightMM: 100 }
-  const sheetOf = (items: NestItem[], p: NestPlacement) => {
+  const cellOf = (items: NestItem[], p: NestPlacement) => {
     const b = bbox(place(items.find((i) => i.id === p.id)!.rings[0], p))
-    return sheetOfPoint((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2, STOCK)
+    return cellOfPoint((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2, STOCK)
   }
 
-  it('carries what will not fit onto sheets below, each part inside its own sheet', () => {
+  it('carries what will not fit onto more sheets, each part inside its own sheet', () => {
     const items = squares(20, 30)
     const r = nestSheets(items, PARAMS)
     expect(r.unplacedIds).toEqual([])
     expect(r.sheets).toBe(3)
     for (const p of r.placements) {
       const b = bbox(place(items.find((i) => i.id === p.id)!.rings[0], p))
-      const o = sheetOffset(p.sheet!, STOCK)
+      const o = cellOffset(nestCell(p.sheet!, STOCK), STOCK)
       expect(b.minY).toBeGreaterThanOrEqual(o.y)
       expect(b.maxY).toBeLessThanOrEqual(o.y + 100)
       expect(b.minX).toBeGreaterThanOrEqual(o.x)
       expect(b.maxX).toBeLessThanOrEqual(o.x + 100)
-      expect(sheetOf(items, p)).toBe(p.sheet)
+      expect(cellOf(items, p)).toEqual(nestCell(p.sheet!, STOCK))
     }
   })
 
@@ -699,7 +699,7 @@ describe('nestSheets', () => {
 
   it('packs round what already stands on a lower sheet', () => {
     // A 98 mm block filling the second sheet leaves room there for nothing.
-    const o = sheetOffset(1, STOCK)
+    const o = cellOffset(nestCell(1, STOCK), STOCK)
     const block = [[rect(o.x + 1, o.y + 1, 98, 98)]]
     const r = nestSheets(squares(12, 30), { ...PARAMS, obstacles: block })
     expect(r.placements.filter((p) => p.sheet === 1)).toHaveLength(0)

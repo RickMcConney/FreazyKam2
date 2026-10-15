@@ -12,6 +12,7 @@ import { arcFitPolyline, douglasPeucker, ARC_FIT_MAX_SPAN, type Pt2 } from './pa
 import { lineSpacingMM } from './photoVcarve'
 import { asciiFileName } from '../io/filename'
 import { downloadText } from '../io/download'
+import { reachesProgram } from './programOps'
 
 
 function f(n: number, decimals = 3) { return n.toFixed(decimals) }
@@ -341,7 +342,7 @@ export function generateGcodeWithOps(
   }
   lines.push('')
 
-  const doneOps = operations.filter((o) => o.visible && o.status === 'done' && o.segments.length > 0 && o.type !== 'gcode')
+  const doneOps = operations.filter(reachesProgram)
   if (doneOps.length === 0) {
     c('No toolpaths to export.')
     lines.push('M30')
@@ -635,7 +636,7 @@ function segmentsForTool(op: AnyOperation, toolId: string): MotionSegment[] {
 function opsForTool(operations: AnyOperation[], toolId: string): AnyOperation[] {
   const out: AnyOperation[] = []
   for (const op of operations) {
-    if (!op.visible || op.status !== 'done' || op.type === 'gcode' || op.segments.length === 0) continue
+    if (!reachesProgram(op)) continue
     const segments = segmentsForTool(op, toolId)
     if (segments.length === 0) continue
     // Drop roughingToolId so generateGcode treats the copy as a single-tool op.
@@ -660,7 +661,7 @@ export function generateGcodePerTool(
   // Distinct tools in order of first use (roughing tool before finishing).
   const orderedToolIds: string[] = []
   for (const op of operations) {
-    if (!op.visible || op.status !== 'done' || op.type === 'gcode' || op.segments.length === 0) continue
+    if (!reachesProgram(op)) continue
     const startToolId = initialToolId(op)
     if (startToolId !== op.toolId && toolsById[startToolId] && !orderedToolIds.includes(startToolId)) {
       orderedToolIds.push(startToolId)

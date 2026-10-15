@@ -143,6 +143,21 @@ export function classifyPaths(paths: ImportedPath[]): Map<string, PathKind> {
 }
 
 /**
+ * Does the Select Only bar's narrowing still describe the selection? Exactly what it
+ * narrowed to, yes. And also when the FORM'S PATH LIST has since clicked paths out of it
+ * (or back in) without leaving it: that is refining the narrowed set, not replacing it, and
+ * dropping the narrowing there lost the bar's ↺ All. Anything else that changes the
+ * selection — a canvas click, even onto one of the narrowed paths — is a new selection, and
+ * the bar reads it afresh rather than going on claiming a choice nobody is looking at.
+ */
+export function narrowingHolds(selected: string[], applied: string[], byPathList: boolean): boolean {
+  if (selected.length === applied.length && selected.every((id, i) => id === applied[i])) return true
+  if (!byPathList) return false
+  const inside = new Set(applied)
+  return selected.every((id) => inside.has(id))
+}
+
+/**
  * The paths no other closed path in the list contains — what an OUTSIDE profile cuts
  * round. Cutting outside a hole or a glyph widens it by a tool diameter, which is never
  * what selecting a whole part meant.

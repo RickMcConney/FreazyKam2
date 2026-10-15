@@ -162,7 +162,7 @@ export default function ExportPreflightDialog({
         <div className="flex flex-col gap-2 px-5 py-3 border-t border-gray-200 dark:border-neutral-700 flex-shrink-0">
           {multiSheet && (
             <p className="text-[13px] text-gray-600 dark:text-neutral-400">
-              The parts are on {job.sheets} sheets: one file per sheet, each cut from the sheet's own corner{canSplit && splitByTool ? ', and one per tool within it' : ''}.
+              The parts are on {job.sheets} sheets: one file per sheet with toolpaths ({job.sheetsWithCuts}), each cut from the sheet's own corner{canSplit && splitByTool ? ', and one per tool within it' : ''}.
             </p>
           )}
           {(multiSheet || (canSplit && splitByTool)) && (
@@ -203,7 +203,7 @@ export default function ExportPreflightDialog({
                 disabled={!report.hasToolpaths}
                 className="px-3 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors"
               >
-                {multiSheet ? `Export ${job.sheets} sheets` : splitByTool && canSplit ? `Export ${job.tools.length} files` : hasWarnings ? 'Export anyway' : 'Export'}
+                {multiSheet ? `Export ${job.sheetsWithCuts} sheet${job.sheetsWithCuts === 1 ? '' : 's'}` : splitByTool && canSplit ? `Export ${job.tools.length} files` : hasWarnings ? 'Export anyway' : 'Export'}
               </button>
             </div>
           </div>

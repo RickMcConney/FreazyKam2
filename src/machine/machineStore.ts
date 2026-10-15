@@ -28,6 +28,8 @@ import { parseSdListing, sdDownloadPath, sdJoin, sdRunCommand, sdUploadForm, typ
 import { jobPreview, type JobPreview } from './jobPreview'
 import { parsePrb, probeDownCommand, zOffsetFromProbe, probeAlarmMessage, type ProbeResult } from './fluidnc/probe'
 import { buildGcodeInputs } from '../io/gcodeExport'
+import { sheetProgramName } from '../cam/sheets'
+import { reachesProgram } from '../cam/programOps'
 import { generateGcode } from '../cam/gcode'
 import { asciiFileName } from '../io/filename'
 import { useProjectStore } from '../store/projectStore'
@@ -1025,11 +1027,13 @@ export const useMachineStore = create<MachineState>()(
           // The ACTIVE sheet, when a nest spread the parts over several (cam/sheets) — named
           // so the card says which board it is for.
           const { operations, toolsById, profile, sheet, sheets } = await buildGcodeInputs()
-          if (!operations.some((o) => o.visible && o.status === 'done' && o.segments.length > 0)) {
-            set({ sdBusy: null, sdError: 'The design has no toolpaths to send — generate some first' })
+          if (!operations.some(reachesProgram)) {
+            set({ sdBusy: null, sdError: sheets > 1
+              ? `Sheet ${sheet + 1} has no toolpaths to send — generate some, or pick another sheet`
+              : 'The design has no toolpaths to send — generate some first' })
             return
           }
-          const program = sheets > 1 ? `${base}_sheet${sheet + 1}` : base
+          const program = sheetProgramName(base, sheet, sheets)
           const gcode = generateGcode(operations, toolsById, program, profile)
           const name = `${program}.nc`
           const file = new File([gcode], name, { type: 'text/plain' })

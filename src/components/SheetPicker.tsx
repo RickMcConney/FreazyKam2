@@ -1,7 +1,7 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { ICON } from '../theme'
 import { useUIStore } from '../store/uiStore'
-import { useSheetCount } from '../canvas/useSheetCount'
+import { useActiveSheet } from '../canvas/useSheets'
 
 /**
  * Which sheet of stock Simulate plays and the machine panel runs, when a nest has spread
@@ -9,9 +9,9 @@ import { useSheetCount } from '../canvas/useSheetCount'
  * export needs no choice — it writes every sheet, a file each.
  */
 export function SheetPicker() {
-  const sheets = useSheetCount()
-  const active = Math.min(useUIStore((s) => s.activeSheet), sheets - 1)
-  const setActive = useUIStore((s) => s.setActiveSheet)
+  const { cells, index: active } = useActiveSheet()
+  const sheets = cells.length
+  const setActive = (k: number) => useUIStore.getState().setActiveSheet(cells[k])
   if (sheets < 2) return null
   const btn = 'p-1 rounded text-gray-600 dark:text-neutral-300 hover:bg-gray-200 dark:hover:bg-neutral-700 disabled:opacity-30 disabled:hover:bg-transparent'
   return (

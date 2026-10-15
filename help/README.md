@@ -73,6 +73,7 @@ Short steps for one task.
 - [Change the cut order](how-to/change-the-cut-order.md)
 - [Add or remove paths from an operation](how-to/edit-an-operation.md)
 - [Nest parts on a sheet](how-to/nest-parts.md)
+- [Work on several sheets](how-to/use-several-sheets.md)
 
 **Make parts**
 - [Make a gear](how-to/make-a-gear.md)

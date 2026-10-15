@@ -113,15 +113,15 @@ export function BooleanForm({ onClose, editCtx }: { onClose: () => void; editCtx
         label={editCtx ? 'Update Boolean' : 'Apply Boolean'}
       />
       {/* Below the button, where every form keeps its path list (PathListSection). */}
-      {canApply && (
-        <PathListSection count={sourcePaths.length}>
-          {sourcePaths.map((p, i) => (
-            <PathChip key={p.id} path={p} label={i === 0
-              ? (form.opType === 'subtract' ? 'primary (kept)' : 'primary')
-              : (form.opType === 'subtract' ? 'tool (cut away)' : 'operand')} />
-          ))}
-        </PathListSection>
-      )}
+      {/* Not gated on canApply: a selection clicked down to one path must still list the
+          one clicked out, or it could not be clicked back in. */}
+      <PathListSection count={sourcePaths.length} toggle={!def && !editCtx}>
+        {sourcePaths.map((p, i) => (
+          <PathChip key={p.id} path={p} label={i === 0
+            ? (form.opType === 'subtract' ? 'primary (kept)' : 'primary')
+            : (form.opType === 'subtract' ? 'tool (cut away)' : 'operand')} />
+        ))}
+      </PathListSection>
     </FormShell>
   )
 }

@@ -23,8 +23,10 @@ put back on the rack.*
 
 <!-- FULL APP · 1600 px wide, downscaled from a 2× capture. -->
 
-Anything that won't fit is **parked clear of the stock** rather than silently dropped, so
-you can see what didn't make it and decide what to do.
+Anything that won't fit is **parked above the stock** rather than silently dropped, so
+you can see what didn't make it and decide what to do — or, with **Use more sheets**
+ticked, carried onto another sheet of the same stock. See
+[More than one sheet](#more-than-one-sheet).
 
 ---
 
@@ -40,6 +42,7 @@ you can see what didn't make it and decide what to do.
 | **Fill stock with copies** | Repeat a single part — as many as fit, or a set number — and optionally copy its toolpaths and tabs to every copy |
 | **Nest inside holes** | Let small parts sit in the holes of larger ones |
 | **Avoid other paths** | Treat unselected paths as ground already taken |
+| **Use more sheets** | Put what won't fit onto more sheets of the same stock, rather than parking it. On by default; hidden while filling |
 
 ### Rotation Step is a step, not a limit
 
@@ -139,6 +142,76 @@ the fill is updated, since that copy is replaced.
 
 ---
 
+## More than one sheet
+
+When the parts won't all go on one board, the job can run over several. Each **sheet** is
+another board the same size as your stock, drawn on the canvas beside or below it with a
+**Sheet N** label on its corner.
+
+<!-- TODO image: images/09-sheets.png · FULL APP · a nest spread over 3–4 sheets, with the
+     sheet picker visible in the toolbar. -->
+
+### Letting the nest add sheets
+
+With **Use more sheets** ticked, the nest packs sheet 1 as full as it can, then carries
+what's left onto a fresh sheet 2, and so on until everything is placed. The last sheet
+holds the remainder. The report says how many it took:
+
+> Nested 40 of 40 on 3 sheets — the first is 71% covered.
+
+The sheets are laid out as a **square-ish grid** — two side by side, then 2 × 2, 3 × 2,
+3 × 3 — rather than one long row, so they fit on screen. On stock wider than it is tall,
+the grid grows downward first.
+
+A part too big for even an empty sheet is still parked above the stock, and the form says
+so: *"1 part would not fit even on an empty sheet — parked above the stock."*
+
+Untick **Use more sheets** to keep the old behaviour: one sheet, and the rest parked.
+
+### Adding a sheet by hand
+
+**Drag a part off the stock to the right, or below it, and a new sheet appears under
+it.** There is no button and nothing to set — a sheet exists wherever something lies on
+it. Drag the last part off a sheet, or delete it, and that sheet goes away again.
+
+- **Which sheet a part is on is decided by where it lies** — by the middle of its outline.
+  Drag a part from sheet 2 onto sheet 3 and it is cut with sheet 3 — its toolpaths
+  regenerate where it now lies, the same as after any move.
+- **Above and to the left of the stock is free workspace.** Parts parked there never make a
+  sheet; they count with sheet 1, and the export review warns that they are off the stock,
+  just as it always did.
+- The 50 mm gap between sheets is only spacing on screen — it is split down the middle, so
+  a part more than halfway across it belongs to the next sheet.
+- Sheets are **numbered in reading order** — across, then down — whatever order they were
+  made in. Removing one renumbers the rest.
+
+Nesting onto more sheets and dragging onto them are the same thing: after a nest you can
+drag parts between sheets to even them out, and a sheet you made by hand is just another
+sheet to the next nest with **Avoid other paths** ticked.
+
+### Simulating and running one sheet
+
+With more than one sheet, a **◀ Sheet 1 of 3 ▶** picker appears in the toolbar. It picks
+the sheet that **Simulate G-code** plays and that the **Machine** tab's **Send to card**
+sends. The active sheet's label is shown bold on the canvas, and the 3D view shows only
+that sheet.
+
+### Exporting
+
+**Export G-code** writes **one file per sheet** — every sheet, whichever one is picked.
+The button reads *Export 3 sheets*. Files are named after the project with the sheet
+number added — `tray_sheet1.gcode`, `tray_sheet2.gcode` — and each one can still be
+split by tool.
+
+**Every file is cut from its own sheet's corner.** The toolpaths for sheet 2 are moved so
+that sheet 2's corner is the work origin, exactly as sheet 1's is. On the machine: run
+sheet 1, load a fresh board, zero it **the same way**, and run sheet 2.
+
+A sheet with parts on it but **no toolpaths yet** gets no file, and the review tells you
+how many of the sheets have something to cut.
+
+---
+
 ## Reading the report
 
 After a nest, the form reports what happened:
@@ -147,6 +220,8 @@ After a nest, the form reports what happened:
 
 - **"9 of 9"** — everything fitted. A smaller first number means some parts were parked
   off the stock.
+- **"on 3 sheets"** replaces the dimensions when the nest used more than one sheet; the
+  percentage is then sheet 1's coverage.
 - **The dimensions** are the bounding box the parts actually occupy, which tells you how
   much board you'd need if you cut this layout from a smaller piece.
 - **The percentage** is coverage, not efficiency. Awkward shapes cover a low percentage

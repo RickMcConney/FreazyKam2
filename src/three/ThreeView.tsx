@@ -1,5 +1,5 @@
-import { opSheet, sheetOffset } from '../cam/sheets'
-import { currentSheet, pathSheet } from '../canvas/useSheetCount'
+import { cellOffset, opCell, sameCell, type Cell } from '../cam/sheets'
+import { currentSheet, pathCell, simProgramIsStaleNow } from '../canvas/useSheets'
 import { useUIStore } from '../store/uiStore'
 import { useEffect, useRef, useState } from 'react'
 import { perfLog } from '../debug'
@@ -316,6 +316,11 @@ interface SceneRefs {
   gridHelper: THREE.LineSegments
   heightfield: HeightfieldMaterial | null    // alternate GPU heightfield strategy
   simSegments: SimSegment[]                  // the store's (top-referenced) segments the carve was built from
+  // The loaded program belongs to another sheet than the one on show (simProgramIsStale):
+  // the loop then draws neither carve nor tool until the active sheet's program arrives.
+  // Kept here, refreshed by the subscriptions that can change it, so the frame loop does
+  // not re-derive the sheet layout sixty times a second.
+  simStale: boolean
   stlGeoCache: Map<string, StlGeoCacheEntry>  // path.id → parsed raw geometry
   rafId: number
   running: boolean            // is the rAF loop currently scheduled?
@@ -413,6 +418,7 @@ export default function ThreeView() {
       gridHelper,
       heightfield: null,
       simSegments: [],
+      simStale: simProgramIsStaleNow(),
       stlGeoCache: new Map(),
       toolpathLines: new Map(),
       rafId: 0,
@@ -509,7 +515,7 @@ export default function ThreeView() {
 
       const sim = useSimStore.getState()
 
-      if (sim.gcode && sim.segments.length > 0) {
+      if (sim.gcode && sim.segments.length > 0 && !refs.simStale) {
         const segIdx = getCurrentSegIdx(sim.segments, sim.elapsedTimeS)
         const pos    = interpolatePos(sim.segments, sim.elapsedTimeS)
         const wp     = useWorkpieceStore.getState()
@@ -653,6 +659,7 @@ export default function ThreeView() {
     const unsubTP = useToolpathStore.subscribe((s, p) => {
       if (s.operations === p.operations) return
       rebuildToolpaths(refs)   // cached per op: only ops whose segments changed are rebuilt
+      refs.simStale = simProgramIsStaleNow()
       wake()
     })
     // Wakes on ANY sim change, not just a new program: dragging the scrubber
@@ -664,6 +671,9 @@ export default function ThreeView() {
         rebuildSim(refs)
         buildToolIndicator(refs)
       }
+      if (state.sheet !== prev.sheet || state.autoReload !== prev.autoReload || state.gcode !== prev.gcode) {
+        refs.simStale = simProgramIsStaleNow()
+      }
       wake()
     })
     const unsubPaths = usePathsStore.subscribe((s, p) => {
@@ -671,12 +681,15 @@ export default function ThreeView() {
       rebuildShapes(refs)
       // A part dragged onto another sheet takes its toolpath with it.
       rebuildToolpaths(refs)
+      // …and can make or empty a sheet, which can move the one on show.
+      refs.simStale = simProgramIsStaleNow()
       wake()
     })
     const unsubSheet = useUIStore.subscribe((s, p) => {
-      if (s.activeSheet === p.activeSheet) return
+      if (sameCell(s.activeSheet, p.activeSheet)) return
       rebuildShapes(refs)
       rebuildToolpaths(refs)
+      refs.simStale = simProgramIsStaleNow()
       wake()
     })
 
@@ -897,6 +910,14 @@ function buildToolIndicator(refs: SceneRefs) {
   buildToolIndicatorForParams(refs, toolType, diamMM, vbitAngleDeg, fluteCount, tipDiaMM, cornerMM)
 }
 
+// The active sheet and how far it is from the stock. CNC (x, y) → three (x, −y), so moving
+// the sheet's corner onto the stock's is a position of (−at.x, 0, at.y).
+function activeSheetPlacement(): { stock: { widthMM: number; heightMM: number }; cell: Cell; at: { x: number; y: number } } {
+  const stock = useWorkpieceStore.getState()
+  const { cell } = currentSheet()
+  return { stock, cell, at: cellOffset(cell, stock) }
+}
+
 function rebuildShapes(refs: SceneRefs) {
   clearGroup(refs.shapesGroup)
 
@@ -906,10 +927,7 @@ function rebuildShapes(refs: SceneRefs) {
   // ONE SHEET ON THE STOCK, like the program the simulator plays (cam/sheets): the active
   // sheet's shapes moved up onto it, every other sheet's left out. Drawn where they lie,
   // sheet 1's outlines stayed on the stock whichever sheet was being simulated.
-  const stock = useWorkpieceStore.getState()
-  const sheet = currentSheet()
-  // CNC (x, y) → three (x, −y): moving a sheet's corner to the stock's is −offset in each.
-  const at = sheetOffset(sheet, stock)
+  const { stock, cell, at } = activeSheetPlacement()
 
   // Prune deleted STL paths from the geometry cache
   const stlPathIds = new Set(paths.filter(p => p.stlSrc).map(p => p.id))
@@ -922,7 +940,7 @@ function rebuildShapes(refs: SceneRefs) {
 
   for (const path of paths) {
     if (!path.visible || path.hidden) continue
-    if (pathSheet(path, stock) !== sheet) continue
+    if (!sameCell(pathCell(path, stock), cell)) continue
 
     if (path.stlSrc && path.stlModelBounds) {
       let cached = refs.stlGeoCache.get(path.id)
@@ -1099,10 +1117,7 @@ function rebuildToolpaths(refs: SceneRefs) {
   const T = useWorkpieceStore.getState().thicknessMM
   // The active sheet's toolpaths only, lifted onto the stock (see rebuildShapes). The cached
   // line keeps its geometry where the op lies; only its POSITION moves it.
-  const stock = useWorkpieceStore.getState()
-  const sheet = currentSheet()
-  // CNC (x, y) → three (x, −y): moving a sheet's corner to the stock's is −offset in each.
-  const at = sheetOffset(sheet, stock)
+  const { stock, cell, at } = activeSheetPlacement()
   const cache = refs.toolpathLines
   const keep = new Set<string>()
   const shown: THREE.LineSegments[] = []
@@ -1112,7 +1127,7 @@ function rebuildToolpaths(refs: SceneRefs) {
     let entry = cache.get(op.id)
     const valid = !!entry && entry.segments === op.segments && entry.T === T
     if (valid) keep.add(op.id)
-    if (!op.visible || opSheet(op, stock) !== sheet) continue
+    if (!op.visible || !sameCell(opCell(op, stock), cell)) continue
     if (!valid) {
       if (entry) disposeToolpathLine(entry.line)
       const line = buildToolpathLine(op.segments, T, op.color)

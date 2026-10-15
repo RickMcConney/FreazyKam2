@@ -199,3 +199,47 @@ describe('optimizeStartPoints — rebuilding exactly the operations the chain in
     ])
   })
 })
+
+// Each sheet of stock is its own program, cut from its own corner (cam/sheets). The 200 mm
+// stock's second sheet sits one gap to its right, from x = 250.
+describe('chaining on more than one sheet', () => {
+  const rect = (x: number, y: number) => `M ${x} ${y} L ${x + 20} ${y} L ${x + 20} ${y + 20} L ${x} ${y + 20} Z`
+  beforeEach(() => {
+    usePathsStore.setState({ paths: [
+      { id: 'p1', name: 'p1', d: rect(30, 20), color: '#000', visible: true },
+      { id: 'p2', name: 'p2', d: rect(300, 40), color: '#000', visible: true },
+    ] })
+  })
+
+  it("chains each operation to the one before it on ITS sheet, and gives a sheet's first none", () => {
+    setOps(
+      op('a', { x: 40, y: 30 }, { pathId: 'p1' }),
+      op('b', { x: 310, y: 50 }, { pathId: 'p2' }),
+      op('c', null, { pathId: 'p1' }),
+      op('d', null, { pathId: 'p2' }),
+    )
+    expect(entryHintAt('b')).toBeUndefined()
+    expect(entryHintAt('c')).toEqual({ x: 40, y: 30 })
+    expect(entryHintAt('d')).toEqual({ x: 310, y: 50 })
+  })
+
+  // Asked before it is generated, an op has no toolpath to place it — its path does.
+  it('finds the sheet of an operation not generated yet from its source path', () => {
+    // b's toolpath lies wholly on sheet 2, so b is there whichever way it is placed; n has
+    // no toolpath at all, so only its path can put it on sheet 2 behind b.
+    const onSheet2: MotionSegment[] = [{ x: 300, y: 40, z: -3, rapid: false }, { x: 310, y: 50, z: 5, rapid: true }]
+    setOps(op('b', null, { pathId: 'p2', segments: onSheet2 }), op('n', null, { pathId: 'p2', segments: [] }))
+    expect(entryHintAt('n')).toEqual({ x: 310, y: 50 })
+  })
+
+  it('regenerates nothing for operations interleaved across sheets that were chained per sheet', async () => {
+    setOps(
+      upToDate(op('a', { x: 40, y: 30 }, { pathId: 'p1' }), undefined),
+      upToDate(op('b', { x: 310, y: 50 }, { pathId: 'p2' }), undefined),
+      upToDate(op('c', { x: 45, y: 35 }, { pathId: 'p1' }), { x: 40, y: 30 }),
+      upToDate(op('d', { x: 315, y: 55 }, { pathId: 'p2' }), { x: 310, y: 50 }),
+    )
+    await optimizeStartPoints()
+    expect(regenerated).toEqual([])
+  })
+})

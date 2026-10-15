@@ -1,6 +1,6 @@
 // Shared widgets used by the operation forms (extracted from MachinePanel — tofix.md R1).
 // ─── Shared sub-components ───────────────────────────────────────────────────
-import { useMemo, useState, useId } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState, useId } from 'react'
 import { NumericInput } from '../../components/NumericInput'
 import { NUMERIC_HINT } from '../../components/parseNumeric'
 import { ICON } from '../../theme'
@@ -17,6 +17,7 @@ import { resolveStartZ, listFlatFloorOps, type StartFrom, type StartZ } from '..
 import { usePathsStore, type ImportedPath } from '../../store/pathsStore'
 import { useFormDefaultsStore } from '../../store/formDefaultsStore'
 import { runBatchGenerate, type BatchGenerateArgs } from './batchGenerate'
+import { useExcludedPaths, togglePathInSelection, watchSelectionForExclusions, placeExcluded, type ExcludedPath } from './pathExclusion'
 
 // Tracks operations created by this form instance, keyed by target (path/group id), so a
 // repeat Generate on the same target updates the existing operation instead of adding a
@@ -57,6 +58,7 @@ export function useSessionOps() {
 }
 
 export function FormShell({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  useExcludedPathsScope()
   return (
     <div className="border border-gray-400 dark:border-neutral-600 rounded-lg mx-3 mt-3 mb-2 overflow-hidden">
       <div className="flex items-center justify-between px-3 py-2 bg-gray-200 dark:bg-neutral-800 border-b border-gray-300 dark:border-neutral-600">
@@ -77,7 +79,10 @@ export function FormShell({ title, onClose, children }: { title: string; onClose
 export function PathChip({ path, label, state, index }: {
   path: ImportedPath
   label?: string
-  state?: 'added' | 'removed'
+  /** `excluded`: clicked out of the selection in this list (see PathListSection), shown so
+   *  it can be clicked back in. Struck through like `removed`, without its − sign, which
+   *  means "the next Regenerate takes this out of the batch". */
+  state?: 'added' | 'removed' | 'excluded'
   /** Position in CUT order, 1-based. Set on the top-level entries of a list of more than
    *  one, so the order the paths were picked in — which is the order they will be cut
    *  (see useSelectedPathsInOrder) — can be read off the form instead of the G-code. */
@@ -85,12 +90,14 @@ export function PathChip({ path, label, state, index }: {
 }) {
   const tone = state === 'added'
     ? 'text-emerald-800 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/40'
-    : state === 'removed'
+    : state === 'removed' || state === 'excluded'
       ? 'text-gray-500 dark:text-neutral-500 bg-gray-100 dark:bg-neutral-800 line-through'
       : 'text-gray-800 dark:text-neutral-200 bg-gray-100 dark:bg-neutral-800'
-  return (
-    <div className={`text-body rounded px-2 py-1 flex items-center gap-1.5 ${tone}`}>
-      {state && <span className="flex-shrink-0 no-underline">{state === 'added' ? '+' : '−'}</span>}
+  const toggle = usePathToggle(path.id)
+  return (<>
+    <div className={`text-body rounded px-2 py-1 flex items-center gap-1.5 ${tone} ${toggle.className}`}
+      {...toggle.props}>
+      {state && state !== 'excluded' && <span className="flex-shrink-0 no-underline">{state === 'added' ? '+' : '−'}</span>}
       {index !== undefined && (
         <span className="flex-shrink-0 tabular-nums text-gray-500 dark:text-neutral-400 no-underline">{index}.</span>
       )}
@@ -98,7 +105,8 @@ export function PathChip({ path, label, state, index }: {
       <span className="truncate">{path.name}</span>
       {label && <span className="text-gray-600 dark:text-neutral-400 flex-shrink-0">({label})</span>}
     </div>
-  )
+    <ExcludedAfter id={path.id} />
+  </>)
 }
 
 // What the pending revision will do, under the path list of a form that is EDITING a
@@ -124,17 +132,116 @@ export function PathRevisionHint({ added, removed }: { added: number; removed: n
   )
 }
 
+// ─── Click a path in the list to take it out of the selection, or put it back ────────
+// The state and its rules are in `pathExclusion.ts`; what is here draws them.
+
+const NO_EXCLUDED: ExcludedPath[] = []
+const NO_IDS: string[] = []
+const NO_PATHS: ImportedPath[] = []
+
+/** Ids clicked out of the open form's path list — a form leaves them out of its own
+ *  `removed` rows, since the list already draws each one where it was. */
+export function useExcludedPathIds(): Set<string> {
+  const entries = useExcludedPaths((s) => s.entries)
+  return useMemo(() => new Set(entries.map((e) => e.id)), [entries])
+}
+
+// The row drawn above `el` in its list, read off the DOM at the click: only the rendered
+// list knows the order the form chose to draw its rows in.
+function rowAbove(el: HTMLElement): string | null {
+  const rows = [...(el.closest('[data-path-list]')?.querySelectorAll<HTMLElement>('[data-path-id]') ?? [])]
+  const i = rows.indexOf(el)
+  return i > 0 ? rows[i - 1].dataset.pathId ?? null : null
+}
+
+function useExcludedPathsScope(): void {
+  useEffect(() => watchSelectionForExclusions(), [])
+}
+
+// What a toggleable list hands its rows, worked out ONCE per list in PathListSection: null
+// outside one, so a chip outside a PathListSection — the Tabs and point-edit forms'
+// "selected" chip — stays inert, and so does a list showing an edited operation's SAVED
+// sources. The rows read only this, never the stores: each row subscribing for itself was a
+// `selectedIds.includes` per row per selection change — O(n²), with 890 rows on the
+// Charizard sheet — and every chip on every form subscribing to every path edit.
+interface PathListCtx {
+  selected: Set<string>
+  /** The excluded paths to draw straight after each row (null = above the first). */
+  below: Map<string | null, ImportedPath[]>
+}
+const PathToggleContext = createContext<PathListCtx | null>(null)
+
+/** Click handling for one row of a toggleable path list; inert outside one. */
+export function usePathToggle(id: string): { className: string; props: React.HTMLAttributes<HTMLDivElement> & { 'data-path-id': string } } {
+  const ctx = useContext(PathToggleContext)
+  if (!ctx) return { className: '', props: { 'data-path-id': id } }
+  return {
+    className: 'cursor-pointer hover:ring-1 hover:ring-gray-400 dark:hover:ring-neutral-500',
+    props: {
+      'data-path-id': id,
+      onClick: (e) => togglePathInSelection(id, rowAbove(e.currentTarget)),
+      title: ctx.selected.has(id) ? 'Click to leave this path out' : 'Click to put this path back',
+    },
+  }
+}
+
+// The excluded paths that were drawn straight below `id` — rendered by the row for `id`
+// itself, so they keep their place in the list. Each is a PathChip, so a run of them
+// clicked out one after another chains down from the first.
+export function ExcludedAfter({ id }: { id: string | null }) {
+  const here = useContext(PathToggleContext)?.below.get(id)
+  if (!here) return null
+  return <>{here.map((p) => <PathChip key={p.id} path={p} state="excluded" />)}</>
+}
+
 // The path list every operation form ends with: same header, same divider, same placement
 // under the Generate button, whatever the form. Forms differ only in the chips they put
 // inside — a pocket labels its islands, a profile has nothing to add.
-export function PathListSection({ count, children }: { count: number; children: React.ReactNode }) {
-  if (count === 0) return null
+//
+// The list SCROLLS IN PLACE past a capped height: a nest or a batch of a few hundred paths
+// otherwise made the whole sidebar scroll, and reading down the list pushed the form's own
+// controls — Generate included — off the top. The header stays put above the scroller.
+//
+// `toggle`: the list shows the SELECTION, so a click on a row takes that path out of it or
+// puts it back (see togglePathInSelection), and a path clicked out stays in its row.
+// `listed` names the UNSELECTED paths the form draws rows for itself — an edited batch's
+// struck-through `removed` members — since an excluded path may sit below one of them.
+export function PathListSection({ count, toggle = false, listed, children }: {
+  count: number
+  toggle?: boolean
+  listed?: Iterable<string>
+  children: React.ReactNode
+}) {
+  const entries = useExcludedPaths((s) => (toggle ? s.entries : NO_EXCLUDED))
+  // Only a toggleable list reads the selection and the paths at all.
+  const selectedIds = usePathsStore((s) => (toggle ? s.selectedIds : NO_IDS))
+  const paths = usePathsStore((s) => (toggle && entries.length > 0 ? s.paths : NO_PATHS))
+  // By content: a form hands a fresh `listed` array on every render.
+  const listedKey = [...(listed ?? [])].join('\n')
+  const { ctx, orphans } = useMemo(() => {
+    if (!toggle) return { ctx: null, orphans: [] }
+    const selected = new Set(selectedIds)
+    const drawn = new Set(listedKey ? listedKey.split('\n') : [])
+    const placed = placeExcluded(entries, paths, selected, drawn)
+    const orphans = placed.get(undefined) ?? []
+    placed.delete(undefined)
+    return { ctx: { selected, below: placed as Map<string | null, ImportedPath[]> }, orphans }
+  }, [toggle, selectedIds, entries, paths, listedKey])
+  if (count === 0 && entries.length === 0) return null
   return (
     <div className="pt-1 border-t border-gray-300 dark:border-neutral-700">
       <div className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">
         Paths{count > 1 && <span className="normal-case text-gray-500 dark:text-neutral-400"> ({count})</span>}
+        {toggle && <span className="normal-case tracking-normal text-gray-500 dark:text-neutral-400"> · click to include/exclude</span>}
       </div>
-      <div className="space-y-0.5">{children}</div>
+      <PathToggleContext.Provider value={ctx}>
+        <div data-path-list className="space-y-0.5 max-h-[30vh] overflow-y-auto overscroll-contain">
+          {/* Excluded from the very top of the list: nothing is drawn above them. */}
+          <ExcludedAfter id={null} />
+          {children}
+          {orphans.map((p) => <PathChip key={p.id} path={p} state="excluded" />)}
+        </div>
+      </PathToggleContext.Provider>
     </div>
   )
 }
@@ -633,8 +740,13 @@ export function BatchPathList({ groups, addedIds, removed, editing }: {
   removed: ImportedPath[]
   editing: boolean
 }) {
+  // A member clicked out in the list is drawn in its own row by the list (ExcludedAfter);
+  // only one taken out on the canvas joins the removed rows at the end.
+  const excludedIds = useExcludedPathIds()
+  const removedRows = removed.filter((p) => !excludedIds.has(p.id))
   return (
-    <PathListSection count={groups.reduce((n, g) => n + 1 + g.islands.length, 0)}>
+    <PathListSection count={groups.reduce((n, g) => n + 1 + g.islands.length, 0)}
+      toggle listed={removedRows.map((p) => p.id)}>
       {groups.map(({ boundary, islands }, gi) => (
         <div key={boundary.id} className="space-y-0.5">
           <PathChip path={boundary} index={groups.length > 1 ? gi + 1 : undefined}
@@ -644,7 +756,7 @@ export function BatchPathList({ groups, addedIds, removed, editing }: {
           ))}
         </div>
       ))}
-      {removed.map((p) => <PathChip key={p.id} path={p} state="removed" />)}
+      {removedRows.map((p) => <PathChip key={p.id} path={p} state="removed" />)}
       {editing && <PathRevisionHint added={addedIds.size} removed={removed.length} />}
     </PathListSection>
   )

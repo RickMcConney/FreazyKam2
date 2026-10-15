@@ -200,11 +200,9 @@ export function PatternForm({ onClose, editCtx }: { onClose: () => void; editCtx
       {error && <p className="text-body text-red-600 dark:text-red-400 flex items-start gap-1.5"><AlertCircle size={ICON.sm} className="mt-0.5 shrink-0" />{error}</p>}
       <GenerateBtn disabled={!canApply} generating={false} onClick={handleApply} label={editCtx ? 'Update Pattern' : 'Apply Pattern'} />
       {/* Below the button, where every form keeps its path list (PathListSection). */}
-      {canApply && (
-        <PathListSection count={selectedPaths.length}>
-          {selectedPaths.map((p) => <PathChip key={p.id} path={p} label={editCtx ? 'source' : 'selected'} />)}
-        </PathListSection>
-      )}
+      <PathListSection count={selectedPaths.length} toggle={!defParams && !editCtx}>
+        {selectedPaths.map((p) => <PathChip key={p.id} path={p} label={editCtx ? 'source' : 'selected'} />)}
+      </PathListSection>
     </FormShell>
   )
 }

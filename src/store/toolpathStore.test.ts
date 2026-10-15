@@ -350,6 +350,47 @@ describe('derived batches', () => {
     endDerivedBatch()
   })
 
+  // Review H3: a toolpath finished in a batch waits in the buffer; the user edits the op
+  // and its regenerate writes `generating` straight to the store. The old toolpath must not
+  // land over that — if the regenerate is then stopped, nothing else would catch it, and the
+  // op would export as `done` with a toolpath cut for its old settings.
+  it('never lets a buffered toolpath land over a newer status write to the same op', () => {
+    const [id] = T().addOperations([pocket('a')])
+    beginDerivedBatch()
+    T().setSegments(id, SEGS)
+    T().updateOperation(id, { depthMM: 5 })
+    T().updateOperation(id, { status: 'generating' })
+    endDerivedBatch()
+    expect(get(id)).toMatchObject({ status: 'generating', depthMM: 5, segments: [] })
+    T().cancelGenerating()
+    expect(get(id).status).toBe('needs-update')
+  })
+
+  // A write with no status — the helical drill's derived hole list, written mid-generation —
+  // supersedes nothing: the result and the entry hint the batch buffered both still land.
+  it('keeps the buffered entry hint and result through a write that sets no status', () => {
+    const [id] = T().addOperations([pocket('a')])
+    beginDerivedBatch()
+    bufferDerived(id, { entryHint: { x: 3, y: 4 } })
+    T().updateOperation(id, { stepoverPercent: 50 } as Partial<AnyOperation>, { record: false })
+    T().setSegments(id, SEGS)
+    endDerivedBatch()
+    expect(get(id)).toMatchObject({ status: 'done', entryHint: { x: 3, y: 4 } })
+    expect(get(id).segments).toEqual(SEGS)
+  })
+
+  // The entry hint is an INPUT buffered before the op ran; a regenerate's status write must
+  // not take it away from the generation that is about to read it.
+  it('keeps a buffered entry hint through a status write', () => {
+    const [id] = T().addOperations([pocket('a')])
+    beginDerivedBatch()
+    bufferDerived(id, { entryHint: { x: 3, y: 4 } })
+    T().updateOperation(id, { status: 'generating' })
+    expect(withPending(get(id)).entryHint).toEqual({ x: 3, y: 4 })
+    endDerivedBatch()
+    expect(get(id).entryHint).toEqual({ x: 3, y: 4 })
+  })
+
   it('stops buffering only when the outermost of two nested batches ends', () => {
     const [id] = T().addOperations([pocket('a')])
     beginDerivedBatch()

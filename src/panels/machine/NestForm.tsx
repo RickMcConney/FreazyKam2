@@ -72,7 +72,7 @@ interface NestFormState {
   packFrom: 'left' | 'bottom'
   useHoles: boolean
   avoidOthers: boolean
-  /** Carry what will not fit onto more sheets of the same stock, laid out below it. */
+  /** Carry what will not fit onto more sheets of the same stock, beside and below it. */
   multiSheet: boolean
   /** Repeat the one selected part until the stock is full — see canFill. */
   fillStock: boolean
@@ -601,7 +601,7 @@ export function NestForm({ onClose, editCtx }: { onClose: () => void; editCtx?: 
             <input type="checkbox" id="nest-sheets" checked={form.multiSheet}
               onChange={(e) => up('multiSheet', e.target.checked)} className="accent-blue-500" />
             <label htmlFor="nest-sheets" className="text-body text-gray-700 dark:text-neutral-300 cursor-pointer"
-              title="Parts that will not fit go onto more sheets of the same stock, laid out below it. Each sheet is simulated and exported on its own.">
+              title="Parts that will not fit go onto more sheets of the same stock, in a grid beside and below it — as square as the number of sheets allows. Each sheet is simulated and exported on its own.">
               Use more sheets
             </label>
           </div>
@@ -669,7 +669,7 @@ export function NestForm({ onClose, editCtx }: { onClose: () => void; editCtx?: 
           title={widthMM > 0 && heightMM > 0 ? `Stock ${fmtLen(widthMM, units, 1)} × ${fmtLen(heightMM, units, 1)}` : 'Set the stock size first'} />
       )}
       {/* Below the button, where every form keeps its path list (PathListSection). */}
-      <PathListSection count={selPaths.length}>
+      <PathListSection count={selPaths.length} toggle={!editCtx}>
         {selPaths.map((p) => <PathChip key={p.id} path={p} label={editCtx ? 'original' : undefined} />)}
       </PathListSection>
     </FormShell>

@@ -16,6 +16,9 @@ opened the simulator to answer is usually *what does this come out like*, and sh
 the answer immediately beats making you watch four minutes of cutting first. Press
 **Play** and it winds back to bare stock and animates from there.
 
+**On a job of several sheets it plays one of them** — the one picked in the toolbar's
+**◀ Sheet N of M ▶** picker. Step the picker and the simulation rebuilds for that sheet.
+
 | Control | Does |
 |---|---|
 | **Play / Pause** | Or the spacebar |
@@ -157,6 +160,21 @@ anyway. They cover:
 - **Chip load** outside a safe band, and spindles that can't run slow enough for the
   material's surface speed
 - For inlays, a **male plug that doesn't match its female socket**
+
+### More than one sheet
+
+When the parts are spread over several sheets of stock (see
+[More than one sheet](09-nesting.md#more-than-one-sheet)), the review says so above the
+button — *"The parts are on 3 sheets: one file per sheet with toolpaths (3), each cut from
+the sheet's own corner"* — and the button becomes *Export 3 sheets*.
+
+Each sheet is its own program, named `<project>_sheet2` and so on, with its toolpaths
+moved so that sheet's corner is the work origin. The checks — on the stock, table travel,
+deepest cut — judge every operation against its own sheet, not against sheet 1. A sheet
+whose parts have no toolpaths yet gets no file.
+
+**Simulate G-code** and the Machine tab work on **one sheet at a time**: the one picked in
+the toolbar's **◀ Sheet 1 of 3 ▶** picker.
 
 ### Splitting by tool
 

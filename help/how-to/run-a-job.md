@@ -2,7 +2,8 @@
 
 ## Send the design you have open
 
-1. In the Machine tab sidebar, click **Send to card**.
+1. In the Machine tab sidebar, click **Send to card**. On [several sheets](use-several-sheets.md),
+   it sends the sheet picked in the toolbar.
 2. Check the map. The job should sit inside the stock. A **Runs off the stock** warning means
    it doesn't.
 

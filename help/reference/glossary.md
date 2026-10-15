@@ -21,6 +21,7 @@
 | **Relay** | Small file on a FluidNC controller that lets FreazyKam connect |
 | **Rest-machining** | Cutting only what earlier passes left |
 | **Scallop** | Ridge left between passes of a round bit |
+| **Sheet** | One board of stock. A job can span several, each exported as its own file |
 | **Stale** | An operation whose toolpath no longer matches its inputs (amber) |
 | **Step down** | Depth per pass |
 | **Stepover** | Sideways distance between passes |

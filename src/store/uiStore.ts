@@ -1,3 +1,4 @@
+import { STOCK_CELL, type Cell } from '../cam/sheets'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { DEFAULT_SHAPE_CONFIG, type ShapeToolConfig, type ShapeType } from '../shapes/shapeGenerators'
@@ -129,9 +130,11 @@ interface UIState {
   // The edit form was opened from the Toolpaths list, so closing it goes back there
   // rather than leaving the user on the Draw tab. Any other edit request clears it.
   returnToToolpaths: boolean
-  // Which sheet of stock (cam/sheets, 0-based) the simulator plays and the machine panel
-  // runs, when a nest has spread the parts over several. The export writes every sheet.
-  activeSheet: number
+  // Which sheet of stock (cam/sheets) the simulator plays and the machine panel runs, when
+  // the parts are spread over several. The export writes every sheet. A CELL, not an index:
+  // a sheet made or emptied elsewhere renumbers the ones after it, and the view must stay
+  // on the sheet it was on. Gone altogether, it falls back to the stock (`sheetIndex`).
+  activeSheet: Cell
   // Ask MachinePanel to open a generator form (boolean/offset/pattern) in edit
   // mode for a GENERATED PATH — the object carries the parameters (see
   // ImportedPath.definition), so the form is opened on the thing rather than on
@@ -194,7 +197,7 @@ interface UIState {
   setPathsView: (v: 'paths' | 'toolpaths') => void
   setRequestEditOpId: (id: string | null) => void
   setReturnToToolpaths: (v: boolean) => void
-  setActiveSheet: (k: number) => void
+  setActiveSheet: (c: Cell) => void
   setRequestEditPathId: (id: string | null) => void
   setRequestMachineForm: (form: string | null) => void
   flashProperties: () => void
@@ -275,7 +278,7 @@ export const useUIStore = create<UIState>()(
   pathsView: 'paths' as const,
   requestEditOpId: null,
   returnToToolpaths: false,
-  activeSheet: 0,
+  activeSheet: STOCK_CELL,
   requestEditPathId: null,
   requestMachineForm: null,
   propertiesFlashSeq: 0,
@@ -319,6 +322,9 @@ export const useUIStore = create<UIState>()(
     pendingDrillPoints: [], penNodes: [],
     // Requests queued for a form to pick up — they name ops/paths of the old document.
     requestEditOpId: null, requestEditPathId: null, requestMachineForm: null,
+    // The sheet on show is a cell of the OLD document's layout: kept, a project opened while
+    // sheet 3 was showing opened on its own sheet 3 (or wherever that cell fell back to).
+    activeSheet: STOCK_CELL,
   }),
   setHelpOpen: (open) => set({ helpOpen: open }),
   setEscapementInfoOpen: (open) => set({ escapementInfoOpen: open }),
@@ -330,7 +336,7 @@ export const useUIStore = create<UIState>()(
   // consumer's clear (null) must leave the flag alone, or it is gone before the form opens.
   setRequestEditOpId: (id) => set(id ? { requestEditOpId: id, returnToToolpaths: false } : { requestEditOpId: null }),
   setReturnToToolpaths: (v) => set({ returnToToolpaths: v }),
-  setActiveSheet: (k) => set({ activeSheet: Math.max(0, Math.floor(k)) }),
+  setActiveSheet: (c) => set({ activeSheet: c }),
   setRequestEditPathId: (id) => set({ requestEditPathId: id }),
   setRequestMachineForm: (form) => set({ requestMachineForm: form }),
   flashProperties: () => set((s) => ({ propertiesFlashSeq: s.propertiesFlashSeq + 1 })),
