@@ -3,7 +3,7 @@ import {
   ChevronDown, ChevronUp,
   Shapes, Wrench, Square, Squircle, Signpost, Circle, Ellipse, Hexagon,
   Star, Heart, Pill, Shield, Orbit, Grid3x3, CookingPot, Cog, Snail, Type, PenTool, Copy, Import, SquaresUnite,
-  SquareSquare, LayoutGrid, Target, CircleDot, Layers, Box, RefreshCw, FileCode,
+  SquareSquare, PencilSparkles, LayoutGrid, Target, CircleDot, Layers, Box, RefreshCw, FileCode,
   X, Image as ImageIcon, Anchor, Weight, Clock, RectangleEllipsis, VectorSquare, Group, TrainTrack,
   RulerDimensionLine, Webhook, Blocks,
 } from 'lucide-react'
@@ -96,6 +96,7 @@ function pathVisual(p: ImportedPath): { label: string; Icon: ChipIcon; color?: s
     if (def.kind === 'boolean') return { label: 'Boolean', Icon: SquaresUnite, color: OP_TYPE_COLORS.boolean }
     if (def.kind === 'offset') return { label: 'Offset', Icon: SquareSquare, color: OP_TYPE_COLORS.offset }
     if (def.kind === 'pattern') return { label: 'Pattern', Icon: LayoutGrid, color: OP_TYPE_COLORS.pattern }
+    if (def.kind === 'trace') return { label: 'Trace', Icon: PencilSparkles, color: OP_TYPE_COLORS.trace }
     if (def.kind === 'fill') return { label: 'Nest', Icon: Blocks, color: OP_TYPE_COLORS.nest }
     if (def.kind === 'duplicate') return { label: p.name, Icon: Copy }
   }

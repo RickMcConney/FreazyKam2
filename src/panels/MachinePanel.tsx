@@ -1,4 +1,4 @@
-import { ProfileForm, TrochoidalForm, PocketForm, DrillForm, VCarveForm, PhotoVCarveForm, InlayForm, Profile3dForm, SurfaceForm, BooleanForm, OffsetForm, PatternForm, NestForm, TabsForm, NodeEditForm } from './machine'
+import { ProfileForm, TrochoidalForm, PocketForm, DrillForm, VCarveForm, PhotoVCarveForm, InlayForm, Profile3dForm, SurfaceForm, BooleanForm, OffsetForm, PatternForm, NestForm, TabsForm, NodeEditForm, TraceForm } from './machine'
 import { useState, useEffect } from 'react'
 import { useToolpathStore } from '../store/toolpathStore'
 import { usePathsStore } from '../store/pathsStore'
@@ -6,9 +6,10 @@ import type { BooleanEditCtx } from './machine/BooleanForm'
 import type { OffsetEditCtx } from './machine/OffsetForm'
 import type { PatternEditCtx } from './machine/PatternForm'
 import type { NestEditCtx } from './machine/NestForm'
+import type { TraceEditCtx } from './machine/TraceForm'
 import { OP_TYPE_COLORS } from '../colors'
 import { ICON } from '../theme'
-import { Circle, CircleDot, Target, Layers, Star, SquaresUnite, SquareSquare, LayoutGrid, Blocks, RectangleEllipsis, VectorSquare, Box, RefreshCw, Image as ImageIcon } from 'lucide-react'
+import { Circle, CircleDot, Target, Layers, Star, SquaresUnite, SquareSquare, LayoutGrid, Blocks, RectangleEllipsis, VectorSquare, Box, RefreshCw, PencilSparkles, Image as ImageIcon } from 'lucide-react'
 import { useUIStore } from '../store/uiStore'
 import { SelectionKindsBar } from './machine/SelectionKindsBar'
 
@@ -22,7 +23,7 @@ export const InlayIcon = ({ size = 24 }: { size?: number }) => (
 
 // ─── Operation type selector ──────────────────────────────────────────────────
 
-type OpType = 'profile' | 'trochoidal' | 'pocket' | 'drill' | 'surface' | 'vcarve' | 'photovcarve' | 'inlay' | 'profile3d' | 'boolean' | 'offset' | 'pattern' | 'nest' | 'tabs' | 'nodeedit'
+type OpType = 'profile' | 'trochoidal' | 'pocket' | 'drill' | 'surface' | 'vcarve' | 'photovcarve' | 'inlay' | 'profile3d' | 'boolean' | 'offset' | 'pattern' | 'nest' | 'tabs' | 'nodeedit' | 'trace'
 type FormState = null | 'menu' | OpType
 
 const opBtnCls = 'flex flex-col items-center gap-0.5 py-1.5 rounded text-body transition-colors border border-gray-400 dark:border-neutral-600 hover:bg-gray-100 dark:hover:bg-neutral-700'
@@ -58,6 +59,7 @@ function AddOperationMenu({ onSelect }: { onSelect: (t: OpType) => void }) {
           ['nest', 'Nest', 'Arrange the selected paths on the stock so the least material is wasted', <Blocks size={ICON.md} />],
           ['tabs', 'Tabs', 'Add holding tabs to keep part from moving', <RectangleEllipsis size={ICON.md} />],
           ['nodeedit', 'Corners', 'Apply corner treatments: round, chamfer, dogbone', <VectorSquare size={ICON.md} />],
+          ['trace', 'Trace', 'Turn an imported picture into vector outlines', <PencilSparkles size={ICON.md} />],
         ] as [OpType, string, string, React.ReactNode][]).map(([type, name, desc, icon]) => (
           <button key={type} onClick={() => onSelect(type)} title={desc} className={opBtnCls}>
             <span style={{ color: OP_TYPE_COLORS[type as string] ?? '#94a3b8' }}>{icon}</span>
@@ -87,7 +89,8 @@ export default function MachinePanel({ fill = false }: { fill?: boolean }) {
   const [editOffset, setEditOffset] = useState<OffsetEditCtx | null>(null)
   const [editPattern, setEditPattern] = useState<PatternEditCtx | null>(null)
   const [editFill, setEditFill] = useState<NestEditCtx | null>(null)
-  const clearEditCtx = () => { setEditOpId(null); setEditBool(null); setEditOffset(null); setEditPattern(null); setEditFill(null) }
+  const [editTrace, setEditTrace] = useState<TraceEditCtx | null>(null)
+  const clearEditCtx = () => { setEditOpId(null); setEditBool(null); setEditOffset(null); setEditPattern(null); setEditFill(null); setEditTrace(null) }
 
   useEffect(() => () => { setMachineFormActive(false); setTabsFormActive(false) }, [setMachineFormActive, setTabsFormActive])
   useEffect(() => { setTabsFormActive(activeForm === 'tabs') }, [activeForm, setTabsFormActive])
@@ -134,6 +137,9 @@ export default function MachinePanel({ fill = false }: { fill?: boolean }) {
     } else if (def.kind === 'fill') {
       setEditFill({ defId: def.id })
       startForm('nest')
+    } else if (def.kind === 'trace') {
+      setEditTrace({ defId: def.id })
+      startForm('trace')
     }
   }, [requestEditPathId]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -186,6 +192,8 @@ export default function MachinePanel({ fill = false }: { fill?: boolean }) {
         <PatternForm key={editPattern?.defId ?? 'new'} onClose={closeForm} editCtx={editPattern ?? undefined} />
       ) : activeForm === 'nest' ? (
         <NestForm key={editFill?.defId ?? 'new'} onClose={closeForm} editCtx={editFill ?? undefined} />
+      ) : activeForm === 'trace' ? (
+        <TraceForm key={editTrace?.defId ?? 'new'} onClose={closeForm} editCtx={editTrace ?? undefined} />
       ) : activeForm === 'tabs' ? (
         <TabsForm onClose={closeForm} />
       ) : activeForm === 'nodeedit' ? (

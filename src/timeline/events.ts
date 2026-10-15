@@ -28,7 +28,7 @@ export function serializeOp(op: AnyOperation): SerializedOperation {
 // never shows up as a chip.
 export const DERIVED_OP_KEYS = ['status', 'segments', 'errorMessage', 'helicalHoles', 'helicalCenterX', 'helicalCenterY', 'helicalRadius', 'entryHint', 'generatedWith'] as const
 
-export type PathsAddSource = 'import' | 'shape' | 'pen' | 'text' | 'duplicate' | 'boolean' | 'offset' | 'pattern' | 'paste' | 'region'
+export type PathsAddSource = 'import' | 'shape' | 'pen' | 'text' | 'duplicate' | 'boolean' | 'offset' | 'pattern' | 'paste' | 'region' | 'trace'
 
 // What kind of gesture produced a paths.edit event — names the chip and picks
 // its icon. Display metadata only.
@@ -156,6 +156,7 @@ export function labelFor(ev: TimelineEventPayload): string {
         case 'offset': return n === 1 ? 'Offset' : `Offset ×${n}`
         case 'pattern': return `Pattern ×${n}`
         case 'region': return 'Region'
+        case 'trace': return 'Trace'
         default: return n === 1 ? 'Path' : `${n} Paths`
       }
     }

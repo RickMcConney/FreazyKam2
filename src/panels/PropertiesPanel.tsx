@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { Dices } from 'lucide-react'
+import { Dices, PencilSparkles } from 'lucide-react'
+import { ICON } from '../theme'
 import { usePathsStore, bakePathsStep, useSelectedPaths, outerGroupOf } from '../store/pathsStore'
 import { useUIStore } from '../store/uiStore'
 import { splitCompoundPath } from '../canvas/nodeUtils'
@@ -1305,6 +1306,16 @@ export default function PropertiesPanel() {
           </button>
         )
       })()}
+
+      {selectedPaths.length === 1 && selectedPaths[0].imageSrc && (
+        <button
+          onClick={() => useUIStore.getState().setRequestMachineForm('trace')}
+          title="Turn this picture into vector outlines you can cut"
+          className="mt-2 w-full flex items-center justify-center gap-1.5 text-label py-1 rounded border transition-colors border-gray-400 dark:border-neutral-600 text-gray-500 dark:text-neutral-400 hover:text-gray-700 dark:hover:text-neutral-300"
+        >
+          <PencilSparkles size={ICON.sm} /> Trace Image
+        </button>
+      )}
 
       {/* WHERE IT SITS RELATIVE TO SOMETHING ELSE, after where it sits outright.
           A constraint is the one thing on this panel whose subject is a PAIR of

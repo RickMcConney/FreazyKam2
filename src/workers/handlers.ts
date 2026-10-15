@@ -20,6 +20,7 @@ import { generateInlayFemale, generateInlayMale } from '../cam/inlay'
 import { generateTrochoidal } from '../cam/trochoidal'
 import { generateSurface } from '../cam/surfacing'
 import { nest, nestSheets } from '../tools/nestOp'
+import { traceImage } from '../tools/imageTrace'
 
 // Clear, run, drain: a note left over from a job that threw must not be reported against
 // the next one. Pocket, v-carve and inlay are the generators that can skip part of what
@@ -62,6 +63,10 @@ export const handlers = {
   // dialog mid-nest.
   nest,
   nestSheets,
+  // Bitmap tracing (tools/imageTrace), for the same reason: a centerline trace of a mostly
+  // dark photograph is a second of thinning, and the Trace form re-runs it after every
+  // slider move. Here the form stays live and a stale run is simply cancelled.
+  traceImage,
 } as const
 
 export type WorkerHandlers = typeof handlers

@@ -57,6 +57,7 @@ FreazyKam runs entirely in your browser — no account, no server, no install. Y
   - **Maze** — a marble-run centreline, emitted as grooves for a ball-nose cutter rather than as an outline. Exactly one entrance and one exit reach the edge, so there is no doubt which end is which, and each gets a lead running clear of the maze
 - **Clock** — a whole going train solved from one number: the beat. Pendulum length, an exact wheel/pinion factorisation for the rate (said in red rather than rounded when no exact train exists), optional 12:1 motion work, and the drive wheel's run time. Every wheel comes out as an ordinary editable shape, and the assembled clock will **run on the canvas**
 - **Text** — vector text paths via opentype.js; choose from bundled or web fonts, edit the text and font of an existing object at any time
+- **Image trace** — turns a PNG or JPEG into paths: closed outlines for pocketing, V-carving or inlay, or single centerlines for a V-bit. Lines can be thickened to fit a bit, and a shaded picture can be split into 3 or 4 nested tones, each on its own layer. A live preview on the canvas shows the paths before they are made, and the trace stays re-editable from its chip
 - **Pen tool** — click for straight segments, click-drag for Bezier curves; Escape to finish open path, click near first node to close
 - **Point editing** — double-click any path; drag anchors and handles, click segment to insert, hover + Delete to remove
 

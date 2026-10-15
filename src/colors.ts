@@ -47,6 +47,7 @@ export const OP_TYPE_COLORS: Record<string, string> = {
   boolean:  '#38bdf8',  // sky-400
   offset:   '#4ade80',  // green-400
   pattern:  '#c084fc',  // purple-400
+  trace:    '#2dd4bf',  // teal-400
   nest:     '#a78bfa',  // violet-400 — an arranging tool, so a neighbour of pattern's hue
   tabs:     '#f59e0b',  // amber-400
   gcode:    '#6366f1',  // indigo-500

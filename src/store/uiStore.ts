@@ -119,6 +119,11 @@ interface UIState {
   // state, so the panel publishes it here for the window to follow live.
   clockInfoOpen: boolean
   clockDraft: ClockSpec | null
+  // What the open Trace form's current settings would make, on the stock, for the canvas
+  // to draw as the paths they will become (TracePreviewLayer). Published by TraceForm
+  // while its settings differ from what was last traced; withdrawn on Trace / Update and
+  // when it closes. `groupId` is the trace being re-done, hidden on the canvas meanwhile.
+  tracePreview: { ds: string[]; colors: string[]; groupId?: string } | null
   timelineOpen: boolean
   // Which list the sidebar's Paths tab shows: the document's paths, or the program —
   // every toolpath in the order the machine runs it (ToolpathsPanel). Different
@@ -193,6 +198,7 @@ interface UIState {
   setEscapementInfoOpen: (open: boolean) => void
   setClockInfoOpen: (open: boolean) => void
   setClockDraft: (spec: ClockSpec | null) => void
+  setTracePreview: (preview: UIState['tracePreview']) => void
   setTimelineOpen: (open: boolean) => void
   setPathsView: (v: 'paths' | 'toolpaths') => void
   setRequestEditOpId: (id: string | null) => void
@@ -274,6 +280,7 @@ export const useUIStore = create<UIState>()(
   escapementInfoOpen: false,
   clockInfoOpen: false,
   clockDraft: null,
+  tracePreview: null,
   timelineOpen: true,
   pathsView: 'paths' as const,
   requestEditOpId: null,
@@ -306,12 +313,12 @@ export const useUIStore = create<UIState>()(
   closeDrawPanels: () => set({
     setupPanelOpen: false, shapesPanelOpen: false, machineFormActive: false,
     clockPanelOpen: false, clockEditId: null,
-    clockInfoOpen: false, clockDraft: null,
+    clockInfoOpen: false, clockDraft: null, tracePreview: null,
   }),
   closeDocumentUi: () => set({
     // Panels and forms (closeDrawPanels' set, plus the two it leaves alone).
     setupPanelOpen: false, shapesPanelOpen: false, machineFormActive: false,
-    clockPanelOpen: false, clockEditId: null, clockInfoOpen: false, clockDraft: null,
+    clockPanelOpen: false, clockEditId: null, clockInfoOpen: false, clockDraft: null, tracePreview: null,
     tabsFormActive: false, escapementInfoOpen: false,
     // Canvas modes working on a path of the outgoing document. Node edit is ABANDONED, not
     // committed — useNodeEditSession checks projectStore.documentEpoch before writing back.
@@ -330,6 +337,7 @@ export const useUIStore = create<UIState>()(
   setEscapementInfoOpen: (open) => set({ escapementInfoOpen: open }),
   setClockInfoOpen: (open) => set({ clockInfoOpen: open }),
   setClockDraft: (spec) => set({ clockDraft: spec }),
+  setTracePreview: (preview) => set({ tracePreview: preview }),
   setTimelineOpen: (open) => set({ timelineOpen: open }),
   setPathsView: (v) => set({ pathsView: v }),
   // A NEW request (a chip or a row asking for a form) starts without a way back; the

@@ -10,6 +10,7 @@ import type { PatternParams } from '../tools/patternOp'
 import type { BooleanOpType } from '../tools/booleanOps'
 import type { CornerTreatmentType } from '../tools/cornerTreatment'
 import type { ClockSpec } from '../shapes/clockTrain'
+import type { TraceParams } from '../tools/imageTrace'
 import { PATH_COLOR } from '../colors'
 import { splitCompoundPath } from '../canvas/nodeUtils'
 import { normalizeColor, colorByLayer } from './layers'
@@ -147,6 +148,9 @@ export type PathDefinition = { id: string } & (
   // part is often several paths — a plate and the text inside it — so the
   // paths alone cannot say how many parts the fill made.
   | { kind: 'fill'; sourceIds: string[]; params: FillParams; copy?: number }
+  // Outlines traced from the picture on the image path `sourceId` (tools/imageTrace).
+  // Every outline of one trace shares the id; the Trace form re-traces them all.
+  | { kind: 'trace'; sourceId: string; params: TraceParams }
 )
 
 /** The Nest settings a fill was made with — what its chip reopens the form on. */

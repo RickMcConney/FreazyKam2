@@ -306,7 +306,7 @@ it, and leave without having disturbed the rest of the project.
 ## Reshaping with Path Tools
 
 The **Path Tools** row, in the CAM Operations panel, makes new geometry from existing
-geometry rather than cutting anything. All five are re-editable afterwards from their chip
+geometry rather than cutting anything. All of them are re-editable afterwards from their chip
 in the Objects strip — the chip holds the parameters, so you can change your mind rather
 than undoing and redoing.
 
@@ -317,6 +317,7 @@ than undoing and redoing.
 | **Pattern** | Linear grid or circular array | One path or group |
 | **Tabs** | Holding tabs on a profile cut — covered in [chapter 5](05-pockets.md#holding-tabs) | An existing profile operation |
 | **Corners** | Applies a corner treatment to the corners you pick | One path |
+| **Trace** | Turns a picture into paths — its own section, [below](#tracing-a-picture) | An imported image |
 
 ### Boolean
 
@@ -408,6 +409,130 @@ untreated original in the middle. Each was applied with no corners picked, so ev
 sharp corner on the path was treated.*
 
 <!-- FULL APP · 1600 px wide. -->
+---
+
+## Tracing a picture
+
+**Trace** turns an imported PNG or JPEG into paths you can cut — a logo, a piece of clip
+art, a cartoon. Import the picture (**Import File** on the toolbar), select it, and press
+**Trace Image** in the Properties panel, or open **Path Tools → Trace**.
+
+![The Trace Image form open beside an imported cartoon hippo on the stock, before tracing](images/02-trace-form.png)
+
+*The form, opened on an imported picture. Nothing has been traced yet — the picture is
+still the only thing on the canvas, and the hippo chip is the only one in the strip.*
+
+<!-- FULL APP · 1600 px wide. -->
+
+### The settings
+
+| Setting | What it does |
+|---|---|
+| **Trace** | **Dark Areas** traces ink on a light background; **Light Areas** the reverse |
+| **Trace As** | **Outlines** gives closed shapes, for pockets, V-carving and inlay. **Centerlines** gives one open path down the middle of each stroke, for a V-bit on a centerline profile |
+| **Tones** | **2** traces one shape. **3** or **4** split the picture into that many brightness bands and trace each as its own layer — see [below](#tones) |
+| **Threshold** | How dark a pixel must be to count. Leave **Auto** on unless the result is wrong; drag the slider and Auto turns itself off |
+| **Smoothing** | **0** follows every pixel step with straight lines; higher gives smoother curves. Sharp corners stay sharp |
+| **Ignore Specks Under** | Shapes and holes smaller than a square of this size are dropped |
+| **Thicken Lines** | Widens every line by this much — so a tool fits inside it. Outlines only |
+
+**What you see is what you get.** Under the settings, a preview shows the trace in black
+and white, and the canvas shows the paths it would make, drawn exactly as they will be.
+Move a slider and both update a moment later. Nothing is added to the drawing until you
+press **Trace**; after that the button reads **Update Trace**, and pressing it again
+replaces the paths with the new ones. Close the form without pressing it and the last
+trace stays as it was.
+
+After the first trace the picture is hidden so the paths can be seen. **Show Image**,
+under the button, puts it back to compare against.
+
+**A speck takes the colour around it.** A light fleck in a dark area is filled in; a dark
+fleck in a light area goes. JPEG noise, dust on a scan and the odd stray pixel all
+disappear this way without leaving holes or islands behind.
+
+### Which way to trace
+
+Decide how the piece will be cut first — that decides the settings.
+
+- **A filled logo or lettering** — Outlines, 2 tones. The result pockets, V-carves or
+  inlays like any imported drawing.
+- **Line art you want to pocket** — Outlines with **Thicken Lines** set to at least the
+  diameter of the bit. A cartoon's lines are often only a millimetre wide once it is sized
+  on the stock; nothing fits in that. Thickened, each line becomes a band the bit can clear.
+- **Line art for a V-bit** — Centerlines, then a **Profile** on the **Centerline** cut side.
+  Every stroke becomes a single groove.
+- **A picture with shading** — 3 or 4 tones, for a stepped carve or an inlay in several
+  woods.
+
+A photograph is the case Trace does not suit. Its texture traces as thousands of specks
+and wriggles; **[Photo V-Carve](06-vcarve-inlay.md#photo-v-carve)** is the tool for it.
+
+### Tones
+
+With **Tones** at 3 or 4 the cuts are chosen from the picture, and the form says where
+they fell. Each tone becomes its own layer — **Tone 1**, **Tone 2** … — drawn in its own
+colour. With the whole trace selected, the **Select Only** bar at the top of the CAM panel
+shows a button for each tone; click one to narrow the selection to that tone.
+
+![A three-tone trace of the cartoon hippo with lines thickened 3.3 mm: blue Tone 1 bands for the black lines, red Tone 2 outlines round the grey shading, and the black, grey and white preview in the form](images/02-trace-tones.png)
+
+*Three tones, Smoothing 65, Thicken Lines +3.3 mm. Blue is Tone 1 — the black lines,
+thickened into bands. Red is Tone 2 — the grey shading. The preview in the form draws
+the same trace in black, grey and white.*
+
+<!-- FULL APP · 1600 px wide. -->
+
+Tone 1 is the darkest (the lightest, for a light trace), and **the tones nest**: Tone 1
+lies inside Tone 2, which lies inside Tone 3. That is the shape a stepped carve wants —
+pocket Tone 2 shallow, then Tone 1 a step deeper, and the darkest parts of the picture end
+up deepest. Where two tones share an edge it is the same curve in both, so their outlines
+never cross. To cut one tone on its own, select it together with the tone inside it:
+Pocket and Inlay treat the inner tone's shapes as islands.
+
+**Auto finds the lines in a cartoon.** A cartoon is three tones even at Tones 2 — black
+lines, grey fill, white background — and the obvious split, white from everything else,
+would trace the whole body as one blob with the lines lost inside it. Auto spots the
+middle tone and cuts below it, so Dark traces the linework; Light cuts above it and traces
+the whole silhouette.
+
+**Thicken Lines is the bit size, for every tone.** The soft edge of a black line is a
+pixel of grey all the way along it, so on its own the grey tone would get a hair-thin rim
+round every line — a gap no bit fits into. With Thicken on, any part of a tone narrower
+than the Thicken amount is dropped, so every tone that remains can actually be cut.
+
+### Centerlines
+
+Centerlines trims the short stubs that thinning leaves at line ends and sharp corners, and
+the Smoothing slider smooths away the pixel steps, so the paths come out clean and meet at
+junctions. **A solid area comes out as its middle line** — a filled pupil becomes a short
+stroke inside the eye. For a picture with large solid areas, use Outlines.
+
+### Cutting it
+
+![The hippo trace with pocket toolpaths filling the traced regions in cyan and an orange outside profile round the silhouette, the Profile form open](images/02-trace-toolpaths.png)
+
+*The trace machined in 6 mm maple with a 1/8″ end mill: pockets on the traced regions
+(cyan) and an outside profile (orange) to cut the hippo free.*
+
+<!-- FULL APP · 1600 px wide. -->
+
+![The 3D View simulation of the carved hippo in maple](images/02-trace-3d.png)
+
+*The same job in the 3D View.*
+
+<!-- FULL APP · 1600 px wide. -->
+
+### Worth knowing
+
+- **Update Trace replaces the paths.** The number of outlines changes with the settings,
+  so the old paths are swapped for new ones rather than reshaped — a toolpath built on the
+  old trace has to be generated again.
+- **The trace stays where it was made.** Move or resize the picture afterwards and the
+  trace does not follow; re-trace to bring it back over the picture.
+- **The picture must stay a rectangle.** It can be moved, scaled and rotated, but not
+  skewed.
+- **There is a limit of 3000 outlines.** Past that the trace is refused with a message:
+  raise **Ignore Specks Under** or move the threshold.
 
 ---
 

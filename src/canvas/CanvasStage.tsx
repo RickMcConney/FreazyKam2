@@ -37,6 +37,7 @@ import { ConstraintPickLayer } from './layers/ConstraintPickLayer'
 import { SnapGuideLayer, type SnapGuides } from './layers/SnapGuideLayer'
 import { collectSnapTargets, snapAxisDelta, nudgeStopDelta, nextStepPoint, type SnapTargets } from './objectSnap'
 import { ShapePreviewLayer } from './layers/ShapePreviewLayer'
+import { TracePreviewLayer } from './layers/TracePreviewLayer'
 import { createRegionFinder, regionToD, type RegionFinder } from '../cam/regionPick'
 import { EscapementAnimLayer } from './layers/EscapementAnimLayer'
 import { GearAnimLayer } from './layers/GearAnimLayer'
@@ -630,6 +631,8 @@ export default function CanvasStage() {
   // group's own paths step aside for it — an escapement's wheel and anchor, or a
   // gear and the lantern it emitted.
   const meshAnimPathId = useUIStore((s) => s.meshAnimPathId)
+  // The trace being re-done is hidden while its preview shows, so old and new do not overlap.
+  const tracePreviewGroupId = useUIStore((s) => s.tracePreview?.groupId)
   const meshAnimGroupId = usePathsStore((s) =>
     s.paths.find((p) => p.id === meshAnimPathId)?.groupId ?? null)
   // A running CLOCK draws all its wheels itself, in mesh, so every one of its
@@ -2680,7 +2683,7 @@ export default function CanvasStage() {
             liveTransform={liveTransform}
             followTransforms={followTransforms}
             excludePathId={nodeEditPathId}
-            excludeGroupId={meshAnimGroupId}
+            excludeGroupId={meshAnimGroupId ?? tracePreviewGroupId}
             excludeClockId={clockAnimId}
           />
           {nodeEditPathId && (
@@ -2706,6 +2709,7 @@ export default function CanvasStage() {
           <TabLayer viewport={viewport} />
           <SimulationLayer viewport={viewport} />
           <ShapePreviewLayer viewport={viewport} d={liveShapeD} />
+          <TracePreviewLayer viewport={viewport} />
           {activeTool === 'region' && <ShapePreviewLayer viewport={viewport} d={regionPreviewD} />}
           <EscapementAnimLayer viewport={viewport} />
           <GearAnimLayer viewport={viewport} />
