@@ -26,6 +26,10 @@ interface ProfileFormState {
   allowanceMM: number
   roundCorners: boolean
   cornerToleranceMM: number
+  /** FINISHING PASS — stored on the op as `finishPassMM` (0 = off) and `springPass`. */
+  finishPass: boolean
+  finishPassMM: number
+  springPass: boolean
   /** OPTIMIZE PATH — outside profiles of several paths only. Stored on the op as `sharedLines`. */
   sharedLines: boolean
   /** With it on: whether the routing may cut through waste to join toolpaths, and how far. */
@@ -43,6 +47,11 @@ const DEFAULT_BRIDGE_MAX_MM = 20
 // radius over 0.1 mm to do it) even at a 60° corner, where the arc's radius equals the
 // deviation; small enough that the bottom of a corner barely changes.
 const DEFAULT_CORNER_TOLERANCE_MM = 0.2
+
+// Stock the depth passes leave for the finishing pass: enough that the last pass cuts
+// everywhere on the wall, past the tool's deflection and the depth passes' step lines,
+// light enough to leave a clean wall.
+const DEFAULT_FINISH_PASS_MM = 0.3
 
 export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?: ProfileOperation }) {
   // Individual selectors, not whole-store destructuring — see DrillForm.
@@ -70,6 +79,9 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
       // A profile saved before the option existed has none, and stays unrounded.
       roundCorners: (editOp.cornerToleranceMM ?? 0) > 0,
       cornerToleranceMM: (editOp.cornerToleranceMM ?? 0) > 0 ? editOp.cornerToleranceMM! : DEFAULT_CORNER_TOLERANCE_MM,
+      finishPass: (editOp.finishPassMM ?? 0) > 0,
+      finishPassMM: (editOp.finishPassMM ?? 0) > 0 ? editOp.finishPassMM! : DEFAULT_FINISH_PASS_MM,
+      springPass: editOp.springPass ?? false,
       sharedLines: editOp.sharedLines ?? false,
       bridgeGaps: (editOp.bridgeMaxMM ?? 0) > 0,
       bridgeMaxMM: (editOp.bridgeMaxMM ?? 0) > 0 ? editOp.bridgeMaxMM! : DEFAULT_BRIDGE_MAX_MM,
@@ -88,6 +100,9 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
       allowanceMM: 0,
       roundCorners: true,
       cornerToleranceMM: DEFAULT_CORNER_TOLERANCE_MM,
+      finishPass: false,
+      finishPassMM: DEFAULT_FINISH_PASS_MM,
+      springPass: false,
       sharedLines: false,
       bridgeGaps: false,
       bridgeMaxMM: DEFAULT_BRIDGE_MAX_MM,
@@ -140,9 +155,13 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
     : new Set(rev.add.map((p) => p.id))
   const removedPaths = sharedEdit ? sheetPaths.filter((p) => !selectedIds.has(p.id)) : rev.drop.map((e) => e.path)
   const selectedTool = tools.find((t) => t.id === form.toolId)
+  // Not on a centerline cut (no wall) and not with Optimize Path (its routed network has no
+  // finishing pass of its own); both hide the controls, and a hidden setting must not act.
+  const finishing = form.finishPass && form.side !== 'centerline'
+    && !(form.side === 'outside' && selectedPaths.length > 1 && form.sharedLines)
   // How far the tool reaches past the path — the same definition the stamp and the
   // staleness check use, so the start height previewed here is the one generated.
-  const cutMarginMM = profileCutMarginMM(form.side, selectedTool, form.allowanceMM)
+  const cutMarginMM = profileCutMarginMM(form.side, selectedTool, form.allowanceMM, finishing ? form.finishPassMM : 0)
   // See PocketForm: ops this session already generated are not cuts preceding themselves.
   const selfOpId = editOp?.id ?? session.firstLiveOpId()
   const startZ = useStartZ(form.startFrom, selectedPaths[0]?.d ?? '', cutMarginMM, selfOpId)
@@ -194,11 +213,13 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
     const tool = selectedTool
     const { toolId, side, depthMM, stepDownMM, stepDownManual, direction, rampIn, allowanceMM, startFrom } = form
     const cornerToleranceMM = form.roundCorners && side !== 'centerline' && !sharing ? form.cornerToleranceMM : 0
+    const finishPassMM = finishing ? form.finishPassMM : 0
+    const springPass = finishing && form.springPass
     if (sharing) {
       const [first, ...rest] = selectedPaths
       const bridgeMaxMM = form.bridgeGaps ? form.bridgeMaxMM : 0
       await generate({
-        settings: { toolId, side: 'outside', depthMM, stepDownMM, stepDownManual, direction, rampIn, allowanceMM, cornerToleranceMM: 0, sharedLines: true, bridgeMaxMM, startFrom },
+        settings: { toolId, side: 'outside', depthMM, stepDownMM, stepDownManual, direction, rampIn, allowanceMM, cornerToleranceMM: 0, finishPassMM: 0, springPass: false, sharedLines: true, bridgeMaxMM, startFrom },
         items: [{
           key: sharedEdit ? editOp!.id : `shared:${selectedPaths.map((p) => p.id).sort().join(',')}`,
           op: sharedEdit ? editOp : undefined,
@@ -214,7 +235,7 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
     const item = (path: ImportedPath, op?: ProfileOperation) =>
       ({ key: path.id, op, name: `Profile: ${path.name} (${tool.name})`, fields: { pathId: path.id } })
     await generate({
-      settings: { toolId, side, depthMM, stepDownMM, stepDownManual, direction, rampIn, allowanceMM, cornerToleranceMM, sharedLines: false, bridgeMaxMM: 0, startFrom },
+      settings: { toolId, side, depthMM, stepDownMM, stepDownManual, direction, rampIn, allowanceMM, cornerToleranceMM, finishPassMM, springPass, sharedLines: false, bridgeMaxMM: 0, startFrom },
       items: converting
         // The sheet becoming one op per part: every part is a new op, and the sheet goes.
         ? selectedPaths.map((path) => item(path))
@@ -282,6 +303,30 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
           <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">
             {allowanceHint}
           </p>
+        </div>
+      )}
+      {/* Hidden for centerline (no wall to finish) and for Optimize Path, whose routed
+          network cuts each line once and has no finishing lap of its own. */}
+      {form.side !== 'centerline' && !sharing && (
+        <div>
+          <CheckRow id="profile-finish-pass" checked={form.finishPass} onChange={(v) => up('finishPass', v)}
+            label="Finishing Pass" hint="one last pass at full depth" />
+          {form.finishPass && (
+            <>
+              <LengthInput id="profile-finish-pass-mm" valueMM={form.finishPassMM} minMM={0.05} maxMM={3} stepMM={0.05}
+                onChangeMM={(v) => up('finishPassMM', v)} />
+              <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">
+                The depth passes stay {fmtLen(form.finishPassMM, units)} off the wall; one pass at full
+                depth then takes it off, so the wall is cut in a single light sweep with no step
+                lines. It runs after every depth pass, so a part is finished while its tabs still
+                hold it — without tabs, hold it down some other way.
+              </p>
+              <div className="mt-1.5">
+                <CheckRow id="profile-spring-pass" checked={form.springPass} onChange={(v) => up('springPass', v)}
+                  label="Spring Pass" hint="repeat it once" />
+              </div>
+            </>
+          )}
         </div>
       )}
       {/* Also hidden for centerline: there is no part side to pull the path away from. */}

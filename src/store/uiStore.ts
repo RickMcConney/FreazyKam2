@@ -24,7 +24,7 @@ export type WorkspaceTab = '2d' | '3d' | 'tools' | 'postprocessor' | 'machine'
 // 'region' is region picking, on while the Pocket form is open (PocketForm sets it):
 // selection works as in 'select', and a click inside an area the drawn lines enclose
 // also makes a closed path of that area — see cam/regionPick.ts.
-type ActiveTool = 'select' | 'drill' | 'pen' | 'constrain' | 'region' | ShapeType
+type ActiveTool = 'select' | 'drill' | 'pen' | 'constrain' | 'region' | 'measure' | ShapeType
 
 export type PenNode = {
   x: number

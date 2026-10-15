@@ -12,9 +12,14 @@ import {
   generateTrackD, generateTrackParts, BRIO,
   type TrackKind, type TrackEnd, type TrackHand,
 } from './trackGenerator'
+import {
+  generateBoxParts, generateFingerJointParts, generateDovetailParts, generateBowtieParts,
+  BOX_PART_LABELS, FINGER_PART_LABELS, DOVETAIL_PART_LABELS, BOWTIE_PART_LABELS,
+  type BoxSpec, type FingerJointSpec, type DovetailSpec, type BowtieSpec, type JointPart,
+} from './joineryGenerator'
 import { fmt4 as f } from '../util/num'
 
-export type ShapeType = 'rectangle' | 'roundrect' | 'inroundrect' | 'circle' | 'ellipse' | 'polygon' | 'star' | 'heart' | 'slot' | 'shield' | 'spirograph' | 'maze' | 'board' | 'gear' | 'cam' | 'ratchet' | 'escapement' | 'pendulum' | 'track' | 'text'
+export type ShapeType = 'rectangle' | 'roundrect' | 'inroundrect' | 'circle' | 'ellipse' | 'polygon' | 'star' | 'heart' | 'slot' | 'shield' | 'spirograph' | 'maze' | 'board' | 'gear' | 'cam' | 'ratchet' | 'escapement' | 'pendulum' | 'track' | 'text' | 'box' | 'fingerjoint' | 'dovetail' | 'bowtie'
 
 export type ShapeParams =
   | { type: 'rectangle'; x: number; y: number; w: number; h: number }
@@ -80,6 +85,13 @@ export type ShapeParams =
       treads: boolean; treadPitch: number
     }
   | { type: 'text'; x: number; y: number; text: string; fontSize: number; fontFamily: string }
+  // Joinery — see joineryGenerator.ts. Each is a FIT against stock thickness and the
+  // cutter, so all four are scale-locked; cx,cy is the middle of the laid-out parts.
+  | ({ type: 'box' } & BoxSpec)
+  | ({ type: 'fingerjoint' } & FingerJointSpec)
+  | ({ type: 'dovetail' } & DovetailSpec)
+  | ({ type: 'bowtie' } & BowtieSpec)
+type Placed<T> = Omit<T, 'cx' | 'cy'>
 export interface ShapeToolConfig {
   rectangle: { w: number; h: number }
   roundrect: { w: number; h: number; r: number }
@@ -126,6 +138,10 @@ export interface ShapeToolConfig {
     treads: boolean; treadPitch: number
   }
   text: { text: string; fontSize: number; fontFamily: string }
+  box: Placed<BoxSpec>
+  fingerjoint: Placed<FingerJointSpec>
+  dovetail: Placed<DovetailSpec>
+  bowtie: Placed<BowtieSpec>
 }
 
 export const DEFAULT_SHAPE_CONFIG: ShapeToolConfig = {
@@ -215,6 +231,14 @@ export const DEFAULT_SHAPE_CONFIG: ShapeToolConfig = {
     treads: true, treadPitch: BRIO.treadPitch,
   },
   text: { text: 'Hello', fontSize: 10, fontFamily: 'Roboto' },
+  // Joinery defaults are sheet goods and the bits a hobby router has: 6 mm ply with a
+  // 1/8" end mill for a box, 12 mm boards with a 1/4" for the rest. A 0.1 mm gap a side
+  // is a push fit in ply; dovetails and keys get a little more, since they are glued
+  // edge-on and squeeze-out wants somewhere to go.
+  box: { w: 150, d: 100, h: 80, inside: false, thickness: 6, fingerW: 15, clearance: 0.1, toolDia: 3.175, relief: 'dogbone', lid: false },
+  fingerjoint: { width: 100, lengthA: 80, lengthB: 80, thickness: 12, fingerW: 20, clearance: 0.1, toolDia: 6.35, relief: 'dogbone', cut: 'joint' },
+  dovetail: { length: 300, depthA: 60, depthB: 60, tails: 5, tailW: 30, tailDepth: 20, angleDeg: 14, clearance: 0.15, toolDia: 6.35, cut: 'joint' },
+  bowtie: { length: 60, width: 30, waist: 12, clearance: 0.15, toolDia: 6.35, style: 'straight' },
 }
 
 
@@ -477,7 +501,22 @@ export function generateShapeD(p: ShapeParams): string {
     case 'pendulum': return generatePendulumD(p)
     case 'track': return generateTrackD(p)
     case 'text': return generateTextD(p)
+    case 'box': case 'fingerjoint': case 'dovetail': case 'bowtie':
+      return jointParts(p).map((j) => j.d).join(' ')
   }
+}
+
+function jointParts(p: Extract<ShapeParams, { type: 'box' | 'fingerjoint' | 'dovetail' | 'bowtie' }>): JointPart[] {
+  switch (p.type) {
+    case 'box': return generateBoxParts(p)
+    case 'fingerjoint': return generateFingerJointParts(p)
+    case 'dovetail': return generateDovetailParts(p)
+    case 'bowtie': return generateBowtieParts(p)
+  }
+}
+
+const JOINT_PART_LABELS: Record<string, Record<string, string>> = {
+  box: BOX_PART_LABELS, fingerjoint: FINGER_PART_LABELS, dovetail: DOVETAIL_PART_LABELS, bowtie: BOWTIE_PART_LABELS,
 }
 
 /**
@@ -610,6 +649,11 @@ export function generateShapeParts(p: ShapeParams): ShapePart[] | null {
       d: g.d,
     }))
   }
+  // Every panel and board of a joint is its own part: each is cut out on its own, and
+  // a bowtie's socket is pocketed while its key is profiled.
+  if (p.type === 'box' || p.type === 'fingerjoint' || p.type === 'dovetail' || p.type === 'bowtie') {
+    return jointParts(p).map((g) => ({ part: g.key, label: JOINT_PART_LABELS[p.type][g.key] ?? g.key, d: g.d }))
+  }
   return null
 }
 
@@ -628,7 +672,10 @@ export function generateShapeParts(p: ShapeParams): ShapePart[] | null {
 // dragging a board or a maze to fit the stock is the natural gesture.
 // The canvas suppresses the resize handles for these (their size is set by
 // their own parameters), so nothing has to refuse a gesture mid-drag.
-export const SCALE_LOCKED_SHAPES: ReadonlySet<ShapeType> = new Set<ShapeType>(['gear', 'escapement', 'pendulum', 'track'])
+//   joinery    a box, a finger joint, a dovetail seam and a bowtie are fits
+//              against the stock's thickness and the cutter's radius; scaled,
+//              the notches no longer match the boards they take.
+export const SCALE_LOCKED_SHAPES: ReadonlySet<ShapeType> = new Set<ShapeType>(['gear', 'escapement', 'pendulum', 'track', 'box', 'fingerjoint', 'dovetail', 'bowtie'])
 
 export function isScaleLocked(params: ShapeParams | undefined | null): boolean {
   return !!params && SCALE_LOCKED_SHAPES.has(params.type)
@@ -656,6 +703,10 @@ export function shapeDisplayName(type: ShapeType): string {
     case 'pendulum': return 'Pendulum'
     case 'track': return 'Train Track'
     case 'text': return 'Text'
+    case 'box': return 'Finger-Joint Box'
+    case 'fingerjoint': return 'Finger Joint'
+    case 'dovetail': return 'Dovetail Seam'
+    case 'bowtie': return 'Bowtie Key'
   }
 }
 
@@ -843,6 +894,11 @@ function dragParams(
       // here (see SCALE_LOCKED_SHAPES). Answering with the designed piece is
       // the only answer that is still a BRIO track.
       return { type: 'track', cx, cy, ...config.track }
+    // Scale-locked too, placed from the panel like the track.
+    case 'box': return { type: 'box', cx, cy, ...config.box }
+    case 'fingerjoint': return { type: 'fingerjoint', cx, cy, ...config.fingerjoint }
+    case 'dovetail': return { type: 'dovetail', cx, cy, ...config.dovetail }
+    case 'bowtie': return { type: 'bowtie', cx, cy, ...config.bowtie }
     case 'text': {
       // drag height → font size; left edge and lower y as baseline position
       const h = Math.abs(end.y - start.y)
@@ -895,6 +951,10 @@ export function shapeParamsFromConfig(
     case 'pendulum': return { type: 'pendulum', cx, cy, ...config.pendulum }
     case 'track': return { type: 'track', cx, cy, ...config.track }
     case 'text': return { type: 'text', x: cx, y: cy, text: config.text.text, fontSize: config.text.fontSize, fontFamily: config.text.fontFamily }
+    case 'box': return { type: 'box', cx, cy, ...config.box }
+    case 'fingerjoint': return { type: 'fingerjoint', cx, cy, ...config.fingerjoint }
+    case 'dovetail': return { type: 'dovetail', cx, cy, ...config.dovetail }
+    case 'bowtie': return { type: 'bowtie', cx, cy, ...config.bowtie }
   }
 }
 
@@ -921,6 +981,8 @@ export function translateShapeParams(p: ShapeParams, dx: number, dy: number): Sh
     case 'pendulum': return { ...p, cx: p.cx + dx, cy: p.cy + dy }
     case 'track': return { ...p, cx: p.cx + dx, cy: p.cy + dy }
     case 'text': return { ...p, x: p.x + dx, y: p.y + dy }
+    case 'box': case 'fingerjoint': case 'dovetail': case 'bowtie':
+      return { ...p, cx: p.cx + dx, cy: p.cy + dy }
   }
 }
 
@@ -1081,6 +1143,9 @@ export function scaleShapeParams(
         bobRx: p.bobRx * asx, bobRy: p.bobRy * asx, bore: p.bore * asx,
       }
     }
+    case 'box': case 'fingerjoint': case 'dovetail': case 'bowtie':
+      // A fit against the stock's thickness and the cutter — the track's answer.
+      return null
     case 'track':
       // Unlike the gear, a track does not scale even uniformly: its every
       // dimension is a fit against a piece cut by somebody else, and a 90%

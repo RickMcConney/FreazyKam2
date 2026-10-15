@@ -32,6 +32,7 @@ import type { Constraint } from './constraints'
  */
 export function ingredientsOf(def: PathDefinition | undefined): string[] {
   if (!def || def.kind === 'duplicate') return []
+  if (def.kind === 'along') return [def.sourceId, def.guideId]
   return def.kind === 'pattern' || def.kind === 'boolean' || def.kind === 'fill' ? def.sourceIds : [def.sourceId]
 }
 
@@ -163,6 +164,7 @@ export function copyPaths(
         ...(def.kind === 'pattern' || def.kind === 'boolean' || def.kind === 'fill'
           ? { sourceIds: def.sourceIds.map((id) => newIdOf.get(id)!) }
           : { sourceId: newIdOf.get((def as { sourceId: string }).sourceId)! }),
+        ...(def.kind === 'along' ? { guideId: newIdOf.get(def.guideId)! } : {}),
       } as PathDefinition
     } else if (opts.lostRecipe === 'copied-from') {
       copy.definition = { id: copiedFromDefId, kind: 'duplicate', sourceId: p.id, offsetMM: dx }

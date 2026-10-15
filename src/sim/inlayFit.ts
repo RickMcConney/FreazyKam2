@@ -37,6 +37,12 @@
 //   INTERFERENCE — gap < 0. Wood where wood already is; the plug will not seat. This is
 //                  the one that makes an inlay unusable.
 //
+//   OVERCUT      — the female cut somewhere OUTSIDE the design (grown by the clearance and
+//                  two cells of quantization): a scar in the finished face beside the inlay,
+//                  which no plug covers. Scored on the female alone. The two scores above
+//                  only look inside the footprint, so without this a tool dragged across the
+//                  inside of a C — outside its outline — passed every fit test.
+//
 //   SURFACE GAP  — the joint closes, but the finished face has a hole in it. Once the
 //                  assembly is planed back to the female's face, the material visible at
 //                  z = 0⁻ is female wood where F = 0, and male wood wherever the plug
@@ -122,6 +128,8 @@ export interface InlayFitResult {
   interference: InlayFitStats
   /** Socket cells with no plug material at the finished face — a hole in the inlay. */
   surfaceGaps: InlayFitStats
+  /** Cells the female cut OUTSIDE the design (plus clearance) — a scar beside the inlay. */
+  overcut: InlayFitStats
   /** Air gap across the socket floor and walls, for sanity: min / median / max in mm. */
   gapMinMM: number
   gapMedianMM: number
@@ -259,6 +267,15 @@ export async function auditInlayFit(opts: InlayFitOptions): Promise<InlayFitResu
   const footprintRings = groups.flatMap(g => regionFromPaths(g.boundaryD, []))
   const footprint = rasterizeRegion(offsetRegion(footprintRings, Math.max(0, params.clearanceMM)), grid)
 
+  // Where the female may cut at all: the footprint, grown by two cells of quantization.
+  const allowed = rasterizeRegion(offsetRegion(footprintRings, Math.max(0, params.clearanceMM) + 2 * cellMM), grid)
+  const overcutMask = new Uint8Array(NX * NY)
+  const overcutDepth = new Float32Array(NX * NY)
+  for (let k = 0; k < NX * NY; k++) {
+    const F = female.hf.topZ[k] - T
+    if (!allowed[k] && F < -1e-3) { overcutMask[k] = 1; overcutDepth[k] = -F }
+  }
+
   const interfereMask = new Uint8Array(NX * NY)
   const interfereDepth = new Float32Array(NX * NY)
   const gapMask = new Uint8Array(NX * NY)
@@ -331,6 +348,7 @@ export async function auditInlayFit(opts: InlayFitOptions): Promise<InlayFitResu
     socketCells,
     interference: statsFrom(interfereMask, interfereDepth, grid),
     surfaceGaps: statsFrom(gapMask, gapDepth, grid),
+    overcut: statsFrom(overcutMask, overcutDepth, grid),
     gapMinMM: gapValues.length ? gapValues[0] : 0,
     gapMedianMM: median,
     gapMaxMM: gapValues.length ? gapValues[gapValues.length - 1] : 0,
@@ -346,6 +364,7 @@ export function inlayFitSummary(r: InlayFitResult): string {
     `worst ${r.interference.worstMM.toFixed(2)}mm)`,
     `surfaceGaps=${r.surfaceGaps.cells} (${r.surfaceGaps.areaMM2.toFixed(1)}mm²,` +
     ` deepest ${r.surfaceGaps.worstMM.toFixed(2)}mm)`,
+    `overcut=${r.overcut.cells} (${r.overcut.areaMM2.toFixed(1)}mm², deepest ${r.overcut.worstMM.toFixed(2)}mm)`,
     `gap min/med/max = ${r.gapMinMM.toFixed(2)}/${r.gapMedianMM.toFixed(2)}/${r.gapMaxMM.toFixed(2)}mm`,
     r.warnings.length ? `\n  warnings: ${r.warnings.join(' | ')}` : '',
   ].join(' ')
@@ -364,5 +383,6 @@ export function inlayFitReport(r: InlayFitResult): string {
   }
   cl('INTERFERENCE', r.interference)
   cl('SURFACE GAP', r.surfaceGaps)
+  cl('OVERCUT', r.overcut)
   return lines.join('\n')
 }

@@ -136,10 +136,41 @@ You generate the two halves **separately**, from the same drawing:
 | **Invert** | Which half of a nested drawing is the plug |
 | **Mirror** | Male only — see below |
 
+**Lettering is cut by size.** Small text, whose strokes the V-bit spans from edge to edge at
+the inlay depth, is V-carved straight into a socket of exactly the strokes' shape. Large
+text — any letter with a stroke wider than that — is cut like every other shape instead:
+the end mill clears a flat floor and the V-bit forms the walls, so a big bold letter gets a
+proper socket and a plug that seats.
+
+**The female doubles as a pocket with crisp V walls.** Its V-bit never goes below the
+floor: the end mill clears the floor flat, and the V-bit cuts the walls down to meet it,
+going round the floor's edge at full depth and clearing the corners the end mill can't
+reach. So the Female half on its own is a flat-bottomed pocket whose walls are sloped and
+whose inside corners are as sharp as the V-bit can make them — handy for a recess, a
+sign's lettering or a tray, with nothing to fill it.
+
 **Invert** answers the same question as Invert Pocket: a design inside a field can be read
 two ways, and only you know which wood is meant to show. The form says which reading it is
 using in plain words — *"the inner shapes are the plug"* versus *"the field around the
 inner shapes is the plug"* — so you can check it rather than infer it.
+
+**Cut-out Outline** (male, on by default) frees the plug from the sheet. Generate clears
+everything round the plug down to the plug depth and adds an **outside Profile right through
+the stock**, run after the plug's own cuts, along the plug's cut-out line:
+
+- **One shape** (a bowtie, an outline drawing) — the cut-out is the shape's own outline, so
+  the profile goes on **the shape's own path**. Nothing new is drawn; a copy laid over the
+  original would put every line on the canvas twice.
+- **Lettering**, or a mirrored shape that isn't symmetric — a new path is drawn, a band
+  wrapped round all of it (or the mirrored outline), and the profile goes on that. It is
+  redrawn on every Generate.
+- **A nested design** gets one cut-out, round the outermost shape: the inner levels stand in
+  its holes on the same piece of board.
+
+The profile is an ordinary operation: open it to add tabs (a small plug cut free at full
+depth can move), or to change its depth. To use a boundary of your own instead, untick the
+option, draw the boundary round the plug, select both and use **Invert** — the plug then
+clears to your boundary.
 
 **Mirror** matters because the male board gets **flipped over** to go in. If your inlay
 has any handedness — lettering, a signature, anything not symmetrical — the plug must be

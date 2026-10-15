@@ -628,6 +628,17 @@ export async function generateVCarve(
 
   const zAtRadius = (rScaled: number) => -Math.min(zStart + depthAtRadius(rScaled), params.maxDepthMM)
 
+  // A RUN THAT CROSSES THE DEPTH CAP IS TWO RUNS. The machine drives Z linearly between the
+  // two points emitted for a medial edge, and that is exact for a V-bit only while both ends
+  // are on the r/tan law. Clamp the far end to the cap and the straight line from the near
+  // end to it runs SHALLOWER than the law the whole way — at the 90° corner of a capped
+  // inlay socket the wall came out 0.5 mm proud for 2 mm along the diagonal, which is wood
+  // the plug lands on. (The inlay used to cap its wall carves at 2.5× the socket depth to
+  // keep the cap out of reach of every edge, and paid for it with a V-groove cut below the
+  // floor all round.) So the edge is split where its radius reaches the cap's: on the law up
+  // to there, flat at the cap after. An edge that never crosses it is untouched.
+  const capRScaled = vRadiusAtHeightMM(Math.max(0, params.maxDepthMM - zStart), tanHalfAngle, tipR) * SCALE
+
   // Z ALONG A MEDIAL EDGE IS NOT A STRAIGHT LINE FOR A TAPER, and the machine interpolates
   // it as one. A V-bit's depth law r/tanθ is linear in the clearance radius, and the radius
   // runs linearly along a medial edge, so the two emitted endpoints describe the whole move
@@ -736,6 +747,14 @@ export async function generateVCarve(
       for (let i = 1; i < toolpath.length; i++) {
         const pt = toolpath[i]
         const z = zAtRadius(pt.r)
+        if ((prev.r - capRScaled) * (pt.r - capRScaled) < 0) {
+          const t = (capRScaled - prev.r) / (pt.r - prev.r)
+          const cap: TPoint = { x: prev.x + t * (pt.x - prev.x), y: prev.y + t * (pt.y - prev.y), r: capRScaled }
+          const zc = zAtRadius(capRScaled)
+          if (tipR > 0) emitRun(prev, prevZ, cap, zc, segs)
+          segs.push({ x: cap.x / SCALE, y: cap.y / SCALE, z: zc, rapid: false })
+          prev = cap; prevZ = zc
+        }
         // The machine drives Z linearly between the points we emit. For a V-bit that is
         // exact; for a taper it is not, and the error lands on sharp corners — see
         // refineRun. Nothing is inserted for a V-bit.

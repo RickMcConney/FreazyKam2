@@ -14,6 +14,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { auditInlayFit, inlayFitSummary, type InlayFitGroup } from '../sim/inlayFit'
 import { useWorkpieceStore } from '../store/workpieceStore'
 import type { Tool } from '../store/toolStore'
+import { translateD } from '../canvas/selectionUtils'
 
 const ENDMILL: Tool = {
   id: 'em', name: '1/8 EM', type: 'endmill', diameterMM: 3.175, fluteCount: 2,
@@ -64,6 +65,8 @@ function expectFits(r: Awaited<ReturnType<typeof fit>>) {
   expect(r.surfaceGaps.areaMM2, inlayFitSummary(r)).toBeLessThanOrEqual(SLACK_MM2)
   // The floor sits a glue line off the plug; nothing anywhere may be jammed.
   expect(r.gapMinMM, inlayFitSummary(r)).toBeGreaterThan(-0.75)
+  // And the socket is cut nowhere it should not be — see the Text on Path case below.
+  expect(r.overcut.areaMM2, inlayFitSummary(r)).toBeLessThanOrEqual(SLACK_MM2)
 }
 
 describe('inlay male plug fits the female socket', () => {
@@ -119,6 +122,44 @@ describe('inlay male plug fits the female socket', () => {
     expectFits(await fit([
       { boundaryD: rect(40, 40, 60, 60), islandDs: [rect(45, 45, 20, 20)] },
     ]))
+  })
+})
+
+// The B of scratch/abcdefg.fkam scaled ×3 (90 mm tall), as the font emitted it.
+const B_90MM = 'M143.56,21.30 L107.90,21.30 L107.90,111.30 L137.26,111.30 Q151.35,111.30,159.33,105.21 Q167.30,99.12,167.30,86.94 L167.30,86.94 Q167.30,81.13,163.72,76.53 Q160.13,71.92,154.20,69.51 L154.20,69.51 Q163.04,68.28,168.20,61.85 Q173.36,55.42,173.36,46.70 L173.36,46.70 Q173.36,34.34,165.32,27.82 Q157.29,21.30,143.56,21.30 L143.56,21.30 M142.95,63.52 L120.08,63.52 L120.08,30.82 L143.56,30.82 Q151.91,30.82,156.51,34.93 Q161.12,39.04,161.12,46.58 L161.12,46.58 Q161.12,54.06,156.42,58.63 Q151.72,63.21,143.75,63.52 L143.75,63.52 L142.95,63.52 M120.08,101.72 L120.08,73.04 L139.79,73.04 Q146.59,73.04,150.86,76.78 Q155.12,80.52,155.12,87.19 L155.12,87.19 Q155.12,94.48,150.52,98.10 Q145.91,101.72,137.26,101.72 L137.26,101.72 L120.08,101.72'
+
+// Lettering went down the V-carve-only TEXT route whatever its size, and a stroke wider than
+// the V-bit spans at the inlay depth has a floor the carve cannot reach: the plug stood up to
+// 5 mm proud (66% of a 90 mm "abcdefg" in the way). Large lettering is now cut like any other
+// shape — floor, walls — and these are the shapes that showed what that needed.
+describe('large lettering fits like any other shape', () => {
+  // Three "letters", strokes 12 mm wide against the 5.8 mm a 60° bit spans at 5 mm.
+  it('gets a floor under strokes the V-bit cannot span, and the plug fits', async () => {
+    expectFits(await fit([{ boundaryD: rect(40, 40, 12, 30) + ' ' + rect(60, 40, 12, 30) + ' M 80 40 L 92 55 L 80 70 Z' }]))
+  })
+
+  // Wide enough for a floor, too narrow for the wall band's inner edge (two half-widths
+  // in): this fell back to a plain V-carve, which ran out of bit before the middle and left
+  // 2 mm of its long wall uncut.
+  it('a narrow shape with room for a floor but not for the wall band', async () => {
+    expectFits(await fit([{ boundaryD: 'M 80 40 L 92 55 L 80 70 Z' }]))
+  })
+
+  // A real B: abcdefg.fkam's lettering at 90 mm tall. Its waist is an inward point with
+  // both counters close by — the shape that needed the floor ROUND-inset (a mitred inset
+  // threw a spike across the middle bar) and the floor finish written EXACT (its loops are
+  // closer than the G-code writer's fit, and it thinned them away).
+  // A full-size letter through both halves, G-code and the carve takes a few seconds.
+  it('a large B: the waist between its bowls and the bar between its counters', async () => {
+    expectFits(await fit([{ boundaryD: B_90MM }]))
+  }, 30_000)
+
+  // An inward point in the outline (a B's waist) with the counters close by. A mitred
+  // inset throws a spike four half-widths into the floor there instead of an arc, and the
+  // floor under it was cut by nothing: a 2.5 mm ridge across the B's middle bar.
+  it('an outline with a sharp inward point between two counters', async () => {
+    expectFits(await fit([{ boundaryD: 'M 40 40 L 80 40 L 80 53 L 68 55 L 80 57 L 80 70 L 40 70 Z ' + 
+      'M 46 44 L 46 52 L 66 52 L 66 44 Z M 46 58 L 46 66 L 66 66 L 66 58 Z' }]))
   })
 })
 
@@ -188,6 +229,29 @@ describe('a socket bigger than the engine argument limit still generates', () =>
     expect(r.endmillSegs.length).toBeGreaterThan(150_000)
     expect(r.vbitSegs.length).toBeGreaterThan(0)
   })
+})
+
+// "abcd" laid round a circle by Text on Path (abcd.fkam), so every letter stands turned. The
+// V-bit's floor-finish loops were joined at depth by a straight move from wherever one
+// ended to wherever the next one's offset started — on a turned letter, across its counter
+// or into its other arm: 6 to 27 moves (by floor step) 8–13 mm long through the face
+// BESIDE the letters. No other case caught it because every score looked only inside the
+// design; the overcut score is what sees it.
+const ABCD_ON_PATH = 'M142.1927,268.8704 L138.6924,266.5808 Q137.9673,267.3128,137.4495,267.8975 Q136.9317,268.482,136.4859,269.126 L136.4859,269.126 Q136.4172,267.1607,135.4834,265.2571 Q134.5495,263.3537,132.7907,262.2033 L132.7907,262.2033 Q129.8766,260.2971,127.375,260.7904 Q124.8733,261.2838,123.159,263.9047 L123.159,263.9047 Q121.4107,266.5773,122.5877,269.5016 Q123.7648,272.426,127.472,274.8509 L127.472,274.8509 L131.1621,277.2647 L129.9552,279.1097 Q128.8837,280.7478,127.2576,281.0506 Q125.6314,281.3534,123.8037,280.1578 L123.8037,280.1578 Q122.1484,279.075,121.6724,277.5819 Q121.1965,276.0887,121.9522,274.9334 L121.9522,274.9334 L118.7503,272.7897 L118.6481,272.8707 Q117.1965,274.8264,118.1173,277.8415 Q119.038,280.8566,122.2452,282.9545 L122.2452,282.9545 Q125.4179,285.0298,128.4037,284.6809 Q131.3895,284.3319,133.3746,281.2971 L133.3746,281.2971 L139.251,272.3136 Q139.9052,271.3134,140.6177,270.45 Q141.3303,269.5866,142.1927,268.8704 L142.1927,268.8704 M131.4297,265.3754 L131.4297,265.3754 Q133.2747,266.5823,134.1373,268.5007 Q134.9998,270.419,134.6474,271.9366 L134.6474,271.9366 L132.6622,274.9714 L128.8515,272.4787 Q126.7996,271.1365,126.2434,269.2954 Q125.6872,267.4544,126.6009,266.0577 L126.6009,266.0577 Q127.413,264.8162,128.6626,264.5995 Q129.9123,264.3828,131.4297,265.3754 M165.4655,285.7919 L165.5499,285.3675 Q166.49,280.6386,164.7931,277.2866 Q163.0962,273.9346,159.115,273.1431 L159.115,273.1431 Q156.9325,272.7092,155.1551,273.2487 Q153.3778,273.7882,151.9934,275.2565 L151.9934,275.2565 L151.9373,272.1573 L148.8858,271.5506 L142.6179,303.0764 L146.5991,303.8679 L149.0339,291.6213 Q149.7753,293.2813,151.1484,294.3526 Q152.5215,295.4238,154.5625,295.8296 L154.5625,295.8296 Q158.6043,296.6332,161.5106,293.8498 Q164.4168,291.0663,165.4655,285.7919 L165.4655,285.7919 M161.5687,284.576 L161.4843,285.0004 Q160.737,288.7592,158.8806,290.8585 Q157.0242,292.9578,154.195,292.3953 L154.195,292.3953 Q152.356,292.0297,151.2717,290.8793 Q150.1875,289.7289,149.7411,288.0646 L149.7411,288.0646 L151.6254,278.5867 Q152.7148,277.1226,154.1384,276.4603 Q155.5621,275.798,157.4617,276.1757 L157.4617,276.1757 Q160.2707,276.7341,161.2472,279.008 Q162.2236,281.2819,161.5687,284.576 L161.5687,284.576 M183.7154,275.8106 L183.7154,275.8106 Q185.5529,275.4372,187.1742,276.3797 Q188.7955,277.3222,189.1566,279.0991 L189.1566,279.0991 L192.7507,278.3687 L192.7867,278.2352 Q192.2929,275.392,189.344,273.71 Q186.3949,272.0281,183.0835,272.7011 L183.0835,272.7011 Q178.4798,273.6367,176.6121,277.2752 Q174.7444,280.9138,175.6923,285.5781 L175.6923,285.5781 L175.8647,286.4261 Q176.8044,291.05,179.9564,293.6789 Q183.1083,296.3077,187.6918,295.3762 L187.6918,295.3762 Q191.3465,294.6335,193.219,291.8981 Q195.0916,289.1627,194.3419,285.8878 L194.3419,285.8878 L194.2769,285.7749 L190.6626,286.5094 Q191.0689,288.5085,190.0517,290.1765 Q189.0345,291.8445,187.0558,292.2466 L187.0558,292.2466 Q184.128,292.8416,182.3236,290.8429 Q180.5192,288.8443,179.8626,285.6136 L179.8626,285.6136 L179.6903,284.7655 Q179.0214,281.4743,179.8844,278.9441 Q180.7473,276.4138,183.7154,275.8106 M202.3159,278.1047 L202.5491,278.4692 Q205.4474,282.9991,209.1593,284.5378 Q212.8713,286.0766,216.3598,283.8445 L216.3598,283.8445 Q218.0086,282.7895,218.8956,281.366 Q219.7826,279.9422,219.9411,278.2019 L219.9411,278.2019 L226.5485,288.5287 L229.9676,286.3411 L212.6442,259.2659 L210.0234,260.9428 L211.0241,263.6536 Q209.2381,262.8885,207.4401,263.0604 Q205.6421,263.2323,203.8545,264.3761 L203.8545,264.3761 Q200.418,266.5749,200.0677,270.3091 Q199.7174,274.0435,202.3159,278.1047 L202.3159,278.1047 M205.9682,276.2816 L205.735,275.9171 Q203.9138,273.0707,203.9828,270.6171 Q204.0519,268.1636,206.499,266.5978 L206.499,266.5978 Q208.0264,265.6206,209.512,265.6485 Q210.9975,265.6765,212.4565,266.5041 L212.4565,266.5041 L218.0644,275.2688 Q218.1489,276.8537,217.5376,278.2111 Q216.9261,279.5684,215.4508,280.5123 L215.4508,280.5123 Q212.9863,282.0892,210.5156,280.8081 Q208.0448,279.5271,205.9682,276.2816 L205.9682,276.2816'
+
+describe('the female cuts nothing outside the design', () => {
+  for (const vFloorStepMM of [0.25, 0.035]) {
+    it(`links the floor-finish loops of turned letters inside them (floor step ${vFloorStepMM} mm)`, async () => {
+      const r = await auditInlayFit({
+        // Moved down onto the test stock (it was drawn above a 300 mm sheet).
+        groups: [{ boundaryD: translateD(ABCD_ON_PATH, -100, -200) }], roughTool: ENDMILL, wallTool: VBIT,
+        params: { ...PARAMS, pocketDepthMM: 1, glueLineMM: 0, clearanceMM: 0.2, stepoverPercent: 70, vFloorStepMM },
+        cellMM: 0.1,
+      })
+      expect(r.socketCells, inlayFitSummary(r)).toBeGreaterThan(1000)
+      expect(r.overcut.areaMM2, inlayFitSummary(r)).toBeLessThanOrEqual(0.1)
+    }, 30_000)
+  }
 })
 
 describe('the audit catches a plug that does not fit', () => {

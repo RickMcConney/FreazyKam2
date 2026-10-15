@@ -5,7 +5,7 @@ import {
   Star, Heart, Pill, Shield, Orbit, Grid3x3, CookingPot, Cog, Snail, Type, PenTool, Copy, Import, SquaresUnite,
   SquareSquare, PencilSparkles, LayoutGrid, Target, CircleDot, Layers, Box, RefreshCw, FileCode,
   X, Image as ImageIcon, Anchor, Weight, Clock, RectangleEllipsis, VectorSquare, Group, TrainTrack,
-  RulerDimensionLine, Webhook, Blocks,
+  RulerDimensionLine, Webhook, Blocks, Package, Puzzle, Hourglass, BrickWall, Spline,
 } from 'lucide-react'
 import { usePathsStore, clearCorners, outerGroupOf, type ImportedPath } from '../store/pathsStore'
 import { useToolpathStore, pathIdsOf, type AnyOperation } from '../store/toolpathStore'
@@ -42,6 +42,7 @@ const SHAPE_ICONS: Record<string, ChipIcon> = {
   ellipse: Ellipse, polygon: Hexagon, star: Star, heart: Heart, slot: Pill,
   shield: Shield, spirograph: Orbit, maze: Grid3x3, board: CookingPot, gear: Cog,
   cam: Snail, ratchet: Webhook, escapement: Anchor, pendulum: Weight, track: TrainTrack, text: Type,
+  box: Package, fingerjoint: BrickWall, dovetail: Puzzle, bowtie: Hourglass,
 }
 
 // … and the CAM operations menu (MachinePanel AddOperationMenu)
@@ -97,6 +98,7 @@ function pathVisual(p: ImportedPath): { label: string; Icon: ChipIcon; color?: s
     if (def.kind === 'offset') return { label: 'Offset', Icon: SquareSquare, color: OP_TYPE_COLORS.offset }
     if (def.kind === 'pattern') return { label: 'Pattern', Icon: LayoutGrid, color: OP_TYPE_COLORS.pattern }
     if (def.kind === 'trace') return { label: 'Trace', Icon: PencilSparkles, color: OP_TYPE_COLORS.trace }
+    if (def.kind === 'along') return { label: 'Text on Path', Icon: Spline }
     if (def.kind === 'fill') return { label: 'Nest', Icon: Blocks, color: OP_TYPE_COLORS.nest }
     if (def.kind === 'duplicate') return { label: p.name, Icon: Copy }
   }

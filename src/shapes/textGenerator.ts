@@ -94,22 +94,18 @@ export function preloadFonts(): void {
 }
 
 
-/** Generate SVG d string from TextParams in CNC Y-up space. Returns '' if font not loaded yet. */
-export function generateTextD(params: TextParams): string {
-  const font = fontCache.get(params.fontFamily) ?? fontCache.get(DEFAULT_FONT_FAMILY)
-  if (!font || !params.text.trim()) return ''
-
-  // Scale so cap height (not em-square) matches params.fontSize.
+/** Cap-height scaling: the font size the font is asked for so `fontSize` is the CAP height. */
+function scaledSizeFor(font: any, fontSize: number): number {
   // sCapHeight is in font units; fall back to ascender if absent.
   const capHeight: number = font.tables?.os2?.sCapHeight || font.ascender
-  const scaledSize = params.fontSize * (font.unitsPerEm / capHeight)
+  return fontSize * (font.unitsPerEm / capHeight)
+}
 
-  // getPath returns path in screen Y-down coords; we flip Y for CNC Y-up
-  const path = font.getPath(params.text, 0, 0, scaledSize)
-  const { x: bx, y: by } = params
-
+/** A font path's commands (screen Y-down, as opentype.js and the stroke shim both give them)
+ *  as a CNC Y-up d string, moved by (bx, by). */
+function commandsToD(commands: any[], bx: number, by: number): string {
   const cmds: string[] = []
-  for (const cmd of path.commands) {
+  for (const cmd of commands) {
     switch (cmd.type) {
       case 'M':
         cmds.push(`M${f(bx + cmd.x)},${f(by - cmd.y)}`)
@@ -131,4 +127,38 @@ export function generateTextD(params: TextParams): string {
     }
   }
   return cmds.join(' ')
+}
+
+/** Generate SVG d string from TextParams in CNC Y-up space. Returns '' if font not loaded yet. */
+export function generateTextD(params: TextParams): string {
+  const font = fontCache.get(params.fontFamily) ?? fontCache.get(DEFAULT_FONT_FAMILY)
+  if (!font || !params.text.trim()) return ''
+  // getPath returns path in screen Y-down coords; we flip Y for CNC Y-up
+  const path = font.getPath(params.text, 0, 0, scaledSizeFor(font, params.fontSize))
+  return commandsToD(path.commands, params.x, params.y)
+}
+
+/**
+ * One letter of a text object, laid out as the Text tool lays it — kerning included — for
+ * placing letters one by one (tools/alongPath). `x` is the letter's pen position along the
+ * baseline and `advance` how far the pen then moves, both in mm; `d` is the letter alone,
+ * CNC Y-up, its pen at the origin and its baseline on y = 0 ('' for a space).
+ */
+export interface GlyphRun { x: number; advance: number; d: string }
+
+/** The letters of `params.text`, or null while its font is not loaded. */
+export function textGlyphRuns(params: TextParams): GlyphRun[] | null {
+  const font = fontCache.get(params.fontFamily) ?? fontCache.get(DEFAULT_FONT_FAMILY)
+  if (!font) return null
+  const size = scaledSizeFor(font, params.fontSize)
+  if (typeof font.getGlyphRuns === 'function') {
+    return font.getGlyphRuns(params.text, size).map((g: any) => ({ x: g.x, advance: g.advance, d: commandsToD(g.path.commands, 0, 0) }))
+  }
+  const runs: GlyphRun[] = []
+  // opentype.js: forEachGlyph applies kerning to the pen position it hands back.
+  font.forEachGlyph(params.text, 0, 0, size, undefined, (glyph: any, gx: number, _gy: number, fs: number) => {
+    const path = glyph.getPath(0, 0, fs)
+    runs.push({ x: gx, advance: ((glyph.advanceWidth ?? 0) * fs) / font.unitsPerEm, d: commandsToD(path.commands, 0, 0) })
+  })
+  return runs
 }

@@ -25,8 +25,16 @@ the canvas.
 
 Other fields:
 
-- **Stock allowance** leaves material on the wall for a finishing pass. **Negative cuts
-  past the line**, which is how you get a slip fit rather than a press fit.
+- **Stock allowance** leaves material on the wall. **Negative cuts past the line**, which
+  is how you get a slip fit rather than a press fit.
+- **Finishing Pass** keeps every depth pass a little further off the wall (0.3 mm by
+  default), then cuts the wall itself in one pass at full depth. The wall comes out as one
+  clean sweep with no step lines from the depth passes, and the last cut is light, so the
+  tool hardly deflects. It runs after all the depth passes, so a part is finished while
+  its tabs still hold it — without tabs, hold the part down some other way. It finishes to
+  the stock allowance, not to the line. **Spring Pass** goes round the wall a second time
+  without lifting, to take off what the tool's flex left on the first. Not on a centerline
+  cut, which has no wall, or with Optimize Path.
 - **Ramp in** enters each pass on a slope instead of plunging. Leave it on unless you
   have a reason.
 - **Direction** — climb for a clean edge on a rigid enough machine, conventional if the

@@ -25,6 +25,14 @@ export interface ProfileParams {
    *  and only ever AWAY from the part — see cam/cornerRounding.ts. 0/absent = off.
    *  Meaningless for a centerline cut, which has no part side, and ignored there. */
   cornerToleranceMM?: number
+  /** FINISHING PASS: the depth passes stay this much (mm) further off the wall, and one
+   *  last pass at full depth along the finished wall takes it off — so the wall is cut in
+   *  one sweep, with no step lines from the depth passes and a light, even load where it
+   *  shows. 0/absent = off. Sided cuts only; a centerline cut has no wall to finish. */
+  finishPassMM?: number
+  /** With a finishing pass: cut it twice. The second lap takes off what the tool's
+   *  deflection left on the first (a SPRING pass). */
+  springPass?: boolean
   // Surface the cut starts from (0 = stock top, negative = the floor an earlier op left).
   // depthMM and tab heights are both measured from here.
   startZMM?: number
@@ -232,9 +240,13 @@ export function generateProfile(
   // rather than guessing a direction.
   const cutRadius = toolRadiusAtHeight(tool, params.depthMM)
   const allowance = params.allowanceMM ?? 0
-  const rawDelta =
-    params.side === 'outside' ? cutRadius + allowance :
-    params.side === 'inside' ? -(cutRadius + allowance) : 0
+  // A finishing pass moves every depth pass a further `finish` off the wall; the pass at
+  // `allowance` itself is then cut once, at full depth, after all of them.
+  const finish = params.side === 'centerline' ? 0 : Math.max(0, params.finishPassMM ?? 0)
+  const sideDelta = (stock: number) =>
+    params.side === 'outside' ? cutRadius + stock :
+    params.side === 'inside' ? -(cutRadius + stock) : 0
+  const rawDelta = sideDelta(allowance + finish)
   // A near-zero offset (a V-bit barely scratching the surface) is a centerline cut —
   // Clipper would otherwise be handed a degenerate inflate.
   const delta = Math.abs(rawDelta) < 1e-6 ? 0 : rawDelta
@@ -252,6 +264,8 @@ export function generateProfile(
   // Set once the corners are rounded: the passes are then fitted HERE at a fine
   // tolerance and marked exact (see fitPass).
   let fineFit = false
+  // The finishing pass's paths, when there is one.
+  let finishPaths: Pt2[][] = []
   if (delta !== 0) {
     // Inside/outside offset only applies to closed loops; open strokes have no
     // interior, so they're left to centerline cuts.
@@ -260,9 +274,11 @@ export function generateProfile(
     // segments looks identical to one that was never generated. Say which knob did it —
     // with an allowance in the mix "the tool is too big" is no longer the only answer.
     if (offsetPaths.length === 0 && openSubs.length === 0) {
-      throw new Error(allowance !== 0
-        ? 'Tool plus allowance is larger than the shape'
-        : 'Tool is larger than the shape')
+      throw new Error(finish > 0
+        ? 'Tool plus finishing pass is larger than the shape — make the finishing pass smaller, or turn it off'
+        : allowance !== 0
+          ? 'Tool plus allowance is larger than the shape'
+          : 'Tool is larger than the shape')
     }
     // An open stroke has no interior, so there is no inside or outside of it to offset
     // to, and it is left out of the inflate above. Left at that it is simply DROPPED —
@@ -283,6 +299,14 @@ export function generateProfile(
       if (rounded.rhoMM > 0) {
         offsetPaths = rounded.rings.map((pts) => ({ pts, isOpen: false }))
         fineFit = true
+      }
+    }
+    if (finish > 0) {
+      // The finished wall's own path, rounded the same way as the depth passes'.
+      finishPaths = offsetClosedSubpaths(closedSubs, sideDelta(allowance))
+      if ((params.cornerToleranceMM ?? 0) > 0 && finishPaths.length > 0) {
+        const rounded = roundInsideCorners(finishPaths, params.side as 'inside' | 'outside', params.cornerToleranceMM!)
+        if (rounded.rhoMM > 0) { finishPaths = rounded.rings; fineFit = true }
       }
     }
   } else {
@@ -349,6 +373,15 @@ export function generateProfile(
     hasTabs: !!tabs && tabs.length > 0, tabRangesOn,
   }
   for (const { pts, isOpen } of offsetPaths) emitProfilePath(segs, pts, isOpen, ctx)
+  // The finishing pass comes after every depth pass of every path, so a part held by its
+  // tabs is finished while it is still held. It enters the way the depth passes did (a
+  // plunge, or a ramp down from the surface) — through the kerf they already cut, which
+  // the finishing stock only grazes — and a spring pass goes round again without lifting.
+  if (finishPaths.length > 0) {
+    const fullDepth = passes[passes.length - 1]
+    const finishCtx: PathEmitContext = { ...ctx, passes: params.springPass ? [fullDepth, fullDepth] : [fullDepth] }
+    for (const pts of finishPaths) emitProfilePath(segs, pts, false, finishCtx)
+  }
 
   return segs
 }

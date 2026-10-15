@@ -212,6 +212,68 @@ describe('generateProfile — stock allowance', () => {
   })
 })
 
+describe('generateProfile — finishing pass', () => {
+  // How far a cutting move on the 40 mm square stands outside it (negative: inside it).
+  const off = (m: MotionSegment) => Math.max(Math.abs(m.x - 30), Math.abs(m.y - 30)) - 20
+  // The cutting moves whose tool centre runs `standoff` off the square, as [z, count].
+  const at = (segs: MotionSegment[], standoff: number) =>
+    cuts(segs).filter((m) => Math.abs(off(m) - standoff) < 1e-6)
+
+  it('keeps every depth pass the finishing stock further off the wall', () => {
+    const segs = generateProfile(SQ, EM6, params({ depthMM: 6, stepDownMM: 2, finishPassMM: 0.5 }))
+    // Tool radius 3 plus 0.5 of stock: the depth passes at −2, −4 and −6 all run 3.5 out.
+    expect(new Set(at(segs, 3.5).map((m) => m.z))).toEqual(new Set([-2, -4, -6]))
+  })
+
+  it('then cuts the wall itself once, at full depth only, after every depth pass', () => {
+    const segs = generateProfile(SQ, EM6, params({ depthMM: 6, stepDownMM: 2, finishPassMM: 0.5 }))
+    const wall = at(segs, 3)
+    expect(new Set(wall.map((m) => m.z))).toEqual(new Set([-6]))
+    // Four sides of one lap, and nothing of the depth passes after it.
+    const firstWall = segs.indexOf(wall[0])
+    expect(cuts(segs.slice(firstWall)).every((m) => Math.abs(off(m) - 3) < 1e-6)).toBe(true)
+  })
+
+  it('finishes an inside cut from the inside: depth passes further in, the wall at a tool radius', () => {
+    const segs = generateProfile(SQ, EM6, params({ side: 'inside', depthMM: 6, stepDownMM: 2, finishPassMM: 0.5 }))
+    expect(new Set(at(segs, -3.5).map((m) => m.z))).toEqual(new Set([-2, -4, -6]))
+    expect(new Set(at(segs, -3).map((m) => m.z))).toEqual(new Set([-6]))
+  })
+
+  it('finishes to the stock allowance, not to the line', () => {
+    const segs = generateProfile(SQ, EM6, params({ depthMM: 6, stepDownMM: 2, allowanceMM: 1, finishPassMM: 0.5 }))
+    expect(at(segs, 4.5).length).toBeGreaterThan(0)
+    expect(new Set(at(segs, 4).map((m) => m.z))).toEqual(new Set([-6]))
+  })
+
+  it('goes round the wall a second time on a spring pass, without lifting between', () => {
+    const one = at(generateProfile(SQ, EM6, params({ depthMM: 6, stepDownMM: 2, finishPassMM: 0.5 })), 3).length
+    const segs = generateProfile(SQ, EM6, params({ depthMM: 6, stepDownMM: 2, finishPassMM: 0.5, springPass: true }))
+    const wall = at(segs, 3)
+    expect(wall.length).toBe(2 * one)
+    const run = segs.slice(segs.indexOf(wall[0]), segs.indexOf(wall[wall.length - 1]) + 1)
+    expect(run.some((m) => m.rapid)).toBe(false)
+  })
+
+  it('lifts over a tab on the finishing pass as the depth passes do', () => {
+    const segs = generateProfile(SQ, EM6, params({ depthMM: 6, stepDownMM: 2, finishPassMM: 0.5 }), [tab({ heightMM: 2 })])
+    // The finishing lap rides at −4 over the tab and is at −6 everywhere else.
+    expect(new Set(at(segs, 3).map((m) => m.z))).toEqual(new Set([-4, -6]))
+  })
+
+  it('does nothing on a centerline cut, which has no wall to finish', () => {
+    expect(generateProfile(SQ, EM6, params({ side: 'centerline', finishPassMM: 0.5, springPass: true })))
+      .toEqual(generateProfile(SQ, EM6, params({ side: 'centerline' })))
+  })
+
+  it('says the finishing pass is what made the cut too big for a small inside shape', () => {
+    // A 6.6 mm square: room for the 6 mm tool, not for the tool plus 0.5 mm a side.
+    const small = 'M 0 0 L 6.6 0 L 6.6 6.6 L 0 6.6 Z'
+    expect(() => generateProfile(small, EM6, params({ side: 'inside' }))).not.toThrow()
+    expect(() => generateProfile(small, EM6, params({ side: 'inside', finishPassMM: 0.5 }))).toThrow(/finishing pass/)
+  })
+})
+
 describe('generateProfile — climb vs conventional', () => {
   // With an M3 (CW) spindle, climb milling puts the material on the RIGHT of
   // travel. That makes an inside profile run CCW and an outside profile CW;

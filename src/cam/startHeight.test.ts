@@ -265,6 +265,14 @@ describe('startInputForOp', () => {
     expect(profileCutMarginMM('outside', undefined)).toBe(0)
   })
 
+  it('profile margin widens an outside cut by its finishing pass, whose depth passes run further out', () => {
+    expect(profileCutMarginMM('outside', tool(), 0.5, 0.3)).toBeCloseTo(6.8, 9)
+    // An inside cut's depth passes move further IN: nothing reaches past the line.
+    expect(profileCutMarginMM('inside', tool(), 0, 0.3)).toBe(0)
+    expect(startInputForOp({ ...profileOp('outside'), finishPassMM: 0.3 } as AnyOperation, paths, [tool()])?.cutMarginMM)
+      .toBeCloseTo(6.3, 9)
+  })
+
   it('is null for operation types with no start-height support', () => {
     const surface = {
       id: 's', name: 'Surface', type: 'surface', toolId: 't', status: 'done', segments: [], color: '#0ff',

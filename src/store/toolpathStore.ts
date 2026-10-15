@@ -81,6 +81,12 @@ export interface ProfileOperation extends BaseOperation {
    *  from the part (cam/cornerRounding.ts). Absent/0 = off — which is what every profile
    *  saved before the option existed reads as, so reopening one never moves its path. */
   cornerToleranceMM?: number
+  /** FINISHING PASS: the depth passes stay this much (mm) further off the wall and one
+   *  full-depth pass at the end takes it off (cam/profile.ts). Absent/0 = off — what every
+   *  profile saved before it existed reads as. Not with `sharedLines`. */
+  finishPassMM?: number
+  /** With a finishing pass: cut it twice (a spring pass). */
+  springPass?: boolean
   /** OPTIMIZE PATH (stored under its first name): an outside profile of a whole sheet —
    *  `pathId` and every path in `pathIds` — cut as one routed network, each line two parts
    *  share cut once (cam/sharedLineProfile.ts). Absent = an ordinary profile of `pathId`. */
@@ -186,6 +192,11 @@ export interface InlayOperation extends BaseOperation {
   // (the first of its plugs); `fieldPlugIds` are the others it must leave standing.
   fieldId?: string
   fieldPlugIds?: string[]
+  // Male only: the CUT-OUT outline the Inlay form drew round the plug (cam/inlay
+  // plugCutoutD), in the machine frame. The male clears to it; the user profiles it to free
+  // the piece. Like a field it is geometry the op machines to, so editing it regenerates
+  // the op — but deleting it only drops the band and the op goes back to its release ring.
+  bandId?: string
   pocketToolId: string    // flat end mill ID (always the endmill, regardless of phase)
   vbitToolId: string      // vbit ID (always the vbit, regardless of phase)
   angleDeg: number
@@ -195,6 +206,7 @@ export interface InlayOperation extends BaseOperation {
   glueLineMM: number
   clearanceMM: number
   rampIn: boolean         // ramp/helical entry on roughing pockets instead of straight plunge
+  vFloorStepMM?: number   // female only: V-bit floor loop spacing (cam/inlay vFloorFinish)
   mirrorX?: boolean       // male only: mirror shape around vertical axis before cutting
   mirrorAxisX?: number    // male only: X of that axis, shared by every op cut from one board
   linkedOpId?: string     // ID of the paired phase operation
@@ -348,7 +360,7 @@ export function refsPathId(op: AnyOperation, pathId: string): boolean {
   // The male's field is geometry it machines (its background clearance), so it counts as a
   // source path like any island: edit it and the op is stale, delete it and the op goes.
   if (op.type === 'inlay') return op.pathId === pathId || op.islandIds.includes(pathId) ||
-    op.fieldId === pathId || !!op.fieldPlugIds?.includes(pathId)
+    op.fieldId === pathId || !!op.fieldPlugIds?.includes(pathId) || op.bandId === pathId
   // A boundary path is geometry the op machines to, like an inlay's field: edit it and the
   // op is stale, delete it and the op goes.
   if (op.type === 'profile3d') return op.pathId === pathId || (op.boundary === 'path' && op.boundaryPathId === pathId)

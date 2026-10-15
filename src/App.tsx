@@ -163,6 +163,12 @@ function useKeyboardShortcuts() {
         ui.setActiveTool(ui.activeTool === 'constrain' ? 'select' : 'constrain')
         return
       }
+      // M enters (and leaves) the Measure tool.
+      if (e.key === 'm' || e.key === 'M') {
+        const ui = useUIStore.getState()
+        ui.setActiveTool(ui.activeTool === 'measure' ? 'select' : 'measure')
+        return
+      }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (!useUIStore.getState().nodeEditPathId) usePathsStore.getState().deleteSelected()
         return

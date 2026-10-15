@@ -1,4 +1,4 @@
-import type { AnyOperation, MotionSegment } from '../store/toolpathStore'
+import type { AnyOperation, MotionSegment, ProfileOperation } from '../store/toolpathStore'
 import { BUILD_DATE } from '../version'
 import { perfLog } from '../debug'
 import type { Tool } from '../store/toolStore'
@@ -98,8 +98,15 @@ function allowanceDesc(mm: number | undefined): string {
   return mm ? ` · ${mm}mm allowance` : ''
 }
 
+// A profile with a finishing pass cuts the wall twice over, which the operator watching the
+// run should expect.
+function finishDesc(op: ProfileOperation): string {
+  if (op.side === 'centerline' || op.sharedLines || !(op.finishPassMM && op.finishPassMM > 0)) return ''
+  return ` · ${op.finishPassMM}mm finishing pass${op.springPass ? ' + spring pass' : ''}`
+}
+
 function opDesc(op: AnyOperation): string {
-  if (op.type === 'profile') return `${op.side} · ${op.depthMM}mm${allowanceDesc(op.allowanceMM)}`
+  if (op.type === 'profile') return `${op.side} · ${op.depthMM}mm${allowanceDesc(op.allowanceMM)}${finishDesc(op)}`
   if (op.type === 'pocket') return `pocket · ${op.stepoverPercent}% stepover · ${op.depthMM}mm${allowanceDesc(op.allowanceMM)}`
   if (op.type === 'drill') return `${op.drillMode} drill · ${op.depthMM}mm`
   if (op.type === 'surface') return `surface · ${op.stepoverPercent}% stepover · ${op.passAngleDeg}° · ${op.depthMM}mm`

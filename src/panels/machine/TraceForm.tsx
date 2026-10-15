@@ -12,7 +12,7 @@ import { useUIStore } from '../../store/uiStore'
 import { regenerateAffectedMany } from '../../cam/regenerate'
 import { loadImageLuminance } from '../../io/imageLuminance'
 import { extractRectInfo } from '../../canvas/selectionUtils'
-import { autoThreshold, DEFAULT_TRACE, type TraceParams, type TraceResult } from '../../tools/imageTrace'
+import { autoThreshold, multiOtsu, DEFAULT_TRACE, type TraceParams, type TraceResult } from '../../tools/imageTrace'
 import { runInWorkerFor, cancelWork, isWorkCancelled } from '../../workers/workerClient'
 import type { PhotoImage } from '../../cam/photoVcarve'
 import { nextPathColor } from '../../importers/svgImporter'
@@ -164,6 +164,30 @@ export function TraceForm({ onClose, editCtx }: { onClose: () => void; editCtx?:
     setForm((f) => ({ ...f, [k]: v }))
   }
 
+  // Multi-tone break points: the brightness histogram the slider draws over, and the
+  // automatic cuts for the current tone count (ascending, as the slider shows them).
+  const tones = form.tones ?? 2
+  const hist = useMemo(() => {
+    if (!image) return null
+    const h = new Float64Array(256)
+    for (let i = 0; i < image.lum.length; i++) h[image.lum[i]]++
+    return h
+  }, [image])
+  const autoCutsFor = (n: number) => image && n > 2 ? multiOtsu(image.lum, n).map((t) => Math.max(1, Math.min(254, Math.round(t)))) : null
+  const autoCuts = useMemo(() => autoCutsFor(tones), [image, tones]) // eslint-disable-line react-hooks/exhaustive-deps
+  // What traceThresholds will use: the manual cuts only while Auto is off and they fit.
+  const shownCuts = !form.autoThreshold && form.cuts?.length === tones - 1 ? [...form.cuts].sort((a, b) => a - b) : autoCuts
+
+  // Changing the tone count while the cuts are manual starts the new count from ITS
+  // automatic cuts (or the two-tone auto cut), still manual, rather than from stale ones.
+  function setTones(n: number) {
+    setForm((f) => {
+      if (f.autoThreshold) return { ...f, tones: n }
+      if (n === 2) return { ...f, tones: n, threshold: autoT ?? f.threshold }
+      return { ...f, tones: n, cuts: autoCutsFor(n) ?? f.cuts }
+    })
+  }
+
   function handleApply() {
     setError(null)
     if (!source || !image) return
@@ -236,24 +260,33 @@ export function TraceForm({ onClose, editCtx }: { onClose: () => void; editCtx?:
         </p>
       )}
 
-      {!centerline && <ToggleRow label="Tones" options={['2', '3', '4'] as const} value={String(form.tones ?? 2) as '2' | '3' | '4'}
-        onChange={(v) => up('tones', parseInt(v))} />}
-      {!centerline && (form.tones ?? 2) > 2 && (
-        <p className="text-label text-gray-600 dark:text-neutral-400 -mt-1">
-          Cuts {preview && 'thresholds' in preview ? preview.thresholds.join(', ') : '…'} (auto). Each tone is its own layer, tone 1 the {form.trace === 'dark' ? 'darkest' : 'lightest'}; they nest, so tone 1 lies inside tone 2
+      {!centerline && <ToggleRow label="Tones" options={['2', '3', '4'] as const} value={String(tones) as '2' | '3' | '4'}
+        onChange={(v) => setTones(parseInt(v))} />}
+      {!centerline && tones > 2 && <div>
+        <label className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">
+          Break Points <span className="text-gray-500 dark:text-neutral-400 normal-case">
+            {shownCuts ? shownCuts.join(', ') : '…'}{form.autoThreshold && ' (auto)'}
+          </span>
+        </label>
+        {shownCuts && hist && <ToneCutsSlider cuts={shownCuts} hist={hist} trace={form.trace}
+          onChange={(c) => setForm((f) => ({ ...f, cuts: c, autoThreshold: false }))} />}
+        <CheckRow id="trace-auto-cuts" checked={form.autoThreshold}
+          onChange={(v) => setForm((f) => ({ ...f, autoThreshold: v, cuts: v ? f.cuts : (autoCuts ?? f.cuts) }))}
+          label="Auto" hint="from the picture's histogram" />
+        <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">
+          Drag a break to move where one tone ends and the next begins. Each tone is its own layer, tone 1 the {form.trace === 'dark' ? 'darkest' : 'lightest'}; they nest, so tone 1 lies inside tone 2
         </p>
-      )}
+      </div>}
 
-      {(centerline || (form.tones ?? 2) === 2) && <div>
+      {(centerline || tones === 2) && <div>
         <label htmlFor="trace-threshold" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">
           Threshold <span className="text-gray-500 dark:text-neutral-400 normal-case">
             {form.autoThreshold ? (autoT !== null ? `${autoT} (auto)` : 'auto') : form.threshold}
           </span>
         </label>
-        <input id="trace-threshold" type="range" min={1} max={254} step={1}
-          value={form.autoThreshold ? (autoT ?? form.threshold) : form.threshold}
-          onChange={(e) => setForm((f) => ({ ...f, threshold: parseInt(e.target.value), autoThreshold: false }))}
-          className="w-full accent-blue-500" />
+        {hist && <ToneCutsSlider id="trace-threshold" cuts={[form.autoThreshold ? (autoT ?? form.threshold) : form.threshold]}
+          hist={hist} trace={form.trace}
+          onChange={(c) => setForm((f) => ({ ...f, threshold: c[0], autoThreshold: false }))} />}
         <CheckRow id="trace-auto" checked={form.autoThreshold}
           onChange={(v) => setForm((f) => ({ ...f, autoThreshold: v, threshold: v ? f.threshold : (autoT ?? f.threshold) }))}
           label="Auto" hint="from the picture's histogram" />
@@ -275,7 +308,7 @@ export function TraceForm({ onClose, editCtx }: { onClose: () => void; editCtx?:
         <input id="trace-speck" type="range" min={0} max={maxSpeckMM} step={maxSpeckMM / 100}
           value={Math.min(form.minSpeckMM, maxSpeckMM)} onChange={(e) => up('minSpeckMM', parseFloat(e.target.value))}
           className="w-full accent-blue-500" />
-        <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">A speck takes the colour around it: light flecks in dark areas fill in, dark ones in light areas go</p>
+        <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">A speck takes the colour around it: light flecks in dark areas fill in, dark ones in light areas go{!centerline && tones > 2 && '. A lighter tone squeezed into a gap or a V narrower than this joins the darker tone round it'}</p>
       </div>
 
       {!centerline && <div>
@@ -313,5 +346,99 @@ export function TraceForm({ onClose, editCtx }: { onClose: () => void; editCtx?:
         {source && <PathChip path={source} label="image" />}
       </PathListSection>
     </FormShell>
+  )
+}
+
+// ─── Break-point slider ───────────────────────────────────────────────────────
+// One track, one thumb per cut, over the picture's brightness histogram (black left,
+// white right) so the breaks can be dropped into the valleys between its tones. Each
+// band is labelled with the tone it falls in; the band past the last break is the
+// untraced background.
+function ToneCutsSlider({ id, cuts, hist, trace, onChange }: {
+  id?: string; cuts: number[]; hist: Float64Array; trace: 'dark' | 'light'; onChange: (cuts: number[]) => void
+}) {
+  const trackRef = useRef<HTMLDivElement>(null)
+  const drag = useRef<number | null>(null)
+
+  // Square-root heights, so a small middle tone still shows beside a big white ground.
+  const histD = useMemo(() => {
+    let max = 0
+    for (let i = 0; i < 256; i++) max = Math.max(max, Math.sqrt(hist[i]))
+    if (max === 0) return ''
+    let d = 'M0,1'
+    for (let i = 0; i < 256; i++) { const y = 1 - Math.sqrt(hist[i]) / max; d += `L${i},${y}L${i + 1},${y}` }
+    return d + 'L256,1Z'
+  }, [hist])
+
+  // Each cut stays strictly between its neighbours, so the tones never swap order.
+  function setCut(i: number, v: number) {
+    const lo = i === 0 ? 1 : cuts[i - 1] + 1
+    const hi = i === cuts.length - 1 ? 254 : cuts[i + 1] - 1
+    const c = Math.max(lo, Math.min(hi, Math.round(v)))
+    if (c !== cuts[i]) onChange(cuts.map((x, j) => (j === i ? c : x)))
+  }
+  const valueAt = (clientX: number) => {
+    const r = trackRef.current!.getBoundingClientRect()
+    return ((clientX - r.left) / r.width) * 255
+  }
+
+  function onPointerDown(e: React.PointerEvent) {
+    const v = valueAt(e.clientX)
+    // The nearest thumb; on a tie (two stacked thumbs) the one on the side clicked.
+    let best = 0
+    for (let i = 1; i < cuts.length; i++) {
+      const d = Math.abs(cuts[i] - v), bd = Math.abs(cuts[best] - v)
+      if (d < bd || (d === bd && v > cuts[i])) best = i
+    }
+    drag.current = best
+    e.currentTarget.setPointerCapture(e.pointerId)
+    ;(e.currentTarget.querySelectorAll('[role="slider"]')[best] as HTMLElement | undefined)?.focus()
+    setCut(best, v)
+  }
+  function onPointerMove(e: React.PointerEvent) {
+    if (drag.current !== null) setCut(drag.current, valueAt(e.clientX))
+  }
+  function onPointerUp() { drag.current = null }
+
+  function onKeyDown(i: number, e: React.KeyboardEvent) {
+    const step = e.shiftKey ? 10 : 1
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { setCut(i, cuts[i] - step); e.preventDefault() }
+    else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { setCut(i, cuts[i] + step); e.preventDefault() }
+  }
+
+  // Bands from black to white: [0, c1), [c1, c2), …, [c_last, 255]. Dark: tone 1 is the
+  // first band and the last is background; light: the reverse.
+  const edges = [0, ...cuts, 255]
+  const n = cuts.length
+  const bandLabel = (b: number) => {
+    const tone = trace === 'dark' ? b + 1 : n + 1 - b
+    return tone === n + 1 ? '–' : String(tone)
+  }
+
+  return (
+    <div className="select-none">
+      <div ref={trackRef} className="relative h-12 cursor-pointer touch-none rounded border border-gray-400 dark:border-neutral-600 overflow-visible"
+        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
+        <svg className="absolute inset-x-0 top-0 h-9 w-full text-gray-400 dark:text-neutral-500" viewBox="0 0 256 1" preserveAspectRatio="none" aria-hidden>
+          <path d={histD} fill="currentColor" />
+        </svg>
+        <div className="absolute inset-x-0 bottom-0 h-3 rounded-b" style={{ background: 'linear-gradient(to right, #000, #fff)' }} aria-hidden />
+        {edges.slice(0, -1).map((a, b) => (
+          <span key={b} aria-hidden
+            className="absolute top-0 text-label text-gray-600 dark:text-neutral-300 -translate-x-1/2 pointer-events-none"
+            style={{ left: `${((a + edges[b + 1]) / 2 / 255) * 100}%` }}>{bandLabel(b)}</span>
+        ))}
+        {cuts.map((c, i) => (
+          <div key={i} id={i === 0 ? id : undefined} role="slider" tabIndex={0} aria-label={cuts.length === 1 ? 'Threshold' : `Break ${i + 1}`}
+            aria-valuemin={1} aria-valuemax={254} aria-valuenow={c}
+            onKeyDown={(e) => onKeyDown(i, e)}
+            className="absolute top-0 bottom-0 w-3 -ml-1.5 flex justify-center outline-none group"
+            style={{ left: `${(c / 255) * 100}%` }}>
+            <div className="w-0.5 h-full bg-blue-500 group-focus-visible:bg-blue-300" />
+            <div className="absolute bottom-0 w-3 h-3 rounded-full bg-blue-500 border-2 border-white dark:border-neutral-900 group-focus-visible:ring-2 ring-blue-300" />
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }

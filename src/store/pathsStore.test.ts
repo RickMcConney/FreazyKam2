@@ -134,6 +134,24 @@ describe('applyPathEdit — one gesture is one undo step', () => {
     expect((useToolpathStore.getState().operations[0] as { islandIds: string[] }).islandIds).toEqual(['i1', 'i2'])
   })
 
+  it('deleting an inlay male\'s cut-out outline keeps the inlay and only drops the outline from it', async () => {
+    // The outline is a convenience drawn for the plug, not part of it: losing it puts the
+    // male back on its own release ring rather than throwing the plug away.
+    await load({
+      paths: [path('plug'), path('band', { d: rectD(-5, -5, 20, 20) })],
+      ops: [op('male', 'plug', { type: 'inlay', role: 'male', phase: 'vbit', bandId: 'band' })],
+    })
+    S().deletePath('band')
+    await step()
+    const ops = useToolpathStore.getState().operations
+    expect(ops.map((o) => o.id)).toEqual(['male'])
+    expect((ops[0] as { bandId?: string }).bandId).toBeUndefined()
+    // …and the plug itself still takes the inlay with it.
+    S().deletePath('plug')
+    await step()
+    expect(useToolpathStore.getState().operations).toHaveLength(0)
+  })
+
   it('deleting a boundary together with its island still drops the pocket', async () => {
     await load({
       paths: [path('outer', { d: rectD(-50, -50, 100, 100) }), path('i1')],

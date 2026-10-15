@@ -616,13 +616,15 @@ function discsD(points: { x: number; y: number }[], r: number): string {
  * at full height — reading too LOW, the crash direction. A wider footprint can only read
  * higher, so the widest diameter is also the safe one.
  *
- * Outside: a full diameter past the path, plus the stock left on the wall. Centerline: half
- * a diameter. Inside: nothing — unless a NEGATIVE allowance carries the tool past the line,
- * which is the only way an inside cut reaches outside it at all.
+ * Outside: a full diameter past the path, plus the stock left on the wall, plus a finishing
+ * pass's stock (the depth passes run that much further out). Centerline: half a diameter.
+ * Inside: nothing — unless a NEGATIVE allowance carries the tool past the line, which is
+ * the only way an inside cut reaches outside it at all; a finishing pass only moves an
+ * inside cut's depth passes further IN.
  */
-export function profileCutMarginMM(side: CutSide, tool: Tool | undefined, allowanceMM = 0): number {
+export function profileCutMarginMM(side: CutSide, tool: Tool | undefined, allowanceMM = 0, finishPassMM = 0): number {
   const dia = tool ? 2 * maxCutRadiusMM(tool) : 0
-  return side === 'outside' ? Math.max(0, dia + allowanceMM)
+  return side === 'outside' ? Math.max(0, dia + allowanceMM + Math.max(0, finishPassMM))
     : side === 'centerline' ? dia / 2
     : Math.max(0, -allowanceMM)
 }
@@ -649,7 +651,7 @@ export function startInputForOp(
   // which is where its raster lines are clipped); a profile swings the tool outside it.
   // A drill stays inside its own circle: the bore's wall IS the path.
   const cutMarginMM = op.type === 'profile'
-    ? profileCutMarginMM(op.side, tools.find((t) => t.id === op.toolId), op.allowanceMM ?? 0)
+    ? profileCutMarginMM(op.side, tools.find((t) => t.id === op.toolId), op.allowanceMM ?? 0, op.sharedLines ? 0 : op.finishPassMM ?? 0)
     : 0
   // A shared-line profile cuts round every part of its sheet.
   const footprintD = op.type === 'profile' && op.pathIds?.length

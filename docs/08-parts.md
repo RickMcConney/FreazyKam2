@@ -9,9 +9,10 @@ Three things are true of all of them:
 
 - **They stay editable.** Every one keeps its parameters and reopens from its chip in the
   Objects strip. Change the tooth count and the gear is recut.
-- **Some refuse drag-sizing.** Gear, escapement, pendulum and track are placed at the size
-  their parameters give them, and draw no resize handles. A gear's size comes from module
-  and tooth count; dragging cannot make one that meshes wrong.
+- **Some refuse drag-sizing.** Gear, escapement, pendulum, track and the four joinery
+  parts are placed at the size their parameters give them, and draw no resize handles. A
+  gear's size comes from module and tooth count, and a box's notches from the thickness of
+  the board; dragging cannot make one that meshes or fits wrong.
 - **Some are not outlines**, and want a particular cutter. The maze and the cutting board
   are covered below — read those before cutting one.
 
@@ -321,6 +322,144 @@ the socket, and how much rail is left outside the grooves.*
 
 A track piece is a **compound path** — outline, grooves, treads. **Double-click to split
 it**, then send each part to the operation it needs.
+
+---
+
+## Joinery
+
+![The Shapes panel with the four joinery buttons at the bottom — Box, Finger, Dovetail and Bowtie — and the Bowtie tool active over an empty stock](images/08-joints.png)
+
+<!-- FULL APP · 1600 px wide, downscaled from the 2800 px capture. Shapes panel open, Bowtie selected, nothing placed yet. -->
+
+Four joints, at the bottom of the shape picker: **Box**, **Finger**, **Dovetail** and
+**Bowtie**. Each is fitted to two things you type in, the **stock** and the **bit**:
+
+- **Tool Ø** — the bit you will cut with. Every inside corner is drawn for it.
+- **Thickness** — what your calipers say the board measures. Plywood is rarely its nominal
+  size, and a finger notch is cut exactly this deep.
+- **Clearance** — the gap you want on each side of the fit.
+
+Click to place one at its designed size; drag-sizing is off, since the notches have to
+match the board, not the drag. Every part lands as its own path, so each can get its own
+operation, and the parameters reopen from its chip in the Objects strip.
+
+### Finger-joint box
+
+![A finger-jointed box laid out flat on the stock — bottom, front, back and two sides — with the Box defaults on the left: 150 × 100 × 80 outside, 6 mm thick, 15 mm fingers, 0.1 mm clearance, a 1/8" bit and dogbone corners, and the readout of inside size and finger counts](images/08-box.png)
+
+<!-- FULL APP · 1600 px wide, downscaled from the 2800 px capture. Box tool active, an open box (Lid off) placed. -->
+
+A box of five panels — six with **Lid** — joined by finger joints on every edge, laid out
+flat ready to cut. Give the **Width**, **Depth** and **Height** as **Outside** or **Inside**
+sizes; the readout gives the other, and how many fingers each edge gets and how wide they
+come out. **Finger** is a target width: each edge gets an odd number of fingers as near it
+as possible, so both ends of an edge match. The front and back keep the fingers at every
+corner, so each corner of the box belongs to exactly one panel.
+
+Profile every panel **outside, right through**, with the bit you entered.
+
+### Corners: dogbones and T-bones
+
+A router bit is round, so the inside corners of every notch come out with the bit's radius
+and a square finger will not go all the way in. **Corners** cuts a relief into each one —
+you can see them as the little round bites at the bottom of every notch in the pictures:
+
+- **Dogbone** — a bit-sized round on the corner's diagonal. Bites equally into both walls.
+- **T-bone** — a round along the longer wall, so it bites deeper into the board rather than
+  into the side of the finger. Less visible on the face of the box.
+- **None** — for a bit small enough that the round corner does not matter, or to square
+  the corners by hand.
+
+### Cutting a joint into the end of a board
+
+The finger joint and the dovetail are usually cut into boards you **already have** — a
+drawer side and front, two halves of a table top. An outside profile can't do that: it
+would cut the joint, and then carry on round the other three sides of the board.
+
+So with **Cut** on **Joint only** (the default) neither shape is a board at all. Each is
+the **waste** at one board's end, drawn as a single closed shape shaped like a **U** with
+teeth:
+
+- the **teeth** are the waste — every notch between the fingers, or every gap between the
+  tails, with its corner reliefs;
+- the **bar** across the top of the U is a strip that lies **past the end of the board**,
+  in air, and joins the teeth into one shape;
+- the two **legs** run down past the board's **sides**, also in air.
+
+The board fits inside the U: its **end** along the inside of the bar, its **sides** along
+the insides of the legs.
+
+To cut it:
+
+1. **Place it, then move it onto the board.** Turn and drag the shape until the board's end
+   runs along the inside of the bar and its sides along the insides of the legs. (Set the
+   **Width** or **Seam** to the board's actual width first.)
+2. **Profile it with Cut Side: Inside**, Depth the board's full thickness, with the bit you
+   entered as **Tool Ø**.
+
+The bit goes round the shape once. Along the bar and down the legs it is in air; between
+the fingers or tails it cuts the joint's walls. On the last pass the waste in each notch
+comes free and **drops out** — far less cutting than pocketing it all away (a pocket of
+the same shape works too, if you'd rather). If the waste pieces are big enough to worry
+you, hold them down or add a tab to each.
+
+**Whole boards** draws the boards complete instead — for cutting both out of a sheet as
+well, like the box panels — and asks for each board's length. Profile those **outside**.
+
+### Finger joint
+
+![The Finger joint with Cut set to Joint only: two U-shaped waste outlines side by side, Board A with notches between its end fingers and Board B with notches at both ends, a dogbone at the bottom corners of every notch, and the readout of 7 fingers × 21.43 mm](images/08-finger.png)
+
+<!-- FULL APP · 1600 px wide, downscaled from the 2800 px capture. Finger tool active, Joint only, Width 150, 12 mm thick, 1/4" bit, dogbone corners. -->
+
+The box's joint for just two boards — a drawer side and front, say. **Width** is the
+length of the joint, which is the boards' width. **Board A** keeps the fingers at both
+ends; **Board B** has the notches there, so its two end notches are open to the board's
+sides. Each notch is exactly **Thickness** deep — the thickness of the other board.
+
+Cut each board's shape with an **inside** profile, as above: Board A Joint on one board's
+end, Board B Joint on the other's.
+
+### Dovetail seam
+
+![The Dovetail seam with Cut set to Joint only: above, the sockets' waste for panel B, five flared sockets rising from a strip; below, the tails' waste for panel A, the gaps between five tails under a strip; all the corners rounded for a 1/4" bit](images/08-dovetail.png)
+
+<!-- FULL APP · 1600 px wide, downscaled from the 2800 px capture. Dovetail tool active, Joint only, 300 mm seam, five 30 mm tails 20 mm long at 14°. -->
+
+Two panels joined edge to edge by dovetails cut **in the face of the sheet** —
+interlocking like puzzle pieces. This is how to make a sign or a top bigger than the
+machine: cut it in halves that lock together. **Seam** is the length of the joint,
+**Tails** how many, **Tail W** a tail's wide end, **Tail L** how far it reaches into the
+other panel, **Angle** how far its sides flare.
+
+A straight bit cannot cut a sharp inside corner, so the corners are rounded **for the bit
+you entered** — the tails' outside corners just enough that the sockets come out with the
+bit's own radius — and the gap is the clearance all round.
+
+Cut both shapes with an **inside** profile, as above:
+
+- **Sockets Joint** (the upper one) goes on **panel B**. B's end is the seam itself, and the
+  sockets are cut back into it.
+- **Tails Joint** (the lower one) goes on **panel A**. A's end is the **tips of the
+  tails**, and the waste between them is cut back to the seam — so panel A has to be
+  **Tail L** longer than its finished size; the two panels overlap by that much once they
+  are together.
+
+### Bowtie key
+
+![The Bowtie with Cut with set to Straight bit: the socket on the left and the key beside it, both with corners rounded for a 1/4" bit, and the readout saying to pocket the socket across the seam and cut the key from a contrasting board with an outside profile](images/08-bowtie.png)
+
+<!-- FULL APP · 1600 px wide, downscaled from the 2800 px capture. Bowtie tool active, Straight bit, 60 × 30 mm with a 12 mm waist. -->
+
+A butterfly key across a seam or a crack. **Length** runs across the seam, **Width** is
+the ends and **Waist** the narrow middle that sits over the seam.
+
+- **Straight bit** — two parts. **Pocket the Socket** into the work, centred on the seam,
+  to the depth you want the key; cut the **Key** out of a contrasting board with an
+  **outside** profile. Both are rounded for the bit, and the key is the clearance smaller
+  all round, so it drops in.
+- **V-bit (Inlay)** — one sharp outline. Select it and use **Inlay**, which cuts it as plug
+  and socket; V-carved walls need no rounding.
 
 ---
 

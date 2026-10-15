@@ -16,6 +16,7 @@ function modeLabel(activeTool: string, nodeEditPathId: string | null): string {
   if (activeTool === 'drill') return 'Drill'
   if (activeTool === 'constrain') return 'Constrain'
   if (activeTool === 'region') return 'Region'
+  if (activeTool === 'measure') return 'Measure'
   return shapeDisplayName(activeTool as ShapeType)
 }
 

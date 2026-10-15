@@ -15,6 +15,7 @@ import { loadFont, isFontLoaded, SINGLE_LINE_FONT_FAMILY } from '../shapes/textG
 import { carriedPinion, gearDims, gearHubOf, gearLabel, gearMesh, gearRimW, gearRotationSense, gearSpokeW, pinionDims, pinionLabel, TOOTH_LABEL_SIZE } from '../shapes/gearGenerator'
 import { hubGrownWhy } from '../shapes/spokedWheel'
 import { camDims } from '../shapes/camGenerator'
+import { BoxFields, FingerJointFields, DovetailFields, BowtieFields } from './draw/JointFields'
 import { ratchetDims } from '../shapes/ratchetGenerator'
 import type { EscapementSpec } from '../shapes/escapementGenerator'
 import EscapementInfoButton from './EscapementInfoButton'
@@ -766,6 +767,15 @@ const ShapeParamsEditor = memo(function ShapeParamsEditor({ id, params, units, f
         </div>
       </>)
     }
+    // Joinery: the same fields as the shape tool's defaults, so the two cannot drift.
+    case 'box':
+      return <div className="col-span-2"><BoxFields m={params} u={u} set={(patch) => update({ ...params, ...patch })} /></div>
+    case 'fingerjoint':
+      return <div className="col-span-2"><FingerJointFields m={params} u={u} set={(patch) => update({ ...params, ...patch })} /></div>
+    case 'dovetail':
+      return <div className="col-span-2"><DovetailFields m={params} u={u} set={(patch) => update({ ...params, ...patch })} /></div>
+    case 'bowtie':
+      return <div className="col-span-2"><BowtieFields m={params} u={u} set={(patch) => update({ ...params, ...patch })} /></div>
     case 'track': {
       const dm = trackDims(params)
       const N = (mm: number) => fromMM(mm, u as 'mm' | 'in').toFixed(2)

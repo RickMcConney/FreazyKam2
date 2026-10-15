@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ICON } from '../../theme'
-import { Square, Circle, Ellipse, Hexagon, Star as StarIcon, PenTool, Type, Squircle, Heart, Pill, Signpost, Shield, Orbit, Grid3x3, CookingPot, Cog, Cloud, Anchor, Dices, ChevronDown, Clock, Weight, TrainTrack, Webhook } from 'lucide-react'
+import { Square, Circle, Ellipse, Hexagon, Star as StarIcon, PenTool, Type, Squircle, Heart, Pill, Signpost, Shield, Orbit, Grid3x3, CookingPot, Cog, Cloud, Anchor, Dices, ChevronDown, Clock, Weight, TrainTrack, Webhook, Package, BrickWall, Puzzle, Hourglass } from 'lucide-react'
 import { useUIStore } from '../../store/uiStore'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 import { spirographLoops, spirographRadii, spirographCentrePen, SPIRO_RATIO_RANGE, SCALE_LOCKED_SHAPES, type ShapeType, type ShapeToolConfig } from '../../shapes/shapeGenerators'
@@ -19,6 +19,7 @@ import { PATH_COLOR } from '../../colors'
 import { NumericInput } from '../../components/NumericInput'
 import FontSelect from '../../components/FontSelect'
 import { NumInput, PlainInput, Select, Check, UnitSpacer, SliderValue, inputCls, labelCls, toolBtnCls, toolBtnState } from './shared'
+import { BoxFields, FingerJointFields, DovetailFields, BowtieFields } from './JointFields'
 
 
 const LS_TEXT_KEY = 'kam:textConfig'
@@ -43,6 +44,10 @@ const SHAPES: { type: ShapeType; label: string; icon: React.ReactNode }[] = [
   { type: 'escapement', label: 'Escape', icon: <Anchor size={ICON.md} /> },
   { type: 'pendulum', label: 'Pend',    icon: <Weight size={ICON.md} /> },
   { type: 'track',    label: 'Track',   icon: <TrainTrack size={ICON.md} /> },
+  { type: 'box',      label: 'Box',     icon: <Package size={ICON.md} /> },
+  { type: 'fingerjoint', label: 'Finger', icon: <BrickWall size={ICON.md} /> },
+  { type: 'dovetail', label: 'Dovetail', icon: <Puzzle size={ICON.md} /> },
+  { type: 'bowtie',   label: 'Bowtie',  icon: <Hourglass size={ICON.md} /> },
 ]
 
 const SHAPE_META: Record<string, { label: string; icon: React.ReactNode }> = Object.fromEntries(
@@ -553,6 +558,14 @@ function ShapeConfig({ type, config, onChange, units }: {
         </p>}
       </div>)
     }
+    case 'box':
+      return <BoxFields m={c.box} u={u} set={(patch) => onChange({ ...c, box: { ...c.box, ...patch } })} />
+    case 'fingerjoint':
+      return <FingerJointFields m={c.fingerjoint} u={u} set={(patch) => onChange({ ...c, fingerjoint: { ...c.fingerjoint, ...patch } })} />
+    case 'dovetail':
+      return <DovetailFields m={c.dovetail} u={u} set={(patch) => onChange({ ...c, dovetail: { ...c.dovetail, ...patch } })} />
+    case 'bowtie':
+      return <BowtieFields m={c.bowtie} u={u} set={(patch) => onChange({ ...c, bowtie: { ...c.bowtie, ...patch } })} />
     case 'track': {
       const m = c.track
       const set = (patch: Partial<ShapeToolConfig['track']>) => onChange({ ...c, track: { ...c.track, ...patch } })

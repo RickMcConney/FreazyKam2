@@ -20,7 +20,8 @@ import type { PhotoImage } from '../cam/photoVcarve'
 import type { RectInfo } from '../canvas/selectionUtils'
 import { traceIsolines } from '../cam/marchingSquares'
 import { round4 } from '../util/num'
-import { inflatePathsD, unionD, differenceD, intersectD, FillRule, JoinType, EndType } from 'clipper2-ts'
+import { inflatePathsD, unionD, differenceD, intersectD, areaD, FillRule, JoinType, EndType, ClipperD, PolyTreeD, PolyPathD, ClipType } from 'clipper2-ts'
+import { interiorPoint, pointInPolygon } from '../cam/geom'
 
 export interface TraceParams {
   /** Brightness cut, 0 (black) … 255 (white). Ignored when `autoThreshold` is on. */
@@ -34,10 +35,14 @@ export interface TraceParams {
   /** 0 = straight segments that follow every pixel step … 100 = smoothest curves. */
   smoothing: number
   /**
-   * How many tones the picture is split into (absent = 2). Above 2 the cuts are automatic
-   * and each comes out as its own LEVEL — see traceImage.
+   * How many tones the picture is split into (absent = 2). Above 2 each cut comes out as
+   * its own LEVEL — see traceImage.
    */
   tones?: number
+  /** The cuts of a multi-tone trace when `autoThreshold` is off: tones − 1 brightnesses,
+   *  ASCENDING (darkest break first) whichever way `trace` points. Ignored — the automatic
+   *  cuts are used — when absent or not tones − 1 long. */
+  cuts?: number[]
   /** Grow every traced region by this much in total (half each side of a line), in mm —
    *  so linework too thin for any tool becomes a band one can pocket. Absent = 0. */
   thickenMM?: number
@@ -383,6 +388,66 @@ function blurInterior(T: Float32Array, w: number, h: number, gw: number, sigma: 
   }
 }
 
+/** Squared Euclidean distance from every pixel to the nearest pixel with `set[i]`
+ *  (Felzenszwalb & Huttenlocher), Infinity when there is none. */
+function edt2(set: Uint8Array, w: number, h: number): Float32Array {
+  const INF = 1e20
+  const d = new Float32Array(w * h)
+  for (let i = 0; i < d.length; i++) d[i] = set[i] ? 0 : INF
+  const m = Math.max(w, h)
+  const f = new Float64Array(m), z = new Float64Array(m + 1), out = new Float64Array(m)
+  const v = new Int32Array(m)
+  const pass = (n: number, get: (i: number) => number, put: (i: number, x: number) => void) => {
+    for (let i = 0; i < n; i++) f[i] = get(i)
+    let k = 0
+    v[0] = 0; z[0] = -Infinity; z[1] = Infinity
+    for (let q = 1; q < n; q++) {
+      let sx = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k])
+      while (sx <= z[k]) { k--; sx = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]) }
+      k++; v[k] = q; z[k] = sx; z[k + 1] = Infinity
+    }
+    k = 0
+    for (let q = 0; q < n; q++) { while (z[k + 1] < q) k++; out[q] = (q - v[k]) * (q - v[k]) + f[v[k]] }
+    for (let i = 0; i < n; i++) put(i, out[i])
+  }
+  for (let c = 0; c < w; c++) pass(h, (r) => d[r * w + c], (r, x) => { d[r * w + c] = x })
+  for (let r = 0; r < h; r++) pass(w, (c) => d[r * w + c], (c, x) => { d[r * w + c] = x })
+  for (let i = 0; i < d.length; i++) if (d[i] >= INF / 2) d[i] = Infinity
+  return d
+}
+
+/**
+ * Fills every gap narrower than `gapPx` between areas of a darker tone with that tone —
+ * the tip of a lighter area squeezed into the V where two lines meet joins the lines, as
+ * does a thin sliver of it run between them. A morphological closing of each tone that
+ * has a lighter tone beyond it, darkest first, done on the grid before anything is traced
+ * by moving each filled pixel's value just into the tone's range (`levels` ascending), so
+ * everything downstream sees an ordinary picture with the gap painted over. The outermost tone is not closed against the
+ * background: that would bridge the white flecks along a line's halo (see dropHalos).
+ * Returns how many pixels changed tone.
+ */
+export function closeTones(T: Float32Array, w: number, h: number, gw: number, levels: number[], gapPx: number): number {
+  const r2 = (gapPx / 2) * (gapPx / 2)
+  if (gapPx < 1 || levels.length < 2) return 0
+  const n = w * h
+  const at = (i: number) => (Math.floor(i / w) + 1) * gw + (i % w) + 1
+  const mask = new Uint8Array(n), notGrown = new Uint8Array(n)
+  let changed = 0
+  for (let c = levels.length; c >= 2; c--) {
+    const lo = levels[c - 1]
+    for (let i = 0; i < n; i++) mask[i] = T[at(i)] > lo ? 1 : 0
+    const dIn = edt2(mask, w, h)
+    for (let i = 0; i < n; i++) notGrown[i] = dIn[i] > r2 ? 1 : 0
+    const dOut = edt2(notGrown, w, h)
+    for (let i = 0; i < n; i++) {
+      if (mask[i] || dOut[i] <= r2) continue
+      T[at(i)] = lo + 0.5
+      changed++
+    }
+  }
+  return changed
+}
+
 // ── Centerlines ──────────────────────────────────────────────────────────────
 
 const N8 = [[0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1]] as const
@@ -556,7 +621,8 @@ export function traceThresholds(lum: Uint8Array, params: TraceParams): number[] 
   if (tones === 2) return [clamp(params.autoThreshold ? autoThreshold(lum, params.trace) : params.threshold)]
   // Ascending cuts nest the dark way round: lum < c1 lies inside lum < c2. A light trace
   // nests the other way, lum ≥ c_last innermost.
-  const cuts = multiOtsu(lum, tones).map(clamp)
+  const manual = !params.autoThreshold && params.cuts?.length === tones - 1
+  const cuts = (manual ? [...params.cuts!].sort((a, b) => a - b) : multiOtsu(lum, tones)).map(clamp)
   return params.trace === 'dark' ? cuts : cuts.reverse()
 }
 
@@ -607,6 +673,14 @@ export function traceImage(img: PhotoImage, rect: RectInfo, params: TraceParams)
   // Smoothing 100 on the test square (0.12 mm at 0.25 mm/px) — and sharp corners round
   // a little more.
   blurInterior(T, w, h, gw, 1.0 * s)
+  // Multi-tone, the speck size is also the narrowest GAP a darker tone keeps: anything
+  // lighter squeezed between two of its areas, or into a V where its lines meet, narrower
+  // than that, fills with it. Small areas of a tone of their own were tried as well (each
+  // taking the tone it bordered most) and dropped: the dark flecks in a JPEG's ringing
+  // joined the halo beside every line into one strip, which dropHalos then kept.
+  if (params.mode !== 'centerline' && thresholds.length > 1) {
+    closeTones(T, w, h, gw, thresholds.map((t) => dark ? 255.5 - t : t - 0.5).sort((a, b) => a - b), params.minSpeckMM / Math.sqrt(sx * sy))
+  }
   if (params.mode === 'centerline') {
     return traceCenterlines(T, w, h, gw, dark ? 255.5 - thresholds[0] : thresholds[0] - 0.5,
       minAreaPx, tolPx, cornerDeg, ([x, y]) => {
@@ -647,6 +721,8 @@ export function traceImage(img: PhotoImage, rect: RectInfo, params: TraceParams)
   // One pixel, in mm — the unit every tolerance below is stated in.
   const pxMM = Math.sqrt(sx * sy)
   const tolMM = tolPx * pxMM
+  // The narrowest gap a darker tone keeps (closeTones), multi-tone only.
+  const gapMM = multi ? params.minSpeckMM : 0
   const thickenRings = (rings: CP[]): CP[] => grow(U(rings, FillRule.EvenOdd), thicken / 2, 0.01)
 
   // The inner tone as WRITTEN — its curves, and those curves sampled densely enough that a
@@ -740,9 +816,40 @@ export function traceImage(img: PhotoImage, rect: RectInfo, params: TraceParams)
         const opened = openMM > 0
           ? intersectD(band, grow(grow(grow(band, -openMM, 0.01), openMM, 0.01), 0.1 * pxMM, 0.01), FillRule.NonZero, 4)
           : band
+        // Measured from the TRACED inner tone: to within a pixel is plenty here, and the
+        // drawn one is sampled every quarter pixel, which made this the slowest step.
+        const solid = dropHalos(opened, innerRaw, haloPx(s) * pxMM, pxMM)
         innerRaw = U([...poly, ...innerRaw], FillRule.NonZero)
-        const grownBand = thicken > 0 && opened.length ? grow(opened, thicken / 2, 0.01) : opened
-        const tone = U([...grownBand, ...innerDrawn], FillRule.NonZero)
+        const grownBand = thicken > 0 && solid.length ? grow(solid, thicken / 2, 0.01) : solid
+        let tone = U([...grownBand, ...innerDrawn], FillRule.NonZero)
+        // The band's opening shaves the narrow tip off whatever closeTones filled into a V
+        // against the inner tone, and the tip came back as a small triangle of the next
+        // tone out — at any Smoothing above 0, where the opening is on. So the tone is
+        // closed again here, adding only what the closing adds: its edges along the inner
+        // tone stay the inner tone's own curves. Not the outermost tone, as in closeTones.
+        if (gapMM > 0 && li < thresholds.length - 1 && tone.length) {
+          // Closed on a copy simplified to a third of a pixel — the tone as written is
+          // sampled every quarter pixel along the inner tone, and closing that took seconds —
+          // then measured against the tone itself, so a filled gap's edge along it is exactly
+          // its edge. The copy never lies exactly on the tone, so the difference is also a
+          // hairline along every edge — round a hole, a whole thin ring — long enough that its
+          // area can pass for a gap's. It is told apart by mean width (twice the area over the
+          // perimeter, holes and all): the copy strays a third of a pixel at most.
+          const rough = tone.map((r) => toCP(simplifyRing(fromCP(r), pxMM / 3))).filter((r) => r.length >= 3)
+          const diff = differenceD(grow(grow(rough, gapMM / 2, 0.05 * pxMM), -gapMM / 2, 0.05 * pxMM), tone, FillRule.NonZero, 4)
+          const perim = (r: CP) => r.reduce((a, p, i) => { const q = r[(i + 1) % r.length]; return a + Math.hypot(q.x - p.x, q.y - p.y) }, 0)
+          const added = toPieces(diff).filter((rings) => {
+            const area = rings.reduce((a, r) => a + areaD(r), 0)
+            return area > 0 && 2 * area / rings.reduce((a, r) => a + perim(r), 0) > 0.3 * pxMM
+          }).flat()
+          if (added.length) tone = U([...tone, ...added], FillRule.NonZero)
+        }
+        // A hole the tone came out with, smaller than a speck, fills — the speck rule, which
+        // the loop filter applies only to what is traced: the opening and the boolean steps
+        // above leave small gaps of their own where two tones' edges meet a line. Filling
+        // only grows this tone, so the tones still nest.
+        const minHoleMM2 = params.minSpeckMM * params.minSpeckMM
+        tone = tone.filter((r) => { const a = areaD(r); return a > 0 || -a >= minHoleMM2 })
         const lock = new Set(innerAt.keys())
         const cellMM = Math.max(tolMM, 1e-6), hash = new Map<string, Pt2[]>()
         for (const r of innerDrawn) for (const pt of r) {
@@ -795,6 +902,60 @@ export function traceImage(img: PhotoImage, rect: RectInfo, params: TraceParams)
     for (const segs of order) { ds.push(segsToD(segs, identity)); levels.push(li + 1) }
   })
   return { ds, levels, thresholds, specks }
+}
+
+// How far out from the inner tone a piece of a band must reach to be a tone of its own,
+// in pixels. Round a dark line on a light ground the picture is never clean: the line's
+// anti-aliased edge, and on a JPEG the ringing beside it, are a few pixels of in-between
+// brightness hugging the line. Where they cross an outer tone's cut they come out as
+// lumps on the line — too wide for the band's opening to shave off, too big for the speck
+// filter, and nothing the picture actually shows. They are told apart by WHERE they lie,
+// not by their size: a halo sits wholly within a few pixels of the line it hangs off,
+// while a real area of that tone (a body's fill, a shadow) reaches out beyond it. Smoothing
+// blurs the picture before it is traced, which spreads the halo, so the reach grows with
+// it: 4 px at Smoothing 0, 8 px at 100 — on the hippo cartoon the lumps stood 5–6 px off
+// the line at 100. The cost is a real area that thin hugging a line, which goes too.
+let HALO_BASE_PX = 4
+const haloPx = (s: number) => HALO_BASE_PX * (1 + s)
+
+/** For the harnesses only: the reach at Smoothing 0 (it doubles by Smoothing 100). */
+export function _setHaloPx(px: number) { HALO_BASE_PX = px }
+
+/** Polygons as PIECES — each outline with its own holes, from Clipper's tree. */
+function toPieces(paths: { x: number; y: number }[][]): { x: number; y: number }[][][] {
+  const tree = new PolyTreeD()
+  const c = new ClipperD(4)
+  c.addSubjectPaths(paths)
+  c.execute(ClipType.Union, FillRule.NonZero, tree)
+  const pieces: { x: number; y: number }[][][] = []
+  const walk = (node: PolyPathD) => {
+    for (let i = 0; i < node.count; i++) {
+      const outer = node.child(i)
+      const rings = [outer.poly!]
+      for (let j = 0; j < outer.count; j++) { const hole = outer.child(j); rings.push(hole.poly!); walk(hole) }
+      pieces.push(rings)
+    }
+  }
+  walk(tree)
+  return pieces
+}
+
+/**
+ * The band's pieces that reach farther than `reachMM` from `inner`, holes and all —
+ * every piece lying wholly within that distance of the inner tone is a halo and goes.
+ */
+function dropHalos(band: { x: number; y: number }[][], inner: { x: number; y: number }[][], reachMM: number, pxMM: number): { x: number; y: number }[][] {
+  if (band.length === 0 || reachMM <= 0 || inner.length === 0) return band
+  const far = differenceD(band, inflatePathsD(inner, reachMM, JoinType.Round, EndType.Polygon, 2, 4, 0.25 * pxMM), FillRule.NonZero, 4)
+  if (far.length === 0) return []
+  const pts = (r: { x: number; y: number }[]): Pt2[] => r.map((p) => [p.x, p.y] as Pt2)
+  // The band as pieces, so a hole can never be credited to the wrong outline.
+  const pieces = toPieces(band)
+  // A piece stays if some part of the band beyond the reach lies in it (outline, not holes).
+  const marks = far.filter((r) => areaD(r) > 0).map((r) => interiorPoint([pts(r)])).filter((p): p is Pt2 => !!p)
+  const inPiece = (rings: { x: number; y: number }[][], p: Pt2) =>
+    rings.reduce((ins, r) => ins !== pointInPolygon(p[0], p[1], pts(r)), false)
+  return pieces.filter((rings) => marks.some((p) => inPiece(rings, p))).flat()
 }
 
 /**

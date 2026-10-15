@@ -144,6 +144,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       startNear: op.entryHint, rampIn: op.rampIn, safeHeightMM,
       allowanceMM: op.allowanceMM,
       cornerToleranceMM: op.cornerToleranceMM,
+      finishPassMM: op.finishPassMM, springPass: op.springPass,
       startZMM,
     }, tabsForGeneration(op.pathId)), builtWith)
 
@@ -354,7 +355,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       angleDeg: op.angleDeg, pocketDepthMM: op.pocketDepthMM,
       stepDownMM: effectiveStepDownMM(pocketTool, op.stepDownMM, op.pocketDepthMM, undefined, op.stepDownManual), stepoverPercent: op.stepoverPercent,
       glueLineMM: op.glueLineMM, clearanceMM: op.clearanceMM,
-      rampIn: op.rampIn, mirrorX: op.mirrorX, mirrorAxisX: op.mirrorAxisX,
+      rampIn: op.rampIn, mirrorX: op.mirrorX, mirrorAxisX: op.mirrorAxisX, vFloorStepMM: op.vFloorStepMM,
       islandDs: islandEntries.map((e) => e.d),
       islandPlugDs: islandEntries.map((e) => e.plugs),
       // Male, inverted grouping: the background outline and the other plugs standing in
@@ -364,6 +365,8 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
         const p = paths.find((x) => x.id === id)
         return p ? [p.d] : []
       }),
+      // Male: the cut-out band, already in the machine frame. A deleted one is dropped.
+      bandD: op.role === 'male' && op.bandId ? paths.find((p) => p.id === op.bandId)?.d : undefined,
       safeHeightMM,
     }
     // The linked half is built by this same call, so its stamp is taken now as well.

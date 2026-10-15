@@ -1,7 +1,7 @@
 import { pointInPolygon, interiorPoint, pushAll, zPasses, isVCutter, tipBallRadiusMM, vProfileHeightMM, vRadiusAtHeightMM } from './geom'
 import { GeometryTooSmallError } from './errors'
 import { addNote } from './notes'
-import { flattenPath, signedArea, splitSelfIntersecting, requireClosedSubpaths, sharesVertex, type Pt2 } from './pathFlattener'
+import { flattenPath, signedArea, splitSelfIntersecting, requireClosedSubpaths, sharesVertex, douglasPeucker, type Pt2 } from './pathFlattener'
 import { edtSq } from './lib/edt'
 import { generatePocket } from './pocket'
 import { generateVCarve } from './vcarve'
@@ -35,7 +35,16 @@ export interface InlayParams {
   // Male only, with fieldD: the OTHER plugs standing in that same field. One operation
   // clears the field for all of them, so every one of them has to be kept out of it.
   fieldPlugDs?: string[]
+  // Male only: the CUT-OUT outline the piece is freed along (plugCutoutD), already in the
+  // machine frame — mirrored when the male is — so it is used as given, never mirrored
+  // again. The male clears everything between its plugs and this line to the mating plane,
+  // and leaves the line itself to a Profile the user puts on it, right through the sheet.
+  // Absent → the plug's own shallow release ring, as before.
+  bandD?: string
   rampIn?: boolean           // ramp/helical entry on roughing pockets instead of plunging
+  // Female only: the spacing of the V-bit's loops on the floor the end mill cannot reach
+  // (vFloorFinish). Absent → DEFAULT_V_FLOOR_STEP_MM.
+  vFloorStepMM?: number
   mirrorX?: boolean          // male only: mirror shape around vertical axis
   // Male only: the X of that axis. Turning the board over is one rigid motion for the
   // WHOLE part, so every operation cut from the same board must flip about the same line.
@@ -142,7 +151,7 @@ function offsetPathRound(d: string, deltaMM: number): string | null {
 // self-intersecting boundary therefore keeps all its lobes on a positive/outward
 // offset, which offsetPath would merge into one. Used for inlay socket offsets, where
 // each lobe must stay a separate region (the same way generatePocket treats them).
-function offsetEachRing(d: string, deltaMM: number): string | null {
+function offsetEachRing(d: string, deltaMM: number, join: JoinType = JoinType.Miter): string | null {
   const cmds: string[] = []
   for (const ring of splitSelfIntersecting(flattenPath(d, 0.05))) {
     let pts = [...ring]
@@ -150,7 +159,7 @@ function offsetEachRing(d: string, deltaMM: number): string | null {
       pts = pts.slice(0, -1)
     if (pts.length < 3) continue
     if (signedArea(pts) < 0) pts = [...pts].reverse()
-    const result = inflatePathsD([pts.map(([x, y]) => ({ x, y }))], deltaMM, JoinType.Miter, EndType.Polygon, 4, 6)
+    const result = inflatePathsD([pts.map(([x, y]) => ({ x, y }))], deltaMM, join, EndType.Polygon, 4, 6)
     for (const loop of result) {
       if (loop.length < 3) continue
       cmds.push(`M${loop[0].x.toFixed(4)} ${loop[0].y.toFixed(4)}`)
@@ -485,6 +494,37 @@ function centerX(d: string): number | null {
 // still reads as text.
 const MULTI_REGION_IS_TEXT = 1
 
+/**
+ * Whether a V-bit inlay of `regions` goes the TEXT route (a plain V-carve socket and a
+ * raised-prism plug) — decided by SIZE, not just by count. That route is right for lettering
+ * whose strokes the V-bit spans from wall to wall at the inlay depth: the carve's own depth
+ * law forms the whole socket. A stroke wider than that has a floor the V-bit cannot reach,
+ * and the V-carve, capped, leaves it standing — so a path with ANY such shape goes the
+ * outline route for all of it, where every shape gets an end-mill floor and V-bit walls,
+ * and one too thin for a floor falls back to the same plain V-carve on its own. "Wide" is
+ * "has room for a disc of the bit's half-width at the inlay depth". Female and male both
+ * ask this with the same parameters, so the two halves always take the same route.
+ */
+function readsAsText(
+  regions: { outerD: string; islandDs: string[] }[], wallTool: Tool | null,
+  params: Pick<InlayParams, 'angleDeg' | 'pocketDepthMM'>,
+): boolean {
+  if (!wallTool || !isVCutter(wallTool) || regions.length <= MULTI_REGION_IS_TEXT) return false
+  const hw = wallGeom(wallTool, params.angleDeg).halfWidthAt(params.pocketDepthMM)
+  return !regions.some((r) => regionFitsDisc(r, hw))
+}
+
+/** Does a disc of `radius` fit anywhere in the region (its outline less its holes)? */
+function regionFitsDisc(r: { outerD: string; islandDs: string[] }, radius: number): boolean {
+  try {
+    const outer = toClipRings(r.outerD)
+    const holes = r.islandDs.flatMap((d) => toClipRings(d))
+    const solid = holes.length ? differenceD(outer, holes, FillRule.NonZero, 6) : outer
+    const eroded = inflatePathsD(solid, -radius, JoinType.Round, EndType.Polygon, 2, 6)
+    return eroded.some((ring) => Math.abs(signedArea(ring.map((p) => [p.x, p.y] as Pt2))) > 1e-3)
+  } catch { return false }
+}
+
 // The boundary/island pairs an inlay operation should machine, one per region, with each
 // region's own holes folded into its island list. `extraIslandDs` (the paths the user
 // selected as islands) go to every region — they were chosen against the whole selection,
@@ -529,10 +569,63 @@ function mirrorPathDAbout(d: string, cx: number): string {
   ).join(' ')
 }
 
-function mirrorPathD(d: string): string {
-  const cx = centerX(d)
-  return cx === null ? d : mirrorPathDAbout(d, cx)
+/** The convex hull of `pts` (monotone chain), CCW. */
+function convexHull(pts: Pt2[]): Pt2[] {
+  const p = [...pts].sort((a, b) => a[0] - b[0] || a[1] - b[1])
+  if (p.length < 3) return p
+  const cross = (o: Pt2, a: Pt2, b: Pt2) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+  const lower: Pt2[] = [], upper: Pt2[] = []
+  for (const q of p) { while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], q) <= 0) lower.pop(); lower.push(q) }
+  for (let i = p.length - 1; i >= 0; i--) { const q = p[i]; while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], q) <= 0) upper.pop(); upper.push(q) }
+  return [...lower.slice(0, -1), ...upper.slice(0, -1)]
 }
+
+/**
+ * Whether a plug's cut-out IS its own outline, where it already lies on the canvas — one
+ * shape, and either not mirrored or symmetric about the mirror axis. Then the cut-out needs
+ * no path of its own: the through profile goes on the plug's own path (an outside profile of
+ * a compound path follows only its outer ring, which is the band), and a second path drawn
+ * exactly on top of the first is a trap — selected again for another operation, every line
+ * is there twice.
+ */
+export function cutoutIsOwnOutline(d: string, mirrorAxisX: number | null): boolean {
+  const outers = outerRingDs(d)
+  if (outers.length > 1) return false
+  if (mirrorAxisX === null) return true
+  try {
+    const a = toClipRings(outers[0] ?? d), b = toClipRings(mirrorPathDAbout(outers[0] ?? d, mirrorAxisX))
+    const ringArea = (rs: { x: number; y: number }[][]) => rs.reduce((t, r) => t + Math.abs(signedArea(r.map((p) => [p.x, p.y] as Pt2))), 0)
+    const whole = ringArea(a)
+    const off = ringArea(differenceD(a, b, FillRule.NonZero, 6)) + ringArea(differenceD(b, a, FillRule.NonZero, 6))
+    return whole > 0 && off < 1e-3 * whole
+  } catch { return false }
+}
+
+/**
+ * The CUT-OUT outline of a male plug: the line the plug's piece is freed from the sheet
+ * along, in the machine frame (mirrored about `mirrorAxisX` when the male is mirrored, so
+ * a Profile put on it lands round the mirrored plug). Like a rubber band stretched round
+ * the plug:
+ *  - one shape (a bowtie, a heart): the shape's own outline — nothing between it and the
+ *    band to clear, so freeing it is one profile;
+ *  - several (lettering): the convex hull of all of them, grown far enough that the
+ *    roughing end mill clears the gaps between the letters and the band.
+ * Null when there is nothing to wrap.
+ */
+export function plugCutoutD(d: string, roughToolDiaMM: number, mirrorAxisX: number | null): string | null {
+  const md = mirrorAxisX === null ? d : mirrorPathDAbout(d, mirrorAxisX)
+  const outers = outerRingDs(md)
+  if (outers.length <= 1) {
+    const subs = flattenPath(outers[0] ?? md, 0.05).filter((s) => s.length >= 3)
+    const outer = subs.find((s) => signedArea(s) > 0) ?? subs[0]
+    return outer ? ptsToD(signedArea(outer) < 0 ? [...outer].reverse() : outer) : null
+  }
+  const hull = convexHull(outers.flatMap((o) => flattenPath(o, 0.05).flat()))
+  if (hull.length < 3) return null
+  // Room for the end mill between the letters and the band, and a margin for its travel.
+  return offsetPathRound(ptsToD(hull), 1.5 * Math.max(0, roughToolDiaMM) + 1)
+}
+
 
 
 // Trace a closed contour at successive Z depths without retracting between passes.
@@ -600,6 +693,159 @@ function addContourStack(pts: Pt2[], passes: number[], segs: MotionSegment[], sa
   segs.push({ x: sx, y: sy, z: safeZ, rapid: true })
 }
 
+// ─── V-bit floor finish ───────────────────────────────────────────────────────
+//
+// A V-bit wall is finished AT the floor, never below it. The medial-axis V-carve that forms
+// the walls used to run its tip down to 1.5 × the socket depth in the middle of its band and
+// deeper still at corners — which hid two things the floor needed: the wall near a convex
+// corner (where the band's skeleton bends away from the wall and needs a deeper tip than the
+// floor to reach it), and the floor's own corners (which the end mill's radius cannot reach).
+// Cut deep, both came out clean, and the socket had a V-groove below its floor all round,
+// invisible under a plug and very visible on a socket used as a pocket on its own.
+//
+// So the wall V-carve is capped at the floor, and this pass does the rest with the tip ON the
+// floor, where the cone can never go deeper than wanted:
+//   - one lap round the floor's own outline — the line one half-width in from every wall,
+//     and round every protrusion — which forms each wall exactly, corners included;
+//   - the floor the end mill cannot reach (the region less its opening by the end mill's
+//     radius: sharp corners, narrow necks), cleared by the tip in loops `stepMM` apart.
+//
+// THE LOOP SPACING IS A SETTING, NOT A CUSP TARGET. It used to be worked out from a 0.03 mm
+// ridge — 2 × 0.03 × tan(θ/2), so 0.035 mm for a 60° bit, ~85 loops across a 3 mm corner —
+// which is finish-machining metal. In wood a ridge that thin is not even cut, it breaks
+// away, and the pass took for ever. The ridge a step s leaves is s / (2 tan(θ/2)) high; the
+// form shows it beside the glue gap, since a ridge under the glue gap cannot touch the plug.
+// `floorD` is the floor the end mill was asked to clear (outline inset by the wall's
+// half-width, less protrusions grown by it); `keepOutDs` are regions the cone must not reach
+// at all (another cut's plugs), grown by the half-width here.
+const FLOOR_CUSP_MM = 0.03
+const LOOP_FIT_TOL_MM = 0.005
+/** The V-bit floor loops' spacing when an operation does not say (see vFloorFinish). The
+ *  widest that stayed as clean as the old 0.03 mm-cusp spacing in `scripts/inlay-fit.mts`
+ *  with the default 0.2 mm glue gap and a 60° bit: 0.2 mm already left 0.02–0.03 mm of
+ *  interference in corners, 0.25 mm up to 0.11 mm — the patch the last loop leaves in a
+ *  corner's middle stands up to twice the ridge between loops. */
+export const DEFAULT_V_FLOOR_STEP_MM = 0.15
+/** The ridge a V-bit of half-angle tangent `tanHalf` leaves between tip passes `stepMM` apart. */
+export const vFloorRidgeMM = (stepMM: number, tanHalf: number) => stepMM / (2 * Math.max(1e-9, tanHalf))
+
+type ClipPath = { x: number; y: number }[]
+
+/**
+ * Does the straight move a → b stay inside `ring`? Both ends are taken to be inside (or
+ * on) it; the move is refused if it crosses any edge of the ring, or if its middle is
+ * outside — which catches a move running along the outside of a concave notch.
+ */
+function segmentInRing(a: Pt2, b: Pt2, ring: Pt2[]): boolean {
+  const [ax, ay] = a, [bx, by] = b
+  if (Math.hypot(bx - ax, by - ay) < 1e-9) return true
+  const cross = (ox: number, oy: number, px: number, py: number, qx: number, qy: number) => (px - ox) * (qy - oy) - (py - oy) * (qx - ox)
+  for (let i = 0; i < ring.length; i++) {
+    const [cx, cy] = ring[i], [dx, dy] = ring[(i + 1) % ring.length]
+    const d1 = cross(cx, cy, dx, dy, ax, ay), d2 = cross(cx, cy, dx, dy, bx, by)
+    const d3 = cross(ax, ay, bx, by, cx, cy), d4 = cross(ax, ay, bx, by, dx, dy)
+    if (((d1 > 1e-9 && d2 < -1e-9) || (d1 < -1e-9 && d2 > 1e-9)) && ((d3 > 1e-9 && d4 < -1e-9) || (d3 < -1e-9 && d4 > 1e-9))) return false
+  }
+  return pointInPolygon((ax + bx) / 2, (ay + by) / 2, ring)
+}
+
+function vFloorFinish(
+  floorRings: ClipPath[], keepOutDs: string[], halfWidthMM: number, endmillR: number,
+  stepMM: number, depthMM: number, safeZ: number,
+): MotionSegment[] {
+  const segs: MotionSegment[] = []
+  if (floorRings.length === 0) return segs
+  let floor = floorRings
+  try {
+    const keepOut = keepOutDs.flatMap((d) => toClipRings(d))
+    if (keepOut.length) floor = differenceD(floor, inflatePathsD(keepOut, halfWidthMM, JoinType.Round, EndType.Polygon, 2, 6), FillRule.NonZero, 6)
+  } catch { /* keep the unrefined floor */ }
+  const z = -depthMM
+  const area = (r: ClipPath) => signedArea(r.map((p) => [p.x, p.y] as Pt2))
+  const perim = (r: ClipPath) => r.reduce((a, p, i) => { const q = r[(i + 1) % r.length]; return a + Math.hypot(q.x - p.x, q.y - p.y) }, 0)
+  const loopPts = (r: ClipPath): Pt2[] => r.map((p) => [p.x, p.y] as Pt2)
+
+  // The walls: a lap of the floor's outline, outer rings and holes alike.
+  for (const ring of floor) if (ring.length >= 3 && Math.abs(area(ring)) > 1e-4) addContourStack(loopPts(ring), [z], segs, safeZ)
+
+  // The floor the end mill cannot reach. Slivers thinner than the cusp are the opening's
+  // own rounding, not stock.
+  let missed: ClipPath[] = []
+  try {
+    const reach = inflatePathsD(inflatePathsD(floor, -endmillR, JoinType.Round, EndType.Polygon, 2, 6), endmillR, JoinType.Round, EndType.Polygon, 2, 6)
+    missed = differenceD(floor, reach, FillRule.NonZero, 6)
+      .filter((r) => area(r) > 0 && 2 * area(r) / Math.max(1e-9, perim(r)) > FLOOR_CUSP_MM)
+  } catch { missed = [] }
+  const step = Math.max(0.005, stepMM)
+  for (const piece0 of missed) {
+    // Offsets inward until nothing is left, each a loop at the floor, linked at depth —
+    // the next loop lies inside the last, in ground the tip has just cut.
+    //
+    // Every loop is offset from the PIECE, by k steps, never from the loop before it. A
+    // round-joined offset adds an arc at every corner, so offsetting each loop from the
+    // last made every loop longer than the one before — on a 500 mm rhino outline, with
+    // hundreds of loops per corner, this one pass took 103 of the socket's 105 seconds
+    // (now 0.2). Mitred, since an inward offset can only move a loop further INTO the
+    // piece. The piece is thinned first, at a tolerance far under the cusp: the opening
+    // that found it leaves dense arcs that are pure cost here.
+    const piece = douglasPeucker([...loopPts(piece0), loopPts(piece0)[0]], LOOP_FIT_TOL_MM).slice(0, -1)
+      .map(([x, y]) => ({ x, y }))
+    if (piece.length < 3) continue
+    const pieceRing = loopPts(piece)
+    // The loops level by level, each knowing the loop it lies inside. An inset of a
+    // non-convex piece SPLITS — a letter's arm into its two ends — so one level can be
+    // several loops, and they are cut branch by branch (depth first), not level by level.
+    type Node = { ring: Pt2[]; kids: Node[] }
+    const root: Node = { ring: pieceRing, kids: [] }
+    let prev: Node[] = [root]
+    for (let k = 1; k < 400; k++) {
+      const live = inflatePathsD([piece], -k * step, JoinType.Miter, EndType.Polygon, 2, 6)
+        .filter((r) => r.length >= 3 && area(r) > 0)
+      if (!live.length) break
+      const next: Node[] = []
+      for (const r of live) {
+        const ring = loopPts(r)
+        const node: Node = { ring, kids: [] }
+        const [px, py] = ring[0]
+        ;(prev.find((n) => pointInPolygon(px, py, n.ring)) ?? prev[0]).kids.push(node)
+        next.push(node)
+      }
+      prev = next
+    }
+    // A LINK STAYS DOWN ONLY WHERE IT STAYS IN THE PIECE. Loops used to be joined at depth
+    // by a straight move from wherever one ended to wherever the next one's offset happened
+    // to start — on a rotated letter that could be across its counter or into another
+    // branch, a gouge through the face beside the inlay (12 mm long on a Text on Path "c").
+    // Each loop now starts at its point nearest the tool, and the move there is fed at
+    // depth only when it lies wholly inside the piece; otherwise the tool lifts and rapids.
+    let at: Pt2 | null = null
+    const emit = (ring: Pt2[]) => {
+      let i0 = 0
+      if (at) {
+        let best = Infinity
+        ring.forEach(([x, y], i) => { const d = (x - at![0]) ** 2 + (y - at![1]) ** 2; if (d < best) { best = d; i0 = i } })
+      }
+      const loop = [...ring.slice(i0), ...ring.slice(0, i0)]
+      const start = loop[0]
+      if (!at || !segmentInRing(at, start, pieceRing)) {
+        if (at) segs.push({ x: at[0], y: at[1], z: safeZ, rapid: true })
+        segs.push({ x: start[0], y: start[1], z: safeZ, rapid: true })
+        segs.push({ x: start[0], y: start[1], z, rapid: false })
+      }
+      // EXACT, and thinned here at a tolerance well under the loop spacing. The loops are
+      // closer together than the G-code writer's own 0.1 mm fit, and run end to end they
+      // read to it as one wiggly line: it thinned 235 000 moves to 1 500 and the corners they
+      // were clearing were never cut (a B's waist kept a 2.5 mm ridge).
+      for (const [x, y] of douglasPeucker([...loop, loop[0]], LOOP_FIT_TOL_MM)) segs.push({ x, y, z, rapid: false, exact: true })
+      at = start
+    }
+    const walk = (n: Node) => { emit(n.ring); for (const c of n.kids) walk(c) }
+    walk(root)
+    if (at) segs.push({ x: at[0], y: at[1], z: safeZ, rapid: true })
+  }
+  return segs
+}
+
 function getOuters(d: string): Pt2[][] {
   const subs = flattenPath(d, 0.05).filter(s => s.length >= 3)
   const outers = subs.filter(s => signedArea(s) >= 0)
@@ -651,6 +897,7 @@ function computeInlayFemaleOffsets(
   d: string,
   params: Pick<InlayParams, 'angleDeg' | 'pocketDepthMM' | 'glueLineMM' | 'clearanceMM'>,
   tipR = 0,
+  bandHalfWidths = 3,
 ): { socketD: string | null; pocketBoundaryD: string | null; vcarveIslandD: string | null } {
   const halfAngle = (params.angleDeg / 2) * (Math.PI / 180)
   const tanHalf = Math.tan(halfAngle)
@@ -667,8 +914,25 @@ function computeInlayFemaleOffsets(
   if (!socketD) return { socketD: null, pocketBoundaryD: null, vcarveIslandD: null }
   return {
     socketD,
-    pocketBoundaryD: offsetEachRing(d, c - halfWidthMM),
-    vcarveIslandD:   offsetEachRing(d, c - halfWidthMM * 3),  // inset by fullWidth × 1.5
+    // The floor: everything a half-width in from the wall. ROUND-joined on the exact-floor
+    // socket, since this is the line the V-bit's tip rides to form the walls (vFloorFinish).
+    // At an inward point of the outline — a B's waist, where its bowls meet — a mitred inset
+    // throws a spike four half-widths into the floor instead of an arc round the point, and
+    // everything under that spike was in neither the pocket nor the floor finish: a 2.5 mm
+    // ridge across the B's middle bar. The deep socket (the plug's holes) keeps its miter.
+    pocketBoundaryD: offsetEachRing(d, c - halfWidthMM, bandHalfWidths <= 2 ? JoinType.Round : JoinType.Miter),
+    // The wall V-carve's band. Two half-widths puts the band's medial axis exactly one
+    // half-width off the wall along every straight run, so its tip lands ON the floor; three
+    // (the plug's holes, whose floor is planed away) runs it half as deep again — see
+    // insideClear's `exactFloor`.
+    //
+    // The two-half-width band's inner edge is ROUND-joined. At an inward point of the
+    // outline (a B's waist, where its bowls meet) a mitred inset runs out to a sharp corner
+    // well past two half-widths, the band is wider there, and its medial axis needs a tip
+    // DEEPER than the floor to form the wall — which the floor cap then refuses, leaving the
+    // waist's wall 1.4 mm proud. Round, the band is two half-widths wide everywhere and the
+    // axis runs round the point at exactly one, on the floor. The deep band keeps its miter.
+    vcarveIslandD:   offsetEachRing(d, c - halfWidthMM * bandHalfWidths, bandHalfWidths <= 2 ? JoinType.Round : JoinType.Miter),
   }
 }
 
@@ -702,6 +966,7 @@ async function insideClear(
   boundaryD: string, boundaryProtrusionDs: string[],
   roughTool: Tool, wallTool: Tool | null, params: InlayParams,
   plugDs: string[] = [],
+  exactFloor = false,
 ): Promise<InlaySplitResult> {
   const totalDepthMM = params.pocketDepthMM + params.glueLineMM
 
@@ -785,10 +1050,32 @@ async function insideClear(
     const halfWidthMM = wg.halfWidthAt(totalDepthMM)
     const fullWidthMM = halfWidthMM * 2
 
-    const { socketD, pocketBoundaryD, vcarveIslandD } = computeInlayFemaleOffsets(boundaryD, params, wg.tipR)
+    // EXACT FLOOR (the female socket): the walls' V-bit never goes below the floor. A socket
+    // is the half of an inlay that is still there when the job is done — and a socket cut on
+    // its own is a pocket with sharp V-bit walls — so a groove under its floor shows. The
+    // walls are carved in a band two half-widths wide, capped at the floor, and finished
+    // by vFloorFinish. The plug's holes keep the deeper carve they always had: that floor
+    // is planed away with the rest of the male's back once the inlay is glued, and their
+    // sharp corners, which take the socket's sharp protrusions, want the extra depth.
+    const wallCapMM = exactFloor ? totalDepthMM : 2.5 * totalDepthMM
+    // A protrusion grown to its floor edge (a half-width) and to its wall band (two). On the
+    // exact-floor socket both are ROUND: they are lines the tip rides at the floor, and a
+    // mitred grow squares a protrusion's corner off at √2 × the distance — cutting the floor
+    // just past every corner out of the pocket and the floor finish alike, and widening the
+    // band there past what the floor cap allows. A counter's corner near the socket wall
+    // left 1.6 mm standing. The deep socket keeps its miter.
+    const growProtrusion = (iD: string, by: number) => exactFloor ? offsetPathRound(iD, by) : offsetPathD(iD, by)
+    const { socketD, pocketBoundaryD, vcarveIslandD } = computeInlayFemaleOffsets(boundaryD, params, wg.tipR, exactFloor ? 2 : 3)
 
-    // Socket too small/thin for the tool geometry → plain medial-axis VCarve, no pocket.
-    if (!socketD || !pocketBoundaryD || !vcarveIslandD) {
+    // Socket too thin for a FLOOR (nothing one half-width in from its wall) → plain
+    // medial-axis V-carve, no pocket: every point of it is within the V-bit's reach.
+    //
+    // Only then. A shape too narrow for the wall BAND's inner edge (two half-widths in) but
+    // with room for a floor used to land here too, and a plain carve of it runs out of bit
+    // before the middle: a 12 × 30 mm triangle left 2 mm of its long wall uncut and its
+    // middle cut below the floor, which is exactly the "large letter" that would not take
+    // its plug. Such a shape is carved whole (below, with no band edge) over a pocketed floor.
+    if (!socketD || !pocketBoundaryD) {
       const vbitSegs = await generateVCarve(socketD ?? boundaryD, wallTool, {
         angleDeg: params.angleDeg,
         maxDepthMM: wg.maxDepthMM,
@@ -806,14 +1093,21 @@ async function insideClear(
     // to stop halfWidth outside it. A plug is the other way round — it is widest at the
     // floor, exactly on its own path — so it is kept out at nominal size.
     const islandPocketDs = [
-      ...protrusionDs.map(iD => offsetPathD(iD, halfWidthMM)),
+      ...protrusionDs.map(iD => growProtrusion(iD, halfWidthMM)),
       ...plugDs,
     ].filter((s): s is string => s !== null)
     try {
-      pushAll(pocketSegs, generatePocket(pocketBoundaryD, roughTool, {
+      // On the exact-floor socket the floor goes to the pocket ALREADY CUT round its islands
+      // — one outline with holes — rather than as a boundary plus islands. An island grown
+      // to its floor edge overlaps the boundary wherever it stands within a band's width of
+      // the socket wall, and handed over that way the pocket dropped the boundary's whole
+      // finishing ring: along a plain straight wall beside a counter the end mill stopped
+      // 0.8 mm short of the floor's edge, and the plug stood 1.7 mm proud on it.
+      const floorD = exactFloor && islandPocketDs.length ? subtractD(pocketBoundaryD, islandPocketDs) : null
+      pushAll(pocketSegs, generatePocket(floorD ?? pocketBoundaryD, roughTool, {
         strategy, depthMM: totalDepthMM, stepDownMM: params.stepDownMM,
         stepoverPercent: params.stepoverPercent, direction: 'climb',
-        islandDs: islandPocketDs, angle: 0, safeHeightMM: params.safeHeightMM,
+        islandDs: floorD ? [] : islandPocketDs, angle: 0, safeHeightMM: params.safeHeightMM,
         rampIn: params.rampIn,
       }))
     } catch (e) { skipTooSmall(e, 'socket floor clearing') }
@@ -831,8 +1125,8 @@ async function insideClear(
     const wallRegionD = subtractD(socketD, [vcarveIslandD, ...protrusionDs, ...plugDs])
     try {
       pushAll(vcarveSegs, await generateVCarve(wallRegionD ?? socketD, wallTool, {
-        angleDeg: params.angleDeg, maxDepthMM: 2.5 * totalDepthMM,
-        islandDs: wallRegionD ? [] : [vcarveIslandD], safeHeightMM: params.safeHeightMM,
+        angleDeg: params.angleDeg, maxDepthMM: wallCapMM,
+        islandDs: wallRegionD || !vcarveIslandD ? [] : [vcarveIslandD], safeHeightMM: params.safeHeightMM,
       }))
     } catch (e) { skipTooSmall(e, 'socket wall V-carve') }
 
@@ -842,30 +1136,40 @@ async function insideClear(
     // differenced against everything else standing in it. Unclipped it carved a groove
     // outside the socket wall entirely, and shaved the tops off neighbouring protrusions.
     for (const iD of protrusionDs) {
-      const islandVCarveOuterD = offsetPathD(iD, fullWidthMM)
+      const islandVCarveOuterD = growProtrusion(iD, fullWidthMM)
       if (!islandVCarveOuterD) continue
       const clipped = intersectPathD(islandVCarveOuterD, socketD) ?? islandVCarveOuterD
       const bandD = subtractD(clipped, [iD, ...protrusionDs.filter(o => o !== iD), ...plugDs])
       try {
         // Same fallback as the socket wall: unclipped annulus rather than no wall.
         //
-        // The cap is 2.5 × the socket depth, matching the socket wall above, NOT the socket
-        // depth itself. A medial-axis V-carve reproduces the exact wall only if the tool
-        // reaches every skeleton point at its own radius/tan(θ/2); cap it short and the cone
-        // from a clipped point rises away at 1/tan and leaves a wedge of stock against the
-        // wall. Along a straight run the annulus's inradius is halfWidth, so socket depth is
-        // exactly enough — but at a protrusion CORNER of half-angle α the skeleton runs out
-        // along the bisector to fullWidth/(1 + sin α), which tends to fullWidth as the corner
-        // sharpens, i.e. up to TWICE the depth a straight wall needs. starinstar.fkam wanted
-        // 4.58 mm against a 3 mm cap and left 1.4 mm of stock standing at all five points of
-        // the inner star, one patch per point. Cutting deeper here cannot reach the
-        // protrusion: a V-carve's cut rises to zero at its own region boundary.
+        // The cap is the socket wall's (`wallCapMM`). It was 2.5 × the socket depth everywhere,
+        // because a medial-axis V-carve capped short of an edge's far end used to cut that
+        // whole edge SHALLOW: the machine drives Z straight between the two emitted ends, and
+        // only the far one was clamped. At a protrusion corner the skeleton runs out along the
+        // bisector to fullWidth/(1 + sin α) — up to twice the depth a straight wall needs — so
+        // starinstar.fkam, capped at the socket depth, left 1.4 mm of stock at all five points
+        // of its inner star. generateVCarve now splits an edge where it crosses the cap, so the
+        // law holds to the cap and the cut is flat beyond it, and the female caps at its floor
+        // (see `exactFloor`). Cutting deeper here could not reach the protrusion anyway: a
+        // V-carve's cut rises to zero at its own region boundary.
         pushAll(vcarveSegs, await generateVCarve(bandD ?? islandVCarveOuterD, wallTool, {
-          angleDeg: params.angleDeg, maxDepthMM: 2.5 * totalDepthMM,
+          angleDeg: params.angleDeg, maxDepthMM: wallCapMM,
           islandDs: bandD ? [] : [iD], safeHeightMM: params.safeHeightMM,
         }))
       } catch (e) { skipTooSmall(e, 'protrusion wall V-carve') }
     }
+
+    // Finish the walls and the floor's corners with the tip ON the floor — see vFloorFinish.
+    if (exactFloor) try {
+      const floorRings = differenceD(
+        toClipRings(pocketBoundaryD),
+        protrusionDs.map((iD) => growProtrusion(iD, halfWidthMM)).filter((x): x is string => !!x).flatMap((x) => toClipRings(x)),
+        FillRule.NonZero, 6,
+      )
+      pushAll(vcarveSegs, vFloorFinish(floorRings, plugDs, halfWidthMM, roughTool.diameterMM / 2,
+        params.vFloorStepMM ?? DEFAULT_V_FLOOR_STEP_MM, totalDepthMM, params.safeHeightMM ?? 5))
+    } catch (e) { skipTooSmall(e, 'socket floor finish') }
 
     if (pocketSegs.length === 0 && vcarveSegs.length === 0)
       throw new GeometryTooSmallError('Inlay socket is too small for the selected tools')
@@ -1007,7 +1311,7 @@ export async function generateInlayFemale(
   // socket; no flat pocket). Depth at full engagement = r / tan(half). Paired with the
   // raised-prism male, so both halves must agree on when this fires — see the note on
   // MULTI_REGION_IS_TEXT.
-  if (vbit && isVCutter(vbit) && regions.length > MULTI_REGION_IS_TEXT) {
+  if (vbit && isVCutter(vbit) && readsAsText(regions, vbit, params)) {
     const wg = wallGeom(vbit, params.angleDeg)
     const vbitSegs = await generateVCarve(growTextSocket(regions, params.clearanceMM) ?? d, vbit, {
       angleDeg: params.angleDeg,
@@ -1028,7 +1332,7 @@ export async function generateInlayFemale(
   let lastErr: unknown = null
   for (const { boundaryD, islandDs } of boundaries) {
     try {
-      const r = await insideClear(boundaryD, islandDs, endmill, vbit, params)
+      const r = await insideClear(boundaryD, islandDs, endmill, vbit, params, [], true)
       pushAll(out.vbitSegs, r.vbitSegs)
       pushAll(out.endmillSegs, r.endmillSegs)
     } catch (e) {
@@ -1097,7 +1401,9 @@ async function generateInlayMaleText(
   params: InlayParams,
 ): Promise<InlaySplitResult> {
   const safeZ = params.safeHeightMM ?? 5
-  const workingD = params.mirrorX ? mirrorPathD(d) : d
+  // The operation's shared axis, as the outline route uses — so a cut-out band computed
+  // about it (plugCutoutD) lands round these letters.
+  const workingD = params.mirrorX ? mirrorPathDAbout(d, params.mirrorAxisX ?? centerX(d) ?? 0) : d
 
   const wg = wallGeom(vbitTool, params.angleDeg)
 
@@ -1172,7 +1478,9 @@ async function generateInlayMaleText(
   // mating face of the plug, and a wedge of stock left at a strategy seam holds the whole
   // letter block off the female. One angle, no seams.
   try {
-    pushAll(endmillSegs, generatePocket(bboxD, profileTool, {
+    // With a cut-out band, the background is everything inside it — the user frees the
+    // piece along the band with a profile of their own. Without one, the invented box.
+    pushAll(endmillSegs, generatePocket(params.bandD ?? bboxD, profileTool, {
       strategy:       'raster',
       depthMM:        params.pocketDepthMM,
       stepDownMM:     params.stepDownMM,
@@ -1216,8 +1524,12 @@ async function generateInlayMaleText(
   // a 90° corner fillet only reaches R(1−1/√2) ≈ 0.29 R from either wall, so it goes
   // completely. The blank simply ends up R/2 smaller all round, which costs nothing: this
   // rectangle is one this function invented to carry the letters, not part of the design.
+  //
+  // Not with a cut-out band: the user's profile of the band frees the piece, and the band
+  // is a hull grown by 1.5 cutters with round joins, so its corners are wider than the
+  // cutter and the background pocket leaves no fillets in them to sweep.
   const releaseOffset = profileTool.diameterMM / 4
-  const releaseD = offsetPathD(bboxD, releaseOffset)
+  const releaseD = params.bandD ? null : offsetPathD(bboxD, releaseOffset)
   if (releaseD) {
     const releasePasses = zPasses(params.pocketDepthMM, params.stepDownMM)
     const rampLen = params.rampIn ? 2 * profileTool.diameterMM : undefined
@@ -1254,7 +1566,7 @@ export async function generateInlayMale(
   // Text with a V-bit: Virtual Z-Plane Shift (raised-letter prisms). Gated the same way
   // as the female's V-carve socket — see MULTI_REGION_IS_TEXT.
   const regions = splitRegions(d)
-  if (vbitTool && isVCutter(vbitTool) && regions.length > MULTI_REGION_IS_TEXT) {
+  if (vbitTool && isVCutter(vbitTool) && readsAsText(regions, vbitTool, params)) {
     return generateInlayMaleText(d, profileTool, vbitTool, params)
   }
 
@@ -1294,7 +1606,11 @@ export async function generateInlayMale(
     // Plug border: outer-cut (no clearance — the plug stays nominal).
     const border = outerCut(mirror(boundaryD), profileTool, vbitTool, params)
     pushAll(vbitSegs, border.vbitSegs)
-    pushAll(endmillSegs, border.endmillSegs)
+    // A V-bit plug's end-mill pass is only a RELEASE ring round it, to plug depth. With a
+    // cut-out band the background is cleared out to the band instead (below), and the band's
+    // own profile — the user's — frees the piece. A flat-walled plug's end-mill pass is its
+    // WALL, and stays.
+    if (!(params.bandD && vbitTool && isVCutter(vbitTool))) pushAll(endmillSegs, border.endmillSegs)
 
     for (let i = 0; i < islandDs.length; i++) {
       const islandD = mirror(islandDs[i])
@@ -1316,6 +1632,24 @@ export async function generateInlayMale(
         pushAll(endmillSegs, socket.endmillSegs)
       } catch (e) { skipTooSmall(e, 'plug hole') }
     }
+  }
+
+  // ── Cut-out band clearance ──────────────────────────────────────────────────
+  //
+  // Everything between the plugs and the band comes down to the mating plane, for the same
+  // reason the field's does below: the female face is untouched out there, and any stock
+  // left standing holds the plug off its socket. A band that IS the plug's outline (one
+  // shape) leaves nothing to clear — the pocket comes back empty and that is the answer.
+  const bandRest = params.bandD && !params.fieldD ? subtractD(params.bandD, standingDs) : null
+  const bandRestArea = bandRest ? flattenPath(bandRest, 0.05).reduce((a, sub) => a + signedArea(sub), 0) : 0
+  if (params.bandD && !params.fieldD && bandRestArea > 1) {
+    try {
+      pushAll(endmillSegs, generatePocket(params.bandD, profileTool, {
+        strategy: 'raster', depthMM: params.pocketDepthMM, stepDownMM: params.stepDownMM,
+        stepoverPercent: params.stepoverPercent, direction: 'climb',
+        islandDs: standingDs, angle: 0, safeHeightMM: params.safeHeightMM, rampIn: params.rampIn,
+      }))
+    } catch (e) { skipTooSmall(e, 'cut-out clearing') }
   }
 
   // ── Field clearance ─────────────────────────────────────────────────────────

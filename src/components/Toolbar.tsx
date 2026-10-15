@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import { ICON } from '../theme'
 import {
   FilePlus, FolderOpen, Save, Import, FileCog, Share,
-  Undo2, Redo2, Magnet, HelpCircle, Play, Sun, Moon,
+  Undo2, Redo2, Magnet, HelpCircle, Play, Sun, Moon, Ruler,
 } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -141,6 +141,7 @@ export default function Toolbar() {
   // uiStore write and on every status/segments write of a Generate.
   const snapEnabled = useUIStore((s) => s.snapEnabled)
   const toggleSnap = useUIStore((s) => s.toggleSnap)
+  const measuring = useUIStore((s) => s.activeTool === 'measure')
   const setWorkspaceTab = useUIStore((s) => s.setWorkspaceTab)
   const darkMode = useUIStore((s) => s.darkMode)
   const toggleDarkMode = useUIStore((s) => s.toggleDarkMode)
@@ -299,6 +300,13 @@ export default function Toolbar() {
             label={`Snap to Grid (S) — ${snapEnabled ? 'On' : 'Off'}`}
             onClick={toggleSnap}
             active={snapEnabled}
+          />
+          {/* Measure (canvas/measure). */}
+          <ToolbarButton
+            icon={<Ruler size={ICON.md} />}
+            label="Measure (M) — click two points to measure between them"
+            onClick={() => useUIStore.getState().setActiveTool(measuring ? 'select' : 'measure')}
+            active={measuring}
           />
           <ToolbarButton
             icon={darkMode ? <Sun size={ICON.md} /> : <Moon size={ICON.md} />}

@@ -1,5 +1,5 @@
 import { SheetLabelLayer } from './layers/SheetLabelLayer'
-import { layoutExtent } from '../cam/sheets'
+import { layoutExtent, cellOfPoint, cellOffset } from '../cam/sheets'
 import { useSheetLayout } from './useSheets'
 import { ptSegDistSq, pointInPolygon } from '../cam/geom'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -35,7 +35,10 @@ import {
 } from '../store/constraints'
 import { ConstraintPickLayer } from './layers/ConstraintPickLayer'
 import { SnapGuideLayer, type SnapGuides } from './layers/SnapGuideLayer'
-import { collectSnapTargets, snapAxisDelta, nudgeStopDelta, nextStepPoint, type SnapTargets } from './objectSnap'
+import { MeasureLayer } from './layers/MeasureLayer'
+import { measureGaps, snapAngle } from './measure'
+import { groupKeyOf } from '../store/pathGroups'
+import { collectSnapTargets, snapAxisDelta, nudgeStopDelta, nextStepPoint, equalSpacingSnap, type SnapTargets, type Box } from './objectSnap'
 import { ShapePreviewLayer } from './layers/ShapePreviewLayer'
 import { TracePreviewLayer } from './layers/TracePreviewLayer'
 import { createRegionFinder, regionToD, type RegionFinder } from '../cam/regionPick'
@@ -112,6 +115,22 @@ function closestVisiblePath(
     if (dist < bestDist) { bestDist = dist; best = p }
   }
   return best
+}
+
+// The topmost image whose picture lies under the point. An image is a solid thing on
+// screen, so a click anywhere on it takes it — not only within reach of its frame, as an
+// outline needs. Asked only after no outline is near, so a trace lying over its picture
+// still picks by its own lines.
+function imageUnder(
+  px: number, py: number,
+  paths: ImportedPath[],
+  getPolys: (p: ImportedPath) => [number, number][][],
+): ImportedPath | null {
+  for (let i = paths.length - 1; i >= 0; i--) {
+    const p = paths[i]
+    if (p.imageSrc && getPolys(p).some((poly) => pointInPolygon(px, py, poly))) return p
+  }
+  return null
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -457,6 +476,14 @@ export default function CanvasStage() {
   // the keyboard. It borrows the `move` mode to do it (see `CanvasMode`).
   const [pickCandidates, setPickCandidates] = useState<AnchorCandidate[]>([])
   const [pickHot, pickHotRef, setPickHot] = useRefState<AnchorCandidate | null>(null)
+  // The Measure tool (canvas/measure): the first click, the second (or the cursor while it
+  // is pending), whether the second is down, and the point a click would take now.
+  const [measureA, measureARef, setMeasureA] = useRefState<{ x: number; y: number } | null>(null)
+  const [measureB, , setMeasureB] = useRefState<{ x: number; y: number } | null>(null)
+  const measureDoneRef = useRef(false)
+  const [measureHot, measureHotRef, setMeasureHot] = useRefState<{ x: number; y: number } | null>(null)
+  // Alt held over a part with something selected: the gaps between them (canvas/measure).
+  const [altMeasure, setAltMeasure] = useState<SnapGuides | null>(null)
   const [pickHeld, pickHeldRef, setPickHeld] = useRefState<AnchorCandidate | null>(null)
   // How far the second point has been DRAGGED, while it is being dragged. The
   // pending dimension is drawn from the hot candidate plus this — every body
@@ -1097,6 +1124,11 @@ export default function CanvasStage() {
           setLivePen(null)
           setPenClosing(false)
           setMode2({ type: 'idle' })
+        } else if (activeTool === 'measure' && measureARef.current) {
+          // A measurement goes first; Escape again leaves the tool.
+          setMeasureA(null)
+          setMeasureB(null)
+          measureDoneRef.current = false
         } else if (activeTool === 'constrain' && pickHeldRef.current) {
           // A half-made constraint goes first; the tool stays on. Same two-stage
           // Escape the pen has, and for the same reason — the commonest thing to
@@ -1229,6 +1261,13 @@ export default function CanvasStage() {
 
   // A region preview belongs to one hover session of region picking.
   useEffect(() => { if (activeTool !== 'region') setRegionPreviewD(null) }, [activeTool])
+
+  // Leaving the Measure tool drops its line; Escape inside it drops the line first.
+  useEffect(() => {
+    if (activeTool === 'measure') return
+    setMeasureA(null); setMeasureB(null); setMeasureHot(null)
+    measureDoneRef.current = false
+  }, [activeTool, setMeasureA, setMeasureB, setMeasureHot])
 
   // Clear pen snap feedback whenever the pen tool deactivates (Escape, closing
   // commit, and toolbar switches all reset activeTool to 'select').
@@ -1444,7 +1483,7 @@ export default function CanvasStage() {
   // Every pickable point in the drawing, built once and reused for the whole
   // session — one bbox flatten per body, not one per frame.
   const allCandidates = useMemo(
-    () => (activeTool === 'constrain' ? allAnchorCandidates(paths) : []),
+    () => (activeTool === 'constrain' || activeTool === 'measure' ? allAnchorCandidates(paths) : []),
     [activeTool, paths])
   // Mirrored into a ref, and the hover handler reads THAT. `handleMouseMove` is
   // one big memoized dispatcher, so a per-frame handler reached through it is
@@ -1481,6 +1520,65 @@ export default function CanvasStage() {
     setPickCandidates(list)
     setPickHot(nearestCandidate(list, cnc.x, cnc.y, PICK_HOT_PX / vp.scale))
   }, [getFlat, setPickHot])
+
+  // Measure tool hover: the point a click would take — a part's corner, edge middle or
+  // centre within reach, else the cursor itself — and, while the second point is pending,
+  // the line follows it (Shift holds it to 15° steps).
+  const onMoveMeasureHover = useCallback((cnc: { x: number; y: number }, vp: Viewport, shift: boolean) => {
+    const near = nearestCandidate(allCandidatesRef.current, cnc.x, cnc.y, PICK_HOT_PX / vp.scale)
+    const a = measureARef.current
+    let pt = near ? { x: near.x, y: near.y } : cnc
+    if (a && !measureDoneRef.current && shift && !near) pt = snapAngle(a, pt, 15)
+    setMeasureHot(near ? pt : null)
+    if (a && !measureDoneRef.current) setMeasureB(pt)
+  }, [setMeasureHot, setMeasureB, measureARef])
+
+  // ALT-HOVER MEASURES. With something selected and Alt held, the gaps between the selection
+  // and the part under the cursor are drawn (canvas/measure measureGaps). The part is found by
+  // its outline first, then as the smallest closed part around the cursor — so hovering
+  // anywhere inside a plate measures to the plate — and with nothing there, against the stock
+  // sheet the selection is on. A group or multi-part shape is measured as a whole.
+  const updateAltMeasure = useCallback((cnc: { x: number; y: number } | null, vp: Viewport) => {
+    const ui = useUIStore.getState()
+    const sb = selectionBBoxRef.current
+    if (!cnc || !altDownRef.current || ui.activeTool !== 'select' || ui.nodeEditPathId
+      || modeRef.current.type !== 'idle' || !sb) {
+      setAltMeasure(null)
+      return
+    }
+    const { paths, selectedIds } = usePathsStore.getState()
+    const sel = new Set(selectedIds)
+    const others = paths.filter((p) => onCanvas(p) && !sel.has(p.id) && !p.imageSrc)
+    let hit = closestVisiblePath(cnc.x, cnc.y, others, 8 / vp.scale, (p) => getFlat(p, 0.05))
+    if (!hit) {
+      let bestArea = Infinity
+      for (const p of others) {
+        const b = getBBox(p.d)
+        if (!b || cnc.x < b.minX || cnc.x > b.maxX || cnc.y < b.minY || cnc.y > b.maxY) continue
+        const area = b.width * b.height
+        if (area < bestArea && getFlat(p, 0.05).some((poly) => pointInPolygon(cnc.x, cnc.y, poly))) { bestArea = area; hit = p }
+      }
+    }
+    let target: Box
+    if (hit) {
+      const key = groupKeyOf(hit)
+      const members = key ? others.filter((q) => groupKeyOf(q) === key) : [hit]
+      const b = getMultiBBox(members.map((q) => q.d))
+      if (!b) { setAltMeasure(null); return }
+      target = { minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY }
+    } else {
+      const { widthMM, heightMM } = useWorkpieceStore.getState()
+      const stock = { widthMM, heightMM }
+      const o = cellOffset(cellOfPoint(sb.cx, sb.cy, stock), stock)
+      target = { minX: o.x, minY: o.y, maxX: o.x + widthMM, maxY: o.y + heightMM }
+    }
+    const gaps = measureGaps({ minX: sb.minX, minY: sb.minY, maxX: sb.maxX, maxY: sb.maxY }, target)
+    setAltMeasure({ gaps, boxes: [target] })
+  }, [getFlat, altDownRef])
+  // Pressing or letting go of Alt answers at once, without waiting for the mouse to move.
+  useEffect(() => {
+    updateAltMeasure(altDown ? useCanvasStore.getState().cursorMM : null, viewportRef.current)
+  }, [altDown, updateAltMeasure])
 
   /**
    * Make the constraint between two picked points, from where the parts stand
@@ -1575,6 +1673,26 @@ export default function CanvasStage() {
       return
     }
 
+    // Measure tool: the first click starts a measurement, the second ends it, and a click
+    // after that starts the next. The tool owns the click — no selection, no drag.
+    if (activeTool === 'measure') {
+      const stagePointer = stageRef.current?.getPointerPosition()
+      if (!stagePointer) return
+      const cnc = screenToCNC(stagePointer.x, stagePointer.y, viewportRef.current)
+      const a = measureARef.current
+      let pt = measureHotRef.current ?? cnc
+      if (a && !measureDoneRef.current) {
+        if (!measureHotRef.current && e.evt.shiftKey) pt = snapAngle(a, pt, 15)
+        setMeasureB(pt)
+        measureDoneRef.current = true
+      } else {
+        setMeasureA(pt)
+        setMeasureB(pt)
+        measureDoneRef.current = false
+      }
+      return
+    }
+
     // Constrain tool: a click takes a point. Never a selection change or a drag
     // box — the tool owns the click while it is on.
     //
@@ -1642,6 +1760,7 @@ export default function CanvasStage() {
     const { paths } = usePathsStore.getState()
     const candidates = paths.filter((p) => onCanvas(p) && p.id !== neid)
     const hit = closestVisiblePath(cnc.x, cnc.y, candidates, 8 / vp.scale, (p) => getFlat(p, 0.05))
+      ?? (activeTool === 'select' ? imageUnder(cnc.x, cnc.y, candidates, (p) => getFlat(p, 0.05)) : null)
 
     if (hit) {
       if (neid && neid !== hit.id) exitNodeEdit()
@@ -1715,14 +1834,28 @@ export default function CanvasStage() {
       const ib = m.initBbox
       const snapOn = useUIStore.getState().snapEnabled
       const tolMM = OBJECT_SNAP_PX / vp.scale
-      const ox = snapOn ? snapAxisDelta([ib.minX + finalDx, ib.maxX + finalDx, ib.cx + finalDx], m.snapTargets.xs, tolMM) : null
-      const oy = snapOn ? snapAxisDelta([ib.minY + finalDy, ib.maxY + finalDy, ib.cy + finalDy], m.snapTargets.ys, tolMM) : null
+      let ox = snapOn ? snapAxisDelta([ib.minX + finalDx, ib.maxX + finalDx, ib.cx + finalDx], m.snapTargets.xs, tolMM) : null
+      let oy = snapOn ? snapAxisDelta([ib.minY + finalDy, ib.maxY + finalDy, ib.cy + finalDy], m.snapTargets.ys, tolMM) : null
+      // Equal spacing competes with alignment on each axis, and the nearer one wins —
+      // both are measured from where the cursor has the box, before either is applied.
+      const at = { minX: ib.minX + finalDx, maxX: ib.maxX + finalDx, minY: ib.minY + finalDy, maxY: ib.maxY + finalDy }
+      const ex = snapOn ? equalSpacingSnap(at, m.snapTargets.boxes, 'x', tolMM) : null
+      const ey = snapOn ? equalSpacingSnap(at, m.snapTargets.boxes, 'y', tolMM) : null
+      const useEx = !!ex && (!ox || ex.dist < Math.abs(ox.correction) - 1e-9)
+      const useEy = !!ey && (!oy || ey.dist < Math.abs(oy.correction) - 1e-9)
+      if (useEx) ox = null
+      if (useEy) oy = null
       if (ox) finalDx += ox.correction
       if (oy) finalDy += oy.correction
+      if (useEx) finalDx += ex!.correction
+      if (useEy) finalDy += ey!.correction
       const gridSnapped = snapCNC({ x: ib.minX + finalDx, y: ib.minY + finalDy })
-      if (!ox) finalDx = gridSnapped.x - ib.minX
-      if (!oy) finalDy = gridSnapped.y - ib.minY
-      setSnapGuides(ox || oy ? { x: ox?.guide, y: oy?.guide } : null)
+      if (!ox && !useEx) finalDx = gridSnapped.x - ib.minX
+      if (!oy && !useEy) finalDy = gridSnapped.y - ib.minY
+      const gaps = [...(useEx ? ex!.marks : []), ...(useEy ? ey!.marks : [])]
+      setSnapGuides(ox || oy || gaps.length > 0
+        ? { x: ox?.guide, y: oy?.guide, ...(gaps.length > 0 ? { gaps } : {}) }
+        : null)
       setLiveTransform({ kind: 'translate', pathIds: new Set(m.pathIds), dx: finalDx, dy: finalDy })
       setLiveBBox({ minX: ib.minX + finalDx, minY: ib.minY + finalDy, width: ib.width, height: ib.height })
       // The Constrain tool's second point riding along: the dimension being made
@@ -2022,6 +2155,8 @@ export default function CanvasStage() {
 
     if (!pointer) return
     const cncMouse = screenToCNC(pointer.x, pointer.y, vp)
+    // An Alt-hover measurement belongs to hovering; any gesture ends it.
+    if (m.type !== 'idle' && altMeasure) setAltMeasure(null)
 
     // Modes that fully consume the move.
     if (m.type === 'move')   return onMoveTranslate(m, cncMouse, pointer, vp)
@@ -2036,6 +2171,8 @@ export default function CanvasStage() {
 
     if (m.type === 'idle' && connectSourceRef.current !== null) onMoveConnectPreview(cncMouse, vp)
     if (useUIStore.getState().activeTool === 'constrain') { onMoveConstrainHover(cncMouse, vp); return }
+    if (useUIStore.getState().activeTool === 'measure') { onMoveMeasureHover(cncMouse, vp, e.evt.shiftKey); return }
+    if (m.type === 'idle' && (altDownRef.current || altMeasure)) updateAltMeasure(cncMouse, vp)
     if (useUIStore.getState().activeTool === 'region') {
       if (m.type === 'idle') onMoveRegionHover(cncMouse, vp)
       else setRegionPreviewD(null)
@@ -2045,7 +2182,7 @@ export default function CanvasStage() {
     if (m.type === 'nodedit-drag' && editDragInitRef.current) onMoveNodeEditDrag(m, cncMouse, e)
   }, [setCursorMM, onMovePan, onMoveTranslate, onMoveResize, onMoveRotate, onMoveDragbox,
       onMoveDrawShape, onMovePenHover, onMoveConnectPreview, onMovePenDraw, onMoveNodeEditDrag,
-      onMoveConstrainHover, onMoveRegionHover])
+      onMoveConstrainHover, onMoveRegionHover, onMoveMeasureHover, updateAltMeasure, altMeasure])
 
   const handleMouseMove = moveBody
 
@@ -2361,7 +2498,11 @@ export default function CanvasStage() {
         // any member of a group works, since updateShapeParams regenerates all of
         // it.
         let regenId = id
-        if (parts && parts.length > 1) {
+        // Even ONE part lands as a part: a shape whose part count changes with its
+        // parameters (a V-bit bowtie is one outline, a straight-bit one a socket and
+        // a key) can then grow its other parts later as parts, instead of being
+        // regenerated as one compound path that has to be split by hand.
+        if (parts && parts.length >= 1) {
           const groupId = uid('shape-group')
           const name = shapeDisplayName(shapeType)
           const color = nextPathColor()
@@ -2790,6 +2931,12 @@ export default function CanvasStage() {
               liveTransform={liveTransform}
             />
           )}
+          {altMeasure && altDown && !snapGuides && (
+            <SnapGuideLayer viewport={viewport} guides={altMeasure} width={size.width} height={size.height} color="#F97316" />
+          )}
+          {activeTool === 'measure' && (
+            <MeasureLayer viewport={viewport} a={measureA} b={measureB} hot={measureHot} />
+          )}
           {snapGuides && (
             <SnapGuideLayer viewport={viewport} guides={snapGuides} width={size.width} height={size.height} />
           )}
@@ -2879,7 +3026,12 @@ export default function CanvasStage() {
           Pocket — click a path to select it, or click inside any area the lines enclose to pocket that area · Shift to add
         </div>
       )}
-      {activeTool !== 'select' && activeTool !== 'drill' && activeTool !== 'pen' && activeTool !== 'constrain' && activeTool !== 'region' && (
+      {activeTool === 'measure' && (
+        <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-blue-600/90 text-white text-body px-3 py-1 rounded-full pointer-events-none">
+          Measure — click two points · Shift for 15° steps · Esc to clear, Esc again to leave
+        </div>
+      )}
+      {activeTool !== 'select' && activeTool !== 'drill' && activeTool !== 'pen' && activeTool !== 'constrain' && activeTool !== 'region' && activeTool !== 'measure' && (
         <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-blue-600/90 text-white text-body px-3 py-1 rounded-full pointer-events-none">
           Drawing {shapeDisplayName(activeTool as ShapeType)} — {SCALE_LOCKED_SHAPES.has(activeTool as ShapeType)
             ? 'click to place at its designed size, Esc to cancel'

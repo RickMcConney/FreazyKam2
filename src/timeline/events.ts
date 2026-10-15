@@ -35,7 +35,7 @@ export type PathsAddSource = 'import' | 'shape' | 'pen' | 'text' | 'duplicate' |
 // 'transform' is synthetic: timelineStore's coalesce() stamps it on a chip
 // that chained two or more DIFFERENT pure-geometry gestures (e.g. Move then
 // Rotate on the same path, nothing else in between) into one entry.
-export type PathEditGesture = 'move' | 'scale' | 'rotate' | 'skew' | 'mirror' | 'transform' | 'corner' | 'points' | 'join' | 'weld' | 'trim' | 'text' | 'boolean'
+export type PathEditGesture = 'move' | 'scale' | 'rotate' | 'skew' | 'mirror' | 'transform' | 'corner' | 'points' | 'join' | 'weld' | 'trim' | 'text' | 'boolean' | 'along'
 
 export const GESTURE_LABELS: Record<PathEditGesture, string> = {
   move: 'Move',
@@ -51,6 +51,7 @@ export const GESTURE_LABELS: Record<PathEditGesture, string> = {
   trim: 'Trim',
   text: 'Text',
   boolean: 'Boolean',
+  along: 'Text on Path',
 }
 
 // Pure-geometry transform gestures: each one fully rewrites a path's `d` from

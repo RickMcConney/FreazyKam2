@@ -16,6 +16,11 @@ import { effectiveStepDownMM, seedStepDownMM } from '../../cam/feeds'
 import { includedAngleDeg, isVCutter } from '../../cam/geom'
 import { groupPathsByContainment, skipOpenPaths, skippedOpenMsg } from './containment'
 import { getMultiBBox } from '../../canvas/selectionUtils'
+import { plugCutoutD, cutoutIsOwnOutline, DEFAULT_V_FLOOR_STEP_MM, vFloorRidgeMM } from '../../cam/inlay'
+import { flattenPath, signedArea } from '../../cam/pathFlattener'
+import { interiorPoint, pointInPolygon } from '../../cam/geom'
+import { nextPathColor } from '../../importers/svgImporter'
+import { uid } from '../../uid'
 
 interface InlayFormState {
   vbitToolId: string
@@ -27,10 +32,14 @@ interface InlayFormState {
   stepoverPercent: number
   glueLineMM: number
   clearanceMM: number
+  /** Female: V-bit floor loop spacing (cam/inlay vFloorFinish). */
+  vFloorStepMM: number
   role: 'female' | 'male'
   rampIn: boolean
   mirrorX: boolean
   invert: boolean
+  /** Male: draw a cut-out outline round the plug and clear to it — see plugCutoutD. */
+  cutout: boolean
 }
 
 // The field a group's plug stands in — only an inverted grouping has one, and only on the
@@ -77,8 +86,10 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
     pocketDepthMM: editOp.pocketDepthMM,
     stepDownMM: editOp.stepDownMM, stepDownManual: editOp.stepDownManual ?? false, stepoverPercent: editOp.stepoverPercent,
     glueLineMM: editOp.glueLineMM, clearanceMM: editOp.clearanceMM,
+    vFloorStepMM: editOp.vFloorStepMM ?? DEFAULT_V_FLOOR_STEP_MM,
     role: editOp.role, rampIn: editOp.rampIn ?? false, mirrorX: editOp.mirrorX ?? false,
     invert: false,
+    cutout: !!editOp.bandId,
   } : { ...mergeWithDefaults(load('inlay'), {
     vbitToolId: defaultVbit?.id ?? '',
     pocketToolId: defaultEndmill?.id ?? '',
@@ -88,6 +99,7 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
     stepoverPercent: 40,
     glueLineMM: 0.2,
     clearanceMM: 0.1,
+    vFloorStepMM: DEFAULT_V_FLOOR_STEP_MM,
     role: 'female' as const,
     rampIn: false,
     mirrorX: false,
@@ -96,6 +108,7 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
     // Deliberately not restored from saved defaults: which half of a nested selection is
     // the part is a property of THAT selection, not a preference.
     invert: false,
+    cutout: true,
   }, tools), invert: false, stepDownManual: false }
     // "None" is an explicit choice, not a stale id — never coerce it to a real tool.
     return { ...base,
@@ -203,9 +216,109 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
       stepoverPercent: form.stepoverPercent,
       glueLineMM: form.glueLineMM,
       clearanceMM: form.clearanceMM,
+      vFloorStepMM: form.vFloorStepMM,
       rampIn: form.rampIn,
       mirrorX: form.mirrorX,
       mirrorAxisX,
+    }
+
+    // ── Cut-out outlines (male) ──
+    // One per OUTERMOST group, written onto the group's ops as `bandId` so the male clears to
+    // it and a through Profile frees the piece along it. A group nested inside another
+    // selected one stands in the same piece of board (its plugs are the next level, in the
+    // outer plug's holes), so it gets none — a cut-out of its own would cut the piece apart.
+    // A group with a field already has its background outline; one without the option, or a
+    // female, gets none (and loses a band it had).
+    //
+    // Where the cut-out is just the plug's own outline (cutoutIsOwnOutline) the band IS the
+    // plug's path and nothing is drawn: a copy laid exactly over the original put every line
+    // on the canvas twice. Otherwise — lettering's band, or a mirrored asymmetric plug — it
+    // is a path of its own, redrawn on every Generate (it follows the plug, the end mill and
+    // the mirror); a boundary of the user's own is what Invert's field is for.
+    const opBandIds = new Map<string, string | undefined>()
+    {
+      const ps = usePathsStore.getState()
+      const add: ImportedPath[] = []
+      const updates: { id: string; d: string }[] = []
+      const dropIds: string[] = []
+      const axis = form.mirrorX ? (mirrorAxisX ?? null) : null
+      // Outer rings of every male boundary in play — this selection's groups, and in an edit
+      // the other male inlays' boundaries — to tell a nested group from an outermost one.
+      const outerRing = (d: string) => {
+        const subs = flattenPath(d, 0.1).filter((r) => r.length >= 3)
+        return subs.reduce((a, b) => (Math.abs(signedArea(b)) > Math.abs(signedArea(a)) ? b : a), subs[0] ?? [])
+      }
+      const otherBoundaries = editOp
+        ? operations.flatMap((o) => o.type === 'inlay' && o.role === 'male' && o.pathId !== editOp.pathId
+          ? ps.paths.filter((p) => p.id === o.pathId) : [])
+        : groups.map((g) => g.boundary)
+      const nested = (b: ImportedPath) => {
+        const pt = interiorPoint(flattenPath(b.d, 0.1).filter((r) => r.length >= 3))
+        return !!pt && otherBoundaries.some((o) => o.id !== b.id && pointInPolygon(pt[0], pt[1], outerRing(o.d)))
+      }
+      for (const g of groups) {
+        const ownOp = editOp ?? (() => {
+          const id = session.liveOpId(groupKey(g.boundary.id))
+          return id ? (operations.find((o) => o.id === id) as InlayOperation | undefined) : undefined
+        })()
+        // A cut-out path a previous Generate drew for this group — never the plug itself.
+        const drawn = ownOp?.bandId && ownOp.bandId !== g.boundary.id ? ps.paths.find((p) => p.id === ownOp.bandId) : undefined
+        const wanted = form.role === 'male' && form.cutout && !g.field && !!pocketTool && !nested(g.boundary)
+        const own = wanted && cutoutIsOwnOutline(g.boundary.d, axis)
+        const bandD = wanted && !own ? plugCutoutD(g.boundary.d, pocketTool!.diameterMM, axis) : null
+        if (own) opBandIds.set(g.boundary.id, g.boundary.id)
+        else if (!bandD) opBandIds.set(g.boundary.id, undefined)
+        else if (drawn) {
+          if (drawn.d !== bandD) updates.push({ id: drawn.id, d: bandD })
+          opBandIds.set(g.boundary.id, drawn.id)
+        } else {
+          const id = uid('path-cutout')
+          add.push({ id, name: `${g.boundary.name} cut-out`, d: bandD, visible: true, color: nextPathColor() })
+          opBandIds.set(g.boundary.id, id)
+        }
+        // A drawn cut-out this group no longer uses goes, with the profile on it.
+        if (drawn && opBandIds.get(g.boundary.id) !== drawn.id) dropIds.push(drawn.id)
+      }
+      // The ops are generated below; the edit must not set off a regenerate of its own.
+      if (updates.length || dropIds.length) ps.applyPathEdit({ updates, deleteIds: dropIds, label: 'Inlay cut-out', regenerate: false })
+      if (add.length) ps.addPaths(add, { label: 'Inlay cut-out' })
+    }
+    const bandOf = (boundaryId: string) => ({ bandId: opBandIds.get(boundaryId) })
+
+    // …and the cut that frees the piece along it: an ordinary outside Profile, right
+    // through the stock, with the roughing end mill — a real operation, so it takes tabs,
+    // a depth edit or a delete like any other. Added AFTER the plug's own ops (it runs
+    // last, once everything is cleared) and only where the band has none yet: a profile
+    // already on it is the user's, edited or not. Returns every profile on a band, new or
+    // not, so the caller regenerates them after the plug — a redrawn band moves them.
+    const addCutoutProfiles = (): string[] => {
+      const bandIds = [...new Set([...opBandIds.values()].filter((x): x is string => !!x))]
+      if (bandIds.length === 0 || !pocketTool) return []
+      const thicknessMM = useWorkpieceStore.getState().thicknessMM
+      const ops = useToolpathStore.getState().operations
+      const bandPaths = usePathsStore.getState().paths
+      const fresh = bandIds.filter((id) => !ops.some((o) => o.type === 'profile' && o.pathId === id))
+      const created = fresh.length ? addOperations(fresh.map((id) => ({
+        type: 'profile' as const,
+        name: `Profile: ${bandPaths.find((p) => p.id === id)?.name ?? 'cut-out'} (${pocketTool.name})`,
+        toolId: pocketTool.id, pathId: id, side: 'outside' as const,
+        depthMM: thicknessMM > 0 ? thicknessMM : form.pocketDepthMM,
+        stepDownMM: seedStepDownMM(pocketTool), stepDownManual: false,
+        direction: 'climb' as const, rampIn: false, allowanceMM: 0, cornerToleranceMM: 0,
+        startFrom: { mode: 'stock' as const },
+      }))) : []
+      const existing = useToolpathStore.getState().operations
+        .filter((o) => o.type === 'profile' && bandIds.includes(o.pathId) && !created.includes(o.id))
+        .map((o) => o.id)
+      return [...existing, ...created]
+    }
+    const runCutouts = async (ids: string[]) => {
+      for (const id of ids) {
+        try { showGenNotes((await generateOperation(id)).notes) } catch (err) {
+          if (isWorkCancelled(err)) return
+          reportError(id, err)
+        }
+      }
     }
 
     if (editOp && editBoundary) {
@@ -214,18 +327,19 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
         ? (operations.find((o) => o.id === editOp.linkedOpId) as InlayOperation | undefined)
         : undefined
       const sharedUpdate = {
-        ...sharedOpFields,
+        ...sharedOpFields, ...bandOf(editBoundary.id),
         toolId: editOp.phase === 'vbit' ? form.vbitToolId : form.pocketToolId,
         status: 'generating' as const,
       }
       updateOperation(editOp.id, sharedUpdate as Partial<AnyOperation>)
       if (linkedOp) {
         updateOperation(linkedOp.id, {
-          ...sharedOpFields,
+          ...sharedOpFields, ...bandOf(editBoundary.id),
           toolId: linkedOp.phase === 'vbit' ? form.vbitToolId : form.pocketToolId,
           status: 'generating',
         } as Partial<AnyOperation>)
       }
+      const cutoutIds = addCutoutProfiles()
       setTimeout(async () => {
         try {
           // Generated from the settings just written — the same call an automatic
@@ -238,6 +352,7 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
             if (linkedOp) reportError(linkedOp.id, err)
           }
         }
+        await runCutouts(cutoutIds)
         setGenerating(false)
         save('inlay', form)
       }, 0)
@@ -263,14 +378,14 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
         if (existingId) {
           updateOperation(existingId, { ...sharedOpFields, phase: 'endmill', toolId: form.pocketToolId,
             islandIds: islands.map((p) => p.id), islandPlugIds: islandPlugs.map((ps) => ps.map((p) => p.id)),
-            ...fieldFields(role, field, fieldPlugs),
+            ...fieldFields(role, field, fieldPlugs), ...bandOf(boundary.id),
             name, status: 'generating' } as Partial<AnyOperation>)
           return existingId
         }
         return soloPayloads.push({ ...opBase, phase: 'endmill', toolId: form.pocketToolId,
           pathId: boundary.id, islandIds: islands.map((p) => p.id),
           islandPlugIds: islandPlugs.map((ps) => ps.map((p) => p.id)),
-          ...fieldFields(role, field, fieldPlugs), name }) - 1
+          ...fieldFields(role, field, fieldPlugs), ...bandOf(boundary.id), name }) - 1
       })
       const soloNew = staleDeleteIds.length > 0
         ? replaceGeneratedOperations({ anchorId: staleDeleteIds[0], deleteIds: staleDeleteIds, add: soloPayloads })
@@ -281,6 +396,7 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
       groups.forEach(({ boundary }, i) => {
         if (typeof soloSlots[i] === 'number') session.remember(groupKey(boundary.id), ids[i])
       })
+      const cutoutIds = addCutoutProfiles()
       setTimeout(async () => {
         for (let i = 0; i < groups.length; i++) {
           try {
@@ -293,6 +409,7 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
             reportError(ids[i], err)
           }
         }
+        await runCutouts(cutoutIds)
         // A Generate that failed leaves nothing behind — only the ops this click made.
         discardFailedOps(ids.filter((_, i) => typeof soloSlots[i] === 'number'))
         setGenerating(false)
@@ -343,14 +460,14 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
           const id = phase === firstPhase ? pair.firstId : pair.secondId
           updateOperation(id, { ...sharedOpFields, phase, toolId,
             islandIds: islands.map((p) => p.id), islandPlugIds: islandPlugs.map((ps) => ps.map((p) => p.id)),
-            ...fieldFields(role, field, fieldPlugs),
+            ...fieldFields(role, field, fieldPlugs), ...bandOf(boundary.id),
             name, status: 'generating' } as Partial<AnyOperation>)
           return id
         }
         return newOps.push({ ...opBase, phase, toolId,
           pathId: boundary.id, islandIds: islands.map((p) => p.id),
           islandPlugIds: islandPlugs.map((ps) => ps.map((p) => p.id)),
-          ...fieldFields(role, field, fieldPlugs), name }) - 1
+          ...fieldFields(role, field, fieldPlugs), ...bandOf(boundary.id), name }) - 1
       })
     })
     // Same replace-don't-append rule as the roughing-only path above: an Invert toggle
@@ -372,6 +489,7 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
       updateOperation(secondIds[i], { linkedOpId: firstIds[i]   } as Partial<AnyOperation>)
     }
 
+    const cutoutIds = addCutoutProfiles()
     setTimeout(async () => {
       for (let i = 0; i < groups.length; i++) {
         try {
@@ -385,6 +503,7 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
           reportError(secondIds[i], err)
         }
       }
+      await runCutouts(cutoutIds)
       // Both halves of a failed pair go: one plug without its socket is not a thing.
       discardFailedOps([
         ...firstIds.filter((_, i) => typeof phaseSlots[0][i] === 'number'),
@@ -488,6 +607,25 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
             onChangeMM={(v) => up('clearanceMM', v)} />
         </div>
       </div>
+      {/* V-bit floor step (female): how far apart the tip's loops run in the corners the end
+          mill cannot reach, and the ridge that leaves — against the glue gap, since a ridge
+          under it cannot touch the plug. */}
+      {form.role === 'female' && (() => {
+        const tanHalf = Math.tan(((vbitTool ? includedAngleDeg(vbitTool) : 60) / 2) * Math.PI / 180)
+        const ridge = vFloorRidgeMM(form.vFloorStepMM, tanHalf)
+        const tall = ridge > form.glueLineMM + 1e-9
+        return (
+          <div>
+            <label htmlFor="inlay-vfloor-step" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">V-bit Floor Step</label>
+            <LengthInput id="inlay-vfloor-step" valueMM={form.vFloorStepMM} minMM={0.01} maxMM={5} stepMM={0.05}
+              onChangeMM={(v) => up('vFloorStepMM', v)} />
+            <p className={`text-label mt-0.5 ${tall ? 'text-amber-600 dark:text-amber-400' : 'text-gray-600 dark:text-neutral-400'}`}>
+              Spacing of the V-bit's passes in corners the end mill can't reach. Leaves ridges {fmtLen(ridge, units, 2)} high
+              {tall ? ` — taller than the glue gap, so the plug may sit on them unless they break away` : ' — under the glue gap'}.
+            </p>
+          </div>
+        )
+      })()}
       {!editOp && (
         <div>
           <div className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">Generate</div>
@@ -548,6 +686,28 @@ export function InlayForm({ onClose, editOp }: { onClose: () => void; editOp?: I
           <label htmlFor="inlay-mirror" className="text-body text-gray-700 dark:text-neutral-300 cursor-pointer">
             Mirror <span className="text-gray-600 dark:text-neutral-400 normal-case">(flip horizontally — for asymmetric shapes inserted reversed)</span>
           </label>
+        </div>
+      )}
+      {/* Cut-out outline — male only. */}
+      {isMale && (
+        <div>
+          <div className="flex items-center gap-2">
+            <input type="checkbox" id="inlay-cutout" checked={form.cutout}
+              onChange={(e) => up('cutout', e.target.checked)} className="accent-blue-500" />
+            <label htmlFor="inlay-cutout" className="text-body text-gray-700 dark:text-neutral-300 cursor-pointer">
+              Cut-out Outline <span className="text-gray-600 dark:text-neutral-400 normal-case">(a path round the plug to free it)</span>
+            </label>
+          </div>
+          {form.cutout && (
+            <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">
+              Draws a path round the plug — its own outline for one shape, a band round all of
+              them for lettering — clears everything inside it to the plug depth, and adds an
+              outside Profile on it right through the stock to cut the piece free. That profile is
+              an ordinary operation: open it to add tabs or change its depth. The path is redrawn
+              on every Generate; for a boundary of your own, draw it round the plug, select both and
+              use Invert.
+            </p>
+          )}
         </div>
       )}
       {!editOp && <FormNotice msg={skippedOpenMsg(skippedOpen, 'an inlay')} />}

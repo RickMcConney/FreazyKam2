@@ -104,6 +104,27 @@ describe('generateVCarve — depth from medial-axis radius', () => {
     })
     expect(cuts(segs).every(s => s.z <= 0)).toBe(true)
   })
+
+  it('follows the depth law up to the cap and runs flat after it — never shallower, anywhere along a move', async () => {
+    // A 20 mm square under a 90° bit (depth = radius) capped at 3 mm: its medial axis is
+    // the two diagonals, from r = 0 at each corner to r = 10 at the middle, so every
+    // diagonal crosses the cap. The machine moves in straight lines between emitted
+    // points; clamp only the far end and the line from the corner runs shallow the whole
+    // way, leaving the corner's walls standing proud.
+    const SQ = 'M 0 0 L 20 0 L 20 20 L 0 20 Z'
+    const segs = await generateVCarve(SQ, vbit(), { angleDeg: 90, maxDepthMM: 3, islandDs: [] })
+    const want = (x: number, y: number) => -Math.min(Math.min(x, 20 - x, y, 20 - y), 3)
+    let worst = 0
+    for (let i = 1; i < segs.length; i++) {
+      const a = segs[i - 1], b = segs[i]
+      if (a.rapid || b.rapid || Math.hypot(b.x - a.x, b.y - a.y) < 0.1) continue
+      for (const t of [0.25, 0.5, 0.75]) {
+        const x = a.x + t * (b.x - a.x), y = a.y + t * (b.y - a.y), z = a.z + t * (b.z - a.z)
+        worst = Math.max(worst, Math.abs(z - want(x, y)))
+      }
+    }
+    expect(worst).toBeLessThan(0.02)
+  })
 })
 
 // ─── Retract framing ──────────────────────────────────────────────────────────

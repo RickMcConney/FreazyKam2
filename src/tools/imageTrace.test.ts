@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  traceImage, otsuThreshold, multiOtsu, autoThreshold, simplifyRingLocked, segPoint, segPiece,
+  traceImage, traceThresholds, otsuThreshold, multiOtsu, autoThreshold, simplifyRingLocked, segPoint, segPiece,
   thinMask, traceSkeleton, despeckleMask, DEFAULT_TRACE, MAX_TRACE_LOOPS,
   type TraceParams, type Seg,
 } from './imageTrace'
@@ -166,6 +166,30 @@ describe('automatic thresholds', () => {
     expect(inside(r.ds, toMM(200, 100))).toBe(false)
     expect(inside(r.ds, toMM(273, 100))).toBe(true)
   })
+
+  it('manual multi-tone cuts are used as given, darkest break innermost for a dark trace', () => {
+    const lum = new Uint8Array(900)
+    lum.fill(20, 0, 300); lum.fill(128, 300, 600); lum.fill(240, 600, 900)
+    const p = { ...DEFAULT_TRACE, tones: 4, autoThreshold: false, cuts: [200, 60, 100] }
+    expect(traceThresholds(lum, p)).toEqual([60, 100, 200])
+    expect(traceThresholds(lum, { ...p, trace: 'light' })).toEqual([200, 100, 60])
+  })
+
+  it('manual cuts give way to the automatic ones when Auto is on or their count does not match the tones', () => {
+    const lum = new Uint8Array(900)
+    lum.fill(20, 0, 300); lum.fill(128, 300, 600); lum.fill(240, 600, 900)
+    const auto = multiOtsu(lum, 3)
+    expect(traceThresholds(lum, { ...DEFAULT_TRACE, tones: 3, autoThreshold: true, cuts: [50, 60] })).toEqual(auto)
+    expect(traceThresholds(lum, { ...DEFAULT_TRACE, tones: 3, autoThreshold: false, cuts: [50, 60, 70] })).toEqual(auto)
+  })
+
+  it('a manual cut moves the tone boundary: the grey fill drops out of tone 2 when the upper cut sits below grey', () => {
+    // Cartoon grey is 170: a cut at 200 takes it into tone 2, one at 150 leaves it out.
+    const at = (upper: number) => trace(cartoon, { tones: 3, autoThreshold: false, cuts: [60, upper], smoothing: 50 })
+    const t2 = (r: ReturnType<typeof at>) => r.ds.filter((_, i) => r.levels[i] === 2)
+    expect(inside(t2(at(200)), toMM(200, 100))).toBe(true)
+    expect(inside(t2(at(150)), toMM(200, 100))).toBe(false)
+  })
 })
 
 // ─── Outlines ─────────────────────────────────────────────────────────────────
@@ -298,6 +322,63 @@ describe('multi-tone trace', () => {
       expect(r.levels.filter((l) => l === 2).length).toBeLessThan(20)
     }
   })
+
+  it('drops a pale halo hanging off a line, but keeps a pale area of its own', () => {
+    // The cartoon with a lump of near-white (232) on the outside of its outline — the
+    // JPEG ringing beside a real line — and a patch of the same grey off on its own.
+    // Both are in tone 2 at a cut of 240; only the patch is a tone the picture shows.
+    const img = paint(400, 200, (x, y) => {
+      const d = Math.hypot(x - 200, y - 100)
+      const line = Math.min(cover(d - 76), cover(70 - d))
+      const fill = cover(d - 70)
+      const lump = cover(Math.hypot(x - 279, y - 100) - 3) * (1 - line)
+      const patch = Math.min(cover(20 - x), cover(x - 50), cover(20 - y), cover(y - 50))
+      const pale = Math.max(lump, patch)
+      return (255 * (1 - line) - (255 - 170) * fill * (1 - line)) - (255 - 232) * pale * (1 - fill)
+    })
+    const r = trace(img, { tones: 3, autoThreshold: false, cuts: [90, 240], smoothing: 50 })
+    const t2 = r.ds.filter((_, i) => r.levels[i] === 2)
+    expect(inside(t2, toMM(280, 100))).toBe(false)   // the halo is gone…
+    expect(inside(t2, toMM(35, 35))).toBe(true)      // …the patch is not…
+    expect(inside(t2, toMM(200, 100))).toBe(true)    // …nor the grey fill inside the line
+  })
+
+  it('a lighter tone squeezed into a V narrower than the speck size joins the darker tone', () => {
+    // A black block with a grey (170) wedge cut into it, 0 px wide at x = 50 opening to
+    // 30 px at x = 350. With specks at 2 mm (8 px) the wedge's narrow tip, 4 px (1 mm)
+    // across at x = 90, fills black; its wide end stays grey. With specks off it is grey.
+    const img = paint(400, 200, (x, y) => {
+      const box = Math.min(cover(20 - x), cover(x - 380), cover(40 - y), cover(y - 160))
+      const wedge = cover(Math.abs(y - 100) - Math.max(0, (x - 50) * 0.05))
+      return 255 - box * (255 - 170 * wedge)
+    })
+    const t1 = (minSpeckMM: number) => {
+      const r = trace(img, { tones: 3, autoThreshold: false, cuts: [90, 240], smoothing: 0, minSpeckMM })
+      return r.ds.filter((_, i) => r.levels[i] === 1)
+    }
+    expect(inside(t1(2), toMM(90, 100))).toBe(true)
+    expect(inside(t1(2), toMM(320, 100))).toBe(false)
+    expect(inside(t1(0), toMM(90, 100))).toBe(false)
+  })
+
+  for (const smoothing of [0, 50, 100]) {
+    it(`leaves no outline smaller than a speck where a light V meets a line and a darker area (smoothing ${smoothing})`, () => {
+      // Black left of x = 200, mid grey (150) right of it, and a pale (220) V between the
+      // two running down to a point at (200, 100) — the corner where a tone boundary meets
+      // a drawn line. With Smoothing on, the band's opening used to shave the filled tip
+      // of the V back off, and it came out as a small triangle of its own.
+      const img = paint(400, 200, (x, y) => {
+        const box = Math.min(cover(20 - x), cover(x - 380), cover(20 - y), cover(y - 180))
+        const black = cover(x - 200)
+        const pale = Math.min(cover(200 - x), cover(x - 200 - Math.max(0, (100 - y) / 4)), cover(y - 100))
+        return 255 - box * (255 - (1 - black) * (150 + 70 * pale))
+      })
+      const r = trace(img, { tones: 4, autoThreshold: false, cuts: [90, 195, 240], smoothing, minSpeckMM: 2 })
+      const ringArea = (ring: Pt2[]) => Math.abs(ring.reduce((a, p, i) => { const q = ring[(i + 1) % ring.length]; return a + p[0] * q[1] - q[0] * p[1] }, 0)) / 2
+      const smallest = Math.min(...r.ds.flatMap((d) => flattenPath(d, 0.01)).map(ringArea))
+      expect(smallest).toBeGreaterThan(2 * 2)
+    })
+  }
 
   it('leaves no hairline rim of the middle tone round a line: no band of it narrower than the bit', () => {
     // The black line's soft outer edge is in-between grey all the way round. Thickened for

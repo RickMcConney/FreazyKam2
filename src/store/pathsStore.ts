@@ -207,6 +207,13 @@ function dropDependentsOf(deleteIds: string[]): string[] {
       reshaped.push(op.id)
       return [{ ...op, islandIds: op.islandIds.filter((id) => !gone.has(id)) }]
     }
+    // An inlay male whose only lost path is its cut-out band keeps going without it — the
+    // band is a convenience drawn for it, not part of the plug.
+    if (op.type === 'inlay' && op.bandId && gone.has(op.bandId)
+        && !deleteIds.some((id) => id !== op.bandId && refsPathId(op, id))) {
+      reshaped.push(op.id)
+      return [{ ...op, bandId: undefined }]
+    }
     // A shared-line profile of a sheet loses the deleted parts and cuts the rest; it goes
     // only with its last part.
     if (op.type === 'profile' && op.pathIds) {

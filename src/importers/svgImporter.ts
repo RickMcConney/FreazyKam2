@@ -11,6 +11,7 @@ import type { BooleanOpType } from '../tools/booleanOps'
 import type { CornerTreatmentType } from '../tools/cornerTreatment'
 import type { ClockSpec } from '../shapes/clockTrain'
 import type { TraceParams } from '../tools/imageTrace'
+import type { AlongPathOptions } from '../tools/alongPath'
 import { PATH_COLOR } from '../colors'
 import { splitCompoundPath } from '../canvas/nodeUtils'
 import { normalizeColor, colorByLayer } from './layers'
@@ -151,6 +152,9 @@ export type PathDefinition = { id: string } & (
   // Outlines traced from the picture on the image path `sourceId` (tools/imageTrace).
   // Every outline of one trace shares the id; the Trace form re-traces them all.
   | { kind: 'trace'; sourceId: string; params: TraceParams }
+  // The letters of the Text object `sourceId` (left hidden) laid along the path `guideId`
+  // (tools/alongPath). The Along Path form reopens on it and Apply re-lays them.
+  | { kind: 'along'; sourceId: string; guideId: string; params: AlongPathOptions }
 )
 
 /** The Nest settings a fill was made with — what its chip reopens the form on. */

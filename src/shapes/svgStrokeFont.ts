@@ -44,6 +44,10 @@ export interface SvgStrokeShimFont {
   descender: number
   tables: { os2: { sCapHeight: number } }
   getPath(text: string, x: number, y: number, fontSize: number): StrokePath
+  /** One entry per character, laid out as getPath lays them: `x` is the pen position, `path`
+   *  the glyph alone with its pen at the origin (empty for a space). What text-on-path needs
+   *  to place each letter on its own — the same shape opentype.js's forEachGlyph gives. */
+  getGlyphRuns(text: string, fontSize: number): { x: number; advance: number; path: StrokePath }[]
 }
 
 function num(s: string | null, fallback: number): number {
@@ -103,6 +107,23 @@ function buildShim(doc: Document): SvgStrokeShimFont {
         penX += g.advance
       }
       return path
+    },
+    getGlyphRuns(text: string, fontSize: number) {
+      const scale = fontSize / upem
+      const runs: { x: number; advance: number; path: StrokePath }[] = []
+      let penX = 0
+      for (const ch of text) {
+        if (ch === '\n') continue
+        const g = ch === ' ' ? undefined : glyphs.get(ch)
+        const advance = g ? g.advance : spaceAdv
+        const path = new StrokePath()
+        if (g) for (const pl of g.polylines) {
+          for (let i = 0; i < pl.length; i++) path.commands.push({ type: i === 0 ? 'M' : 'L', x: pl[i][0] * scale, y: -pl[i][1] * scale })
+        }
+        runs.push({ x: penX * scale, advance: advance * scale, path })
+        penX += advance
+      }
+      return runs
     },
   }
 }
