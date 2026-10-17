@@ -28,8 +28,45 @@ const HELIX_DEG = 30
 const GULLY_DEPTH = 0.42
 const LAND_LO = 0.2, LAND_W = 0.55
 const SIDES = 96
-const STEEL = new THREE.Color(0xb9bec4)
-const GULLY = new THREE.Color(0x2a6ea0) // same blue as the src/icons/*.svg flute outlines
+// Bright steel on the lands, a darker steel down in the gullies: in metal the colour is the
+// reflectance, so the gullies read as the shadowed channels they are, not as paint.
+const STEEL = new THREE.Color(0xdfe3e8)
+const GULLY = new THREE.Color(0x868c94)
+
+// WHAT THE METAL REFLECTS. Metal has no colour of its own to light — it shows what is round
+// it — so a fully metallic material in a scene with nothing to reflect renders nearly black.
+// This is a small studio drawn once and handed to the tool's materials only (not the scene,
+// whose wood is lit as it always was): a bright sky, a darker floor, and soft light strips
+// that run round the tool as highlights along each flute and down the shank as it turns.
+let studio: THREE.Texture | null = null
+function studioEnvironment(): THREE.Texture {
+  if (studio) return studio
+  const W = 256, H = 128
+  const canvas = document.createElement('canvas')
+  canvas.width = W
+  canvas.height = H
+  const ctx = canvas.getContext('2d')!
+  const sky = ctx.createLinearGradient(0, 0, 0, H)
+  sky.addColorStop(0, '#ffffff')
+  sky.addColorStop(0.45, '#c9ced6')
+  sky.addColorStop(0.55, '#6f747c')
+  sky.addColorStop(1, '#2c2f34')
+  ctx.fillStyle = sky
+  ctx.fillRect(0, 0, W, H)
+  // Two soft vertical light panels, half a turn apart.
+  for (const x of [W * 0.2, W * 0.7]) {
+    const g = ctx.createLinearGradient(x - 18, 0, x + 18, 0)
+    g.addColorStop(0, 'rgba(255,255,255,0)')
+    g.addColorStop(0.5, 'rgba(255,255,255,0.85)')
+    g.addColorStop(1, 'rgba(255,255,255,0)')
+    ctx.fillStyle = g
+    ctx.fillRect(x - 18, H * 0.1, 36, H * 0.55)
+  }
+  studio = new THREE.CanvasTexture(canvas)
+  studio.mapping = THREE.EquirectangularReflectionMapping
+  studio.colorSpace = THREE.SRGBColorSpace
+  return studio
+}
 
 // The sim's tool parameters as the library Tool the profile functions take. `diamMM` is
 // the WIDEST cutting diameter (the sim's one meaning for a tool diameter), so a taper's
@@ -149,7 +186,7 @@ function flutePhase(helix: FluteHelix, twist: number, upcutLen: number): (h: num
 
 // Builds a tool indicator group, tip at Y=0, extending up +Y: the fluted cutting end (see
 // the header), then a polished steel shank (small tools get a standard ~3.2mm shank) topped
-// with a dark collet nut. A taper is drawn from its WIDEST cutting diameter down to its tip
+// with a dark steel collet nut. All solid metal — it is drawn opaque, as the real bit is. A taper is drawn from its WIDEST cutting diameter down to its tip
 // ball; `diamMM` carries that widest diameter and `tipDiaMM` the ball.
 export function buildToolMesh(type: string, diamMM: number, vbitAngleDeg = 60, fluteCount = 2, tipDiaMM = 0, cornerMM = 0, helix: FluteHelix = 'up'): THREE.Object3D {
   const r = Math.max(0.05, diamMM / 2)
@@ -161,10 +198,12 @@ export function buildToolMesh(type: string, diamMM: number, vbitAngleDeg = 60, f
   const shankH = Math.max(diamMM * 2.5, 12)
   const SEGS = 32
 
-  const opts = { transparent: true, opacity: 0.9 }
-  const fluteMat  = new THREE.MeshPhongMaterial({ vertexColors: true, specular: 0x555555, shininess: 60, ...opts })
-  const shankMat  = new THREE.MeshPhongMaterial({ color: 0xd4d7db, specular: 0x777777, shininess: 90, ...opts })
-  const colletMat = new THREE.MeshPhongMaterial({ color: 0x3a3d42, specular: 0x444444, shininess: 70, ...opts })
+  // Ground flutes are a little rougher than the polished shank; the collet nut is darker,
+  // blacked steel. The env map is shared (one texture for every tool), never disposed.
+  const envMap = studioEnvironment()
+  const fluteMat  = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 1, roughness: 0.32, envMap, envMapIntensity: 1.1 })
+  const shankMat  = new THREE.MeshStandardMaterial({ color: 0xe6e9ed, metalness: 1, roughness: 0.18, envMap, envMapIntensity: 1.1 })
+  const colletMat = new THREE.MeshStandardMaterial({ color: 0x4a4e55, metalness: 1, roughness: 0.4, envMap, envMapIntensity: 0.8 })
 
   const group = new THREE.Group()
 
