@@ -14,6 +14,7 @@ import { useUIStore } from '../../store/uiStore'
 import { seedStepDownMM } from '../../cam/feeds'
 import { extractCircles, type CircleInfo } from '../../canvas/selectionUtils'
 import { type StartFrom } from '../../cam/startHeight'
+import { drillFormDefaults, drillPathItem, HELICAL_TOOL_TYPES } from './opDefaults'
 
 interface DrillFormState {
   toolId: string
@@ -45,15 +46,7 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
     toolId: editOp.toolId, drillMode: editOp.drillMode,
     depthMM: editOp.depthMM, stepDownMM: editOp.stepDownMM, stepDownManual: editOp.stepDownManual ?? false,
     startFrom: editOp.startFrom ?? { mode: 'auto' as const },
-  } : { ...mergeWithDefaults(load('drill'), {
-    toolId: defaultTool?.id ?? '',
-    drillMode: 'peck' as const,
-    startFrom: { mode: 'auto' as const } as StartFrom,
-    // Default to the full stock thickness; the tool's max Z is only a warning.
-    depthMM: thicknessMM > 0 ? thicknessMM : (defaultTool?.maxDepthMM ?? 10),
-    stepDownMM: seedStepDownMM(defaultTool),
-    stepDownManual: false,
-  }, tools), stepDownManual: false })
+  } : { ...mergeWithDefaults(load('drill'), drillFormDefaults(defaultTool, thicknessMM), tools), stepDownManual: false })
   const { generating, errorMsg, generate } = useBatchGenerate('drill', 'drill')
   const session = useSessionOps()
 
@@ -68,12 +61,8 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
     }
   }, [form.drillMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Peck plunges straight down the axis, so any tool that can plunge is fair game — a drill
-  // bit above all. Helical bores the hole with the SIDE of the tool while it ramps, which
-  // is an end mill's job: a drill bit has no side edge (the form already refused to
-  // generate one), and a V-bit or ball nose would cut a cone or a rounded bottom rather
-  // than a straight-walled hole.
-  const helicalTools = toolsOfType(tools, ['endmill'])
+  // Helical bores with the side of the tool — see HELICAL_TOOL_TYPES.
+  const helicalTools = toolsOfType(tools, HELICAL_TOOL_TYPES)
   const drillTools = form.drillMode === 'helical' ? helicalTools : tools
 
   // The two modes keep SEPARATE tool selections. Switching to helical with a drill bit
@@ -187,21 +176,7 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
     const tool = selectedTool
     const { toolId, depthMM, stepDownMM, stepDownManual, startFrom } = form
     // The holes of one path, read the way the form's mode reads them — one op per path.
-    // The holes ride as FIELDS, not settings: editing a batch rewrites its depth and tool,
-    // but every op keeps the holes it was built from.
-    const pathItem = (path: ImportedPath, holes: CircleInfo[]): BatchItem => form.drillMode === 'helical' ? {
-      key: path.id,
-      name: `Helical Drill: ${path.name} (${tool.name})${holes.length > 1 ? ` ×${holes.length}` : ''}`,
-      fields: {
-        drillMode: 'helical', points: [], pathId: path.id, helicalHoles: holes,
-        helicalCenterX: holes[0].cx, helicalCenterY: holes[0].cy,
-        helicalRadius: Math.max(0, holes[0].radiusMM - tool.diameterMM / 2),
-      },
-    } : {
-      key: path.id,
-      name: `Peck Drill: ${path.name} (${tool.name}) ×${holes.length}`,
-      fields: { drillMode: 'peck', points: holes.map((h) => ({ x: h.cx, y: h.cy })), pathId: path.id },
-    }
+    const pathItem = (path: ImportedPath, holes: CircleInfo[]): BatchItem => drillPathItem(path, holes, tool, form.drillMode)
     const kept = (op: DrillOperation): BatchItem => ({ key: op.pathId ?? op.id, op, name: op.name, fields: {} })
 
     let items: BatchItem[]

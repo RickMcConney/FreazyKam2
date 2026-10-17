@@ -28,10 +28,86 @@ function selectImported(paths: { id: string }[]) {
   if (paths.length > 0) usePathsStore.getState().setSelectedIds(paths.map((p) => p.id))
 }
 
+/** What a text import added, or why it added nothing — for a caller that is not a person
+ *  watching the status bar (the MCP bridge). The status bar is told either way. */
+export interface TextImportResult { pathIds: string[]; problem?: string }
+
+/** Import an SVG's text: centred on the stock, one group, selected. */
+export function importSvgText(text: string, fileName: string): TextImportResult {
+  try {
+    const { widthMM, heightMM } = useWorkpieceStore.getState()
+    const gn = fileName.replace(/\.svg$/i, '')
+    const result = importSvg(text, {}, gn)
+    if (result.paths.length > 0) {
+      // Center on workpiece by actual path bbox (handles SVGs where content
+      // is smaller than the declared page size, e.g. tiny art on an A4 canvas)
+      const bbox = getMultiBBox(result.paths.map(p => p.d))
+      if (bbox) {
+        const dx = widthMM / 2 - (bbox.minX + bbox.maxX) / 2
+        const dy = heightMM / 2 - (bbox.minY + bbox.maxY) / 2
+        if (Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001)
+          for (const path of result.paths) path.d = translateD(path.d, dx, dy)
+      }
+      const store = usePathsStore.getState()
+      store.addPaths(result.paths, { source: 'import', label: `Import SVG (${fileName})` })
+      store.toggleGroupCollapsed(result.groupId)
+      selectImported(result.paths)
+      useUIStore.getState().setSidebarTab('draw')
+      return { pathIds: result.paths.map((p) => p.id) }
+    }
+    useUIStore.getState().showStatus('SVG import failed — no usable paths in the file', 'warn')
+    return { pathIds: [], problem: 'no usable paths in the file' }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'unknown error'
+    useUIStore.getState().showStatus(`SVG import failed — ${msg}`, 'error')
+    return { pathIds: [], problem: msg }
+  }
+}
+
+/**
+ * Import a picture from its data URL: sized at 96 DPI and scaled down to fit 80% of the
+ * stock, centred on it. Resolves once the picture has decoded and its path is added.
+ */
+export function importImageDataUrl(src: string, fileName: string): Promise<TextImportResult> {
+  return new Promise((resolve) => {
+    const img = new window.Image()
+    img.onload = () => {
+      const { widthMM, heightMM } = useWorkpieceStore.getState()
+      // Convert natural pixels → mm at 96 DPI, then scale to fit 80% of workpiece
+      const PX_TO_MM = 25.4 / 96
+      const naturalW = img.naturalWidth * PX_TO_MM
+      const naturalH = img.naturalHeight * PX_TO_MM
+      const scl = Math.min((widthMM * 0.8) / naturalW, (heightMM * 0.8) / naturalH, 1)
+      const imgW = naturalW * scl
+      const imgH = naturalH * scl
+      // Center on the workpiece
+      const cx = widthMM / 2, cy = heightMM / 2
+      const hw = imgW / 2, hh = imgH / 2
+      const d = `M${round4(cx - hw)},${round4(cy - hh)} L${round4(cx + hw)},${round4(cy - hh)} L${round4(cx + hw)},${round4(cy + hh)} L${round4(cx - hw)},${round4(cy + hh)} Z`
+      const id = uid('img')
+      usePathsStore.getState().addPaths([{
+        id,
+        name: fileName.replace(/\.[^.]+$/, ''),
+        d,
+        visible: true,
+        color: '#94a3b8',
+        imageSrc: src,
+      }], { source: 'import', label: `Import image (${fileName})` })
+      useUIStore.getState().setSidebarTab('draw')
+      resolve({ pathIds: [id] })
+    }
+    img.onerror = () => {
+      useUIStore.getState().showStatus(`Image import failed — could not decode ${fileName}`, 'error')
+      resolve({ pathIds: [], problem: `could not decode ${fileName}` })
+    }
+    img.src = src
+  })
+}
+
 // Finish a DXF import once units are known — either straight from the file's
 // $INSUNITS or from the units-prompt dialog (DxfUnitsDialog) after the user
 // picks. Exported for that dialog.
-export function completeDxfImport(text: string, fileName: string, units?: DxfUnitsChoice) {
+export function completeDxfImport(text: string, fileName: string, units?: DxfUnitsChoice): TextImportResult {
   useUIStore.getState().setPendingDxfImport(null)
   const { widthMM, heightMM } = useWorkpieceStore.getState()
   const result = importDxf(text, fileName, units, { x: widthMM / 2, y: heightMM / 2 })
@@ -48,12 +124,16 @@ export function completeDxfImport(text: string, fileName: string, units?: DxfUni
       useUIStore.getState().showStatus(
         `Imported ${result.paths.length} path${result.paths.length === 1 ? '' : 's'}. Not imported: ${left} — convert text to outlines (explode) in your CAD program to cut it.`, 'warn')
     }
+    return { pathIds: result.paths.map((p) => p.id), ...(left ? { problem: `not imported: ${left} — text has to be exploded to outlines in the CAD program` } : {}) }
   } else if (result.error) {
     useUIStore.getState().showStatus(`DXF import failed — ${result.error}`, 'error')
+    return { pathIds: [], problem: result.error }
   } else if (!result.needsUnitsPrompt) {
     const left = describeSkipped(result.skipped)
     useUIStore.getState().showStatus(`DXF import failed — no supported geometry in the file${left ? ` (found only: ${left})` : ''}`, 'warn')
+    return { pathIds: [], problem: `no supported geometry in the file${left ? ` (found only: ${left})` : ''}` }
   }
+  return { pathIds: [], problem: 'the file does not say what units it is in' }
 }
 
 // G-code imports run one at a time, in the order they were started: dropping a split-by-tool
@@ -154,34 +234,7 @@ export function importFile(file: File): void {
 
   if (file.name.toLowerCase().endsWith('.svg') || file.type === 'image/svg+xml') {
     const reader = new FileReader()
-    reader.onload = (ev) => {
-      try {
-        const { widthMM, heightMM } = useWorkpieceStore.getState()
-        const gn = file.name.replace(/\.svg$/i, '')
-        const result = importSvg(ev.target?.result as string, {}, gn)
-        if (result.paths.length > 0) {
-          // Center on workpiece by actual path bbox (handles SVGs where content
-          // is smaller than the declared page size, e.g. tiny art on an A4 canvas)
-          const bbox = getMultiBBox(result.paths.map(p => p.d))
-          if (bbox) {
-            const dx = widthMM / 2 - (bbox.minX + bbox.maxX) / 2
-            const dy = heightMM / 2 - (bbox.minY + bbox.maxY) / 2
-            if (Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001)
-              for (const path of result.paths) path.d = translateD(path.d, dx, dy)
-          }
-          const store = usePathsStore.getState()
-          store.addPaths(result.paths, { source: 'import', label: `Import SVG (${file.name})` })
-          store.toggleGroupCollapsed(result.groupId)
-          selectImported(result.paths)
-          useUIStore.getState().setSidebarTab('draw')
-        } else {
-          useUIStore.getState().showStatus('SVG import failed — no usable paths in the file', 'warn')
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : 'unknown error'
-        useUIStore.getState().showStatus(`SVG import failed — ${msg}`, 'error')
-      }
-    }
+    reader.onload = (ev) => { importSvgText(ev.target?.result as string, file.name) }
     reader.onerror = readFailed
     reader.readAsText(file)
     return
@@ -227,36 +280,7 @@ export function importFile(file: File): void {
 
   if (/\.(png|jpe?g|webp)$/i.test(file.name) || file.type.startsWith('image/')) {
     const reader = new FileReader()
-    reader.onload = (ev) => {
-      const src = ev.target?.result as string
-      const img = new window.Image()
-      img.onload = () => {
-        const { widthMM, heightMM } = useWorkpieceStore.getState()
-        // Convert natural pixels → mm at 96 DPI, then scale to fit 80% of workpiece
-        const PX_TO_MM = 25.4 / 96
-        const naturalW = img.naturalWidth * PX_TO_MM
-        const naturalH = img.naturalHeight * PX_TO_MM
-        const scl = Math.min((widthMM * 0.8) / naturalW, (heightMM * 0.8) / naturalH, 1)
-        const imgW = naturalW * scl
-        const imgH = naturalH * scl
-        // Center on the workpiece
-        const cx = widthMM / 2, cy = heightMM / 2
-        const hw = imgW / 2, hh = imgH / 2
-        const d = `M${round4(cx - hw)},${round4(cy - hh)} L${round4(cx + hw)},${round4(cy - hh)} L${round4(cx + hw)},${round4(cy + hh)} L${round4(cx - hw)},${round4(cy + hh)} Z`
-        usePathsStore.getState().addPaths([{
-          id: uid('img'),
-          name: file.name.replace(/\.[^.]+$/, ''),
-          d,
-          visible: true,
-          color: '#94a3b8',
-          imageSrc: src,
-        }], { source: 'import', label: `Import image (${file.name})` })
-        useUIStore.getState().setSidebarTab('draw')
-      }
-      img.onerror = () =>
-        useUIStore.getState().showStatus(`Image import failed — could not decode ${file.name}`, 'error')
-      img.src = src
-    }
+    reader.onload = (ev) => { void importImageDataUrl(ev.target?.result as string, file.name) }
     reader.onerror = readFailed
     reader.readAsDataURL(file)
     return

@@ -13,6 +13,7 @@ import { isWorkCancelled } from '../../workers/workerClient'
 import { generateOperation } from '../../cam/opJob'
 import { extractRectInfo } from '../../canvas/selectionUtils'
 import { grooveWidthMM, lineSpacingMM } from '../../cam/photoVcarve'
+import { PHOTO_VCARVE_TOOL_TYPES, photoVcarveFormDefaults, norm180 } from './opDefaults'
 
 interface PhotoVCarveFormState {
   toolId: string
@@ -23,12 +24,6 @@ interface PhotoVCarveFormState {
   startFrom: StartFrom
 }
 
-// Raster lines are undirected — 200° and 20° lay down the same lines — so every angle has an
-// equivalent in [0, 180), which is the range the slider offers.
-function norm180(deg: number) {
-  const d = ((deg % 180) + 180) % 180
-  return Math.round(d / 5) * 5 % 180
-}
 
 export function PhotoVCarveForm({ onClose, editOp }: { onClose: () => void; editOp?: PhotoVCarveOperation }) {
   // Individual selectors, not whole-store destructuring — see DrillForm.
@@ -40,9 +35,8 @@ export function PhotoVCarveForm({ onClose, editOp }: { onClose: () => void; edit
   const save = useFormDefaultsStore((s) => s.save)
   const units = useWorkpieceStore((s) => s.units)
 
-  // V-bits only — the groove width the line spacing is derived from is 2·d·tan(θ/2), which
-  // exists only for a cone. See VCarveForm on the dropped fall-back to every tool.
-  const vbits = toolsOfType(tools, ['vbit'])
+  // V-bits only — see PHOTO_VCARVE_TOOL_TYPES.
+  const vbits = toolsOfType(tools, PHOTO_VCARVE_TOOL_TYPES)
   const defaultTool = vbits[0]
   const imagePaths = paths.filter((p) => !!p.imageSrc)
 
@@ -54,17 +48,7 @@ export function PhotoVCarveForm({ onClose, editOp }: { onClose: () => void; edit
       minDepthMM: editOp.minDepthMM,
       maxDepthMM: editOp.maxDepthMM,
       startFrom: editOp.startFrom ?? { mode: 'stock' as const },
-    } : mergeWithDefaults(load('photovcarve'), {
-      toolId: defaultTool?.id ?? '',
-      pathId: imagePaths[0]?.id ?? '',
-      passAngleDeg: 0,
-      // White cuts nothing, black cuts 0.6 mm. Shallow on purpose: the depth sets the line
-      // spacing, so this is the resolution control — 0.6 mm on a 60° bit gives 0.69 mm lines.
-      minDepthMM: 0,
-      maxDepthMM: 0.6,
-      // Deliberately not carried over from the saved defaults — see PocketForm.
-      startFrom: { mode: 'auto' } as StartFrom,
-    }, tools)
+    } : mergeWithDefaults(load('photovcarve'), photoVcarveFormDefaults(defaultTool, imagePaths[0]?.id ?? ''), tools)
     // An op or saved default from before the slider can hold any angle in ±180. Fold it into
     // the slider's half turn rather than let the control clamp it to a different raster.
     return {

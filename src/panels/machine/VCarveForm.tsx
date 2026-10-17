@@ -13,6 +13,7 @@ import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 import { includedAngleDeg, isVCutter, tipBallRadiusMM, toolRadiusAtHeight } from '../../cam/geom'
 import { groupPathsByContainment, skipOpenPaths, skippedOpenMsg } from './containment'
 import { reviseGroupBatch } from './reviseBatch'
+import { VCARVE_TOOL_TYPES, vcarveFormDefaults } from './opDefaults'
 
 interface VCarveFormState {
   toolId: string
@@ -39,18 +40,12 @@ export function VCarveForm({ onClose, editOp }: { onClose: () => void; editOp?: 
   // which offered drills for a cut they can't make. A taper qualifies — it is the same cone
   // with a ball on the tip, so a stroke narrower than the tip comes out round-bottomed
   // instead of pointed rather than being cut wrong.
-  const vbits = toolsOfType(tools, ['vbit', 'taper'])
+  const vbits = toolsOfType(tools, VCARVE_TOOL_TYPES)
   const defaultTool = vbits[0]
   const [form, setForm] = useState<VCarveFormState>(() => {
     const base = editOp
       ? { toolId: editOp.toolId, maxDepthMM: editOp.maxDepthMM, startFrom: editOp.startFrom ?? { mode: 'stock' as const } }
-      : { ...mergeWithDefaults(load('vcarve'), {
-          toolId: defaultTool?.id ?? '',
-          // Default to the full stock thickness; the tool's max Z is only a warning.
-          maxDepthMM: thicknessMM > 0 ? thicknessMM : (defaultTool?.maxDepthMM ?? 10),
-          // Deliberately not carried over from the saved defaults — see PocketForm.
-          startFrom: { mode: 'auto' } as StartFrom,
-        }, tools), startFrom: { mode: 'auto' as const } }
+      : { ...mergeWithDefaults(load('vcarve'), vcarveFormDefaults(defaultTool, thicknessMM), tools), startFrom: { mode: 'auto' as const } }
     return { ...base, toolId: pickToolId(base.toolId, vbits) }
   })
   const { generating, errorMsg, generate } = useBatchGenerate('vcarve', 'vcarve')

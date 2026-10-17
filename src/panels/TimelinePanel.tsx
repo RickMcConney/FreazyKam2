@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronDown, ChevronUp,
-  Shapes, Wrench, Square, Squircle, Signpost, Circle, Ellipse, Hexagon,
-  Star, Heart, Pill, Shield, Orbit, Grid3x3, CookingPot, Cog, Snail, Type, PenTool, Copy, Import, SquaresUnite,
+  Shapes, Wrench, Square, Squircle, Circle, Ellipse, Hexagon,
+  Star, Heart, Shield, Orbit, Grid3x3, Cog, Snail, Type, PenTool, Copy, Import, SquaresUnite,
   SquareSquare, PencilSparkles, LayoutGrid, Target, CircleDot, Layers, Box, RefreshCw, FileCode,
-  X, Image as ImageIcon, Anchor, Weight, Clock, RectangleEllipsis, VectorSquare, Group, TrainTrack,
-  RulerDimensionLine, Webhook, Blocks, Package, Puzzle, Hourglass, BrickWall, Spline,
+  X, Image as ImageIcon, Weight, Clock, VectorSquare, Group, TrainTrack,
+  RulerDimensionLine, Webhook, Blocks, Package, 
 } from 'lucide-react'
+import { TabsIcon, AlongPathIcon } from './pathToolIcons'
+import { SignIcon, SlotIcon, BoardIcon, EscapementIcon, FingerJointIcon, DovetailIcon, BowtieIcon } from './draw/shapeIcons'
 import { usePathsStore, clearCorners, outerGroupOf, type ImportedPath } from '../store/pathsStore'
 import { useToolpathStore, pathIdsOf, type AnyOperation } from '../store/toolpathStore'
 import { useTabStore, type Tab } from '../store/tabStore'
@@ -38,11 +40,11 @@ type ChipIcon = React.ComponentType<{ size?: number; style?: React.CSSProperties
 
 // Same icons as the shape panel (ShapePanel SHAPES) …
 const SHAPE_ICONS: Record<string, ChipIcon> = {
-  rectangle: Square, roundrect: Squircle, inroundrect: Signpost, circle: Circle,
-  ellipse: Ellipse, polygon: Hexagon, star: Star, heart: Heart, slot: Pill,
-  shield: Shield, spirograph: Orbit, maze: Grid3x3, board: CookingPot, gear: Cog,
-  cam: Snail, ratchet: Webhook, escapement: Anchor, pendulum: Weight, track: TrainTrack, text: Type,
-  box: Package, fingerjoint: BrickWall, dovetail: Puzzle, bowtie: Hourglass,
+  rectangle: Square, roundrect: Squircle, inroundrect: SignIcon, circle: Circle,
+  ellipse: Ellipse, polygon: Hexagon, star: Star, heart: Heart, slot: SlotIcon,
+  shield: Shield, spirograph: Orbit, maze: Grid3x3, board: BoardIcon, gear: Cog,
+  cam: Snail, ratchet: Webhook, escapement: EscapementIcon, pendulum: Weight, track: TrainTrack, text: Type,
+  box: Package, fingerjoint: FingerJointIcon, dovetail: DovetailIcon, bowtie: BowtieIcon,
 }
 
 // … and the CAM operations menu (MachinePanel AddOperationMenu)
@@ -98,7 +100,7 @@ function pathVisual(p: ImportedPath): { label: string; Icon: ChipIcon; color?: s
     if (def.kind === 'offset') return { label: 'Offset', Icon: SquareSquare, color: OP_TYPE_COLORS.offset }
     if (def.kind === 'pattern') return { label: 'Pattern', Icon: LayoutGrid, color: OP_TYPE_COLORS.pattern }
     if (def.kind === 'trace') return { label: 'Trace', Icon: PencilSparkles, color: OP_TYPE_COLORS.trace }
-    if (def.kind === 'along') return { label: 'Text on Path', Icon: Spline }
+    if (def.kind === 'along') return { label: 'Text on Path', Icon: AlongPathIcon }
     if (def.kind === 'fill') return { label: 'Nest', Icon: Blocks, color: OP_TYPE_COLORS.nest }
     if (def.kind === 'duplicate') return { label: p.name, Icon: Copy }
   }
@@ -283,7 +285,7 @@ function attachedChips(p: ImportedPath, tabs: Tab[]): ObjectChip[] {
   const out: ObjectChip[] = []
   const n = tabs.filter((t) => t.pathId === p.id).length
   if (n > 0) out.push({
-    key: `tabs:${p.id}`, label: n === 1 ? 'Tab' : `Tabs ×${n}`, Icon: RectangleEllipsis,
+    key: `tabs:${p.id}`, label: n === 1 ? 'Tab' : `Tabs ×${n}`, Icon: TabsIcon,
     color: OP_TYPE_COLORS.tabs, family: 'attached', pathIds: [p.id], form: 'tabs',
   })
   const t = p.corners?.treatments.length ?? 0

@@ -3,6 +3,7 @@ import { ICON } from '../theme'
 import { SIM_HEAT_COLORS } from '../colors'
 import { Play, Pause, Rewind, FileText, X } from 'lucide-react'
 import { useSimStore, type SimSpeed } from '../store/simStore'
+import { closeSimulation } from './closeSimulation'
 import { useUIStore } from '../store/uiStore'
 import { useWorkpieceStore, MATERIAL_INFO, MM_PER_INCH as MM_PER_IN } from '../store/workpieceStore'
 import { spindleDialLabel } from '../store/spindle'
@@ -94,7 +95,7 @@ export default function SimulationPlayer() {
   const minSpindleRpm = useWorkpieceStore((s) => s.minSpindleRpm)
   const spindleType = useWorkpieceStore((s) => s.spindleType)
   const workspaceTab = useUIStore((s) => s.workspaceTab)
-  const { play, pause, stop, seekToTime, setSpeed, toggleGcodeViewer, clearSim } = useSimStore()
+  const { play, pause, stop, seekToTime, setSpeed, toggleGcodeViewer } = useSimStore()
 
   // Animation loop — reads fresh store state each frame to avoid stale closures
   useEffect(() => {
@@ -304,11 +305,7 @@ export default function SimulationPlayer() {
         {/* Close simulation — from the 3D view this also returns to 2D */}
         <button
           title="Close simulation"
-          onClick={() => {
-            clearSim()
-            const ui = useUIStore.getState()
-            if (ui.workspaceTab === '3d') ui.setWorkspaceTab('2d')
-          }}
+          onClick={closeSimulation}
           className="text-gray-600 dark:text-neutral-400 hover:text-gray-800 dark:hover:text-neutral-200 transition-colors p-0.5"
         >
           <X size={ICON.sm} />

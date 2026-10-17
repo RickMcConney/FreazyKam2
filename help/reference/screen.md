@@ -4,7 +4,7 @@
 
 | Area | Where | Holds |
 |---|---|---|
-| **Toolbar** | Top | New, Open, Save, Import, Export G-code, Export SVG, Undo, Redo, Simulate, mm/in, Snap, Theme, **?** help |
+| **Toolbar** | Top | New, Open, Save, Import, Export G-code, Export SVG, Undo, Redo, Simulate (Stop while a simulation is open), mm/in, Snap, Theme, **MCP** (AI assistant), **?** help |
 | **View tabs** | Under toolbar | 2D View, 3D View, Tool Library, Post-Processor, Machine |
 | **Sidebar** | Left | Draw, Paths, Setup tabs |
 | **Canvas** | Middle | Your drawing and toolpaths |

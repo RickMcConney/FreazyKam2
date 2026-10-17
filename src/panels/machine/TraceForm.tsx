@@ -15,20 +15,10 @@ import { extractRectInfo } from '../../canvas/selectionUtils'
 import { autoThreshold, multiOtsu, DEFAULT_TRACE, type TraceParams, type TraceResult } from '../../tools/imageTrace'
 import { runInWorkerFor, cancelWork, isWorkCancelled } from '../../workers/workerClient'
 import type { PhotoImage } from '../../cam/photoVcarve'
-import { nextPathColor } from '../../importers/svgImporter'
-import { colorByLayer } from '../../importers/layers'
+import { traceColors } from '../../tools/traceColors'
+import { tracePaths } from '../../tools/pathToolActions'
 import { uid } from '../../uid'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
-
-// The colours the traced paths get — one per tone LAYER when there are several (as
-// colorByLayer gives an import's layers), the ordinary path colour otherwise. Shared by
-// the canvas preview and Trace itself, so locking a preview in changes nothing on screen.
-function traceColors(levels: number[], tones: number): string[] {
-  if (tones <= 1) return levels.map(() => nextPathColor())
-  const tmp = levels.map((l) => ({ id: '', name: '', d: '', visible: true, color: '', layer: `Tone ${l}` }) as ImportedPath)
-  colorByLayer(tmp)
-  return tmp.map((p) => p.color)
-}
 
 // Worker-pool key for this form's traces: a new request cancels whatever is still running.
 const TRACE_JOB = 'trace-image'
@@ -202,15 +192,8 @@ export function TraceForm({ onClose, editCtx }: { onClose: () => void; editCtx?:
         const groupId = defPaths[0]?.groupId ?? uid('grp-trace')
         // Each tone level is a LAYER, so Select Only → Layers picks one out to pocket or
         // inlay on its own, and the canvas colours them apart.
-        const multi = r.thresholds.length > 1
         const noun = centerline ? 'lines' : 'outlines'
-        const colors = traceColors(r.levels, r.thresholds.length)
-        const newPaths: ImportedPath[] = r.ds.map((d, i) => ({
-          id: uid('path-trace'), name: `${source.name} ${multi ? `tone ${r.levels[i]}` : centerline ? 'line' : 'trace'} ${i + 1}`, d, visible: true, color: colors[i],
-          groupId, groupName: `${source.name} trace`,
-          ...(multi ? { layer: `Tone ${r.levels[i]}` } : {}),
-          definition: { id, kind: 'trace', sourceId: source.id, params: form },
-        }))
+        const newPaths = tracePaths(source, r, form, id, groupId)
         const store = usePathsStore.getState()
         if (defPaths.length > 0) {
           // The number of outlines changes with the settings, so a re-trace replaces the

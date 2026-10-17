@@ -16,30 +16,11 @@ import { generateOperation } from '../../cam/opJob'
 import { effectiveStepDownMM } from '../../cam/feeds'
 import { profile3dDepthMM, STOCK_SKIN_MM, modelBelowCut, MODEL_BELOW_CUT_MSG } from '../../cam/profile3d'
 import { enclosingBoundaries } from '../../cam/boundaryCandidates'
-import { DEFAULT_RELIEF_MM, depthMapFloorLevel } from '../../cam/depthMapMesh'
+import { depthMapFloorLevel } from '../../cam/depthMapMesh'
 import { loadImageLuminance } from '../../io/imageLuminance'
+import { PROFILE3D_FINISH_TOOL_TYPES, PROFILE3D_ROUGH_TOOL_TYPES, profile3dFormDefaults, profile3dOpFields, profile3dSettingsOf, type Profile3dSettings } from './opDefaults'
 
-interface Profile3dFormState {
-  toolId: string
-  stepoverPercent: number
-  finishStrategy: 'raster' | 'waterline'
-  boundary: 'model' | 'stock' | 'path'
-  boundaryPathId: string
-  modelTopMM: number
-  rasterAngleDeg: number
-  maxDepthMM: number
-  pathId: string
-  reliefDepthMM: number         // depth map only
-  invertDepth: boolean          // depth map only: dark is high
-  roughingToolId: string        // '' = no roughing pass
-  roughingStepoverPercent: number
-  roughingStepDownMM: number
-  /** The roughing step-down was typed over the auto one (BaseOperation.stepDownManual — the
-   *  roughing pass is this operation's only step-down). */
-  stepDownManual: boolean
-  roughingStockAllowanceMM: number
-  roughingRasterAngleDeg: number | ''  // '' = auto (finishing angle + 90)
-}
+type Profile3dFormState = Profile3dSettings
 
 export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp?: Profile3dOperation }) {
   // Individual selectors, not whole-store destructuring — see DrillForm.
@@ -59,8 +40,8 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
   // The ROUGHING bit is a ball nose or a flat end mill — the two shapes profile3d models
   // a rougher as. Any other type (a V-bit, a drill) would silently become no roughing pass
   // at all, so it is not offered.
-  const finishTools = toolsOfType(tools, ['ballnose', 'bullnose', 'taper'])
-  const roughTools = toolsOfType(tools, ['ballnose', 'bullnose', 'endmill'])
+  const finishTools = toolsOfType(tools, PROFILE3D_FINISH_TOOL_TYPES)
+  const roughTools = toolsOfType(tools, PROFILE3D_ROUGH_TOOL_TYPES)
   const defaultTool = finishTools[0]
   // The model: an STL, or an imported picture read as a depth map (cam/depthMapMesh).
   const stlPaths = paths.filter((p) => !!p.stlSrc)
@@ -68,44 +49,8 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
   const modelPaths = [...stlPaths, ...imagePaths]
 
   const [form, setForm] = useState<Profile3dFormState>(() => {
-    const base: Profile3dFormState = editOp ? {
-      toolId: editOp.toolId,
-    stepoverPercent: editOp.stepoverPercent,
-    finishStrategy: editOp.finishStrategy === 'raster' || !editOp.finishStrategy ? 'raster' : 'waterline',
-    boundary: editOp.boundary ?? 'model',
-    boundaryPathId: editOp.boundaryPathId ?? '',
-    modelTopMM: editOp.modelTopMM ?? 0,
-    rasterAngleDeg: editOp.rasterAngleDeg,
-    maxDepthMM: editOp.maxDepthMM,
-    pathId: editOp.pathId,
-    reliefDepthMM: editOp.reliefDepthMM ?? DEFAULT_RELIEF_MM,
-    invertDepth: !!editOp.invertDepth,
-    roughingToolId: editOp.roughingToolId ?? '',
-    roughingStepoverPercent: editOp.roughingStepoverPercent ?? 60,
-    roughingStepDownMM: editOp.roughingStepDownMM ?? 2,
-    stepDownManual: editOp.stepDownManual ?? false,
-    roughingStockAllowanceMM: editOp.roughingStockAllowanceMM ?? 0.3,
-    roughingRasterAngleDeg: editOp.roughingRasterAngleDeg ?? '',
-  } : mergeWithDefaults(load('profile3d'), {
-    toolId: defaultTool?.id ?? '',
-    stepoverPercent: 20,
-    finishStrategy: 'raster' as 'raster' | 'waterline',
-    boundary: 'model' as 'model' | 'stock' | 'path',
-    boundaryPathId: '',
-    modelTopMM: 0,
-    rasterAngleDeg: 0,
-    // Default to the full stock thickness; the tool's max Z is only a warning.
-    maxDepthMM: thicknessMM > 0 ? thicknessMM : (defaultTool?.maxDepthMM ?? 10),
-    pathId: modelPaths[0]?.id ?? '',
-    reliefDepthMM: DEFAULT_RELIEF_MM,
-    invertDepth: false,
-    roughingToolId: '',
-    roughingStepoverPercent: 60,
-    roughingStepDownMM: 2,
-    stepDownManual: false,
-    roughingStockAllowanceMM: 0.3,
-    roughingRasterAngleDeg: '' as number | '',
-  }, tools)
+    const base: Profile3dFormState = editOp ? profile3dSettingsOf(editOp)
+      : mergeWithDefaults(load('profile3d'), profile3dFormDefaults(defaultTool, thicknessMM, modelPaths[0]?.id ?? ''), tools)
     // A saved default's boundary path is an id from the session it was saved in. Kept, it
     // showed "Model box" in the select (no option matched) while the form still said
     // 'path', and Generate was disabled with nothing visible to say why.
@@ -176,35 +121,13 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
     // Re-Generate for a model this form already generated for updates that op in place.
     const existingId = editOp ? undefined : session.liveOpId(form.pathId)
     const updateId = editOp?.id ?? existingId
-    const opName = hasRoughing
-      ? `3D Profile: ${selectedPath.name} (rough: ${roughingTool?.name ?? ''} / finish: ${selectedTool.name})`
-      : `3D Profile: ${selectedPath.name} (${selectedTool.name})`
 
     // WRITE THE SETTINGS, THEN GENERATE FROM THE OPERATION — see PhotoVCarveForm. This
     // form generated first and stored afterwards, so an edit that picked a different model
     // cut it onto an operation still naming the old one.
     // The op's settings, written the same way whether it is new or edited: an unused
     // roughing or boundary field is cleared, not left behind from an earlier setting.
-    const settings = {
-      name: opName,
-      toolId: form.toolId,
-      pathId: form.pathId,
-      reliefDepthMM: isDepthMap ? form.reliefDepthMM : undefined,
-      invertDepth: isDepthMap && form.invertDepth ? true : undefined,
-      stepoverPercent: form.stepoverPercent,
-      finishStrategy: strategy,
-      boundary: form.boundary,
-      boundaryPathId: form.boundary === 'path' ? form.boundaryPathId : undefined,
-      modelTopMM: form.modelTopMM > 0 ? form.modelTopMM : undefined,
-      rasterAngleDeg: form.rasterAngleDeg,
-      maxDepthMM: form.maxDepthMM,
-      roughingToolId: hasRoughing ? form.roughingToolId : undefined,
-      roughingStepoverPercent: hasRoughing ? form.roughingStepoverPercent : undefined,
-      roughingStepDownMM: hasRoughing ? form.roughingStepDownMM : undefined,
-      stepDownManual: hasRoughing && form.stepDownManual ? true : undefined,
-      roughingStockAllowanceMM: hasRoughing ? form.roughingStockAllowanceMM : undefined,
-      roughingRasterAngleDeg: hasRoughing && form.roughingRasterAngleDeg !== '' ? form.roughingRasterAngleDeg : undefined,
-    } satisfies Partial<Profile3dOperation>
+    const settings = profile3dOpFields(form, selectedPath, selectedTool, roughingTool)
     let opId: string
     if (updateId) {
       updateOperation(updateId, { ...settings, status: 'generating' } as Partial<AnyOperation>)

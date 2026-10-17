@@ -47,6 +47,12 @@ you will use on every job afterwards. The finished project is
 | **[11. When something goes wrong](11-troubleshooting.md)** | Open-path refusals, missing tools, stale operations, wrong size, wrong depth |
 | **[12. Running the machine](12-machine.md)** | Driving a FluidNC controller over WiFi: the one-time relay setup, homing and zeroing, jogging, the SD card, running and stopping a job |
 
+## Help from an AI assistant
+
+| | |
+|---|---|
+| **[13. Working with an AI assistant](13-ai-assistants.md)** | Letting Claude or another MCP-capable assistant draw parts, make toolpaths and check the job for you: setup, what it can and can't do, undo, privacy |
+
 ---
 
 ## Conventions used here

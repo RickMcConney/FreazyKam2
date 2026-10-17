@@ -5,7 +5,8 @@ import { ICON } from '../../theme'
 import { AlertCircle } from 'lucide-react'
 import { useFormDefaultsStore } from '../../store/formDefaultsStore'
 import { usePathsStore, useSelectedPaths } from '../../store/pathsStore'
-import { applyCornerTreatments, getTreatableCorners, pathSimilarityTransform, transformPathBySimilarity, type CornerTreatmentType } from '../../tools/cornerTreatment'
+import type { CornerTreatmentType } from '../../tools/cornerTreatment'
+import { cornerSession, applyCorners } from '../../tools/pathToolActions'
 import { useUIStore } from '../../store/uiStore'
 
 // 'none' removes the treatment on the targeted corners (restores the sharp corner)
@@ -14,11 +15,6 @@ type TreatmentChoice = CornerTreatmentType | 'none'
 interface NodeEditFormState {
   treatmentType: TreatmentChoice
   radiusMM: number
-}
-
-type CornerSession = {
-  baseD: string
-  treatments: [number, { type: CornerTreatmentType; radiusMM: number }][]
 }
 
 // THERE IS NO SESSION CACHE. The recipe lives on the path (ImportedPath.corners):
@@ -39,7 +35,6 @@ const CORNER_TREATMENTS: { type: TreatmentChoice; label: string; desc: string; p
 
 export function NodeEditForm({ onClose }: { onClose: () => void }) {
   // Individual selectors, not whole-store destructuring — see DrillForm.
-  const batchUpdatePaths = usePathsStore((s) => s.batchUpdatePaths)
   const setNodeEditPathId = useUIStore((s) => s.setNodeEditPathId)
   const setCornerPickSession = useUIStore((s) => s.setCornerPickSession)
   const setTreatedCorners = useUIStore((s) => s.setTreatedCorners)
@@ -97,27 +92,12 @@ export function NodeEditForm({ onClose }: { onClose: () => void }) {
     // edits genuinely change the corner geometry and start a fresh session.
     // The path is the one home for this (ImportedPath.corners), which is also what
     // lets a corner chip be clicked after a reload or a project load.
-    const saved = activePath.corners
-    if (saved) {
-      const replay = applyCornerTreatments(saved.baseD, new Map(saved.treatments))
-      let session: CornerSession | null = null
-      if (replay === activePath.d) {
-        session = saved
-      } else {
-        const sim = pathSimilarityTransform(replay, activePath.d)
-        if (sim) {
-          session = {
-            baseD: transformPathBySimilarity(saved.baseD, sim),
-            treatments: saved.treatments.map(([i, p]) => [i, { ...p, radiusMM: p.radiusMM * sim.scale }]),
-          }
-        }
-      }
-      if (session) {
-        treatmentsRef.current = new Map(session.treatments)
-        setCornerPickSession(activePath.id, session.baseD)
-        setTreatedCorners([...treatmentsRef.current.keys()])
-        return
-      }
+    const session = cornerSession(activePath)
+    if (session.resumed) {
+      treatmentsRef.current = session.treatments
+      setCornerPickSession(activePath.id, session.baseD)
+      setTreatedCorners([...treatmentsRef.current.keys()])
+      return
     }
 
     treatmentsRef.current = new Map()
@@ -128,27 +108,11 @@ export function NodeEditForm({ onClose }: { onClose: () => void }) {
   function handleApply() {
     if (!activePath) return
     const baseD = useUIStore.getState().cornerPickBaseD ?? activePath.d
-    const targets = selectedCorners.length > 0
-      ? selectedCorners
-      : getTreatableCorners(baseD).map((c) => c.idx)
-    for (const idx of targets) {
-      if (form.treatmentType === 'none') treatmentsRef.current.delete(idx)
-      else treatmentsRef.current.set(idx, { type: form.treatmentType, radiusMM: form.radiusMM })
-    }
-    const newD = applyCornerTreatments(baseD, treatmentsRef.current)
-    if (newD !== activePath.d) {
-      lastWrittenDRef.current = newD
-      // `corner` records the full current per-corner recipe (not a delta —
-      // treatmentsRef is already cumulative) so timeline replay can
-      // recompute against whatever this path's geometry becomes upstream,
-      // instead of replaying a stale baked d if the shape is edited later
-      // at an earlier point in the timeline.
-      const corner = [...treatmentsRef.current].map(([idx, p]) => ({ idx, ...p }))
-      // `cornerBaseD` goes with it: the recipe means nothing without the outline
-      // it was cut from, and storing the pair is what keeps a later edit of the
-      // radius re-cutting the ORIGINAL corner rather than rounding a round one.
-      batchUpdatePaths([{ id: activePath.id, d: newD, shapeParams: null, corner, cornerBaseD: baseD }], 'corner')
-    }
+    // The whole recipe goes onto the path with the outline it was cut from — see applyCorners.
+    treatmentsRef.current = applyCorners(activePath, { baseD, treatments: treatmentsRef.current }, selectedCorners, form.treatmentType, form.radiusMM)
+    // Our own write, when there was one — so the session effect knows not to restart.
+    const written = usePathsStore.getState().paths.find((p) => p.id === activePath.id)?.d
+    if (written !== undefined && written !== activePath.d) lastWrittenDRef.current = written
     setTreatedCorners([...treatmentsRef.current.keys()])
     clearSelectedCorners()
     save('nodeedit', form)

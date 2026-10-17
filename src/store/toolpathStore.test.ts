@@ -56,6 +56,47 @@ beforeEach(async () => {
 })
 afterEach(() => { vi.useRealTimers() })
 
+describe('an operation named after its tool', () => {
+  beforeEach(async () => {
+    useToolStore.setState({ tools: [
+      { id: 't', name: '1/8" End Mill', type: 'endmill', diameterMM: 3.175, fluteCount: 2, rpm: 18000, xyFeedMmMin: 1000, zFeedMmMin: 300, maxDepthMM: 25 },
+      { id: 'u', name: '1/4" End Mill', type: 'endmill', diameterMM: 6.35, fluteCount: 2, rpm: 18000, xyFeedMmMin: 1000, zFeedMmMin: 300, maxDepthMM: 25 },
+    ] })
+    await load({ paths: [path('a')] })
+  })
+
+  it('takes the new tool\'s name when its tool changes — the name is the G-code section header', async () => {
+    const id = T().addOperation(pocket('a', { name: 'Pocket: a (1/8" End Mill)' })); await step()
+    T().updateOperation(id, { toolId: 'u' }); await step()
+    expect(get(id).name).toBe('Pocket: a (1/4" End Mill)')
+  })
+
+  it('keeps a name the same update sets', async () => {
+    const id = T().addOperation(pocket('a', { name: 'Pocket: a (1/8" End Mill)' })); await step()
+    T().updateOperation(id, { toolId: 'u', name: 'Mine' }); await step()
+    expect(get(id).name).toBe('Mine')
+  })
+
+  it('leaves a name that does not carry its tool alone', async () => {
+    const id = T().addOperation(pocket('a', { name: 'Lid recess' })); await step()
+    T().updateOperation(id, { toolId: 'u' }); await step()
+    expect(get(id).name).toBe('Lid recess')
+  })
+
+  it('is renamed by a form\'s Regenerate too, which rewrites an edited op\'s settings but not its name', async () => {
+    const id = T().addOperation(pocket('a', { name: 'Pocket: a (1/8" End Mill)' })); await step()
+    const op = get(id)
+    await runBatchGenerate({
+      type: 'pocket', settings: { toolId: 'u' }, editOp: op,
+      items: [{ key: 'a', op, name: 'ignored for a kept op', fields: {} }],
+      session: { liveOpId: () => undefined, remember: () => {}, forget: () => {} },
+      run: async () => {}, onError: () => {},
+    })
+    await step()
+    expect(get(id).name).toBe('Pocket: a (1/4" End Mill)')
+  })
+})
+
 describe('adding operations', () => {
   it('makes every op the same way: pending, no segments, visible, coloured', () => {
     const [id] = T().addOperations([pocket('a')])

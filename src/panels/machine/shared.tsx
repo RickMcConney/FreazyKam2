@@ -7,7 +7,7 @@ import { ICON } from '../../theme'
 import { AlertCircle, AlertTriangle, Loader2, RotateCcw, Square } from 'lucide-react'
 import { abortGeneration } from '../../workers/abortGeneration'
 import { useUIStore } from '../../store/uiStore'
-import type { Tool, ToolType } from '../../store/toolStore'
+import type { Tool } from '../../store/toolStore'
 import { ToolPicker } from './ToolPicker'
 import { useWorkpieceStore, fromMM, toMM, fmtLen, lenValue, inchStepFor } from '../../store/workpieceStore'
 import { useGenProgressStore } from '../../store/genProgressStore'
@@ -247,20 +247,8 @@ export function PathListSection({ count, toggle = false, listed, children }: {
 }
 
 
-// Which tool types an operation can physically be cut with. A drill only plunges —
-// it has no usable side-cutting edge — so it can never follow a profile or a
-// trochoid; surfacing wants a flat bottom across the whole face, which a ball nose
-// or V-bit can't leave. A form filters its dropdown with `toolsOfType` AND runs its
-// initial id through `pickToolId`: saved form defaults and older projects can name
-// a tool the op has no business using, and filtering alone would leave the select
-// blank while Generate quietly went ahead with that tool.
-export function toolsOfType(tools: Tool[], types: readonly ToolType[]): Tool[] {
-  return tools.filter((t) => types.includes(t.type))
-}
-
-export function pickToolId(preferred: string | undefined, allowed: Tool[]): string {
-  return allowed.some((t) => t.id === preferred) ? preferred! : (allowed[0]?.id ?? '')
-}
+// Defined beside the forms' new-op defaults so the MCP bridge can use them too.
+export { toolsOfType, pickToolId } from './opDefaults'
 
 export function ToolSelector({ tools, value, onChange }: {
   tools: Tool[]

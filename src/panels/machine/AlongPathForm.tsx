@@ -17,11 +17,12 @@ import { useFormDefaultsStore } from '../../store/formDefaultsStore'
 import { usePathsStore, useSelectedPathsInOrder, type ImportedPath } from '../../store/pathsStore'
 import { regenerateAffectedMany } from '../../cam/regenerate'
 import { useUIStore } from '../../store/uiStore'
-import { textGlyphRuns, loadFont, isFontLoaded, type TextParams } from '../../shapes/textGenerator'
-import { layoutAlongPath, guideOf, type AlongSide, type AlongPathOptions } from '../../tools/alongPath'
+import { loadFont, isFontLoaded, type TextParams } from '../../shapes/textGenerator'
+import { guideOf, type AlongSide, type AlongPathOptions } from '../../tools/alongPath'
+import { ALONG_DEFAULTS, alongResult, addTextAlong } from '../../tools/pathToolActions'
 import { uid } from '../../uid'
 
-const DEFAULTS: AlongPathOptions = { side: 'out', at: 0.5, spacingMM: 0, gapMM: 0, rotate: true }
+const DEFAULTS: AlongPathOptions = ALONG_DEFAULTS
 
 const isText = (p: ImportedPath) => p.shapeParams?.type === 'text'
 
@@ -77,12 +78,8 @@ export function AlongPathForm({ onClose, editCtx }: { onClose: () => void; editC
     if (params && !isFontLoaded(params.fontFamily)) loadFont(params.fontFamily).then(() => setFontTick((t) => t + 1))
   }, [params?.fontFamily]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const result = useMemo(() => {
-    if (!params || !guide) return null
-    const runs = textGlyphRuns(params)
-    if (!runs) return null
-    return layoutAlongPath(runs, params.fontSize, guide.d, f)
-  }, [params, guide?.d, f]) // eslint-disable-line react-hooks/exhaustive-deps
+  const result = useMemo(() => (params && guide ? alongResult(params, guide.d, f) : null),
+    [params, guide?.d, f]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Drawn on the canvas as it will be made, while the form is open. Editing, the result
   // itself is kept off the canvas meanwhile (it would sit under the preview, in the old place).
@@ -106,17 +103,7 @@ export function AlongPathForm({ onClose, editCtx }: { onClose: () => void; editC
       onClose()
       return
     }
-    // A group of one, so the preview can hide it while it is being edited (see above).
-    const made: ImportedPath = {
-      id: uid('path-along'), name: `${text.name} on path`, d: result, visible: true, color: text.color,
-      groupId: uid('grp-along'), groupName: `${text.name} on path`, definition,
-    }
-    usePathsStore.getState().applyPathEdit({
-      gesture: 'along',
-      add: [made],
-      updates: [{ id: text.id, d: text.d, hidden: true }],
-      selectAfter: [made.id],
-    })
+    addTextAlong(text, guide, f, result)
     useUIStore.getState().setTracePreview(null)
     save('alongpath', f)
     onClose()
@@ -205,27 +192,45 @@ function Choice({ on, label, onClick, children }: { on: boolean; label: string; 
   )
 }
 
-// The letters drawn as a thick band beside a thin circle — outside, on or inside it.
+// Lucide-spec icons (24 grid, 2 px round strokes, ≥ 2 px between elements). Every stroke is
+// the same weight, so the guide is DASHED and the letters are the solid band beside it.
+const LUCIDE = {
+  width: 24, height: 24, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+  strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true,
+} as const
+
+// Guide: a dashed circle r 8 about (12,14), eight dashes centred every 45° from the top, 16°
+// long, so each gap is 29° ≈ 4 px of path — 2 px visible once the round caps take theirs.
+// The band spans ±53° at radius 12 (outside), 8 (on) or 4 (inside); on the circle it replaces
+// the three top dashes and stops a full gap short of the next.
+const C = { x: 12, y: 14, r: 8 }
+const at = (R: number, deg: number) => {
+  const t = (deg * Math.PI) / 180
+  return `${+(C.x + R * Math.sin(t)).toFixed(2)} ${+(C.y - R * Math.cos(t)).toFixed(2)}`
+}
+const arc = (R: number, from: number, to: number) => `M${at(R, from)}A${R} ${R} 0 0 1 ${at(R, to)}`
+
 function CircleIcon({ side }: { side: AlongSide }) {
-  const cx = 18, cy = 14, r = 8
-  const R = side === 'out' ? 11.5 : side === 'on' ? r : 4.5
-  const a = (50 * Math.PI) / 180
-  const x1 = cx - R * Math.sin(a), x2 = cx + R * Math.sin(a), y = cy - R * Math.cos(a)
+  const R = side === 'out' ? 12 : side === 'on' ? C.r : 4
+  const dashes = [0, 45, 90, 135, 180, 225, 270, 315]
+    .filter((a) => side !== 'on' || (a !== 0 && a !== 45 && a !== 315))
+    .map((a) => arc(C.r, a - 8, a + 8))
   return (
-    <svg width="36" height="28" viewBox="0 0 36 28" aria-hidden>
-      <circle cx={cx} cy={cy} r={r} fill="none" stroke="currentColor" strokeOpacity={0.5} strokeWidth={1} />
-      <path d={`M${x1} ${y} A${R} ${R} 0 0 1 ${x2} ${y}`} fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" />
+    <svg {...LUCIDE}>
+      <path d={dashes.join('')} />
+      <path d={arc(R, -53, 53)} />
     </svg>
   )
 }
 
-// The same for an open line: the band above, on or below it.
+// The same for an open line: a dashed guide at y 12, the band above, on or below it.
 function LineIcon({ side }: { side: AlongSide }) {
-  const y = side === 'out' ? 9 : side === 'on' ? 14 : 19
+  const y = side === 'out' ? 8 : side === 'on' ? 12 : 16
+  const dashes = (side === 'on' ? [2, 20] : [2, 8, 14, 20]).map((x) => `M${x} 12h2`)
   return (
-    <svg width="36" height="28" viewBox="0 0 36 28" aria-hidden>
-      <line x1={2} y1={14} x2={34} y2={14} stroke="currentColor" strokeOpacity={0.5} strokeWidth={1} />
-      <line x1={10} y1={y} x2={26} y2={y} stroke="currentColor" strokeWidth={3} strokeLinecap="round" />
+    <svg {...LUCIDE}>
+      <path d={dashes.join('')} />
+      <path d={`M8 ${y}h8`} />
     </svg>
   )
 }

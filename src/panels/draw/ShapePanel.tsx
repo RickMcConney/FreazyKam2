@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ICON } from '../../theme'
-import { Square, Circle, Ellipse, Hexagon, Star as StarIcon, PenTool, Type, Squircle, Heart, Pill, Signpost, Shield, Orbit, Grid3x3, CookingPot, Cog, Cloud, Anchor, Dices, ChevronDown, Clock, Weight, TrainTrack, Webhook, Package, BrickWall, Puzzle, Hourglass } from 'lucide-react'
+import { Square, Circle, Ellipse, Hexagon, Star as StarIcon, PenTool, Type, Squircle, Heart, Shield, Orbit, Grid3x3, Cog, Cloud, Dices, ChevronDown, Clock, Weight, TrainTrack, Webhook, Package } from 'lucide-react'
+import { SignIcon, SlotIcon, BoardIcon, EscapementIcon, FingerJointIcon, DovetailIcon, BowtieIcon } from './shapeIcons'
 import { useUIStore } from '../../store/uiStore'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 import { spirographLoops, spirographRadii, spirographCentrePen, SPIRO_RATIO_RANGE, SCALE_LOCKED_SHAPES, type ShapeType, type ShapeToolConfig } from '../../shapes/shapeGenerators'
@@ -27,27 +28,27 @@ const LS_TEXT_KEY = 'kam:textConfig'
 const SHAPES: { type: ShapeType; label: string; icon: React.ReactNode }[] = [
   { type: 'rectangle', label: 'Rect',    icon: <Square size={ICON.md} /> },
   { type: 'roundrect',   label: 'Round',   icon: <Squircle size={ICON.md} /> },
-  { type: 'inroundrect', label: 'Sign',    icon: <Signpost size={ICON.md} /> },
+  { type: 'inroundrect', label: 'Sign',    icon: <SignIcon size={ICON.md} /> },
   { type: 'circle',    label: 'Circle',  icon: <Circle size={ICON.md} /> },
   { type: 'ellipse',   label: 'Ellipse', icon: <Ellipse size={ICON.md} /> },
   { type: 'polygon',   label: 'Polygon', icon: <Hexagon size={ICON.md} /> },
   { type: 'star',      label: 'Star',    icon: <StarIcon size={ICON.md} /> },
   { type: 'heart',     label: 'Heart',   icon: <Heart size={ICON.md} /> },
-  { type: 'slot',      label: 'Slot',    icon: <Pill size={ICON.md} /> },
+  { type: 'slot',      label: 'Slot',    icon: <SlotIcon size={ICON.md} /> },
   { type: 'shield',    label: 'Shield',  icon: <Shield size={ICON.md} /> },
   { type: 'spirograph', label: 'Spiro',  icon: <Orbit size={ICON.md} /> },
   { type: 'maze',      label: 'Maze',    icon: <Grid3x3 size={ICON.md} /> },
-  { type: 'board',     label: 'Board',   icon: <CookingPot size={ICON.md} /> },
+  { type: 'board',     label: 'Board',   icon: <BoardIcon size={ICON.md} /> },
   { type: 'gear',      label: 'Gear',    icon: <Cog size={ICON.md} /> },
   { type: 'cam',       label: 'Cam',     icon: <Cloud size={ICON.md} /> },
   { type: 'ratchet',   label: 'Ratchet', icon: <Webhook size={ICON.md} /> },
-  { type: 'escapement', label: 'Escape', icon: <Anchor size={ICON.md} /> },
+  { type: 'escapement', label: 'Escape', icon: <EscapementIcon size={ICON.md} /> },
   { type: 'pendulum', label: 'Pend',    icon: <Weight size={ICON.md} /> },
   { type: 'track',    label: 'Track',   icon: <TrainTrack size={ICON.md} /> },
   { type: 'box',      label: 'Box',     icon: <Package size={ICON.md} /> },
-  { type: 'fingerjoint', label: 'Finger', icon: <BrickWall size={ICON.md} /> },
-  { type: 'dovetail', label: 'Dovetail', icon: <Puzzle size={ICON.md} /> },
-  { type: 'bowtie',   label: 'Bowtie',  icon: <Hourglass size={ICON.md} /> },
+  { type: 'fingerjoint', label: 'Finger', icon: <FingerJointIcon size={ICON.md} /> },
+  { type: 'dovetail', label: 'Dovetail', icon: <DovetailIcon size={ICON.md} /> },
+  { type: 'bowtie',   label: 'Bowtie',  icon: <BowtieIcon size={ICON.md} /> },
 ]
 
 const SHAPE_META: Record<string, { label: string; icon: React.ReactNode }> = Object.fromEntries(

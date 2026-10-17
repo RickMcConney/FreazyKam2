@@ -592,6 +592,21 @@ export const useToolpathStore = create<ToolpathState>()((set, get) => ({
 
   updateOperations: (entries, opts) => {
     if (entries.length === 0) return
+    // An op's name carries its tool — "Profile: Rectangle (1/8" End Mill)" — and becomes the
+    // section header in the exported G-code. A new tool renames it, or the operator reads the
+    // old bit's name over the new one's cut. Every way of changing a tool comes through here
+    // (a form's Regenerate rewrites settings but never the name of an op it is editing), so
+    // the rule lives here once. An update that sets the name itself is left alone.
+    const tools = useToolStore.getState().tools
+    entries = entries.map((e) => {
+      const toolId = (e.updates as { toolId?: string }).toolId
+      if (toolId === undefined || 'name' in e.updates) return e
+      const op = get().operations.find((o) => o.id === e.id)
+      const was = op && tools.find((t) => t.id === op.toolId)
+      const now = tools.find((t) => t.id === toolId)
+      if (!op || !was || !now || was.id === now.id || !op.name.includes(`(${was.name})`)) return e
+      return { ...e, updates: { ...e.updates, name: op.name.replace(`(${was.name})`, `(${now.name})`) } }
+    })
     const byId = new Map(entries.map((e) => [e.id, e.updates]))
     for (const { id, updates } of entries) if ('status' in updates) supersedeBufferedResult(id)
     const typeOf = new Map(get().operations.filter((o) => byId.has(o.id)).map((o) => [o.id, o.type]))

@@ -1,0 +1,45 @@
+{
+  "name": "freazykam-mcp",
+  "version": "0.2.0",
+  "description": "MCP server that lets Claude (or any MCP client) work with a FreazyKam tab open in your browser",
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "cnc",
+    "cam",
+    "freazykam"
+  ],
+  "homepage": "https://freazykam.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RickMcConney/FreazyKam2.git",
+    "directory": "mcp"
+  },
+  "type": "module",
+  "bin": {
+    "freazykam-mcp": "dist/server.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build && node scripts/smoke.mjs",
+    "smoke": "npm run build && node scripts/smoke.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/ws": "^8.18.2",
+    "typescript": "^7.0.2"
+  }
+}

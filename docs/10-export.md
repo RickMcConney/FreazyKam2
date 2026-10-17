@@ -8,8 +8,11 @@ and getting the file onto the machine.
 
 ## The simulator
 
-Press **Simulate G-code** in the toolbar. The program is built from every visible
-operation, in program order (**Paths → Toolpaths**), and loaded into the player.
+Press **Simulate G-code** in the toolbar — the green button, grey until there is a toolpath
+to simulate. The program is built from every visible operation, in program order
+(**Paths → Toolpaths**), and loaded into the player. While it's open the button turns into a
+red **Stop**, which closes the simulator just as the player's **×** does — useful when
+you've hidden the player in the 3D view.
 
 **It opens on the finished part, not on bare stock.** That's deliberate — the question you
 opened the simulator to answer is usually *what does this come out like*, and showing you

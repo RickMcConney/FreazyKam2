@@ -88,6 +88,9 @@ Short steps for one task.
 - [Set up your post-processor](how-to/set-up-your-post-processor.md)
 - [Save and reopen a project](how-to/save-a-project.md)
 
+**Work with an AI assistant**
+- [Connect an AI assistant](how-to/connect-an-ai-assistant.md)
+
 **Run the machine (FluidNC)**
 - [Install the relay file (once)](how-to/install-the-relay.md)
 - [Connect to your machine](how-to/connect-to-your-machine.md)
@@ -117,6 +120,7 @@ Facts in tables. For looking things up, not reading through.
 - [Machine tab controls](reference/machine-tab.md)
 - [File formats](reference/file-formats.md)
 - [Messages and what to do](reference/messages.md)
+- [What an AI assistant can ask FreazyKam to do](reference/ai-assistant-tools.md)
 - [Glossary](reference/glossary.md)
 
 ## Explanations
@@ -138,6 +142,7 @@ The "why" behind the app, for when you want to work things out yourself.
 - [Gears and clock trains](explanation/gears-and-clocks.md)
 - [Why the machine needs a relay file](explanation/relay.md)
 - [What a simulation can't tell you](explanation/simulation-limits.md)
+- [Working with an AI assistant](explanation/ai-assistants.md)
 
 ---
 

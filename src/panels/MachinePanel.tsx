@@ -10,7 +10,8 @@ import type { TraceEditCtx } from './machine/TraceForm'
 import type { AlongEditCtx } from './machine/AlongPathForm'
 import { OP_TYPE_COLORS } from '../colors'
 import { ICON } from '../theme'
-import { Circle, CircleDot, Target, Layers, Star, SquaresUnite, SquareSquare, LayoutGrid, Blocks, RectangleEllipsis, VectorSquare, Box, RefreshCw, PencilSparkles, Image as ImageIcon, Spline } from 'lucide-react'
+import { TabsIcon, AlongPathIcon } from './pathToolIcons'
+import { Circle, CircleDot, Target, Layers, Star, SquaresUnite, SquareSquare, LayoutGrid, Blocks, VectorSquare, Box, RefreshCw, PencilSparkles, Image as ImageIcon } from 'lucide-react'
 import { useUIStore } from '../store/uiStore'
 import { SelectionKindsBar } from './machine/SelectionKindsBar'
 
@@ -58,10 +59,10 @@ function AddOperationMenu({ onSelect }: { onSelect: (t: OpType) => void }) {
           ['offset', 'Offset', 'Inset or outset path by distance', <SquareSquare size={ICON.md} />],
           ['pattern', 'Pattern', 'Linear or circular array', <LayoutGrid size={ICON.md} />],
           ['nest', 'Nest', 'Arrange the selected paths on the stock so the least material is wasted', <Blocks size={ICON.md} />],
-          ['tabs', 'Tabs', 'Add holding tabs to keep part from moving', <RectangleEllipsis size={ICON.md} />],
+          ['tabs', 'Tabs', 'Add holding tabs to keep part from moving', <TabsIcon size={ICON.md} />],
           ['nodeedit', 'Corners', 'Apply corner treatments: round, chamfer, dogbone', <VectorSquare size={ICON.md} />],
           ['trace', 'Trace', 'Turn an imported picture into vector outlines', <PencilSparkles size={ICON.md} />],
-          ['along', 'Along Path', 'Lay text along a path — round a circle, along a curve', <Spline size={ICON.md} />],
+          ['along', 'Along Path', 'Lay text along a path — round a circle, along a curve', <AlongPathIcon size={ICON.md} />],
         ] as [OpType, string, string, React.ReactNode][]).map(([type, name, desc, icon]) => (
           <button key={type} onClick={() => onSelect(type)} title={desc} className={opBtnCls}>
             <span style={{ color: OP_TYPE_COLORS[type as string] ?? '#94a3b8' }}>{icon}</span>

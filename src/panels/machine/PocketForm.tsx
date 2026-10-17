@@ -16,6 +16,7 @@ import type { PocketNote, PocketStrategy } from '../../cam/pocket'
 // a strategy by an id that is not the word on the button is no help.
 const STRATEGY_LABELS: Partial<Record<PocketStrategy, string>> = { hybrid: 'auto' }
 import { seedStepDownMM } from '../../cam/feeds'
+import { POCKET_TOOL_TYPES, pocketFormDefaults } from './opDefaults'
 import { currentPocketStrategy, pocketEngagementFraction } from '../../cam/pocket/strategyIds'
 import { groupPathsByContainment, skipOpenPaths, skippedOpenMsg } from './containment'
 import { reviseGroupBatch } from './reviseBatch'
@@ -68,7 +69,7 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
 
   // Clearing a pocket needs a side-cutting edge, so the same filter as the dropdown
   // picks the default and vets a saved one.
-  const cutters = toolsOfType(tools, ['endmill', 'bullnose', 'ballnose'])
+  const cutters = toolsOfType(tools, POCKET_TOOL_TYPES)
   const defaultTool = cutters[0]
   const [form, setForm] = useState<PocketFormState>(() => {
     const base = editOp ? {
@@ -85,30 +86,7 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
     // checkbox reopens saying what this pocket actually did. Un-inverted for anything
     // saved before the field existed, which is what those pockets were.
     invert: editOp.invert ?? false,
-  } : { ...mergeWithDefaults(load('pocket'), {
-    toolId: defaultTool?.id ?? '',
-    // 'hybrid' — shown as "Auto". Note this is only the default for a FIRST pocket: the
-    // form-defaults store replays whatever was last used after that.
-    strategy: 'hybrid' as PocketStrategy,
-    // Default to the full stock thickness; the tool's max Z is only a warning.
-    depthMM: thicknessMM > 0 ? thicknessMM : (defaultTool?.maxDepthMM ?? 10),
-    stepDownMM: seedStepDownMM(defaultTool),
-    stepDownManual: false,
-    stepoverPercent: 40,
-    passAngleDeg: 0,
-    autoAngle: true,
-    direction: 'climb' as CuttingDirection,
-    rampIn: false,
-    allowanceMM: 0,
-    // Never restored from the saved form defaults: a start reference belongs to the
-    // operation it was chosen for, and replaying an old one onto a new pocket is exactly
-    // the "silently starts 2 mm down over solid stock" case this design exists to avoid.
-    startFrom: { mode: 'auto' } as StartFrom,
-    // Not restored from the saved defaults either, and for the same reason: it belongs to
-    // the selection it was chosen for. Replaying an inverted pocket onto an un-nested
-    // selection would silently produce no operations at all.
-    invert: false,
-  }, tools), startFrom: { mode: 'auto' } as StartFrom, invert: false, stepDownManual: false }
+  } : { ...mergeWithDefaults(load('pocket'), pocketFormDefaults(defaultTool, thicknessMM), tools), startFrom: { mode: 'auto' } as StartFrom, invert: false, stepDownManual: false }
     // Remembered defaults never pass through a project migration, so a retired strategy id
     // can still come back from them.
     return { ...base, strategy: currentPocketStrategy(base.strategy) as PocketStrategy, toolId: pickToolId(base.toolId, cutters) }

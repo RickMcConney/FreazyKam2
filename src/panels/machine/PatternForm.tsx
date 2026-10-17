@@ -11,7 +11,8 @@ import type { PathDefinition } from '../../importers/svgImporter'
 import { useUIStore } from '../../store/uiStore'
 import { regenerateAffectedMany } from '../../cam/regenerate'
 import { useWorkpieceStore, fromMM, toMM } from '../../store/workpieceStore'
-import { computePatternInstances, isLegacyLinear, patternCopies, type PatternParams } from '../../tools/patternOp'
+import { isLegacyLinear, type PatternParams } from '../../tools/patternOp'
+import { PATTERN_DEFAULTS, patternDefs, createPattern } from '../../tools/pathToolActions'
 import { getMultiBBox } from '../../canvas/selectionUtils'
 import { uid } from '../../uid'
 
@@ -35,7 +36,6 @@ export interface PatternEditCtx {
 
 export function PatternForm({ onClose, editCtx }: { onClose: () => void; editCtx?: PatternEditCtx }) {
   const paths = usePathsStore((s) => s.paths)
-  const addPaths = usePathsStore((s) => s.addPaths)
   const selPaths = useSelectedPaths()
   const load = useFormDefaultsStore((s) => s.load)
   const save = useFormDefaultsStore((s) => s.save)
@@ -55,9 +55,9 @@ export function PatternForm({ onClose, editCtx }: { onClose: () => void; editCtx
     // they fall back to the default rather than being misread.
     const savedLin = saved?.linParams && typeof saved.linParams.xGapMM === 'number' ? saved.linParams : null
     const base: PatternFormState = {
-      mode: saved?.mode ?? 'linear',
-      linParams: savedLin ?? { rows: 2, cols: 3, xGapMM: 5, yGapMM: 5 },
-      cirParams: saved?.cirParams ?? { count: 6, radiusMM: 30, startAngleDeg: 0, endAngleDeg: 360, rotateItems: true },
+      mode: saved?.mode ?? PATTERN_DEFAULTS.mode,
+      linParams: savedLin ?? PATTERN_DEFAULTS.linParams,
+      cirParams: saved?.cirParams ?? PATTERN_DEFAULTS.cirParams,
     }
     if (defParams) {
       const p = defParams.params
@@ -89,19 +89,9 @@ export function PatternForm({ onClose, editCtx }: { onClose: () => void; editCtx
     const params: PatternParams = form.mode === 'linear'
       ? { type: 'linear' as const, ...form.linParams }
       : { type: 'circular' as const, ...form.cirParams }
-    const instances = computePatternInstances(params, getMultiBBox(selectedPaths.map((p) => p.d)))
-    if (instances.length === 0) { setError('Pattern produced no instances'); return }
-    // [0] is the original itself, for both kinds — a circular pattern's count includes it.
-    const instancesToCreate = instances.slice(1)
-    if (instancesToCreate.length === 0) { setError('A pattern of one is just the original'); return }
-    // A COPY IS THE SHAPE IT WAS COPIED FROM. patternCopies carries the whole
-    // identity across — parameters, placement, the shared groupId that makes a
-    // train track's body, grooves and treads ONE part — with a fresh group per
-    // instance so patterning a group does not grow the group being patterned.
-    // Without it the copies were loose outlines, and nesting a patterned track
-    // laid every groove out as a part of its own.
-    const defs = patternCopies(selectedPaths, instancesToCreate)
-    if (defs.length === 0) { setError('Pattern produced no geometry'); return }
+    const made = patternDefs(selectedPaths, params)
+    if ('error' in made) { setError(made.error); return }
+    const { defs } = made
 
     if (editCtx && defParams) {
       // Rework in place: reuse existing result ids by index (ops on surviving
@@ -134,15 +124,7 @@ export function PatternForm({ onClose, editCtx }: { onClose: () => void; editCtx
       return
     }
 
-    const definition: PathDefinition = {
-      id: uid('def'), kind: 'pattern', sourceIds: selectedPaths.map((p) => p.id), params,
-    }
-    const newPaths: ImportedPath[] = defs.map((def) => ({
-      ...def,
-      id: uid('path-pattern'),
-      definition,
-    }))
-    addPaths(newPaths, { source: 'pattern' })
+    createPattern(selectedPaths, params)
     save('pattern', form)
   }
 

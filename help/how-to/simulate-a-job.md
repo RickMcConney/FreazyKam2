@@ -1,6 +1,7 @@
 # Simulate a job
 
-1. Click **Simulate G-code** in the toolbar.
+1. Click **Simulate G-code** in the toolbar (the green button). It's grey until there is a
+   toolpath to simulate.
 2. Click **3D View** to see material removed.
 3. Press **Play** (or **Space**).
 
@@ -21,6 +22,9 @@ On [several sheets](use-several-sheets.md), it plays the one picked in the toolb
 | 1× 5× 20× 100× | Speed |
 | Document icon | Show the G-code |
 | **×** | Close |
+
+While the simulation is open, the toolbar's Simulate button turns into a red **Stop**.
+It closes the simulation too, even when you've hidden the player in the 3D view.
 
 ## What to look for
 

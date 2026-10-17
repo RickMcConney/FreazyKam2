@@ -10,6 +10,7 @@ import { usePathsStore, type ImportedPath } from '../../store/pathsStore'
 import { useSelectedPathsInOrder } from '../../store/pathsStore'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 import { trochoidalEngagementFraction, seedStepDownMM } from '../../cam/feeds'
+import { TROCHOIDAL_TOOL_TYPES, trochoidalFormDefaults, trochoidalToolSeeds } from './opDefaults'
 
 interface TrochoidalFormState {
   toolId: string
@@ -38,9 +39,8 @@ export function TrochoidalForm({ onClose, editOp }: { onClose: () => void; editO
   const thicknessMM = useWorkpieceStore((s) => s.thicknessMM)
   const units = useWorkpieceStore((s) => s.units)
 
-  // Trochoidal cuts the whole width with the side of the tool — a drill can't, and a
-  // V-bit's width changes with depth, so the trochoid radius wouldn't mean anything.
-  const cutters = toolsOfType(tools, ['endmill', 'bullnose', 'ballnose'])
+  // Trochoidal cuts with the side of the tool — see TROCHOIDAL_TOOL_TYPES.
+  const cutters = toolsOfType(tools, TROCHOIDAL_TOOL_TYPES)
   const defaultTool = cutters[0]
   const [form, setForm] = useState<TrochoidalFormState>(() => {
     const base = editOp ? {
@@ -48,19 +48,7 @@ export function TrochoidalForm({ onClose, editOp }: { onClose: () => void; editO
       stepDownMM: editOp.stepDownMM, stepDownManual: editOp.stepDownManual ?? false, direction: editOp.direction,
       trochStepMM: editOp.trochStepMM, trochRadiusMM: editOp.trochRadiusMM,
       finishingPass: editOp.finishingPass, rampIn: editOp.rampIn ?? false,
-    } : mergeWithDefaults(load('trochoidal'), {
-      toolId: defaultTool?.id ?? '',
-      side: 'outside' as CutSide,
-      // Default to the full stock thickness; the tool's max Z is only a warning.
-      depthMM: thicknessMM > 0 ? thicknessMM : (defaultTool?.maxDepthMM ?? 10),
-      stepDownMM: seedStepDownMM(defaultTool),
-      stepDownManual: false,
-      direction: 'climb' as CuttingDirection,
-      trochStepMM: (defaultTool?.diameterMM ?? 6) * 0.15,
-      trochRadiusMM: (defaultTool?.diameterMM ?? 6) * 0.5,
-      finishingPass: true,
-      rampIn: false,
-    }, tools)
+    } : mergeWithDefaults(load('trochoidal'), trochoidalFormDefaults(defaultTool, thicknessMM), tools)
     return { ...base, stepDownManual: editOp ? base.stepDownManual : false, toolId: pickToolId(base.toolId, cutters) }
   })
   // A sided cut needs an interior to be on a side of, so open paths in the selection (a
@@ -92,8 +80,7 @@ export function TrochoidalForm({ onClose, editOp }: { onClose: () => void; editO
       ...f, toolId,
       stepDownMM: seedStepDownMM(t),
       stepDownManual: false,
-      trochStepMM: parseFloat((t.diameterMM * 0.15).toFixed(3)),
-      trochRadiusMM: parseFloat((t.diameterMM * 0.5).toFixed(3)),
+      ...trochoidalToolSeeds(t),
     }))
   }
 

@@ -14,8 +14,8 @@ import { OFFSETTABLE_SHAPES } from '../../tools/shapeOffset'
 import { planOffset, planFields, type OffsetFormState, type OffsetPlan } from '../../tools/offsetPlan'
 import type { ShapeParams } from '../../shapes/shapeGenerators'
 import { useWorkpieceStore, fmtLen, lenValue } from '../../store/workpieceStore'
-import { nextPathColor, type PathDefinition } from '../../importers/svgImporter'
-import { uid } from '../../uid'
+import type { PathDefinition } from '../../importers/svgImporter'
+import { OFFSET_DEFAULTS, offsetFailure, createOffsets } from '../../tools/pathToolActions'
 
 // Edit mode (offset-chip click): recompute the SAME offset paths from their
 // sources with new parameters. Identified by the DEFINITION id every result of
@@ -28,7 +28,6 @@ export interface OffsetEditCtx {
 
 export function OffsetForm({ onClose, editCtx }: { onClose: () => void; editCtx?: OffsetEditCtx }) {
   const paths = usePathsStore((s) => s.paths)
-  const addPaths = usePathsStore((s) => s.addPaths)
   const selPaths = useSelectedPaths()
   const load = useFormDefaultsStore((s) => s.load)
   const save = useFormDefaultsStore((s) => s.save)
@@ -45,10 +44,10 @@ export function OffsetForm({ onClose, editCtx }: { onClose: () => void; editCtx?
     if (editCtx) return { distanceMM: 5, cornerStyle: 'miter', keepShape: false, keepGenerated: true }
     const saved = load('offset') as Partial<OffsetFormState> | null
     return {
-      distanceMM: saved?.distanceMM ?? 5,
-      cornerStyle: saved?.cornerStyle ?? 'miter',
-      keepShape: saved?.keepShape ?? false,
-      keepGenerated: saved?.keepGenerated ?? true,
+      distanceMM: saved?.distanceMM ?? OFFSET_DEFAULTS.distanceMM,
+      cornerStyle: saved?.cornerStyle ?? OFFSET_DEFAULTS.cornerStyle,
+      keepShape: saved?.keepShape ?? OFFSET_DEFAULTS.keepShape,
+      keepGenerated: saved?.keepGenerated ?? OFFSET_DEFAULTS.keepGenerated,
     }
   })
   const [error, setError] = useState<string | null>(null)
@@ -103,11 +102,7 @@ export function OffsetForm({ onClose, editCtx }: { onClose: () => void; editCtx?
     setForm((f) => ({ ...f, [k]: v }))
   }
 
-  const noGeometry = (src: ImportedPath) => form.keepGenerated && src.shapeParams && OFFSETTABLE_SHAPES.has(src.shapeParams.type)
-    ? `${src.name} cannot be inset that far`
-    : form.keepShape && !src.shapeParams
-      ? `${src.name} cannot shrink that far by scaling`
-      : `Offset produced no geometry for ${src.name}`
+  const noGeometry = (src: ImportedPath) => offsetFailure(src, form)
 
   function handleApply() {
     setError(null)
@@ -137,20 +132,8 @@ export function OffsetForm({ onClose, editCtx }: { onClose: () => void; editCtx?
       return
     }
 
-    const defId = uid('def')
-    const newPaths: ImportedPath[] = []
-    for (const p of sourcePaths) {
-      const plan = planOffset(p, form)
-      if (!plan) continue
-      newPaths.push({
-        id: uid('path-offset'), name: `${p.name} offset`, d: plan.d, visible: true, color: nextPathColor(),
-        ...planFields(plan),
-        definition: { id: defId, kind: 'offset', sourceId: p.id, ...form },
-      })
-    }
-    if (newPaths.length === 0) { setError(sourcePaths.length === 1 ? noGeometry(sourcePaths[0]) : 'Offset produced no geometry'); return }
-    addPaths(newPaths, { source: 'offset' })
-    usePathsStore.getState().setSelectedIds(newPaths.map((p) => p.id))
+    const r = createOffsets(sourcePaths, form)
+    if ('error' in r) { setError(r.error); return }
     save('offset', form)
   }
 

@@ -12,6 +12,7 @@ import { usePathsStore, type ImportedPath } from '../../store/pathsStore'
 import { useSelectedPathsInOrder } from '../../store/pathsStore'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 import { seedStepDownMM } from '../../cam/feeds'
+import { DEFAULT_BRIDGE_MAX_MM, DEFAULT_CORNER_TOLERANCE_MM, DEFAULT_FINISH_PASS_MM, PROFILE_TOOL_TYPES, profileFormDefaults } from './opDefaults'
 import { maxCutRadiusMM, toolRadiusAtHeight } from '../../cam/geom'
 
 interface ProfileFormState {
@@ -38,21 +39,6 @@ interface ProfileFormState {
   startFrom: StartFrom
 }
 
-// A bridge long enough to join parts packed a few cutters apart, short enough that a
-// stray one across a big gap of good stock is not on offer.
-const DEFAULT_BRIDGE_MAX_MM = 20
-
-// A new profile rounds its inside corners, by at most this much. Large enough that the
-// rounding arcs survive the G-code writer as G2/G3 (it fits arcs to 0.1 mm and needs a
-// radius over 0.1 mm to do it) even at a 60° corner, where the arc's radius equals the
-// deviation; small enough that the bottom of a corner barely changes.
-const DEFAULT_CORNER_TOLERANCE_MM = 0.2
-
-// Stock the depth passes leave for the finishing pass: enough that the last pass cuts
-// everywhere on the wall, past the tool's deflection and the depth passes' step lines,
-// light enough to leave a clean wall.
-const DEFAULT_FINISH_PASS_MM = 0.3
-
 export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?: ProfileOperation }) {
   // Individual selectors, not whole-store destructuring — see DrillForm.
   const tools = useToolStore((s) => s.tools)
@@ -66,10 +52,8 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
   const thicknessMM = useWorkpieceStore((s) => s.thicknessMM)
   const units = useWorkpieceStore((s) => s.units)
 
-  // A profile follows the path with the side of the tool, so it needs a side-cutting
-  // edge — a drill has none. Tapered tools stay: the taper hint below explains the
-  // wall a V-bit or ball nose leaves.
-  const cutters = toolsOfType(tools, ['endmill', 'bullnose', 'ballnose', 'vbit', 'taper'])
+  // A profile needs a side-cutting edge — see PROFILE_TOOL_TYPES.
+  const cutters = toolsOfType(tools, PROFILE_TOOL_TYPES)
   const defaultTool = cutters[0]
   const [form, setForm] = useState<ProfileFormState>(() => {
     const base = editOp ? {
@@ -87,28 +71,7 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
       bridgeMaxMM: (editOp.bridgeMaxMM ?? 0) > 0 ? editOp.bridgeMaxMM! : DEFAULT_BRIDGE_MAX_MM,
       // Legacy ops stay on stock top — see PocketForm.
       startFrom: editOp.startFrom ?? { mode: 'stock' },
-    } : { ...mergeWithDefaults(load('profile'), {
-      toolId: defaultTool?.id ?? '',
-      side: 'outside' as CutSide,
-      // A profile typically cuts the part free, so default to the full stock
-      // thickness rather than the tool's max flute depth.
-      depthMM: thicknessMM > 0 ? thicknessMM : (defaultTool?.maxDepthMM ?? 10),
-      stepDownMM: seedStepDownMM(defaultTool),
-      stepDownManual: false,
-      direction: 'climb' as CuttingDirection,
-      rampIn: false,
-      allowanceMM: 0,
-      roundCorners: true,
-      cornerToleranceMM: DEFAULT_CORNER_TOLERANCE_MM,
-      finishPass: false,
-      finishPassMM: DEFAULT_FINISH_PASS_MM,
-      springPass: false,
-      sharedLines: false,
-      bridgeGaps: false,
-      bridgeMaxMM: DEFAULT_BRIDGE_MAX_MM,
-      // Deliberately not carried over from the saved defaults — see PocketForm.
-      startFrom: { mode: 'auto' } as StartFrom,
-    }, tools), startFrom: { mode: 'auto' } as StartFrom, stepDownManual: false }
+    } : { ...mergeWithDefaults(load('profile'), profileFormDefaults(defaultTool, thicknessMM), tools), startFrom: { mode: 'auto' } as StartFrom, stepDownManual: false }
     return { ...base, toolId: pickToolId(base.toolId, cutters) }
   })
   // A sided cut needs an interior to be on a side of, so open paths in the selection (a

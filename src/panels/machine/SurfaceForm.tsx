@@ -8,6 +8,7 @@ import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 import { isWorkCancelled } from '../../workers/workerClient'
 import { generateOperation } from '../../cam/opJob'
 import { seedStepDownMM } from '../../cam/feeds'
+import { SURFACE_TOOL_TYPES, surfaceFormDefaults } from './opDefaults'
 
 interface SurfaceFormState {
   toolId: string
@@ -30,22 +31,14 @@ export function SurfaceForm({ onClose, editOp }: { onClose: () => void; editOp?:
   const load = useFormDefaultsStore((s) => s.load)
   const save = useFormDefaultsStore((s) => s.save)
 
-  // Surfacing has to leave a flat face across the whole slab, so it's end mills only:
-  // a ball nose leaves scallops between passes and a V-bit leaves ridges.
-  const endMills = toolsOfType(tools, ['endmill'])
+  // A flat face across the whole slab — see SURFACE_TOOL_TYPES.
+  const endMills = toolsOfType(tools, SURFACE_TOOL_TYPES)
   const defaultTool = endMills[0]
   const [form, setForm] = useState<SurfaceFormState>(() => {
     const base = editOp ? {
       toolId: editOp.toolId, depthMM: editOp.depthMM, stepDownMM: editOp.stepDownMM, stepDownManual: editOp.stepDownManual ?? false,
       stepoverPercent: editOp.stepoverPercent, passAngleDeg: editOp.passAngleDeg,
-    } : mergeWithDefaults(load('surface'), {
-      toolId: defaultTool?.id ?? '',
-      depthMM: seedStepDownMM(defaultTool),
-      stepDownMM: seedStepDownMM(defaultTool),
-      stepDownManual: false,
-      stepoverPercent: 40,
-      passAngleDeg: 0,
-    }, tools)
+    } : mergeWithDefaults(load('surface'), surfaceFormDefaults(defaultTool), tools)
     return { ...base, stepDownManual: editOp ? base.stepDownManual : false, toolId: pickToolId(base.toolId, endMills) }
   })
   const [generating, setGenerating] = useState(false)

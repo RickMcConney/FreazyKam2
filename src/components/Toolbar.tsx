@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import { ICON } from '../theme'
 import {
   FilePlus, FolderOpen, Save, Import, FileCog, Share,
-  Undo2, Redo2, Magnet, HelpCircle, Play, Sun, Moon, Ruler,
+  Undo2, Redo2, Magnet, HelpCircle, CircleStop, Sun, Moon, Ruler,
 } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -23,6 +23,9 @@ import ConfirmNewProjectDialog from './ConfirmNewProjectDialog'
 import { importFile, loadImportedGcode } from '../io/importFile'
 import { openProjectFile, requestNewProject } from '../io/projectLoad'
 import HelpPanel from '../panels/HelpPanel'
+import { McpButton } from '../panels/McpPanel'
+import { SimulateIcon } from '../panels/pathToolIcons'
+import { closeSimulation } from '../sim/closeSimulation'
 
 function ToolbarButton({
   icon,
@@ -167,6 +170,10 @@ export default function Toolbar() {
   const redoDisabled = useLocalRedo ? false : !canRedo
   // A boolean, so the toolbar re-renders when it flips rather than on every operations write.
   const hasToolpaths = useToolpathStore((s) => s.operations.some((o) => o.status === 'done' && o.visible))
+  // The simulator is up — showing a program, or armed and waiting to rebuild one (see
+  // simStore.autoReload). Simulate turns into Stop then, because the player that carries
+  // the X can be hidden in the 3D view and leave no other visible way out.
+  const simOpen = useSimStore((s) => s.gcode !== '' || s.autoReload)
   const name = useProjectStore((s) => s.name)
   const importRef = useRef<HTMLInputElement>(null)
   const [preflight, setPreflight] = useState<ExportPreflight | null>(null)
@@ -263,11 +270,20 @@ export default function Toolbar() {
         <ToolbarButton icon={<Redo2 size={ICON.md} />} label="Redo (Ctrl+Y)" onClick={redo} disabled={redoDisabled} />
         <Sep />
 
-        <ToolbarButton
-          icon={<Play size={ICON.md} />}
-          label={hasToolpaths ? 'Simulate G-code' : 'Simulate G-code (no toolpaths)'}
-          onClick={handleSimulate}
-        />
+        {simOpen ? (
+          <ToolbarButton
+            icon={<CircleStop size={ICON.md} className="text-red-600 dark:text-red-400" />}
+            label="Stop simulation"
+            onClick={closeSimulation}
+          />
+        ) : (
+          <ToolbarButton
+            icon={<SimulateIcon size={ICON.md} className={hasToolpaths ? 'text-green-600 dark:text-green-400' : undefined} />}
+            label={hasToolpaths ? 'Simulate G-code' : 'Simulate G-code (no toolpaths)'}
+            onClick={handleSimulate}
+            disabled={!hasToolpaths}
+          />
+        )}
         <SheetPicker />
         <Sep />
 
@@ -313,6 +329,7 @@ export default function Toolbar() {
             label={darkMode ? 'Switch to Light Theme' : 'Switch to Dark Theme'}
             onClick={toggleDarkMode}
           />
+          <McpButton />
           <ToolbarButton icon={<HelpCircle size={ICON.md} />} label="Help" onClick={() => setHelpOpen(true)} />
         </div>
       </div>

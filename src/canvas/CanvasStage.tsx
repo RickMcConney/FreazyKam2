@@ -58,7 +58,6 @@ import { getBBox, getMultiBBox, extractCircles, dragBoxEncloses, wholeGroupsOnly
 import type { BBox } from './selectionUtils'
 import {
   generateShapeD,
-  generateShapeParts,
   shapeParamsFromDrag,
   shapeParamsFromConfig,
   shapeDisplayName,
@@ -73,6 +72,7 @@ import { nodesToD, removeNode, insertNodeOnSegment, splitCompoundPath, weldNodes
 import type { PathNode } from './nodeUtils'
 import type { CrossPathEntry } from './layers/NodeEditLayer'
 import { uid } from '../uid'
+import { placeShape } from '../shapes/placeShape'
 
 export interface Viewport {
   x: number
@@ -2486,67 +2486,7 @@ export default function CanvasStage() {
           ? shapeParamsFromDrag(shapeType, m.startCNC, m.currentCNC, shapeToolConfig, shapeFromCenter)
           : shapeParamsFromConfig(shapeType, at.x, at.y, shapeToolConfig)
 
-        const id = uid('shape')
-        const { addPaths: add, selectPath: sel, setSelectedIds } = usePathsStore.getState()
-        const d = generateShapeD(params)
-        // A multi-part shape lands as one path per part (a gear's teeth, bore and
-        // spokes each want their own operation — see generateShapeParts). They
-        // share a groupId so the paths list keeps them together, and each carries
-        // the same shapeParams so the set stays editable as one shape.
-        const parts = generateShapeParts(params)
-        // The id to regenerate this shape through if a font has to arrive first —
-        // any member of a group works, since updateShapeParams regenerates all of
-        // it.
-        let regenId = id
-        // Even ONE part lands as a part: a shape whose part count changes with its
-        // parameters (a V-bit bowtie is one outline, a straight-bit one a socket and
-        // a key) can then grow its other parts later as parts, instead of being
-        // regenerated as one compound path that has to be split by hand.
-        if (parts && parts.length >= 1) {
-          const groupId = uid('shape-group')
-          const name = shapeDisplayName(shapeType)
-          const color = nextPathColor()
-          const made = parts.map((pt) => ({
-            id: uid('shape'), name: `${name} ${pt.label}`, d: pt.d,
-            visible: true, color, shapeParams: params, shapePart: pt.part,
-            groupId, groupName: name,
-            // The tool's setting is the DEFAULT for what is drawn from it; from
-            // here on it is the object's own, changed from its panel.
-            ...(shapeFromCenter ? { fromCenter: true } : {}),
-          }))
-          add(made, { source: 'shape' })
-          setSelectedIds(made.map((p) => p.id))
-          regenId = made[0].id
-        } else {
-          add([{
-            id, name: shapeDisplayName(shapeType), d, visible: true, color: nextPathColor(), shapeParams: params,
-            ...(shapeFromCenter ? { fromCenter: true } : {}),
-          }], { source: shapeType === 'text' ? 'text' : 'shape' })
-          sel(id)
-        }
-
-        // If text font wasn't loaded yet, update d once it loads — via
-        // updateShapeParams so the fix amends the Text chip in place rather
-        // than recording a separate edit event.
-        if (params.type === 'text' && !d) {
-          import('../shapes/textGenerator').then(({ loadFont }) => {
-            loadFont(params.fontFamily).then(() => {
-              const newD = generateShapeD(params)
-              if (newD) usePathsStore.getState().updateShapeParams(id, params)
-            })
-          })
-        }
-
-        // Same story for a gear's tooth-count number: the single-stroke font is
-        // fetched on demand, so a gear drawn before it lands has every part but
-        // that one. Regenerating the group once it is here adds the part.
-        if (params.type === 'gear' && params.toothLabel && !parts?.some((pt) => pt.part === 'label')) {
-          import('../shapes/textGenerator').then(({ loadFont, SINGLE_LINE_FONT_FAMILY }) => {
-            loadFont(SINGLE_LINE_FONT_FAMILY).then(() => {
-              usePathsStore.getState().updateShapeParams(regenId, params)
-            })
-          })
-        }
+        placeShape(params, { fromCenter: shapeFromCenter })
 
         if (dragged) {
           // Keep the shape tool selected so more shapes can be dragged out.
