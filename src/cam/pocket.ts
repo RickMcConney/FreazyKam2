@@ -219,10 +219,10 @@ export function generatePocket(
       const rest = restRings
       if (rest.length > 0) {
         lastPos = _timed('emitRest', () => emitLinkedContourRings(rest, z, plan.travelObstacles, segs, params.startNear,
-          rampDist, roughed ? z : prevZ, safeZ, tool.diameterMM, lastPos))
+          rampDist, roughed ? z : prevZ, safeZ, tool.diameterMM, lastPos, false, false, prevZ))
       }
       lastPos = _timed('emitFinish', () => emitLinkedContourRings(plan.finishRings, z, plan.travelObstacles, segs, params.startNear,
-        rampDist, roughed || rest.length > 0 ? z : prevZ, safeZ, tool.diameterMM, lastPos))
+        rampDist, roughed || rest.length > 0 ? z : prevZ, safeZ, tool.diameterMM, lastPos, false, false, prevZ))
     }
     // AN AREA TOO NARROW FOR THE TOOL IS CUT NOT AT ALL, and until this was counted
     // nothing said so: a planner hands back a plan for it that emits no cuts (or no plan

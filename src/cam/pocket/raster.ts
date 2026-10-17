@@ -3,7 +3,7 @@ import { pointInPolygon } from '../geom'
 import { JoinType } from 'clipper2-ts'
 import { buildPocketClearance } from './clearance'
 import type { MotionSegment } from '../../store/toolpathStore'
-import { type PocketPlan, type PocketPlanner, type TravelSafetyObstacles, POCKET_FLATTEN_TOL_MM, compoundFinishRings, emitCutTransition, emitRampDescent, growIslands, insetRing, isTravelSafe, rampLeadIn } from './shared'
+import { type PocketPlan, type PocketPlanner, type TravelSafetyObstacles, POCKET_FLATTEN_TOL_MM, compoundFinishRings, emitCutTransition, emitRampDescent, growIslands, insetRing, isTravelSafe, rampLeadIn, SweptArea } from './shared'
 
 // ─── Raster utilities ──────────────────────────────────────────────────────────
 
@@ -216,6 +216,9 @@ class EndpointGrid {
   }
 }
 
+// Most cells a raster level's SweptArea may use (one byte each).
+const SWEPT_MAX_CELLS = 4_000_000
+
 function buildRasterPath(
   scanlines: Scanline[],
   travelObstacles: TravelSafetyObstacles,
@@ -250,6 +253,21 @@ function buildRasterPath(
   const ends: Pt2[] = []
   for (const sl of scanlines) ends.push(sl.p1, sl.p2)
   const grid = new EndpointGrid(ends)
+
+  // What this level has cut so far, so a stay-down link rides only over that (see
+  // SweptArea). The cell is what bounds a missed sliver: an uncut band narrower than a cell
+  // can fall between cell centres, and a tenth of the radius (0.3 mm on a 6 mm cutter) let a
+  // link ride 0.26 mm of stock along an ellipse's rim at G0. A twentieth, capped at
+  // SWEPT_MAX_CELLS so a big socket cut with a fine bit stays a few MB.
+  const toolR = toolDiameterMM / 2
+  let cleared: SweptArea | undefined
+  if (toolR > 0) {
+    let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity
+    for (const [x, y] of ends) { bx0 = Math.min(bx0, x); by0 = Math.min(by0, y); bx1 = Math.max(bx1, x); by1 = Math.max(by1, y) }
+    const w = bx1 - bx0 + 2 * toolR, h = by1 - by0 + 2 * toolR
+    const cell = Math.max(toolR / 20, Math.sqrt((w * h) / SWEPT_MAX_CELLS), 0.01)
+    cleared = new SweptArea(bx0 - toolR - cell, by0 - toolR - cell, bx1 + toolR + cell, by1 + toolR + cell, cell)
+  }
 
   for (let remaining = scanlines.length; remaining > 0; remaining--) {
     let bestIdx = -1, bestScore = Infinity, bestDist = Infinity, bestReversed = false, bestNeedsLift = true
@@ -310,10 +328,11 @@ function buildRasterPath(
         segs.push({ x: start[0], y: start[1], z: zDepth, rapid: false })
       }
     } else {
-      if (current) emitCutTransition(segs, current, start, zDepth, toolDiameterMM, safeZ)
+      if (current) emitCutTransition(segs, current, start, zDepth, toolDiameterMM, safeZ, cleared)
       else segs.push({ x: start[0], y: start[1], z: zDepth, rapid: false })
     }
     segs.push({ x: end[0], y: end[1], z: zDepth, rapid: false })
+    cleared?.add(start, end, toolR)
     current = end
   }
   return current

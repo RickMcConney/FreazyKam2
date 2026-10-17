@@ -1,8 +1,9 @@
 import { create } from 'zustand'
-import { parseGcode, getCurrentSegIdx, lineStartsOf, type SimSegment, type ToolState } from '../sim/gcodeParser'
+import { parseGcode, getCurrentSegIdx, lineStartsOf, type SimMessage, type SimSegment, type ToolState } from '../sim/gcodeParser'
 import { useWorkpieceStore, zDatumOffsetMM, machineMotionLimits } from './workpieceStore'
 import { useUIStore } from './uiStore'
 import { STOCK_CELL, type Cell } from '../cam/sheets'
+import { findRapidGouges, type RapidGouge } from '../sim/rapidGouge'
 
 export type SimSpeed = 1 | 5 | 20 | 100
 
@@ -17,6 +18,13 @@ interface SimState {
   // copy, which on a bottom-datum program was three copies of every segment.
   segments: SimSegment[]
   toolStates: ToolState[]
+  // The program's operator messages — (MSG, …) / (PRINT, …) — each tied to the move it
+  // precedes; the player shows the ones playback has reached.
+  messages: SimMessage[]
+  // G0 moves that cut into the stock (sim/rapidGouge.ts). Worked out just AFTER a load —
+  // it is a carve of the whole program, and the player should not wait for it — so it is
+  // empty for a moment on every load.
+  rapidGouges: RapidGouge[]
   totalTimeS: number
   playing: boolean
   speed: SimSpeed
@@ -73,7 +81,7 @@ export type LoadGcodeOpts = { autoReload: false } | { autoReload?: true; sheet: 
 
 // Fresh arrays per call — the cleared state is handed to consumers, not shared.
 const emptyProgram = (): Partial<SimState> => ({
-  gcode: '', lineStarts: new Uint32Array(0), segments: [], toolStates: [],
+  gcode: '', lineStarts: new Uint32Array(0), segments: [], toolStates: [], messages: [], rapidGouges: [],
   totalTimeS: 0, elapsedTimeS: 0, playing: false, genZOff: 0, programUnits: 'mm', sheet: STOCK_CELL,
 })
 
@@ -82,6 +90,8 @@ export const useSimStore = create<SimState>()((set, get) => ({
   lineStarts: new Uint32Array(0),
   segments: [],
   toolStates: [],
+  messages: [],
+  rapidGouges: [],
   totalTimeS: 0,
   playing: false,
   speed: 20,
@@ -110,6 +120,8 @@ export const useSimStore = create<SimState>()((set, get) => ({
       lineStarts: lineStartsOf(text),
       segments: parsed.segments,
       toolStates: parsed.toolStates,
+      messages: parsed.messages,
+      rapidGouges: [],
       programUnits: parsed.units,
       totalTimeS: parsed.totalTimeS,
       // A loaded program shows its RESULT: the finished part, every cut made. That is
@@ -124,6 +136,19 @@ export const useSimStore = create<SimState>()((set, get) => ({
       autoReload: opts.autoReload !== false,
       sheet: 'sheet' in opts ? opts.sheet : STOCK_CELL,
     })
+    // The rapid check, once the player is up. A newer load (or a clear) in the meantime
+    // replaced `segments`, and this result belongs to the program it was worked out for.
+    // (WorkpieceLayer is imported lazily: it reaches useSheets, which imports this store.)
+    const segments = parsed.segments
+    setTimeout(async () => {
+      const { originWorldXY } = await import('../canvas/layers/WorkpieceLayer')
+      if (get().segments !== segments) return
+      const { widthMM, heightMM, origin } = useWorkpieceStore.getState()
+      const org = originWorldXY(origin, widthMM, heightMM)
+      const rapidGouges = findRapidGouges(segments, parsed.toolStates,
+        { widthMM, heightMM, thicknessMM, orgX: org.x, orgY: org.y })
+      if (get().segments === segments) set({ rapidGouges })
+    }, 0)
   },
 
   // Play from the start when the run is sitting at its end — which is where a freshly

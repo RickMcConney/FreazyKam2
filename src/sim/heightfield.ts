@@ -12,7 +12,9 @@ import { vRadiusAtHeightMM, vConeOffsetMM } from '../cam/geom'
 import type { SimSegment, ToolState } from './gcodeParser'
 import { segTool } from './gcodeParser'
 
-export const TARGET_CELL_MM = 0.05     // desired sample spacing where cuts happen
+export const TARGET_CELL_MM = 0.05
+// How close (mm) a cut must come to a marked surface to count as cutting it (float32 heights).
+const MARK_REACH_MM = 1e-3     // desired sample spacing where cuts happen
 export const MAX_SAMPLES = 4_000_000   // cap total grid samples (texture + vertices)
 export const MAX_AXIS = 4096           // hard cap on samples per axis
 
@@ -47,10 +49,13 @@ function segMaxRadius(seg: SimSegment, toolStates: ToolState[]): number {
 export function computeCutBounds(
   segments: SimSegment[], toolStates: ToolState[],
   orgX: number, orgY: number, W: number, H: number,
+  // Rapids carved as cuts (the 3D view's rapids that cut, sim/rapidGouge.ts).
+  carvedRapids?: ReadonlySet<number>,
 ): CutBounds {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
-  for (const seg of segments) {
-    if (seg.rapid || (seg.prevZ >= 0 && seg.z >= 0)) continue
+  for (let k = 0; k < segments.length; k++) {
+    const seg = segments[k]
+    if ((seg.rapid && !carvedRapids?.has(k)) || (seg.prevZ >= 0 && seg.z >= 0)) continue
     const ax = seg.prevX + orgX, ay = seg.prevY + orgY
     const bx = seg.x + orgX, by = seg.y + orgY
     const r = segMaxRadius(seg, toolStates)
@@ -76,8 +81,9 @@ export function gridForSegments(
   segments: SimSegment[], toolStates: ToolState[],
   orgX: number, orgY: number,
   cellMM?: number,
+  carvedRapids?: ReadonlySet<number>,
 ): HeightfieldGrid & { bounds: CutBounds } {
-  const bounds = computeCutBounds(segments, toolStates, orgX, orgY, W, H)
+  const bounds = computeCutBounds(segments, toolStates, orgX, orgY, W, H, carvedRapids)
   const regionW = Math.max(bounds.x1 - bounds.x0, 1e-3)
   const regionH = Math.max(bounds.y1 - bounds.y0, 1e-3)
   const targetCell = cellMM ?? (bounds.empty ? Math.max(W, H) / 4 : TARGET_CELL_MM)
@@ -171,7 +177,13 @@ export class Heightfield {
   }
 
   // The per-cell carve math (flat / ball / V-bit) — a closest-point model evaluated over
-  // the uniform grid.
+  // the uniform grid. Returns the most material it took off any one cell (mm), which is
+  // how the rapid check (sim/rapidGouge.ts) tells a G0 that cut from one that did not.
+  // `mark`, when given, gets `markValue` at every cell this carve lowers — how the 3D view
+  // keeps track of which surface a rapid left. A carve marking 0 (an ordinary cut) also
+  // CLEARS the mark wherever it reaches the surface already there, not only where it goes
+  // deeper: a pocket's later pass cuts to the very floor a rapid reached first, lowers
+  // nothing, and would otherwise leave that floor showing as the rapid's.
   carve(
     ax: number, ay: number, bx: number, by: number,
     prevZ: number, endZ: number,
@@ -180,7 +192,9 @@ export class Heightfield {
     toolDiameterMM = 0,
     tipRadiusMM = 0,
     cornerRadiusMM = 0,
-  ) {
+    mark?: Uint8Array,
+    markValue = 1,
+  ): number {
     const dz = endZ - prevZ
     // Deliberately NOT capped at the tool's own diameter: this model has always let the
     // cone run on past full engagement, the inlay pipeline v-carves to 2.5× the socket
@@ -188,7 +202,7 @@ export class Heightfield {
     const r = vbitTan
       ? vRadiusAtHeightMM(Math.max(Math.abs(prevZ), Math.abs(endZ)), vbitTan, tipRadiusMM)
       : toolDiameterMM / 2
-    if (r <= 0) return
+    if (r <= 0) return 0
 
     // Deepest achievable height (tip, deepest Z) — cells already at/below skip.
     const flatH = Math.max(0, this.T + Math.min(prevZ, endZ))
@@ -220,6 +234,8 @@ export class Heightfield {
     const off = vbitTan ? vConeOffsetMM(vbitTan, tipRadiusMM) : 0
     const r0sq = tipRadiusMM * tipRadiusMM
     const dTsq = dT * dT
+    let removed = 0
+    const clearing = mark !== undefined && markValue === 0
 
     for (let j = jMin; j <= jMax; j++) {
       const py = gy0 + j * sy
@@ -227,7 +243,7 @@ export class Heightfield {
       for (let i = iMin; i <= iMax; i++) {
         const idx = rowBase + i
         const cur = topZ[idx]
-        if (cur <= flatH) continue
+        if (cur <= flatH && !(clearing && mark[idx])) continue
         const px = gx0 + i * sx
 
         const ex = px - ax, ey = py - ay
@@ -311,11 +327,17 @@ export class Heightfield {
         }
 
         if (cur > newH) {
+          if (cur - newH > removed) removed = cur - newH
+          if (mark) mark[idx] = markValue
           topZ[idx] = newH
           this.dirty = true
           this.anyCarved = true
+        } else if (clearing && mark[idx] && newH <= cur + MARK_REACH_MM) {
+          mark[idx] = 0
+          this.dirty = true
         }
       }
     }
+    return removed
   }
 }

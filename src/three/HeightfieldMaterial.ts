@@ -24,6 +24,16 @@ function isCuttingSeg(seg: SimSegment): boolean {
   return !seg.rapid && (seg.prevZ < 0 || seg.z < 0)
 }
 
+// RAPIDS ARE CARVED, and the surface one leaves is tinted this red. Every G0 below the
+// stock top goes through the same carve as a cut, at this view's own resolution — a rapid
+// that touches nothing changes nothing, so a stay-down link over cleared floor costs a
+// carve and no colour. A sample is marked as a rapid lowers it, and cleared again wherever
+// a later cut reaches that surface, so red that survives to the finished part is damage the
+// part keeps, and red that fades during playback was stock the program was about to clear.
+const DAMAGE_RGB: [number, number, number] = [0.86, 0.12, 0.1]
+// The mark, in a byte texture the shader reads normalised (255 → 1.0).
+const DAMAGED = 255
+
 // Paint left in the cuts after the face is sanded back. Not quite black: a groove
 // full of paint still catches a little light off its walls, and a dead 0 reads as a
 // hole in the mesh rather than a filled line. Sampled in the same space as the wood
@@ -53,9 +63,13 @@ function patchSurfaceShader(
   woodTex: THREE.Texture,
   tileMM: [number, number],
   paintedCuts: boolean,
+  damage: THREE.DataTexture | null,
 ) {
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uHeight = { value: texture }
+    shader.uniforms.uDamage = { value: damage ?? texture }
+    shader.uniforms.uHasDamage = { value: damage ? 1 : 0 }
+    shader.uniforms.uDamageRgb = { value: new THREE.Color(...DAMAGE_RGB) }
     shader.uniforms.uTexel = { value: new THREE.Vector2(1 / NX, 1 / NY) }
     shader.uniforms.uSpacing = { value: new THREE.Vector2(sx, sy) }
     shader.uniforms.uWoodTex = { value: woodTex }
@@ -70,6 +84,9 @@ function patchSurfaceShader(
         uniform vec2 uTexel;     // 1/NX, 1/NY
         uniform vec2 uSpacing;   // sample spacing in world mm (sx, sy)
         attribute vec2 aHUv;     // texel-centre UV for this vertex
+        uniform sampler2D uDamage;
+        uniform float uHasDamage;
+        varying float vDamage;   // 1 where a rapid left the surface (interpolated: soft edge)
         varying float vH;
         varying vec2 vWUv;       // planar wood UV in mm: (localX, localY)`)
       // Per-vertex normal from neighbouring texels (smooth shading at any res).
@@ -87,6 +104,7 @@ function patchSurfaceShader(
         float _h = texture2D(uHeight, aHUv).r;
         vec3 transformed = vec3(position.x, _h, position.z);
         vH = _h;
+        vDamage = uHasDamage > 0.5 ? texture2D(uDamage, aHUv).r : 0.0;
         vWUv = vec2(position.x, -position.z);`)
 
     shader.fragmentShader = shader.fragmentShader
@@ -96,6 +114,8 @@ function patchSurfaceShader(
         uniform float uThickness;
         uniform float uPainted;
         uniform vec3 uPaint;
+        uniform vec3 uDamageRgb;
+        varying float vDamage;
         varying float vH;
         varying vec2 vWUv;`)
       .replace('#include <color_fragment>', /* glsl */ `#include <color_fragment>
@@ -119,7 +139,7 @@ function patchSurfaceShader(
             _wood = pow(_wood, vec3(0.5));
           }
         }
-        diffuseColor.rgb = _wood;`)
+        diffuseColor.rgb = mix(_wood, uDamageRgb, clamp(vDamage, 0.0, 1.0) * 0.85);`)
   }
 }
 
@@ -243,6 +263,12 @@ export class HeightfieldMaterial {
   private readonly _skirtMat: THREE.MeshLambertMaterial | null
 
   private readonly _hf: Heightfield
+  // The rapids below the stock top (by segment index), carved like cuts, and the samples
+  // whose surface one of them left — null when there are none, so a program whose rapids
+  // all stay above the stock pays nothing.
+  private readonly _carvedRapids: ReadonlySet<number>
+  private readonly _damage: Uint8Array | null
+  private readonly _damageTex: THREE.DataTexture | null
   private _lastFullIdx = -1
   private _lastPartialIdx = -1
   private _lastPartialT = 0
@@ -265,11 +291,14 @@ export class HeightfieldMaterial {
     opacity = 1,
   ) {
     this._toolStates = toolStates
+    const carvedRapids = new Set<number>()
+    segments.forEach((g, k) => { if (g.rapid && (g.prevZ < 0 || g.z < 0)) carvedRapids.add(k) })
+    this._carvedRapids = carvedRapids
 
     // Grid only the region that actually gets cut, so resolution concentrates
     // there rather than being spread over the whole stock. The field itself (grid +
     // carve math) lives in sim/heightfield.ts so tests can drive the same code.
-    const grid = gridForSegments(W, H, T, segments, toolStates, orgX, orgY)
+    const grid = gridForSegments(W, H, T, segments, toolStates, orgX, orgY, undefined, carvedRapids)
     this._hf = new Heightfield(grid)
     const { NX, NY, gx0, gy0, bounds } = grid
     this._sx = grid.sx
@@ -284,6 +313,20 @@ export class HeightfieldMaterial {
     this._texture.wrapS = THREE.ClampToEdgeWrapping
     this._texture.wrapT = THREE.ClampToEdgeWrapping
     this._texture.needsUpdate = true
+
+    if (carvedRapids.size > 0) {
+      this._damage = new Uint8Array(NX * NY)
+      this._damageTex = new THREE.DataTexture(this._damage, NX, NY, THREE.RedFormat, THREE.UnsignedByteType)
+      this._damageTex.magFilter = THREE.NearestFilter
+      this._damageTex.minFilter = THREE.NearestFilter
+      // One byte per sample: rows are NX bytes, which WebGL's default 4-byte row alignment
+      // would skew whenever NX is not a multiple of 4.
+      this._damageTex.unpackAlignment = 1
+      this._damageTex.needsUpdate = true
+    } else {
+      this._damage = null
+      this._damageTex = null
+    }
 
     // Static displaced plane over the cut region: vertex (i,j) at world
     // (gx0+i·sx, 0, -(gy0+j·sy)), uv at the matching texel centre so nearest
@@ -320,7 +363,7 @@ export class HeightfieldMaterial {
     this._surfaceGeo.setIndex(new THREE.BufferAttribute(indices, 1))
 
     this._surfaceMat = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide })
-    patchSurfaceShader(this._surfaceMat, this._texture, NX, NY, this._sx, this._sy, T, woodTex, tileMM, paintedCuts)
+    patchSurfaceShader(this._surfaceMat, this._texture, NX, NY, this._sx, this._sy, T, woodTex, tileMM, paintedCuts, this._damageTex)
 
     // Flat bottom of the stock over the cut region — reuses the surface grid
     // (undisplaced at Y=0) and punches through where the cut goes clean through.
@@ -373,6 +416,7 @@ export class HeightfieldMaterial {
 
   reset() {
     this._hf.reset()
+    this._damage?.fill(0)
     this._lastFullIdx = -1
     this._lastPartialIdx = -1
     this._lastPartialT = 0
@@ -410,9 +454,11 @@ export class HeightfieldMaterial {
     let i = this._lastFullIdx + 1
     for (; i < end; i++) {
       const s = segments[i]
-      if (isCuttingSeg(s)) {
+      const rapidCut = this._carvedRapids.has(i)
+      if (rapidCut || isCuttingSeg(s)) {
         const ts = segTool(s, this._toolStates)
-        this._hf.carve(s.prevX, s.prevY, s.x, s.y, s.prevZ, s.z, ts.toolVbitHalfAngleTan, ts.toolBallNose, ts.toolDiameterMM, ts.toolTipRadiusMM, ts.toolCornerRadiusMM)
+        this._hf.carve(s.prevX, s.prevY, s.x, s.y, s.prevZ, s.z, ts.toolVbitHalfAngleTan, ts.toolBallNose, ts.toolDiameterMM, ts.toolTipRadiusMM, ts.toolCornerRadiusMM,
+          this._damage ?? undefined, rapidCut ? DAMAGED : 0)
       }
       // Checked in blocks: performance.now() per segment costs more than the carve on
       // the short moves a fine toolpath is made of.
@@ -428,7 +474,8 @@ export class HeightfieldMaterial {
     this._catchingUp = false
 
     const seg = segIdx < segments.length ? segments[segIdx] : null
-    if (seg && isCuttingSeg(seg)) {
+    const rapidCut = this._carvedRapids.has(segIdx)
+    if (seg && (rapidCut || isCuttingSeg(seg))) {
       const startT = segIdx === this._lastPartialIdx ? this._lastPartialT : 0
       if (t > startT + 1e-6) {
         const x0 = seg.prevX + (seg.x - seg.prevX) * startT
@@ -438,7 +485,8 @@ export class HeightfieldMaterial {
         const pz0 = seg.prevZ + (seg.z - seg.prevZ) * startT
         const pz1 = seg.prevZ + (seg.z - seg.prevZ) * t
         const ts = segTool(seg, this._toolStates)
-        this._hf.carve(x0, y0, x1, y1, pz0, pz1, ts.toolVbitHalfAngleTan, ts.toolBallNose, ts.toolDiameterMM, ts.toolTipRadiusMM, ts.toolCornerRadiusMM)
+        this._hf.carve(x0, y0, x1, y1, pz0, pz1, ts.toolVbitHalfAngleTan, ts.toolBallNose, ts.toolDiameterMM, ts.toolTipRadiusMM, ts.toolCornerRadiusMM,
+          this._damage ?? undefined, rapidCut ? DAMAGED : 0)
       }
     }
     this._lastPartialIdx = segIdx
@@ -452,6 +500,7 @@ export class HeightfieldMaterial {
   flushToGPU(): boolean {
     if (!this._hf.dirty) return false
     this._texture.needsUpdate = true
+    if (this._damageTex) this._damageTex.needsUpdate = true
     this._hf.dirty = false
     return true
   }
@@ -465,6 +514,7 @@ export class HeightfieldMaterial {
     this._skirtGeo?.dispose()
     this._skirtMat?.dispose()
     this._texture.dispose()
+    this._damageTex?.dispose()
   }
 
 }

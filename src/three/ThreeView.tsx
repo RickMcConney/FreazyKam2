@@ -12,10 +12,11 @@ import { useToolStore } from '../store/toolStore'
 import { usePathsStore } from '../store/pathsStore'
 import { getCurrentSegIdx, interpolatePos, segFraction, segTool, type SimSegment } from '../sim/gcodeParser'
 import { flattenPath } from '../cam/pathFlattener'
-import { cornerRadiusMM, includedAngleDeg, isVCutter, maxCutRadiusMM } from '../cam/geom'
+import { cornerRadiusMM, fluteHelixFromName, includedAngleDeg, isVCutter, maxCutRadiusMM, type FluteHelix } from '../cam/geom'
 import { getBBox } from '../canvas/selectionUtils'
 import { THREE_BG_COLOR_THREE, MATERIAL_COLORS } from '../colors'
 import { HeightfieldMaterial } from './HeightfieldMaterial'
+import { buildToolMesh } from './toolMesh'
 import { getWoodTexture, setWoodTextureListener, woodTileMM } from './woodTexture'
 import SimulationPlayer from '../sim/SimulationPlayer'
 // M3 (clockwise viewed from above) is negative rotation about three's +Y.
@@ -57,217 +58,6 @@ function buildCNCAxes(size: number): THREE.LineSegments {
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
   geo.setAttribute('color',    new THREE.BufferAttribute(col, 3))
   return new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ vertexColors: true }))
-}
-
-// One dark groove drawn per tile; texture.repeat.x = fluteCount wraps it around
-// the flute cylinder so the groove count matches the tool. Helical grooves climb
-// one full tile width over the tile height (each flute advances 1/fluteCount of
-// a turn over the cutting length); straight grooves run vertically — on a sphere
-// they converge at the pole like meridians, matching ball-nose tip flutes.
-function makeFluteTexture(fluteCount: number, helical: boolean): THREE.CanvasTexture {
-  const W = 64, H = 256
-  const canvas = document.createElement('canvas')
-  canvas.width = W
-  canvas.height = H
-  const ctx = canvas.getContext('2d')!
-  ctx.fillStyle = '#b9bec4'
-  ctx.fillRect(0, 0, W, H)
-  ctx.strokeStyle = '#2a6ea0' // same blue as the src/icons/*.svg flute outlines
-  ctx.lineWidth = W * 0.38
-  if (helical) {
-    // Draw at x offsets -W/0/+W so the diagonal tiles seamlessly across the wrap
-    for (const off of [-W, 0, W]) {
-      ctx.beginPath()
-      ctx.moveTo(off, H)
-      ctx.lineTo(off + W, 0)
-      ctx.stroke()
-    }
-  } else {
-    ctx.beginPath()
-    ctx.moveTo(W / 2, 0)
-    ctx.lineTo(W / 2, H)
-    ctx.stroke()
-  }
-  const tex = new THREE.CanvasTexture(canvas)
-  tex.wrapS = THREE.RepeatWrapping
-  tex.repeat.set(fluteCount, 1)
-  tex.colorSpace = THREE.SRGBColorSpace
-  return tex
-}
-
-// Builds a tool indicator group, tip at Y=0, extending up +Y.
-// Cutting section shows fluteCount helical grooves; shank is polished steel
-// (small tools get a standard ~3.2mm shank) topped with a dark collet nut.
-// V-bit:     striped cone (height from included angle) + shank
-// Taper:     striped tip ball + striped cone opening out to its widest cutting
-//            diameter over its usable length + shank (see cam/geom.ts for the profile)
-// Ball nose: striped hemisphere tip + striped flute cylinder + shank
-// Drill:     striped 118° point + striped flute cylinder + shank
-// Flat:      striped flute cylinder with dark end face + shank
-function buildToolMesh(type: string, diamMM: number, vbitAngleDeg = 60, fluteCount = 2, tipDiaMM = 0, cornerMM = 0): THREE.Object3D {
-  // A taper is drawn from its WIDEST cutting diameter down to its tip ball; `diamMM`
-  // carries that widest diameter (the sim's one meaning for a tool diameter) and
-  // `tipDiaMM` the ball.
-  const r = diamMM / 2
-  const isBall = type === 'ball' || type === 'ballnose'
-  // Real-world shank sizing: never thinner than ~3.2mm; V-bits step down from a
-  // wide cutting diameter to a narrower shank (capped at 80% of the cutting
-  // radius so the cone rim always shows); ball noses neck down slightly so the
-  // ball reads as a ball.
-  const shankR = type === 'vbit' || type === 'taper' ? Math.max(Math.min(r * 0.8, 3.175), 1.6)
-    : isBall ? Math.max(r * 0.8, 1.6)
-    : Math.max(r, 1.6)
-  const fluteLen = Math.max(diamMM * 3, 6)
-  const shankH = Math.max(diamMM * 2.5, 12)
-  const SEGS = 32
-
-  const opts = { transparent: true, opacity: 0.9 }
-  // Drills/V-bits read best with helical grooves; end mills and ball noses with
-  // straight vertical grooves (per user preference).
-  // A taper cuts like an end mill, so it gets straight grooves, not a drill's helix.
-  const helical = type === 'drill' || type === 'vbit'
-  const fluteMat  = new THREE.MeshPhongMaterial({ map: makeFluteTexture(fluteCount, helical), specular: 0x555555, shininess: 60, ...opts })
-  const shankMat  = new THREE.MeshPhongMaterial({ color: 0xd4d7db, specular: 0x777777, shininess: 90, ...opts })
-  const capMat    = new THREE.MeshPhongMaterial({ color: 0x565b62, specular: 0x333333, shininess: 40, ...opts })
-  const colletMat = new THREE.MeshPhongMaterial({ color: 0x3a3d42, specular: 0x444444, shininess: 70, ...opts })
-
-  const group = new THREE.Group()
-  let y = 0 // top of what's been built so far
-
-  // Radius at the top of the section directly below the shank (ball noses neck
-  // down to 80% of the ball radius).
-  const belowShankR = isBall ? r * 0.8 : r
-
-  const addShank = () => {
-    let bodyStart = y
-    let bodyH = shankH
-    // When the shank is wider than the section below it (small bits on a
-    // standard shank), taper up to it with a 45° chamfer instead of a step.
-    if (shankR > belowShankR + 0.01) {
-      const chamferH = Math.min(shankR - belowShankR, shankH * 0.3)
-      const chamferGeo = new THREE.CylinderGeometry(shankR, belowShankR, chamferH, SEGS)
-      chamferGeo.translate(0, y + chamferH / 2, 0)
-      group.add(new THREE.Mesh(chamferGeo, shankMat))
-      bodyStart += chamferH
-      bodyH -= chamferH
-    }
-    const shankGeo = new THREE.CylinderGeometry(shankR, shankR, bodyH, SEGS)
-    shankGeo.translate(0, bodyStart + bodyH / 2, 0)
-    group.add(new THREE.Mesh(shankGeo, shankMat))
-    y += shankH
-    const colletR = shankR * 1.4
-    const colletH = Math.max(diamMM * 0.8, 5)
-    // Chamfered bottom: truncated cone from shank radius up to full collet
-    // radius, then the cylindrical body above it.
-    const chamferH = colletH * 0.4
-    const chamferGeo = new THREE.CylinderGeometry(colletR, shankR, chamferH, SEGS)
-    chamferGeo.translate(0, y + chamferH / 2, 0)
-    group.add(new THREE.Mesh(chamferGeo, colletMat))
-    const colletBodyH = colletH - chamferH
-    const colletGeo = new THREE.CylinderGeometry(colletR, colletR, colletBodyH, SEGS)
-    colletGeo.translate(0, y + chamferH + colletBodyH / 2, 0)
-    group.add(new THREE.Mesh(colletGeo, colletMat))
-  }
-
-  const addFluteCylinder = (h: number) => {
-    const geo = new THREE.CylinderGeometry(r, r, h, SEGS)
-    geo.translate(0, y + h / 2, 0)
-    // Material array: [side, top cap, bottom cap] — dark end face, striped side
-    group.add(new THREE.Mesh(geo, [fluteMat, capMat, capMat]))
-    y += h
-  }
-
-  // Cone with apex at current y, base at y+coneH. ConeGeometry's apex is at
-  // +Y/2 by default; rotateX(π) flips it down, translate puts apex at y.
-  const addTipCone = (coneH: number) => {
-    const coneGeo = new THREE.ConeGeometry(r, coneH, SEGS)
-    coneGeo.rotateX(Math.PI)
-    coneGeo.translate(0, y + coneH / 2, 0)
-    group.add(new THREE.Mesh(coneGeo, fluteMat))
-    y += coneH
-  }
-
-  if (type === 'taper') {
-    // Ball cap from the south pole up to the tangency latitude (90° − θ from the pole),
-    // then the cone that leaves it tangentially and opens out to the full radius r.
-    const halfAngle = (vbitAngleDeg / 2) * Math.PI / 180
-    const tipR = Math.max(0.01, tipDiaMM / 2)
-    const dT = tipR * Math.cos(halfAngle)      // radius at the ball/cone join
-    const hT = tipR * (1 - Math.sin(halfAngle))
-    const ballGeo = new THREE.SphereGeometry(tipR, SEGS, 16, 0, Math.PI * 2, halfAngle, Math.PI - halfAngle)
-    ballGeo.translate(0, tipR, 0)
-    group.add(new THREE.Mesh(ballGeo, fluteMat))
-    y = hT
-    // Cone from the join out to the widest cutting radius — its height is exactly the
-    // usable taper length the tool's Max Z described.
-    const coneH = Math.max(0.01, (r - dT) / Math.tan(halfAngle))
-    const coneGeo = new THREE.CylinderGeometry(r, dT, coneH, SEGS, 1, true)
-    coneGeo.translate(0, y + coneH / 2, 0)
-    group.add(new THREE.Mesh(coneGeo, fluteMat))
-    y += coneH
-    if (shankR < r - 0.01) {
-      const taperH = r - shankR
-      const taperGeo = new THREE.CylinderGeometry(shankR, r, taperH, SEGS)
-      taperGeo.translate(0, y + taperH / 2, 0)
-      group.add(new THREE.Mesh(taperGeo, shankMat))
-      y += taperH
-    }
-  } else if (type === 'vbit') {
-    const halfAngle = (vbitAngleDeg / 2) * Math.PI / 180
-    addTipCone(r / Math.tan(halfAngle))
-    // 45° chamfer easing the cone base into the narrower shank
-    if (shankR < r - 0.01) {
-      const taperH = r - shankR
-      const taperGeo = new THREE.CylinderGeometry(shankR, r, taperH, SEGS)
-      taperGeo.translate(0, y + taperH / 2, 0)
-      group.add(new THREE.Mesh(taperGeo, shankMat))
-      y += taperH
-    }
-  } else if (type === 'drill') {
-    addTipCone(r / Math.tan(59 * Math.PI / 180)) // standard 118° point
-    addFluteCylinder(fluteLen)
-  } else if (isBall) {
-    // Sphere portion from the south pole up past the equator to the latitude
-    // where it necks down to belowShankR, so most of the ball is visible.
-    // thetaStart is measured from the north pole; translate(0, r, 0) puts the
-    // south pole at Y=0. Grooves only on the ball; the neck is plain steel.
-    const neckTheta = Math.asin(belowShankR / r)
-    const ballGeo = new THREE.SphereGeometry(r, SEGS, 16, 0, Math.PI * 2, neckTheta, Math.PI - neckTheta)
-    ballGeo.translate(0, r, 0)
-    group.add(new THREE.Mesh(ballGeo, fluteMat))
-    y = r + Math.cos(neckTheta) * r // top of the sphere portion
-    const bodyH = Math.max(fluteLen - y, 0)
-    const bodyGeo = new THREE.CylinderGeometry(belowShankR, belowShankR, bodyH, SEGS)
-    bodyGeo.translate(0, y + bodyH / 2, 0)
-    group.add(new THREE.Mesh(bodyGeo, shankMat))
-    y += bodyH
-  } else if (type === 'bull' || type === 'bullnose') {
-    // A bull nose: a flat end face of radius r − rc, the corner turned up to the wall as a
-    // quarter-round, then the straight flutes.
-    const rc = Math.max(0.01, Math.min(cornerMM, r))
-    const flatR = r - rc
-    const pts: THREE.Vector2[] = []
-    for (let k = 0; k <= 12; k++) {
-      const a = (k / 12) * (Math.PI / 2)
-      pts.push(new THREE.Vector2(flatR + rc * Math.sin(a), rc - rc * Math.cos(a)))
-    }
-    group.add(new THREE.Mesh(new THREE.LatheGeometry(pts, SEGS), fluteMat))
-    if (flatR > 0.01) {
-      const face = new THREE.CircleGeometry(flatR, SEGS)
-      face.rotateX(Math.PI / 2)
-      group.add(new THREE.Mesh(face, capMat))
-    }
-    y = rc
-    const bodyGeo = new THREE.CylinderGeometry(r, r, Math.max(fluteLen - rc, 0.01), SEGS, 1, true)
-    bodyGeo.translate(0, y + Math.max(fluteLen - rc, 0.01) / 2, 0)
-    group.add(new THREE.Mesh(bodyGeo, fluteMat))
-    y = fluteLen
-  } else {
-    addFluteCylinder(fluteLen)
-  }
-
-  addShank()
-  return group
 }
 
 function disposeObject3D(obj: THREE.Object3D) {
@@ -541,9 +331,9 @@ export default function ThreeView() {
           }
           // The tip is part of the shape, so it belongs in the key — without it a
           // taper and a V-bit of the same diameter and angle share a mesh.
-          const key = `${tType}|${tDiam}|${tAngle}|${ts.fluteCount}|${tTip}|${ts.toolCornerRadiusMM ?? 0}`
+          const key = `${tType}|${tDiam}|${tAngle}|${ts.fluteCount}|${tTip}|${ts.toolCornerRadiusMM ?? 0}|${ts.toolHelix ?? 'up'}`
           if (key !== refs.activeToolKey) {
-            buildToolIndicatorForParams(refs, tType, tDiam, tAngle, ts.fluteCount, tTip, ts.toolCornerRadiusMM ?? 0)
+            buildToolIndicatorForParams(refs, tType, tDiam, tAngle, ts.fluteCount, tTip, ts.toolCornerRadiusMM ?? 0, ts.toolHelix)
             refs.activeToolKey = key
           }
         }
@@ -854,13 +644,13 @@ function rebuildHeightfield(refs: SceneRefs) {
   perfLog(`[heightfield] built ${hf.topZ.length.toLocaleString()} samples @ ${hf.cellMM.toFixed(3)}mm cell`)
 }
 
-function buildToolIndicatorForParams(refs: SceneRefs, toolType: string, diamMM: number, vbitAngleDeg: number, fluteCount = 2, tipDiaMM = 0, cornerMM = 0) {
+function buildToolIndicatorForParams(refs: SceneRefs, toolType: string, diamMM: number, vbitAngleDeg: number, fluteCount = 2, tipDiaMM = 0, cornerMM = 0, helix: FluteHelix = 'up') {
   if (refs.toolMesh) {
     refs.scene.remove(refs.toolMesh)
     disposeObject3D(refs.toolMesh)
     refs.toolMesh = null
   }
-  const mesh = buildToolMesh(toolType, diamMM, vbitAngleDeg, fluteCount, tipDiaMM, cornerMM)
+  const mesh = buildToolMesh(toolType, diamMM, vbitAngleDeg, fluteCount, tipDiaMM, cornerMM, helix)
   mesh.visible = false
   refs.scene.add(mesh)
   refs.toolMesh = mesh
@@ -873,12 +663,14 @@ function buildToolIndicator(refs: SceneRefs) {
 
   const { segments, toolStates } = useSimStore.getState()
   let toolType = 'flat', diamMM = 3, vbitAngleDeg = 60, fluteCount = 2, tipDiaMM = 0, cornerMM = 0
+  let helix: FluteHelix = 'up'
 
   for (const seg of segments) {
     if (!seg.rapid) {
       const ts = segTool(seg, toolStates)
       diamMM = ts.toolDiameterMM
       fluteCount = ts.fluteCount
+      helix = ts.toolHelix ?? 'up'
       tipDiaMM = ts.toolTipRadiusMM ? ts.toolTipRadiusMM * 2 : 0
       if (ts.toolVbitHalfAngleTan) {
         toolType = tipDiaMM > 0 ? 'taper' : 'vbit'
@@ -905,9 +697,10 @@ function buildToolIndicator(refs: SceneRefs) {
     // A library taper stores its TIP as its diameter; the mesh wants the widest.
     if (t.type === 'taper') { tipDiaMM = t.diameterMM; diamMM = 2 * maxCutRadiusMM(t) }
     cornerMM = cornerRadiusMM(t)
+    helix = fluteHelixFromName(t.name)
   }
 
-  buildToolIndicatorForParams(refs, toolType, diamMM, vbitAngleDeg, fluteCount, tipDiaMM, cornerMM)
+  buildToolIndicatorForParams(refs, toolType, diamMM, vbitAngleDeg, fluteCount, tipDiaMM, cornerMM, helix)
 }
 
 // The active sheet and how far it is from the stock. CNC (x, y) → three (x, −y), so moving

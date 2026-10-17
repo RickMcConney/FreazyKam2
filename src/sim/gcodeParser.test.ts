@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseGcode, segTool, lineAt, lineStartsOf, formatSimTime } from './gcodeParser'
+import { parseGcode, segTool, lineAt, lineStartsOf, formatSimTime, messagesReached } from './gcodeParser'
 
 const last = <T,>(a: T[]) => a[a.length - 1]
 
@@ -146,9 +146,65 @@ describe('parseGcode — tool state', () => {
     expect(tool.spindleRpm).toBe(18000)
   })
 
+  it('reads which way the flutes twist from the tool name on the dia line, upcut when it says nothing', () => {
+    const helixOf = (comment: string) => {
+      const g = parseGcode(`${comment}\nG1 X10 F1000`)
+      return segTool(g.segments[0], g.toolStates).toolHelix ?? 'up'
+    }
+    expect(helixOf('; Tool: 1/4 Downcut Spiral  dia 6.35mm  flutes:2')).toBe('down')
+    expect(helixOf('; Tool: 1/4 Compression  dia 6.35mm  flutes:2')).toBe('compression')
+    expect(helixOf('; Tool: 1/4in end mill dia 6.35mm flutes:2')).toBe('up')
+  })
+
+  it('a later tool without a twist in its name goes back to upcut', () => {
+    const g = parseGcode('; Tool: 1/8 Down Cut dia 3.175mm\nG1 X10 F1000\n; Tool: 1/4 End Mill dia 6.35mm\nG1 X20')
+    expect(segTool(g.segments[0], g.toolStates).toolHelix).toBe('down')
+    expect(segTool(g.segments[1], g.toolStates).toolHelix ?? 'up').toBe('up')
+  })
+
   it('parenthesized comments do not generate motion', () => {
     const { segments } = parseGcode('(G1 X100 F500)\n; G0 X50')
     expect(segments.length).toBe(0)
+  })
+})
+
+describe('parseGcode — operator messages, by FluidNC\'s own rules', () => {
+  it('reads MSG anywhere in a parenthesised comment, and PRINT/DEBUG only at its start', () => {
+    const { messages } = parseGcode([
+      'M0 (MSG, Change to tool T2: 1/8 Downcut)',
+      '(PRINT, Op 1 of 2: Pocket)',
+      '(DEBUG, x is #<_x>)',
+      '(a note that mentions PRINT, but is not one)',
+    ].join('\n'))
+    expect(messages.map((m) => [m.kind, m.text])).toEqual([
+      ['msg', 'Change to tool T2: 1/8 Downcut'],
+      ['print', 'Op 1 of 2: Pocket'],
+      ['debug', 'x is #<_x>'],
+    ])
+  })
+
+  it('ignores a semicolon comment, which the controller drops unread', () => {
+    expect(parseGcode('; (MSG, not sent)\nG1 X1 F100 ; MSG, nor this').messages).toEqual([])
+  })
+
+  it('ties each message to the move it precedes, a message on a move line coming before that move', () => {
+    const { messages, segments } = parseGcode([
+      'G0 X1', '(PRINT, second)', 'G1 X2 F100 (MSG, on the third move)', 'G1 X3', '(PRINT, after the last)',
+    ].join('\n'))
+    // The MSG sits on the line of move 1 and is sent as that line starts, so it ties to
+    // move 1 too — not to the move after it.
+    expect(messages.map((m) => m.segIdx)).toEqual([1, 1, segments.length])
+    expect(messages.map((m) => m.lineIdx)).toEqual([1, 2, 4])
+  })
+
+  it('counts a message reached from the start of its move, and one after the last move once the run is over', () => {
+    const p = parseGcode('(PRINT, start)\nG1 X10 F600\n(PRINT, middle)\nG1 X20\n(PRINT, end)')
+    const at = (t: number) => messagesReached(p.messages, p.segments, t, p.totalTimeS)
+    expect(at(0)).toBe(1)
+    expect(at(p.segments[1].startTimeS - 1e-6)).toBe(1)
+    expect(at(p.segments[1].startTimeS)).toBe(2)
+    expect(at(p.totalTimeS - 1e-6)).toBe(2)
+    expect(at(p.totalTimeS)).toBe(3)
   })
 })
 

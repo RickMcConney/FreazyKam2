@@ -78,6 +78,24 @@ export function tipBallRadiusMM(tool: Tool): number {
   return tool.type === 'taper' ? Math.max(0, tool.diameterMM / 2) : 0
 }
 
+// Which way a tool's flutes twist — it decides where the chips go, not the shape of the
+// cut, so nothing in the CAM reads it; the 3D sim draws it. There is no field for it: a
+// bit's NAME is where makers and users write it, so it is read from there, and a name
+// that says nothing is an upcut — the common spiral router bit, and how every tool was
+// drawn before this was read at all. Libraries spell downcut every which way ("Down
+// Cut", "Downcut", "DownShear", "DownTown"), so ANY "down" in the name is a downcut. A
+// name with both — "Up/Down", "UpDown" — is a compression bit; its "up" must start a
+// word, or the "up" inside "Super Downshear" would turn a downcut into one.
+export type FluteHelix = 'up' | 'down' | 'compression' | 'straight'
+
+export function fluteHelixFromName(name: string): FluteHelix {
+  const down = /down/i.test(name)
+  if (/compression/i.test(name) || (down && /\bup/i.test(name))) return 'compression'
+  if (down) return 'down'
+  if (/\bstraight\b/i.test(name)) return 'straight'
+  return 'up'
+}
+
 // ── The V-cutter primitives ───────────────────────────────────────────────────
 // A cone of half-angle θ tangent to a ball of radius `tipR` at the tip. tipR = 0 is a
 // plain V-bit and both reduce to the bare cone laws. Uncapped — the widest the tool

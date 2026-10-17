@@ -300,7 +300,7 @@ describe('generateGcode — tool changes', () => {
     expect(changeIdx).toBeGreaterThan(0)
     // M5/M0 pause precedes the new-tool comment; new RPM follows it
     expect(lines.slice(0, changeIdx)).toContain('M3 S18000')
-    expect(lines.slice(changeIdx - 3, changeIdx)).toEqual(expect.arrayContaining(['M5', 'M0']))
+    expect(lines.slice(changeIdx - 3, changeIdx)).toEqual(expect.arrayContaining(['M5', 'M0 ; Tool change: T2 Small End Mill']))
     expect(lines.slice(changeIdx)).toContain('M3 S24000')
     // cuts after the change use the second tool's feed
     expect(g).toContain('G1 X30.000 Y0.000 Z-1.000 F600')
@@ -315,8 +315,8 @@ describe('generateGcode — tool changes', () => {
       { x: 10, y: 0, z: 5, rapid: true, toolChange: 't2' },
       rapid(20, 0, 5), cut(20, 0, -1),
     ])]).split('\n')
-    const pause = lines.indexOf('M0')
-    expect(lines.slice(pause - 2, pause + 1)).toEqual(['G0 X10.000 Y0.000 Z5.000', 'M5', 'M0'])
+    const pause = lines.indexOf('M0 ; Tool change: T2 Small End Mill')
+    expect(lines.slice(pause - 2, pause + 1)).toEqual(['G0 X10.000 Y0.000 Z5.000', 'M5', 'M0 ; Tool change: T2 Small End Mill'])
     // …so the first move with the new tool starts at safe height, not in the material.
     const after = lines.slice(pause).find((l) => l.startsWith('G0') || l.startsWith('G1'))
     expect(after).toBe('G0 X20.000 Y0.000 Z5.000')
@@ -331,8 +331,118 @@ describe('generateGcode — tool changes', () => {
       rapid(20, 0, 5),
     ])]).split('\n')
     expect(lines.filter((l) => l === 'G0 X10.000 Y0.000 Z5.000')).toHaveLength(1)
-    const pause = lines.indexOf('M0')
-    expect(lines.slice(pause - 2, pause + 1)).toEqual(['G0 X10.000 Y0.000 Z5.000', 'M5', 'M0'])
+    const pause = lines.indexOf('M0 ; Tool change: T2 Small End Mill')
+    expect(lines.slice(pause - 2, pause + 1)).toEqual(['G0 X10.000 Y0.000 Z5.000', 'M5', 'M0 ; Tool change: T2 Small End Mill'])
+  })
+})
+
+describe('generateGcode — stock-simulation header for the CNC GCode Tools viewer', () => {
+  const twoTools = () => gen([makeOp([
+    rapid(0, 0, 5), cut(0, 0, -1), cut(10, 0, -1),
+    { x: 10, y: 0, z: 5, rapid: true, toolChange: 't2' },
+    rapid(20, 0, 5), cut(20, 0, -1),
+  ])]).split('\n')
+
+  it('declares the stock in the program\'s own coordinates, origin and Z datum applied', () => {
+    useWorkpieceStore.setState({ origin: 'center', zOrigin: 'bottom' })
+    const lines = gen([makeOp([rapid(0, 0, 5), cut(0, 0, -1)])]).split('\n')
+    expect(lines).toContain('; CNCSIM 1 UNITS=mm')
+    expect(lines).toContain('; Stock: XMIN=-50 XMAX=50 YMIN=-40 YMAX=40 ZMIN=0 ZMAX=12')
+  })
+
+  it('writes inch output in inches', () => {
+    const lines = gen([makeOp([rapid(0, 0, 5), cut(0, 0, -1)])], { ...POST, unitMode: 'in' }).split('\n')
+    expect(lines).toContain('; CNCSIM 1 UNITS=in')
+    expect(lines).toContain('; Stock: XMIN=0 XMAX=3.937 YMIN=0 YMAX=3.1496 ZMIN=-0.4724 ZMAX=0')
+  })
+
+  it('numbers the tools in the order they run, before the first move, one ToolDef each', () => {
+    const lines = twoTools()
+    const defs = lines.filter((l) => l.startsWith('; ToolDef'))
+    expect(defs).toEqual([
+      '; ToolDef 1: SHAPE=flat D=6 FLUTES=2 LEN=25 NAME=Test End Mill',
+      '; ToolDef 2: SHAPE=flat D=3.175 FLUTES=2 LEN=15 NAME=Small End Mill',
+    ])
+    const firstMove = lines.findIndex((l) => /^G[0-3]\b/.test(l))
+    expect(lines.indexOf(defs[1])).toBeLessThan(firstMove)
+  })
+
+  it('tags the tool-change M0 with "tool", which is what advances the viewer to ToolDef 2', () => {
+    expect(twoTools()).toContain('M0 ; Tool change: T2 Small End Mill')
+  })
+
+  it('maps each tool shape to the format\'s, with V angles INCLUDED and a taper\'s widest diameter as D', () => {
+    const defsFor = (tool: Tool) => generateGcode([makeOp([rapid(0, 0, 5), cut(0, 0, -1)])], { t1: tool }, 'p', POST)
+      .split('\n').find((l) => l.startsWith('; ToolDef'))
+    expect(defsFor({ ...TOOL, type: 'vbit', vbitAngleDeg: 60 })).toContain('SHAPE=vbit D=6 ANGLE=60 TIP=0')
+    expect(defsFor({ ...TOOL, type: 'taper', diameterMM: 1, vbitAngleDeg: 5, maxDepthMM: 20 }))
+      .toMatch(/SHAPE=taperball D=4\.\d+ ANGLE=10 TIP=1 /)
+    expect(defsFor({ ...TOOL, type: 'bullnose', cornerRadiusMM: 1.5 })).toContain('SHAPE=bullnose D=6 CR=1.5')
+    expect(defsFor({ ...TOOL, type: 'ballnose' })).toContain('SHAPE=ball D=6')
+  })
+
+  it('keeps every header line one unwrapped line within the controller limit, cutting a long name', () => {
+    const name = 'An Extremely Long Tool Name (with parentheses) That Goes On And On Forever'
+    const g = generateGcode([makeOp([rapid(0, 0, 5), cut(0, 0, -1)])], { t1: { ...TOOL, name } }, 'p',
+      { ...POST, commentStyle: 'parenthesis' })
+    const def = g.split('\n').find((l) => l.startsWith('(ToolDef'))!
+    expect(def.length).toBeLessThanOrEqual(MAX_GCODE_LINE)
+    expect(def).toMatch(/^\(ToolDef 1: SHAPE=flat D=6 FLUTES=2 LEN=25 NAME=An Extremely[^()]*\)$/)
+  })
+
+  it('writes nothing, and leaves the M0 bare, when the post has comments off', () => {
+    const lines = gen([makeOp([
+      rapid(0, 0, 5), cut(0, 0, -1),
+      { x: 0, y: 0, z: 5, rapid: true, toolChange: 't2' }, cut(0, 0, -1),
+    ])], { ...POST, commentStyle: 'none' }).split('\n')
+    expect(lines.some((l) => /CNCSIM|Stock:|ToolDef/.test(l))).toBe(false)
+    expect(lines).toContain('M0')
+  })
+})
+
+describe('generateGcode — operator messages for FluidNC', () => {
+  const PAREN = { ...POST, commentStyle: 'parenthesis' as const }
+  const job = (post: PostProcessorProfile, tool2 = 't2') => gen([
+    makeOp([rapid(0, 0, 5), cut(0, 0, -1), { x: 0, y: 0, z: 5, rapid: true, toolChange: tool2 }, cut(0, 0, -1)]),
+    makeOp([rapid(0, 0, 5), cut(5, 0, -1)], { id: 'op2', name: 'Pocket #2 100%' }),
+  ], post).split('\n')
+
+  it('PRINTs each operation as it starts and the end of the job, in the order they run', () => {
+    const prints = job(PAREN).filter((l) => l.startsWith('(PRINT,'))
+    expect(prints).toEqual(['(PRINT, Op 1 of 2: Profile 1)', '(PRINT, Op 2 of 2: Pocket 2 100)', '(PRINT, All operations done)'])
+  })
+
+  it('makes the tool-change M0 a MSG naming the tool, which FluidNC shows while it waits', () => {
+    expect(job(PAREN)).toContain('M0 (MSG, Change to tool T2: Small End Mill)')
+  })
+
+  it('names the FIRST tool too, before the spindle starts, since no M0 waits for it', () => {
+    const lines = job(PAREN)
+    const first = lines.indexOf('(MSG, Start with tool T1: Test End Mill)')
+    expect(first).toBeGreaterThan(0)
+    expect(first).toBeLessThan(lines.indexOf('M3 S18000'))
+  })
+
+  it('round-trips through the simulator as the same messages, in order', () => {
+    const { messages } = parseGcode(job(PAREN).join('\n'))
+    expect(messages.map((m) => `${m.kind}: ${m.text}`)).toEqual([
+      'print: Op 1 of 2: Profile 1', 'msg: Start with tool T1: Test End Mill', 'msg: Change to tool T2: Small End Mill',
+      // The pocket runs on the first tool again: another change, and the next number.
+      'print: Op 2 of 2: Pocket 2 100', 'msg: Change to tool T3: Test End Mill', 'print: All operations done',
+    ])
+  })
+
+  it('sends none with a semicolon post, whose comments the controller never reads', () => {
+    const lines = job(POST)
+    expect(lines.some((l) => /MSG|PRINT/.test(l))).toBe(false)
+    expect(lines).toContain('M0 ; Tool change: T2 Small End Mill')
+  })
+
+  it('keeps a message within the controller\'s line limit however long the name', () => {
+    const lines = gen([makeOp([rapid(0, 0, 5), cut(5, 0, -1)], { name: 'x'.repeat(200) })], PAREN).split('\n')
+    const print = lines.find((l) => l.startsWith('(PRINT, Op'))!
+    expect(print.length).toBeLessThanOrEqual(MAX_GCODE_LINE)
+    expect(print.endsWith(')')).toBe(true)
   })
 })
 

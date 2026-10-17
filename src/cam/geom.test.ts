@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { zPasses, pointInPolygon, pointOnRing, arcLengths, interpPt, stripClosingDuplicate, ptSegDistSq, toolRadiusAtHeight,
-  toolProfileHeightMM, maxCutRadiusMM, includedAngleDeg, isVCutter, vProfileHeightMM, vRadiusAtHeightMM } from './geom'
+  toolProfileHeightMM, maxCutRadiusMM, fluteHelixFromName, includedAngleDeg, isVCutter, vProfileHeightMM, vRadiusAtHeightMM } from './geom'
 import type { Pt2 } from './pathFlattener'
 import type { Tool } from '../store/toolStore'
 
@@ -278,5 +278,29 @@ describe('the two angle conventions', () => {
     expect(isVCutter(mkTool({ type: 'endmill' }))).toBe(false)
     expect(isVCutter(mkTool({ type: 'ballnose' }))).toBe(false)
     expect(isVCutter(mkTool({ type: 'drill' }))).toBe(false)
+  })
+})
+
+describe('fluteHelixFromName', () => {
+  it('reads ANY "down" in the name as a downcut, however the library spells it', () => {
+    for (const n of ['1/4" Downcut Spiral', '1/8 Down Cut', 'down-cut 2fl', 'DownTown 1/4', 'Downshear 3/8', 'Super Downshear']) {
+      expect(fluteHelixFromName(n)).toBe('down')
+    }
+  })
+
+  it('reads a compression bit by name, or by an "up" starting a word alongside a "down"', () => {
+    for (const n of ['1/4 Compression', 'Mortise Compression 3/8', '1/4 Up/Down Cut', 'up-down spiral', 'UpDown 1/4']) {
+      expect(fluteHelixFromName(n)).toBe('compression')
+    }
+  })
+
+  it('reads a straight-fluted bit', () => {
+    expect(fluteHelixFromName('1/2 Straight Bit')).toBe('straight')
+  })
+
+  it('falls back to upcut when the name says nothing about the twist, or says upcut', () => {
+    for (const n of ['1/4" End Mill', '60° V-Bit', '', '1/4 Upcut Spiral', 'Upshear 1/8', 'Super O-flute']) {
+      expect(fluteHelixFromName(n)).toBe('up')
+    }
   })
 })

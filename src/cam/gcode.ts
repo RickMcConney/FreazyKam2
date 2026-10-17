@@ -92,6 +92,97 @@ export function commentLines(text: string, style: PostProcessorProfile['commentS
   return out.map(wrap)
 }
 
+// ─── Stock-simulation header (CNC GCode Tools) ────────────────────────────────
+// `(CNCSIM …)`, `(Stock: …)` and one `(ToolDef N: …)` per tool, the header the CNC GCode
+// Tools viewer (jeyeager65/cnc-gcode-tools — the FluidNC WebUI / FigUI / VS Code viewer)
+// reads to carve the stock as a solid; its docs/stock-simulation-metadata.md is the format.
+// Comments only, so no controller sees them. Three rules of that format shape this code:
+// - Each is a line ON ITS OWN, and a wrapped one is two broken lines — so they are never
+//   passed through `commentLines`' wrapping; numbers are written short (≤ 4 dp, no trailing
+//   zeros) and a ToolDef's NAME, which runs to the end of the line, is cut to fit.
+// - Our files have no T words, so N is the viewer's SEQUENTIAL tool number: tool 1 from the
+//   start, the next one at each `M0` whose comment mentions "tool". The tool-change M0 is
+//   tagged with such a comment for exactly that reason (`tagToolChangeM0`), and every tool
+//   change gets its own N even when an earlier tool comes back.
+// - Values are in the program's own units and coordinates (origin and Z datum applied).
+function num4(n: number): string {
+  return String(+n.toFixed(4))
+}
+
+function commentLine(text: string, style: PostProcessorProfile['commentStyle']): string {
+  const body = style === 'parenthesis' ? text.replace(/[()]/g, (m) => (m === '(' ? '[' : ']')) : text
+  return style === 'semicolon' ? `; ${body}` : `(${body})`
+}
+
+function toolDefFields(tool: Tool, k: number): string {
+  const L = (mm: number) => num4(mm * k)
+  const common = `FLUTES=${Math.max(1, Math.round(tool.fluteCount) || 1)}${tool.maxDepthMM > 0 ? ` LEN=${L(tool.maxDepthMM)}` : ''}`
+  switch (tool.type) {
+    case 'ballnose': return `SHAPE=ball D=${L(tool.diameterMM)} ${common}`
+    case 'bullnose': return `SHAPE=bullnose D=${L(tool.diameterMM)} CR=${L(cornerRadiusMM(tool))} ${common}`
+    case 'vbit': return `SHAPE=vbit D=${L(tool.diameterMM)} ANGLE=${num4(includedAngleDeg(tool))} TIP=0 ${common}`
+    // D is the widest it cuts and TIP its ball; ANGLE is INCLUDED there as everywhere
+    // in that format, where ours is stored per side.
+    case 'taper': return `SHAPE=taperball D=${L(2 * maxCutRadiusMM(tool))} ANGLE=${num4(includedAngleDeg(tool))} TIP=${L(tool.diameterMM)} ${common}`
+    // The format's own mapping for a drill: a V-bit of its point angle.
+    case 'drill': return `SHAPE=vbit D=${L(tool.diameterMM)} ANGLE=118 TIP=0 ${common}`
+    default: return `SHAPE=flat D=${L(tool.diameterMM)} ${common}`
+  }
+}
+
+/** The header lines, in the program's units and coordinates. Empty with comments off. */
+export function stockSimHeader(
+  tools: Tool[], profile: PostProcessorProfile,
+  stock: { widthMM: number; heightMM: number; thicknessMM: number; orgX: number; orgY: number; zOffMM: number },
+): string[] {
+  const style = profile.commentStyle
+  if (style !== 'semicolon' && style !== 'parenthesis') return []
+  const k = profile.unitMode === 'in' ? 1 / MM_PER_IN : 1
+  const v = (mm: number) => num4(mm * k)
+  const out = [
+    commentLine(`CNCSIM 1 UNITS=${profile.unitMode === 'in' ? 'in' : 'mm'}`, style),
+    commentLine(`Stock: XMIN=${v(-stock.orgX)} XMAX=${v(stock.widthMM - stock.orgX)} ` +
+      `YMIN=${v(-stock.orgY)} YMAX=${v(stock.heightMM - stock.orgY)} ` +
+      `ZMIN=${v(stock.zOffMM - stock.thicknessMM)} ZMAX=${v(stock.zOffMM)}`, style),
+  ]
+  tools.forEach((tool, i) => {
+    const head = `ToolDef ${i + 1}: ${toolDefFields(tool, k)}`
+    // NAME runs to the end of the line, so it is the part that gives way to the limit.
+    const room = MAX_GCODE_LINE - commentLine(`${head} NAME=`, style).length
+    const name = tool.name.trim().replace(/\s+/g, ' ').slice(0, Math.max(0, room)).trim()
+    out.push(commentLine(name ? `${head} NAME=${name}` : head, style))
+  })
+  return out
+}
+
+// ─── Operator messages ─────────────────────────────────────────────────────────
+// FluidNC sends a comment to the sender's console as it reaches the line
+// (gcode_comment_msg, GCode.cpp): `(MSG, …)` is any PARENTHESISED comment containing
+// "MSG"; `(PRINT, …)` substitutes `#<number or parameter>` and `%` formats into the text,
+// so those two characters are kept out of ours. A `;` comment is dropped unread, so with a
+// semicolon post there are no messages, only the plain comments. Grbl and other controllers
+// skip them as ordinary comments. MSG is for what the operator must DO (the tool change the
+// M0 is waiting on); PRINT is progress (which operation is starting).
+function controllerMessage(kind: 'MSG' | 'PRINT', text: string, prefix = ''): string {
+  let body = text.trim().replace(/\s+/g, ' ').replace(/[()]/g, (m) => (m === '(' ? '[' : ']'))
+  if (kind === 'PRINT') body = body.replace(/[#%]/g, '')
+  const head = `${prefix}(${kind}, `
+  return `${head}${body.slice(0, Math.max(0, MAX_GCODE_LINE - head.length - 1)).trim()})`
+}
+
+// The tool-change template's bare `M0` with a comment naming the tool — which is what the
+// viewer above counts as a tool change, and (as a MSG) what FluidNC shows the operator while
+// it waits. Any other line, or a template without an M0, is left exactly as the user wrote it.
+function tagToolChangeM0(line: string, n: number, tool: Tool, style: PostProcessorProfile['commentStyle']): string {
+  if (!/^\s*M0?0\s*$/i.test(line) || (style !== 'semicolon' && style !== 'parenthesis')) return line
+  const bare = line.trim()
+  if (style === 'parenthesis') return controllerMessage('MSG', `Change to tool T${n}: ${tool.name}`, `${bare} `)
+  const head = `Tool change: T${n}`
+  const room = MAX_GCODE_LINE - `${bare} ${commentLine(`${head} `, style)}`.length
+  const name = tool.name.trim().replace(/\s+/g, ' ').slice(0, Math.max(0, room)).trim()
+  return `${bare} ${commentLine(name ? `${head} ${name}` : head, style)}`
+}
+
 // A roughing pass and its finishing pass differ ONLY by the allowance, so without this
 // the two ops read identically in the file the operator checks the run against.
 function allowanceDesc(mm: number | undefined): string {
@@ -327,6 +418,13 @@ export function generateGcodeWithOps(
   c(`Post-processor: ${profile.name}`)
   c(`Origin: ${origin}  offset X${f(org.x)} Y${f(org.y)}`)
   c(`Z origin: ${zOrigin} of stock (Z0 = ${zOrigin === 'bottom' ? 'stock bottom' : 'top surface'})`)
+  // The stock-simulation header goes HERE, but which tools it lists is only known once the
+  // program is written — so the place is held and the lines spliced in at the end.
+  const simHeaderAt = lines.length
+  // Every tool the program runs, in the order it runs them (ToolDef N is entry N).
+  const toolSeq: Tool[] = []
+  const toolChangeLines = (tool: Tool) =>
+    profile.toolChangeGcode.split('\n').map((l) => tagToolChangeM0(l, toolSeq.length, tool, profile.commentStyle))
   // The unit word is emitted from `profile.unitMode`, which is the ONLY thing that decides
   // whether the coordinates below are inches or mm (see `fmtCoord`). It used to come from
   // the start-block template, which every built-in gets right — but a user profile copied
@@ -372,6 +470,9 @@ export function generateGcodeWithOps(
 
     opStarts.push({ opId: op.id, line: lines.length })
     c(`=== ${op.name} ===`)
+    if (profile.commentStyle === 'parenthesis') {
+      lines.push(controllerMessage('PRINT', `Op ${opStarts.length} of ${doneOps.length}: ${op.name}`))
+    }
     if (roughingToolId && toolsById[roughingToolId]) {
       const rt = toolsById[roughingToolId]
       // Sim parser reads "dia X.XXXmm" to set tool diameter — emit roughing tool LAST so
@@ -389,8 +490,13 @@ export function generateGcodeWithOps(
     }
 
     if (lastToolId !== firstToolId) {
+      toolSeq.push(firstTool)
       if (lastToolId && profile.toolChangeGcode.trim()) {
-        lines.push(...profile.toolChangeGcode.split('\n'))
+        lines.push(...toolChangeLines(firstTool))
+      } else if (!lastToolId && profile.commentStyle === 'parenthesis') {
+        // Every later bit is named by the M0 that waits for it; the first has no M0, so
+        // without this the operator is never told what to load before pressing Start.
+        lines.push(controllerMessage('MSG', `Start with tool T1: ${firstTool.name}`))
       }
       if (profile.spindleOnTemplate.trim()) {
         const dc = dialComment(firstFeeds.rpm); if (dc) c(dc)
@@ -457,7 +563,8 @@ export function generateGcodeWithOps(
         }
         const newTool = toolsById[seg.toolChange]
         if (newTool && seg.toolChange !== lastToolId) {
-          if (profile.toolChangeGcode.trim()) lines.push(...profile.toolChangeGcode.split('\n'))
+          toolSeq.push(newTool)
+          if (profile.toolChangeGcode.trim()) lines.push(...toolChangeLines(newTool))
           // Emit dia + tool type so sim parser updates to the new tool
           c(`${newTool.name}  ${toolDiaComment(newTool)}  flutes:${newTool.fluteCount}`)
           toolShapeComments(newTool, op.type === 'inlay' ? op.angleDeg : undefined, c)
@@ -586,6 +693,8 @@ export function generateGcodeWithOps(
     lines.push('')
   }
 
+  if (profile.commentStyle === 'parenthesis') lines.push(controllerMessage('PRINT', 'All operations done'))
+
   if (profile.endGcode.trim()) {
     // Shift literal Z values in endGcode by the datum offset so a hardcoded retract like
     // "G0 Z10" becomes "G0 Z22" when bottom-of-stock (T=12) is selected.
@@ -598,6 +707,12 @@ export function generateGcodeWithOps(
       : profile.endGcode
     lines.push(...endBlock.split('\n'))
   }
+
+  const simHeader = stockSimHeader(toolSeq, profile, {
+    widthMM, heightMM, thicknessMM, orgX: org.x, orgY: org.y, zOffMM: zOff,
+  })
+  lines.splice(simHeaderAt, 0, ...simHeader)
+  for (const s of opStarts) s.line += simHeader.length
 
   perfLog(`[perf] generateGcode total ${(performance.now() - _tStart).toFixed(0)}ms | arc-fit ${_arcMs.toFixed(0)}ms | segs ${_segIn}→${_segOut}`)
 

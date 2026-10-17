@@ -455,6 +455,111 @@ export function compoundFinishRings(
     .map(r => ensureWinding(r, signedArea(r) < 0 ? !wantCCW : wantCCW))
 }
 
+/**
+ * The ground a pass has CLEARED at its own depth so far: a grid marking every cell whose
+ * centre lies within the tool radius of a cut. What a stay-down link asks before it rides
+ * somewhere — `isTravelSafe` only knows the DESIGN (walls, islands), so it passes a link
+ * across stock the pass simply has not reached yet, and riding half a millimetre over the
+ * floor means riding through that stock. The link to a raster row's start is the everyday
+ * case: the row is uncut by definition, so the last tool radius of the link pushed into a
+ * full-depth crescent of it at travel speed — a G0, with `linksAsRapids` (sim/rapidGouge.ts).
+ */
+export class SweptArea {
+  private readonly cells: Uint8Array
+  private readonly nx: number
+  private readonly ny: number
+
+  constructor(
+    private readonly x0: number, private readonly y0: number,
+    x1: number, y1: number,
+    private readonly cell: number,
+  ) {
+    this.nx = Math.max(1, Math.ceil((x1 - x0) / cell) + 1)
+    this.ny = Math.max(1, Math.ceil((y1 - y0) / cell) + 1)
+    this.cells = new Uint8Array(this.nx * this.ny)
+  }
+
+  /**
+   * Mark the ground a tool of radius `r` sweeps moving from `a` to `b` — a capsule. It is
+   * convex, so each grid row crosses it in ONE interval, worked out in closed form from its
+   * three pieces (the two end discs and the band between) and filled as a run. Testing
+   * every cell in the move's bounding box instead made a raster ten times slower: an angled
+   * row's box is most of the pocket.
+   */
+  add(a: Pt2, b: Pt2, r: number) {
+    const { cell, nx, ny, x0, y0 } = this
+    const dx = b[0] - a[0], dy = b[1] - a[1]
+    const L = Math.hypot(dx, dy)
+    const ux = L > 1e-12 ? dx / L : 1, uy = L > 1e-12 ? dy / L : 0
+    const nX = -uy, nY = ux
+    const j0 = Math.max(0, Math.floor((Math.min(a[1], b[1]) - r - y0) / cell))
+    const j1 = Math.min(ny - 1, Math.ceil((Math.max(a[1], b[1]) + r - y0) / cell))
+    for (let j = j0; j <= j1; j++) {
+      const y = y0 + j * cell
+      let lo = Infinity, hi = -Infinity
+      for (const p of [a, b]) {
+        const h = r * r - (y - p[1]) * (y - p[1])
+        if (h >= 0) { const w = Math.sqrt(h); lo = Math.min(lo, p[0] - w); hi = Math.max(hi, p[0] + w) }
+      }
+      // The band: perpendicular offset within ±r and position along the move within [0, L],
+      // each linear in x along this row.
+      let bl = -Infinity, bh = Infinity
+      const ry = y - a[1]
+      for (const [k, c, lim0, lim1] of [[nX, ry * nY, -r, r], [ux, ry * uy, 0, L]] as const) {
+        if (Math.abs(k) < 1e-12) { if (c < lim0 || c > lim1) { bl = Infinity; bh = -Infinity } continue }
+        const e0 = (lim0 - c) / k, e1 = (lim1 - c) / k
+        bl = Math.max(bl, a[0] + Math.min(e0, e1)); bh = Math.min(bh, a[0] + Math.max(e0, e1))
+      }
+      if (bl <= bh) { lo = Math.min(lo, bl); hi = Math.max(hi, bh) }
+      if (lo > hi) continue
+      const i0 = Math.max(0, Math.ceil((lo - x0) / cell)), i1 = Math.min(nx - 1, Math.floor((hi - x0) / cell))
+      if (i0 <= i1) this.cells.fill(1, j * nx + i0, j * nx + i1 + 1)
+    }
+  }
+
+  /** Whether every cell centre within `r` of `p` is cleared (off the grid is not). */
+  private clearAt(p: Pt2, r: number): boolean {
+    const { cell, nx, ny, x0, y0 } = this
+    const i0 = Math.floor((p[0] - r - x0) / cell), i1 = Math.ceil((p[0] + r - x0) / cell)
+    const j0 = Math.floor((p[1] - r - y0) / cell), j1 = Math.ceil((p[1] + r - y0) / cell)
+    const r2 = r * r
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        const dx = x0 + i * cell - p[0], dy = y0 + j * cell - p[1]
+        if (dx * dx + dy * dy > r2) continue
+        if (i < 0 || j < 0 || i >= nx || j >= ny || !this.cells[j * nx + i]) return false
+      }
+    }
+    return true
+  }
+
+  /**
+   * How far along a → b (0…1) a tool of radius `r` stays over cleared ground, from `a`.
+   * Tested a cell and a half NARROWER than the tool: the grid places an edge only to about
+   * that, and a cut's own rim — which a link back along the same line rides exactly — must
+   * not read as stock.
+   */
+  clearedFraction(a: Pt2, b: Pt2, r: number): number {
+    const rTest = Math.max(0, r - 1.5 * this.cell)
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1])
+    // Discs a quarter radius apart cover all but a sliver r/64 deep between them.
+    const n = Math.max(1, Math.ceil(len / Math.max(this.cell, r / 4)))
+    for (let k = 0; k <= n; k++) {
+      const t = k / n
+      if (!this.clearAt([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], rTest)) return Math.max(0, (k - 1) / n)
+    }
+    return 1
+  }
+}
+
+// A move from one cut to the next at depth `z`. A short one is a cut. A long one rides
+// MICRO_LIFT_MM over the floor as a `travel` move — but only over ground `cleared` says the
+// pass has cut: where that ends, the tool drops and CUTS at feed the rest of the way. Not a
+// lift: the move is inside the design (`isTravelSafe` chose it), so the worst it can be is a
+// slot at feed, which is what every first row is — and a lift was measured to cost a
+// retract on most links of an angled raster, whose rows leave uncut triangles along the
+// wall between their ends that the old ride went straight through. Without `cleared` the
+// whole link rides, as it always did.
 export function emitCutTransition(
   segs: MotionSegment[],
   from: Pt2,
@@ -462,16 +567,28 @@ export function emitCutTransition(
   z: number,
   toolDiameterMM: number,
   safeZ: number,
+  cleared?: SweptArea,
 ) {
   const dist = Math.hypot(to[0] - from[0], to[1] - from[1])
-  if (dist > toolDiameterMM * 2) {
-    const liftZ = Math.min(safeZ, z + MICRO_LIFT_MM)
+  if (dist <= toolDiameterMM * 2) {
+    segs.push({ x: to[0], y: to[1], z, rapid: false })
+    return
+  }
+  const t = cleared ? cleared.clearedFraction(from, to, toolDiameterMM / 2) : 1
+  const liftZ = Math.min(safeZ, z + MICRO_LIFT_MM)
+  if (t >= 1) {
     segs.push({ x: from[0], y: from[1], z: liftZ, rapid: false, travel: true })
     segs.push({ x: to[0], y: to[1], z: liftZ, rapid: false, travel: true })
     segs.push({ x: to[0], y: to[1], z, rapid: false })
-  } else {
-    segs.push({ x: to[0], y: to[1], z, rapid: false })
+    return
   }
+  const stop: Pt2 = [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t]
+  if (Math.hypot(stop[0] - from[0], stop[1] - from[1]) > 1e-6) {
+    segs.push({ x: from[0], y: from[1], z: liftZ, rapid: false, travel: true })
+    segs.push({ x: stop[0], y: stop[1], z: liftZ, rapid: false, travel: true })
+    segs.push({ x: stop[0], y: stop[1], z, rapid: false })
+  }
+  segs.push({ x: to[0], y: to[1], z, rapid: false })
 }
 
 export function centroidOfRing(pts: Pt2[]): Pt2 {
@@ -1009,6 +1126,14 @@ export function emitLinkedContourRings(
   // there, so every pass has cleared material on one side instead of slotting full width.
   // The start VERTEX is still chosen for shortest travel; only the ring order is constrained.
   startInnermost = false,
+  // How low a ring ENTERED FROM SAFE HEIGHT may rapid before it ramps. `prevZ` is the
+  // floor the pass descends from, and for the rest and finishing rings that is the level
+  // just roughed — cleared under the roughing passes, but NOT under these rings, which lie
+  // over the stock the roughing left (the wall allowance, the leftover patch). A G0 down to
+  // it plunged the cutter's edge into that stock; ovals.fkam took 3 mm of allowance at
+  // rapid speed. So a lifted entry rapids only to this (the level's own start surface) and
+  // ramps the rest at feed. A ring linked at depth is unaffected. Default: `prevZ`.
+  entryZ?: number,
 ): Pt2 | null {
   if (rings.length === 0) return incomingPos
   let lastPos: Pt2 | null = incomingPos
@@ -1073,18 +1198,22 @@ export function emitLinkedContourRings(
       const rampNeeded = firstRingAtDepth || !canTravelAtDepth
 
       if (rampNeeded) {
+        // From safe height the rapid stops on ground cleared under the WHOLE ring (entryZ);
+        // linked at depth, the ramp starts from the floor the pass descends from.
+        const lifted = lastPos === null || !canTravelAtDepth
+        const descendFrom = lifted ? Math.max(entryZ ?? prevZ, prevZ) : prevZ
         if (lastPos !== null && !canTravelAtDepth) {
           segs.push({ x: lastPos[0], y: lastPos[1], z: safeZ, rapid: true })
           segs.push({ x: rampStartX, y: rampStartY, z: safeZ, rapid: true })
-          segs.push({ x: rampStartX, y: rampStartY, z: prevZ, rapid: true })
+          segs.push({ x: rampStartX, y: rampStartY, z: descendFrom, rapid: true })
         } else if (lastPos === null) {
           segs.push({ x: rampStartX, y: rampStartY, z: safeZ, rapid: true })
-          segs.push({ x: rampStartX, y: rampStartY, z: prevZ, rapid: true })
+          segs.push({ x: rampStartX, y: rampStartY, z: descendFrom, rapid: true })
         } else {
           segs.push({ x: rampStartX, y: rampStartY, z: prevZ, rapid: false })
         }
 
-        emitRampDescent(segs, sampleAt, prevZ, z, 12)
+        emitRampDescent(segs, sampleAt, descendFrom, z, 12)
       } else {
         if (lastPos) emitLink()
         else segs.push({ x: sx, y: sy, z, rapid: false })

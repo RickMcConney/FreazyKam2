@@ -5,6 +5,8 @@
 // at every point, so a test can ask where the tool is against the SURFACE rather than
 // against the code's own height map.
 import { describe, it, expect } from 'vitest'
+import { findRapidGouges } from '../sim/rapidGouge'
+import type { SimSegment, ToolState } from '../sim/gcodeParser'
 import { buildHeightMap, generateProfile3d, StockModel, ballKernel, flatKernel, profile3dDepthMM, STOCK_SKIN_MM, modelBelowCut, type Profile3dParams } from './profile3d'
 import { maxCutRadiusMM, toolProfileHeightMM } from './geom'
 import type { Tool } from '../store/toolStore'
@@ -875,4 +877,43 @@ describe('roughing with a flat end mill', () => {
       expect(finishing.filter((s) => Math.hypot(s.x - 20, s.y - 20) < 6).length).toBeGreaterThan(50)
     })
   })
+})
+
+describe('a 3D Profile never moves into stock at rapid speed', () => {
+  // A `travel` move goes out as G0 (`linksAsRapids`), so it is judged as one: the program is
+  // carved in order with the simulator's rapid check (sim/rapidGouge.ts) and every travel
+  // move that removes stock is counted. Two faults lived here: a cleared ride's LAST step,
+  // the drop onto the next cut — 3 mm into a roughing level, or the finish's allowance — and
+  // a cleared ride dipping below the level above on a slope, where the tip height it follows
+  // runs under the surface at the tool's centre.
+  const DOME: Height = (x, y) => { const r = Math.hypot(x - 20, y - 20); return r < 8 ? Math.sqrt(64 - r * r) - 8 : -8 }
+  const dome = mesh(DOME, W, W, 80)
+  const rapidsIntoStock = (segs: MotionSegment[], roughFlat: boolean) => {
+    const tools: ToolState[] = [
+      { toolDiameterMM: 6, spindleRpm: 1, fluteCount: 2, ...(roughFlat ? {} : { toolBallNose: true }) },
+      { toolDiameterMM: 6, spindleRpm: 1, fluteCount: 2, toolBallNose: true },
+    ]
+    let p = { x: 0, y: 0, z: SAFE_Z }, tool = 0
+    const prog: SimSegment[] = []
+    for (const s of segs) {
+      if (s.toolChange) tool = 1
+      prog.push({ x: s.x, y: s.y, z: s.z, prevX: p.x, prevY: p.y, prevZ: p.z, rapid: !!(s.rapid || s.travel),
+        feedRateMmMin: 1, lineIdx: prog.length, durationS: 0, startTimeS: 0, toolStateIdx: tool })
+      p = s
+    }
+    return findRapidGouges(prog, tools, { widthMM: W, heightMM: W, thicknessMM: 20, orgX: 0, orgY: 0 }, 0.1).length
+  }
+  for (const [name, m] of [['groove', groove], ['dome', dome]] as const) {
+    for (const roughFlat of [false, true]) {
+      for (const finishStrategy of ['raster', 'waterline'] as const) {
+        it(`${name}, ${roughFlat ? 'end mill' : 'ball'} roughing, ${finishStrategy} finish`, () => {
+          const segs = generateProfile3d(m.positions, null, m.bounds, box(0, 0, W, W), BALL, params({
+            finishStrategy, roughingRadiusMM: 3, roughingFlat: roughFlat, roughingStepoverPercent: 50,
+            roughingStepDownMM: 3, roughingStockAllowanceMM: 0.3, rasterAngleDeg: 30,
+          }))
+          expect(rapidsIntoStock(segs, roughFlat)).toBe(0)
+        })
+      }
+    }
+  }
 })

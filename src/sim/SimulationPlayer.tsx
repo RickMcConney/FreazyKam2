@@ -9,9 +9,15 @@ import { useWorkpieceStore, MATERIAL_INFO, MM_PER_INCH as MM_PER_IN } from '../s
 import { spindleDialLabel } from '../store/spindle'
 import type { ToolType } from '../store/toolStore'
 import { targetChipLoad, aimChipLoad } from '../cam/feeds'
-import { getCurrentSegIdx, interpolatePos, segTool, segFeedAt, toolTypeOf, feedDiameterOf, formatSimTime } from './gcodeParser'
+import { getCurrentSegIdx, interpolatePos, segTool, segFeedAt, toolTypeOf, feedDiameterOf, formatSimTime, messagesReached } from './gcodeParser'
 
 const SPEEDS: SimSpeed[] = [1, 5, 20, 100]
+
+// How many of the latest operator messages the player shows; older ones are dimmed.
+const MESSAGES_SHOWN = 3
+const MESSAGE_LABEL = { msg: 'MSG', print: 'PRINT', debug: 'DEBUG' } as const
+// How many rapids that cut the banner lists by line; the rest are counted.
+const GOUGES_LISTED = 4
 
 // The heat map's bands, in the legend's words (sim/cutTrail.ts heatBand).
 const HEAT_KEY: [number, string][] = [
@@ -87,6 +93,8 @@ export default function SimulationPlayer() {
   const segments = useSimStore((s) => s.segments)
   const genZOff = useSimStore((s) => s.genZOff)
   const toolStates = useSimStore((s) => s.toolStates)
+  const messages = useSimStore((s) => s.messages)
+  const rapidGouges = useSimStore((s) => s.rapidGouges)
   const gcode = useSimStore((s) => s.gcode)
   const gcodeViewerOpen = useSimStore((s) => s.gcodeViewerOpen)
   const units = useWorkpieceStore((s) => s.units)
@@ -198,12 +206,40 @@ export default function SimulationPlayer() {
   const lastLineNum = segments.length > 0 ? segments[segments.length - 1].lineIdx + 1 : 0
   const wLine = Math.max(4, String(lastLineNum).length)
   const dialLabel = spindleDialLabel(spindleType, spindleRpm)
+  // The operator messages playback has reached — what the controller's console would be
+  // showing at this point in the job.
+  const reached = messagesReached(messages, segments, elapsedTimeS, totalTimeS)
+  const shownMessages = messages.slice(Math.max(0, reached - MESSAGES_SHOWN), reached)
+  // The deepest rapids that cut, deepest first — the ones worth looking at.
+  const worstGouges = [...rapidGouges].sort((a, b) => b.depthMM - a.depthMM).slice(0, GOUGES_LISTED)
 
   return (
     // Bottom-pinned column: the last child holds its place and the stack grows UPWARD, so
     // the rows that come and go (the two hint banners) live at the TOP. Below the bars they
     // shunted the whole player up and down every time the chip load crossed a band.
     <div className="absolute bottom-12 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-1.5 select-none">
+      {/* Rapids that cut into the stock (sim/rapidGouge.ts) — click a line to go to it */}
+      {worstGouges.length > 0 && (
+        <div className="max-w-md bg-red-50/95 dark:bg-red-950/90 border border-red-300 dark:border-red-800 rounded-md px-3 py-1.5 text-body text-red-700 dark:text-red-300 text-center whitespace-normal">
+          ⚠ {rapidGouges.length} rapid (G0) move{rapidGouges.length === 1 ? '' : 's'} run{rapidGouges.length === 1 ? 's' : ''} into
+          stock at full speed. Often it is stock a later pass clears anyway; in 3D, red marks
+          any the finished part keeps.
+          <div className="flex flex-wrap justify-center gap-x-3 mt-0.5 font-mono">
+            {worstGouges.map((g) => (
+              <button
+                key={g.segIdx}
+                title="Go to this move"
+                onClick={() => seekToTime(segments[g.segIdx]?.startTimeS ?? 0)}
+                className="underline decoration-dotted hover:text-red-900 dark:hover:text-red-100"
+              >
+                line {g.lineIdx + 1} · {progLen(g.depthMM, inch)} {units}
+              </button>
+            ))}
+            {rapidGouges.length > GOUGES_LISTED && <span>+{rapidGouges.length - GOUGES_LISTED} more</span>}
+          </div>
+        </div>
+      )}
+
       {/* Surface-speed warning — explains the red spindle and how (or whether) to fix it */}
       {spindleTooFast && spindleHint && (
         <div className="max-w-md bg-red-50/95 dark:bg-red-950/90 border border-red-300 dark:border-red-800 rounded-md px-3 py-1.5 text-body text-red-700 dark:text-red-300 text-center whitespace-normal pointer-events-none">
@@ -215,6 +251,27 @@ export default function SimulationPlayer() {
       {suggestion && (
         <div className="max-w-md bg-gray-50/95 dark:bg-neutral-900/95 border border-gray-300 dark:border-neutral-700 rounded-md px-3 py-1 text-body text-gray-600 dark:text-neutral-400 text-center whitespace-normal pointer-events-none">
           {suggestion}
+        </div>
+      )}
+
+      {/* Operator messages, (MSG, …) and (PRINT, …): the latest few the run has reached.
+          Click one to jump to where it is sent. */}
+      {shownMessages.length > 0 && (
+        <div className="max-w-md bg-gray-50/95 dark:bg-neutral-900/95 border border-gray-300 dark:border-neutral-700 rounded-md px-2 py-1 text-body flex flex-col gap-0.5">
+          {shownMessages.map((m, i) => (
+            <button
+              key={`${m.lineIdx}-${i}`}
+              title={`Line ${m.lineIdx + 1} — click to go there`}
+              onClick={() => seekToTime(m.segIdx < segments.length ? segments[m.segIdx].startTimeS : totalTimeS)}
+              className={[
+                'flex items-baseline gap-2 text-left truncate hover:text-blue-600 dark:hover:text-blue-400',
+                i < shownMessages.length - 1 ? 'text-gray-500 dark:text-neutral-500' : 'text-gray-800 dark:text-neutral-200',
+              ].join(' ')}
+            >
+              <span className="font-mono text-gray-500 dark:text-neutral-400 shrink-0">{MESSAGE_LABEL[m.kind]}</span>
+              <span className="truncate">{m.text}</span>
+            </button>
+          ))}
         </div>
       )}
 

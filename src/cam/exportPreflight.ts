@@ -1,4 +1,4 @@
-import { opsAtSheetOrigins, programSheetCount } from './sheets'
+import { opsAtSheetOrigins, opsOnCell, programSheetCount } from './sheets'
 import { reachesProgram } from './programOps'
 import { sheetLayoutNow } from '../canvas/useSheets'
 import { useToolpathStore, nothingToCut } from '../store/toolpathStore'
@@ -11,6 +11,7 @@ import { generateGcodeWithOps, initialToolId } from './gcode'
 import { parseGcode, segTool, toolTypeOf, feedDiameterOf, type ParsedGcode } from '../sim/gcodeParser'
 import { lengthBelowSpeed } from '../sim/motionPlanner'
 import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
+import { findRapidGouges } from '../sim/rapidGouge'
 
 interface PreflightWarning {
   level: 'warn' | 'info'
@@ -311,6 +312,43 @@ export function buildExportPreflight(): ExportPreflight {
           // feed ÷ (RPM × flutes), so at the slower real feed it comes back with less RPM or
           // fewer flutes; chips cleared away cannot rub and reheat.
           `Lower the RPM, use a tool with fewer flutes, or blow the chips clear.`,
+      })
+    }
+  }
+
+  // Rapids that cut (sim/rapidGouge.ts). Judged per SHEET: each sheet's program starts at
+  // the same corner of fresh stock, so a combined program would judge one sheet's rapids
+  // against another sheet's cuts.
+  if (doneOps.length > 0) {
+    const zOff = zDatumOffsetMM(zOrigin, thicknessMM)
+    const org = originWorldXY(origin, widthMM, heightMM)
+    const hits: { opId: string; depthMM: number; x: number; y: number; sheet: number }[] = []
+    const cells = sheetLayoutNow()
+    cells.forEach((cell, k) => {
+      const onCell = opsOnCell(stored, cell, stock)
+      if (!onCell.some(reachesProgram)) return
+      const single = sheetsWithCuts <= 1 && parsed && program
+      const prog = single ? program : generateGcodeWithOps(onCell, toolsById, 'estimate', profile)
+      const p = single ? parsed : parseGcode(prog.gcode)
+      // The check wants TOP-referenced Z, as the simulator holds it.
+      const segs = zOff ? p.segments.map((g) => ({ ...g, z: g.z - zOff, prevZ: g.prevZ - zOff })) : p.segments
+      for (const g of findRapidGouges(segs, p.toolStates, { widthMM, heightMM, thicknessMM, orgX: org.x, orgY: org.y })) {
+        let j = 0
+        while (j + 1 < prog.opStarts.length && g.lineIdx >= prog.opStarts[j + 1].line) j++
+        hits.push({ opId: prog.opStarts[j]?.opId ?? '', depthMM: g.depthMM, x: g.x, y: g.y, sheet: k + 1 })
+      }
+    })
+    if (hits.length > 0) {
+      const deepest = [...hits].sort((a, b) => b.depthMM - a.depthMM)
+      const where = (h: typeof hits[number]) =>
+        `${fmt(h.depthMM)} deep in ${stored.find((o) => o.id === h.opId)?.name ?? 'the program'}` +
+        `${cells.length > 1 ? ` on sheet ${h.sheet}` : ''} at X${h.x.toFixed(1)} Y${h.y.toFixed(1)}`
+      warnings.push({
+        level: 'warn',
+        text: `${hits.length} rapid (G0) move${nS(hits.length)} run${hits.length === 1 ? 's' : ''} into stock at full speed — ` +
+          `${deepest.slice(0, 3).map(where).join('; ')}${hits.length > 3 ? `; +${hits.length - 3} more` : ''}. ` +
+          `It may be stock a later pass clears anyway, but the tool still takes that cut at rapid speed. ` +
+          `Simulate in 3D: anything the finished part keeps is shown red.`,
       })
     }
   }

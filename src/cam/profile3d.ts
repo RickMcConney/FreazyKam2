@@ -818,9 +818,33 @@ class PassEmitter {
     const { motion } = this
     const rideS = ride.len / (motion.xyFeedMmMin * (overCleared ? TRAVEL_FEED_FACTOR : 1))
     if (!(rideS < this.liftSeconds(at, x, y, z))) return false
-    for (const [qx, qy, qz] of ride.pts) {
+    // The last step lands where the next cut starts, which has stock to take, so it is a
+    // CUT even at the end of a travel ride. Marked travel with the rest, it went out as a
+    // G0 (`linksAsRapids`) into that stock: on a 3D roughing it was the drop from riding
+    // the level above down onto the next level, 3 mm into it at rapid speed, and on a
+    // finish a shave of the allowance (sim/rapidGouge.ts). Steeper than 45° it is taken as
+    // a level move over to above the start and a drop straight down, so the writer feeds
+    // the descent at the plunge rate, not the XY rate a nearly vertical move would get.
+    //
+    // And a ride called cleared is held to it. The caller's test is the model surface under
+    // the tool CENTRE against the level above, while the ride follows the tool's tip height,
+    // which dips below that on a slope — on rosett.fkam, 0.2–0.5 mm into the level being cut,
+    // at G0. Each travel point is lifted to where the stock model (what earlier passes left,
+    // an upper bound) says the tool is clear: higher than the gouge-free height, so no gouge,
+    // and still travel.
+    const last = ride.pts.length - 1
+    const stock = overCleared ? motion.stock : null
+    for (let i = 0; i < last; i++) {
+      const [qx, qy] = ride.pts[i]
+      const qz = stock ? Math.max(ride.pts[i][2], stock.clearTipZ(qx, qy, motion.enter)) : ride.pts[i][2]
+      ride.pts[i][2] = qz
       this.segs.push(overCleared ? { x: qx, y: qy, z: qz, rapid: false, travel: true } : { x: qx, y: qy, z: qz, rapid: false })
     }
+    const [px, py, pz] = last > 0 ? ride.pts[last - 1] : [at.x, at.y, at.z]
+    if (overCleared && pz - z > Math.hypot(x - px, y - py)) {
+      this.segs.push({ x, y, z: pz, rapid: false, travel: true })
+    }
+    this.segs.push({ x, y, z, rapid: false })
     this.at = { x, y, z }
     return true
   }

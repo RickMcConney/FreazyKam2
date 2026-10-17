@@ -1,5 +1,6 @@
 
 import type { ToolType } from '../store/toolStore'
+import { fluteHelixFromName, type FluteHelix } from '../cam/geom'
 import { planMotion, trapezoidAt, FALLBACK_RAPID_MM_MIN, type MotionLimits, type PlanBlock, type Trapezoid } from './motionPlanner'
 
 export interface SimSegment {
@@ -41,8 +42,44 @@ export interface ToolState {
   toolCornerRadiusMM?: number    // a bull nose's corner radius; set for bull nose segments
   toolChipCeilingMM?: number     // the tool's rated chip load (mm/tooth), when it has one
   toolDrill?: boolean            // set for drill-bit segments (118° point)
+  // Which way the flutes twist, read from the tool's NAME on the `dia` line (see
+  // fluteHelixFromName). Drawn by the 3D sim only; absent is an upcut.
+  toolHelix?: FluteHelix
   spindleRpm: number             // active spindle speed (S word); 0 if none seen
   fluteCount: number             // from "flutes:N" comment; defaults to 2
+}
+
+/**
+ * A message the program sends the operator: FluidNC's `(MSG, …)` (any parenthesised
+ * comment containing "MSG"), `(PRINT, …)` and `(DEBUG, …)` (only when the comment STARTS
+ * with them) — the rules of FluidNC's own `gcode_comment_msg`. A `;` comment is never one:
+ * the controller drops it unread. The controller sends it when it reaches the line, before
+ * that line's motion, so `segIdx` is the first move it precedes (segments.length if none).
+ */
+export interface SimMessage {
+  kind: 'msg' | 'print' | 'debug'
+  text: string
+  lineIdx: number
+  segIdx: number
+}
+
+// The messages on one line, in order. Text is shown as written — PRINT's #parameter and
+// %format substitution is the controller's, and our own PRINTs never contain either.
+function lineMessages(raw: string, lineIdx: number, segIdx: number, out: SimMessage[]) {
+  let i = raw.indexOf('(')
+  while (i >= 0) {
+    const semi = raw.indexOf(';')
+    if (semi >= 0 && semi < i) return
+    const close = raw.indexOf(')', i + 1)
+    const body = raw.slice(i + 1, close < 0 ? raw.length : close)
+    if (body.includes('MSG')) {
+      out.push({ kind: 'msg', text: body.slice(4).trim(), lineIdx, segIdx })
+    } else if (/^(PRINT|DEBUG),/i.test(body)) {
+      out.push({ kind: /^P/i.test(body) ? 'print' : 'debug', text: body.slice(6).trim(), lineIdx, segIdx })
+    }
+    if (close < 0) return
+    i = raw.indexOf('(', close + 1)
+  }
 }
 
 export interface ParsedGcode {
@@ -54,6 +91,8 @@ export interface ParsedGcode {
   // (non-XY arc planes, absolute arc centers, malformed arcs). Empty for
   // anything this app generates itself; imported external G-code may hit them.
   warnings: string[]
+  // Operator messages in program order (see SimMessage).
+  messages: SimMessage[]
   // Units the PROGRAM is written in, from its own G20/G21 — the first one wins, since
   // that is the modal declaration every start block makes. Everything above is converted
   // to mm regardless (the heightfield, the cut trail and the tool position all assume mm);
@@ -226,6 +265,7 @@ export function parseGcode(text: string, initialZMM = 5, limits?: MotionLimits):
   let motionMode = 0  // 0 = G0, 1 = G1, 2 = G2, 3 = G3
   let absolute = true // G90 (default) vs G91 incremental distance mode
   const warnings = new Set<string>()
+  const messages: SimMessage[] = []
   let toolDiameterMM = 3.0
   let toolVbitHalfAngleTan: number | undefined
   let toolTipRadiusMM: number | undefined
@@ -233,6 +273,7 @@ export function parseGcode(text: string, initialZMM = 5, limits?: MotionLimits):
   let toolCornerRadiusMM: number | undefined
   let toolChipCeilingMM: number | undefined
   let toolDrill: boolean | undefined
+  let toolHelix: FluteHelix | undefined
   let spindleRpm = 0
   let fluteCount = 2
   let cumT = 0
@@ -261,14 +302,14 @@ export function parseGcode(text: string, initialZMM = 5, limits?: MotionLimits):
   const matchesCur = (t: ToolState) =>
     t.toolDiameterMM === toolDiameterMM && t.toolVbitHalfAngleTan === toolVbitHalfAngleTan &&
     t.toolTipRadiusMM === toolTipRadiusMM &&
-    t.toolBallNose === toolBallNose && t.toolCornerRadiusMM === toolCornerRadiusMM && t.toolChipCeilingMM === toolChipCeilingMM && t.toolDrill === toolDrill &&
+    t.toolBallNose === toolBallNose && t.toolCornerRadiusMM === toolCornerRadiusMM && t.toolChipCeilingMM === toolChipCeilingMM && t.toolDrill === toolDrill && t.toolHelix === toolHelix &&
     t.spindleRpm === spindleRpm && t.fluteCount === fluteCount
   const syncToolState = () => {
     if (matchesCur(toolStates[curStateIdx])) return
     const found = toolStates.findIndex(matchesCur)
     if (found >= 0) { curStateIdx = found; return }
     curStateIdx = toolStates.length
-    toolStates.push({ toolDiameterMM, toolVbitHalfAngleTan, toolTipRadiusMM, toolBallNose, toolCornerRadiusMM, toolChipCeilingMM, toolDrill, spindleRpm, fluteCount })
+    toolStates.push({ toolDiameterMM, toolVbitHalfAngleTan, toolTipRadiusMM, toolBallNose, toolCornerRadiusMM, toolChipCeilingMM, toolDrill, toolHelix, spindleRpm, fluteCount })
   }
 
   // Axis words: absolute (G90) coordinates, or deltas from the current
@@ -290,6 +331,9 @@ export function parseGcode(text: string, initialZMM = 5, limits?: MotionLimits):
         toolCornerRadiusMM = undefined     // reset; overwritten below if bullnose-r present
         toolChipCeilingMM = undefined        // reset; overwritten below if fzmax present
         toolDrill = undefined              // reset; overwritten below if drillbit present
+        // The name rides on the same line as `dia` (ours, and most CAM's tool comments).
+        const helix = fluteHelixFromName(raw)
+        toolHelix = helix === 'up' ? undefined : helix
       }
 
       // Parse V-bit half-angle tangent: "; vbit-angle:30.0" (half-angle in degrees)
@@ -325,6 +369,8 @@ export function parseGcode(text: string, initialZMM = 5, limits?: MotionLimits):
       // Fold any tool-comment changes on this line into the flyweight table.
       if (diamMatch || vbitMatch || tipMatch || fluteMatch || drillMatch || ballMatch || bullMatch || fzMatch) syncToolState()
     }
+
+    if (raw.indexOf('(') >= 0) lineMessages(raw, li, segs.length, messages)
 
     // Words, in one pass. A letter's FIRST occurrence on the line is the one that
     // counts; the G words are folded straight into the flags read below.
@@ -483,7 +529,7 @@ export function parseGcode(text: string, initialZMM = 5, limits?: MotionLimits):
   if (limits) cumT = applyPlan(segs, arcRadius, arcIdOf, stopBefore, limits)
   markFeedLinks(segs)
 
-  return { lines: rawLines, segments: segs, totalTimeS: cumT, toolStates, warnings: [...warnings], units: programUnits }
+  return { lines: rawLines, segments: segs, totalTimeS: cumT, toolStates, warnings: [...warnings], messages, units: programUnits }
 }
 
 // Re-time every move by the machine's planner, stamping its speed profile on it.
@@ -565,6 +611,25 @@ export function getCurrentSegIdx(segments: SimSegment[], elapsedTimeS: number): 
     const mid = (lo + hi + 1) >> 1
     if (segments[mid].startTimeS <= elapsedTimeS) lo = mid
     else hi = mid - 1
+  }
+  return lo
+}
+
+/**
+ * How many of `messages` playback has reached at `elapsedTimeS`: a message is sent as its
+ * line is reached, so it counts from the START of the move it precedes — and one after the
+ * last move counts once the run is over.
+ */
+export function messagesReached(
+  messages: SimMessage[], segments: SimSegment[], elapsedTimeS: number, totalTimeS: number,
+): number {
+  if (elapsedTimeS >= totalTimeS) return messages.length
+  const cur = getCurrentSegIdx(segments, elapsedTimeS)
+  let lo = 0, hi = messages.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (messages[mid].segIdx <= cur) lo = mid + 1
+    else hi = mid
   }
   return lo
 }

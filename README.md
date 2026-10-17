@@ -58,6 +58,7 @@ FreazyKam runs entirely in your browser — no account, no server, no install. Y
   - **Maze** — a marble-run centreline, emitted as grooves for a ball-nose cutter rather than as an outline. Exactly one entrance and one exit reach the edge, so there is no doubt which end is which, and each gets a lead running clear of the maze
 - **Clock** — a whole going train solved from one number: the beat. Pendulum length, an exact wheel/pinion factorisation for the rate (said in red rather than rounded when no exact train exists), optional 12:1 motion work, and the drive wheel's run time. Every wheel comes out as an ordinary editable shape, and the assembled clock will **run on the canvas**
 - **Text** — vector text paths via opentype.js; choose from bundled or web fonts, edit the text and font of an existing object at any time
+- **Text along a path** — lays a text object's letters along a line, a curve or round a circle, choosing which side they stand on and where along it they sit; it always reads left to right and upright, and stays re-editable from its chip
 - **Image trace** — turns a PNG or JPEG into paths: closed outlines for pocketing, V-carving or inlay, or single centerlines for a V-bit. Lines can be thickened to fit a bit, and a shaded picture can be split into 3 or 4 nested tones, each on its own layer. A live preview on the canvas shows the paths before they are made, and the trace stays re-editable from its chip
 - **Pen tool** — click for straight segments, click-drag for Bezier curves; Escape to finish open path, click near first node to close
 - **Point editing** — double-click any path; drag anchors and handles, click segment to insert, hover + Delete to remove
@@ -68,8 +69,10 @@ FreazyKam runs entirely in your browser — no account, no server, no install. Y
 - Offset tool: inset/outset with round, miter or square corners — re-editable from its chip
 - Corner treatment: outer radius, inner radius, chamfer, dogbone
 - Linear and circular pattern tools — also re-editable from their chip
-- **Nesting** — packs the selected parts onto the stock with the least waste. Set the gap, edge margin, rotation step and which edge to pack from, so the offcut is left as one usable strip rather than scattered. Small parts drop into the holes of larger ones, unselected paths can be treated as ground already taken, and anything that won't fit is parked clear of the stock. **Fill stock with copies** repeats a single part until no more fit
+- **Nesting** — packs the selected parts onto the stock with the least waste. Set the gap, edge margin, rotation step and which edge to pack from, so the offcut is left as one usable strip rather than scattered. Small parts drop into the holes of larger ones, unselected paths can be treated as ground already taken, and anything that won't fit goes onto another sheet (or is parked clear of the stock). **Fill stock with copies** repeats a single part until no more fit. **Shared lines** places parts exactly one cutter apart so neighbours share a cut, and the sheet is routed as one network
+- **More than one sheet** — drag a part to the right of or below the stock and a new sheet of the same stock appears under it; empty a sheet and it goes. Each sheet is simulated and exported as its own program, cut from its own corner; the toolbar's **◀ Sheet N of M ▶** picker chooses which one is shown
 - **Constraints** — hold one part a stated distance from another and keep it there as either is edited. Press **C**, click a point on one part (corner, edge midpoint, centre, or the centre of a round feature), then a point on another — or *drag* the second part into place with the dimension reading out live, and let go where you want it. Numbers are measured in the first part's own frame, so four holes 10 mm in from the corners of a plate stay 10 mm in from the corners when the plate is resized *or rotated*; the second part can be held at its angle to the first as well, so a slot turns with the plate it sits in. Parts can also be held off an edge of the stock, which is ground and wins over a drag. There is no root — drag any part of a chain and the rest follow — and a contradiction is reported rather than half-applied
+- **Measure** — press **M** and click two points (each snaps to a part's corners, edge middles and centre) for the length, ΔX, ΔY and angle; Shift holds it to 15° steps. Or, with a part selected, hold **Alt** and hover another part — or the stock — to see the gaps between them
 - Holding tabs: configure count, length, height; drag individual tabs along path
 - Group / ungroup (`Ctrl+G` / `Ctrl+Shift+G`) — groups nest, and Alt-click reaches a single path inside one
 - Copy and paste paths between projects (`Ctrl+C` / `Ctrl+V`) — a pasted gear is still a gear, with its parameters, corner treatments and grouping intact
@@ -87,22 +90,25 @@ Undo and redo cover every edit and are independent of both strips; undo history 
 
 ### Tool Library
 
-A library of cutters, saved with the project and kept in the browser between sessions. Each row holds diameter, flute count, RPM, feeds and the tool's maximum depth of cut; an operation only offers the tools that can actually make its cut.
+A library of cutters, saved with the project and kept in the browser between sessions. Each row holds diameter, flute count, RPM, feeds, a rated chip load and the tool's maximum depth of cut; an operation only offers the tools that can actually make its cut. A maker's catalogue can be imported from a **Fusion 360 tool library** (`.json`) into its own folder, so it never mixes with your own rack.
 
 | Tool | Defined by | Available to |
 |---|---|---|
-| End mill | Diameter | Profile, pocket, trochoidal, surfacing, helical drilling |
-| Ball nose | Diameter | Profile, pocket, trochoidal, 3D profile |
+| End mill | Diameter | Profile, pocket, trochoidal, surfacing, inlay, helical drilling, 3D profile roughing |
+| Bull nose | Diameter + **corner radius** | Profile, pocket, trochoidal, 3D profile (roughing and finishing) |
+| Ball nose | Diameter | Profile, pocket, trochoidal, 3D profile (roughing and finishing) |
 | V-bit | Diameter + **included** angle | V-carve, photo V-carve, inlay walls, profile |
 | Taper end mill | **Tip** diameter + **per-side** angle + usable length | V-carve, inlay walls, 3D profile, profile |
-| Drill | Diameter | Peck drilling |
+| Drill | Diameter | Peck drilling (which lists every tool, warning where a bit is a poor choice) |
+
+A **bull nose** — a bowl bit is a big one — is a flat bottom rounded into the side by its corner radius: an end mill at a radius of 0 and a ball nose at half the diameter, and handled as exactly that family everywhere it cuts.
 
 A **taper end mill** is a V-bit with a ball ground on its tip, described the way the bits are sold: the diameter column is its *tip ball*, and the angle is *per side* where a V-bit's is included. The library derives how wide it opens out — a 5°/side taper on a 1 mm tip reaches Ø5.29 mm at 25 mm deep. Its ball tip can enter a stroke narrower than itself, cutting a round-bottomed groove rather than refusing it, which is what suits it to fine lettering and 3D finishing. In an inlay a V-bit still closes tighter: a taper's rounded foot leaves a hairline gap at the finished face.
 
 ### CAM Operations
 | Operation | Description |
 |---|---|
-| Profile | Inside / outside / centerline cut, climb or conventional, ramp-in, holding tabs |
+| Profile | Inside / outside / centerline cut, climb or conventional, ramp-in, holding tabs, optional finishing pass |
 | Pocket | Five clearing strategies (below), island support, finish allowance, ramp-in |
 | Trochoidal | Low-engagement slotting with configurable step and loop radius, optional finishing pass |
 | Drill | Peck drilling at placed points or helical drilling from circular paths |
@@ -120,7 +126,7 @@ A **taper end mill** is a V-bit with a ball ground on its tip, described the way
 | Raster | Simple open pockets; straight parallel passes at any angle |
 | Contour | Concentric offsets following the boundary, so walls and islands are traced |
 | Morph | A single continuous spiral morphed between the boundary and the interior |
-| Adaptive | Constant tool engagement — heavier depth of cut at lower load, best for harder material and deeper pockets |
+| Adaptive | Constant tool engagement — heavier depth of cut at lower load, best for harder material and deeper pockets. A port of FreeCAD's Adaptive2d, checked against FreeCAD's own output |
 
 Any pocket also gets a **rest-clearing pass**: stock a strategy's passes couldn't reach is cut after them and before the wall pass, so it's a light skim rather than a full-width plunge.
 
@@ -145,15 +151,23 @@ Depths are always measured *from* the start surface, and the tool-reach and past
 - Toggle off to use each tool's own stored feeds and speeds instead
 
 ### Preview & Simulation
-- **2D simulation** — play, pause, stop, speed control, seek slider, current G-code line, Z depth, elapsed/total time
-- **Chip-load gauge** — live feed-per-tooth readout during steady cutting, color-banded against the target for your machine rigidity, with feed/RPM/flute suggestions to hit the sweet spot
-- **3D view** — orbit, pan, zoom; workpiece box with material appearance; toolpath visualization; material removal animation
+- **Opens on the finished part** — Simulate shows the result first; Play rewinds and cuts it. While the player is open it follows your edits, rebuilding the program whenever an operation changes
+- **Real machine timing** — every move is timed the way a Grbl-family controller runs it: acceleration, the cornering rule and the axis limits from your Machine Motion settings, not just the F word. Playback, the clock and the export estimate all use it
+- **2D simulation** — play, pause, stop, speed control, seek slider, current G-code line, Z depth, elapsed/total time. The cut trail is a **chip-load heat map**, so the corners where the machine slows and the chip thins show where they happen
+- **Chip-load gauge** — live feed-per-tooth readout at the speed the machine really reaches, color-banded against the target for your machine rigidity, with feed/RPM/flute suggestions to hit the sweet spot
+- **3D view** — orbit, pan, zoom; workpiece box with a wood-grain material appearance; toolpath visualization; material removal animation. The cutter is a real fluted model, shaped by the same profile that carves the stock, with its flutes twisting the way the bit's name says (upcut, downcut, compression or straight)
+- **Rapids that cut** — any G0 move that runs into stock is listed above the player (click one to go to it) and in the export review, and the 3D view carves it and tints red any surface it leaves on the finished part
+- **Operator messages** — `(MSG, …)` and `(PRINT, …)` lines in the program appear in the player as playback reaches them, as the controller's console would show them
 - **G-code viewer** — line-synchronized highlight during simulation
+- Imported G-code from other CAM programs simulates too
 
 ### Export
 - G-code export with configurable post-processor profiles
-- Built-in profiles for Grbl (mm and inches), grblHAL, LinuxCNC, Mach3, UCCNC and a generic controller; add your own with placeholders for `{x}`, `{y}`, `{z}`, `{f}`, `{s}`
-- Pre-export preflight: cut-time estimate, and warnings for anything that would surprise you at the machine
+- Built-in profiles for FluidNC and Grbl (mm and inches), grblHAL, LinuxCNC, Mach3, UCCNC and a generic controller; add your own with placeholders for `{x}`, `{y}`, `{z}`, `{f}`, `{s}`
+- Pre-export review: cut-time estimate, and warnings for anything that would surprise you at the machine — operations that failed or are out of date, cuts off the stock or past its bottom, a spindle too fast for the material, chip load lost in the corners, rapids that run into stock
+- One file per sheet, and optionally one file per tool so each bit is loaded and run on its own
+- **FluidNC messages** — the program names the first bit to load, says which bit each tool-change pause is waiting for (`M0 (MSG, …)`), and prints each operation as it starts (`(PRINT, …)`). Comment lines are kept within the 80-character limit FluidNC enforces
+- **Stock-simulation header** — the stock size and every tool's shape go in the file's header, so the [CNC GCode Tools](https://github.com/jeyeager65/cnc-gcode-tools) viewer in the FluidNC WebUI, FigUI or VS Code shows the job carved in the right stock with the right bits
 - Arc output (G2/G3) optional per profile
 - Separate G-code unit mode (mm or inches) independent of display units
 - **SVG export** of the selection or the whole drawing — round-trips through this app's own importer with the stock as the page, so a path exported at (120, 40) comes back at (120, 40)
@@ -162,6 +176,7 @@ Depths are always measured *from* the start surface, and the tool-reach and past
 ### Machine Control (FluidNC)
 - **Drive a FluidNC controller over WiFi from the browser** — no sender to install. A one-time file copied to the controller (the relay, `404.htm`) lets the secure app reach the plain-http controller; the Machine tab offers it for download with step-by-step setup
 - **Position, home, zero and jog** — work and machine readouts, homing per axis (or hide it on a machine without limit switches), zero per axis, motor enable/disable, and a jog pad with mm or inch steps
+- **Probe Z** — finds the stock top with a touch plate and zeroes Z there, allowing for the plate's thickness
 - **Go-to map** — the stock with the job's toolpath drawn on it; click anywhere to send the tool there, lifting to the safe height first
 - **SD card** — list, upload, delete and load files, or **Send to card** to post the current design straight to the controller and run it from there; files with lines too long for FluidNC are flagged on load
 - **Run, pause, cancel, stop** — Cancel ends a paused job without an alarm and lifts Z clear; a STOP button is always on screen; feed, rapid and spindle overrides mid-job
@@ -170,6 +185,11 @@ Depths are always measured *from* the start surface, and the tool-reach and past
 ![The Machine tab — SD card and job in the sidebar, controls on the left, the go-to map and console on the right](docs/images/12-machine.png)
 
 *Driving the machine: the job loaded from the SD card is drawn on the stock, ready to run.*
+
+### AI Assistants (MCP)
+- **Let an AI assistant do the work** — Claude, ChatGPT, Cursor or any other app that speaks **MCP** (the Model Context Protocol) can draw parts, set up toolpaths, check the job and write the G-code in the project open in your browser, while you watch
+- It uses the same actions you do, through the same undo history, so you can stop it, take over or undo what it did at any point
+- A small server on your own computer (`freazykam-mcp`, run with `npx`) relays between the assistant and your tab, over a connection that never leaves the machine — though what the assistant reads of your project goes to your AI provider as part of the conversation. Setup and privacy are in the [user guide](docs/13-ai-assistants.md)
 
 ---
 
@@ -187,6 +207,8 @@ Depths are always measured *from* the start surface, and the tool-reach and past
 | `Ctrl/Cmd+G` / `Ctrl/Cmd+Shift+G` | Group / ungroup selected |
 | `Delete` / `Backspace` | Delete selected |
 | `C` | Constrain tool — hold one part relative to another |
+| `M` | Measure tool — distance, ΔX, ΔY and angle between two points |
+| `Alt` + hover | With a part selected: the gaps to another part, or to the stock |
 | `S` | Toggle snap to grid |
 | `Space` | Play / pause simulation |
 | `Escape` | Cancel pen drawing / exit point edit |
@@ -219,3 +241,7 @@ No backend required. All data stays in your browser.
 ## Acknowledgements
 
 Thanks to **Daniel Moura** and his [WoodCAM](https://github.com/danielma89/WoodCam) project (MIT licence). The 3D Profile improvements — the waterline finishing strategy and the work around it — were taken from WoodCAM, as was the common-line cut planning, and nesting improvements, which was ported along with its tests.
+
+Thanks to **Jason Yeager** and his [CNC GCode Tools](https://github.com/jeyeager65/cnc-gcode-tools) project (MIT licence). The 3D simulator's cutter models are adapted from his: the bit is turned from its own cutting profile, and real flutes are cut into it, twisting up the tool — where before it was a striped cylinder. His stock-simulation header is also what FreazyKam writes into its G-code, so jobs open correctly in his viewer.
+
+The Adaptive pocket strategy is a port of **Kresimir Tusek**'s Adaptive2d from [FreeCAD](https://www.freecad.org) (LGPL-2.1-or-later), and is judged against FreeCAD's own output.
