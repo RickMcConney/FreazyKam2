@@ -35,7 +35,7 @@ Skip this if your machine has no limit switches.
 
 ## 4. Zero on the stock
 
-1. Fit the 6 mm end mill.
+1. Fit the 1/4" end mill.
 2. Use the **jog arrows** to move the bit over the stock's **bottom-left corner**.
 3. Click **Zero → X** and **Zero → Y**.
 4. Jog **Z−** until the bit just touches the top of the stock. Use a small step near the

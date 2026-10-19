@@ -2,6 +2,7 @@
 
 export { ProfileForm } from './ProfileForm'
 export { TrochoidalForm } from './TrochoidalForm'
+export { FlutingForm } from './FlutingForm'
 export { PocketForm } from './PocketForm'
 export { DrillForm } from './DrillForm'
 export { VCarveForm } from './VCarveForm'

@@ -15,6 +15,7 @@ import type { Profile3dOperation } from '../../store/toolpathStore'
 import { isVCutter } from '../../cam/geom'
 import { DEFAULT_RELIEF_MM } from '../../cam/depthMapMesh'
 import { DEFAULT_V_FLOOR_STEP_MM } from '../../cam/inlay'
+import type { FluteBreakpoint } from '../../cam/fluting'
 
 // Which tool types an operation can physically be cut with. A drill only plunges —
 // it has no usable side-cutting edge — so it can never follow a profile or a
@@ -180,6 +181,36 @@ export function trochoidalToolSeeds(tool: Tool) {
   return {
     trochStepMM: parseFloat((tool.diameterMM * 0.15).toFixed(3)),
     trochRadiusMM: parseFloat((tool.diameterMM * 0.5).toFixed(3)),
+  }
+}
+
+// Fluting cuts ON the line, so the groove's section is the tool's own: a V-bit or taper
+// leaves a V, a ball nose a round-bottomed flute. A flat end mill would leave a square
+// step wherever the depth changes, so it is not offered.
+export const FLUTING_TOOL_TYPES: readonly ToolType[] = ['vbit', 'taper', 'ballnose']
+
+/** A new flute: full depth through the middle, tapering out to nothing at both ends. */
+export const DEFAULT_FLUTE_PROFILE: FluteBreakpoint[] = [
+  { t: 0, depth: 0 }, { t: 0.2, depth: 1 }, { t: 0.8, depth: 1 }, { t: 1, depth: 0 },
+]
+
+/** A stored or saved profile, or the default one when it is not a usable list of breakpoints. */
+export function flutingProfileOf(v: unknown): FluteBreakpoint[] {
+  const ok = Array.isArray(v) && v.length >= 2 &&
+    v.every((p) => p && typeof p === 'object' && Number.isFinite(p.t) && Number.isFinite(p.depth))
+  return ok ? (v as FluteBreakpoint[]).map((p) => ({ t: p.t, depth: p.depth })) : DEFAULT_FLUTE_PROFILE
+}
+
+export function flutingFormDefaults(defaultTool: Tool | undefined) {
+  return {
+    toolId: defaultTool?.id ?? '',
+    // A flute is a decorative groove, not a cut through: a few mm, capped by the bit.
+    depthMM: Math.min(3, defaultTool?.maxDepthMM ?? 3),
+    stepDownMM: seedStepDownMM(defaultTool),
+    stepDownManual: false,
+    profile: DEFAULT_FLUTE_PROFILE,
+    smooth: true,
+    reverse: false,
   }
 }
 

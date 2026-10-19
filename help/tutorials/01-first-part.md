@@ -55,7 +55,7 @@ You now have two circles, one inside the other.
 
    | Field | Value |
    |---|---|
-   | Tool | 6 mm end mill |
+   | Tool | 1/4" end mill |
    | Depth | `3` |
 
 4. Leave everything else as it is.
@@ -84,7 +84,7 @@ You now have two circles, one inside the other.
 
    | Field | Value |
    |---|---|
-   | Tool | 6 mm end mill |
+   | Tool | 1/4" end mill |
    | Cut Side | **outside** |
    | Depth | `12.5` |
 

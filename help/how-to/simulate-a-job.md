@@ -12,6 +12,11 @@ On [several sheets](use-several-sheets.md), it plays the one picked in the toolb
 
 ![The 3D simulation](../../docs/images/01-sim-3d.png)
 
+In the **2D View** it plays flat, with a trail coloured by chip load behind the tool —
+the quicker read for travel moves and the order of the cuts.
+
+![The 2D simulation, the trail coloured by chip load](../../docs/images/10-sim-2d.png)
+
 ## Controls
 
 | Control | Does |

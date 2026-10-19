@@ -5,6 +5,7 @@ import {
   FileCode, Wrench, Loader2, AlertCircle, Eye, EyeOff, ArrowRightLeft, Combine, GripVertical, X, CircleSlash, Route,
 } from 'lucide-react'
 import { ICON } from '../theme'
+import { FlutingIcon } from './pathToolIcons'
 import { useToolpathStore, batchOf, pathIdsOf, nothingToCut, GCODE_IMPORT_TOOL_ID, type AnyOperation } from '../store/toolpathStore'
 import { usePathsStore } from '../store/pathsStore'
 import { useToolStore, type Tool } from '../store/toolStore'
@@ -40,7 +41,7 @@ type ChipIcon = React.ComponentType<{ size?: number; style?: React.CSSProperties
 const OP_ICONS: Record<string, ChipIcon> = {
   profile: Circle, trochoidal: RefreshCw, pocket: Target, drill: CircleDot,
   surface: Layers, vcarve: Star, inlay: InlayIcon, profile3d: Box, gcode: FileCode,
-  photovcarve: ImageIcon,
+  photovcarve: ImageIcon, fluting: FlutingIcon,
 }
 
 // Band tint for a tool. Keyed by the tool's position in the library rather than a hash of

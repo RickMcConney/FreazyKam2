@@ -171,10 +171,10 @@ written to G-code — with how long each one takes and its share of the whole jo
 faint bar under the row the width of that share, so the long ones stand out down the list.
 This is the list to check before exporting.
 
-![The Toolpaths view: ten operations in two tool blocks — five pockets on the 1/4" end mill taking 63% of the job, a tool change, then five profiles on the 6 mm end mill — each row with its run time and share](images/04-toolpaths.png)
+![The Toolpaths view: ten operations in two tool blocks — five pockets on the 1/4" end mill, a tool change, then five profiles on the 1/8" end mill — each row with its run time and share](images/04-toolpaths.png)
 
-*Ten operations, one tool change, 2 m 22 s in all. Each tool's block is headed by its
-total — the 1/4" end mill's pockets are 63 % of the job — and each row by its own time and
+*Ten operations, one tool change, 4 m 21 s in all. Each tool's block is headed by its
+total — the 1/4" end mill's pockets are 47 % of the job — and each row by its own time and
 share.*
 
 <!-- FULL APP · 1600 px wide, downscaled from the 2800 px capture. Paths tab, Toolpaths view. -->

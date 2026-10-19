@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { perfLog } from '../debug'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { registerCameraAim } from './cameraAim'
 import { useSimStore } from '../store/simStore'
 import { useToolpathStore, type MotionSegment } from '../store/toolpathStore'
 import { useWorkpieceStore, zDatumOffsetMM } from '../store/workpieceStore'
@@ -486,7 +487,24 @@ export default function ThreeView() {
     // Repaint when an async wood photo texture finishes loading (render-on-demand).
     setWoodTextureListener(wake)
 
+    // Down on a CNC point, tilted back towards the viewer (−CNC y). Scene x is CNC x and scene
+    // z is −CNC y (fitCamera); straight down, a hair of tilt keeps the orbit controls off their
+    // pole, so CNC +Y stays up the screen.
+    registerCameraAim((x, y, spanMM, tiltDeg = 0) => {
+      const T = useWorkpieceStore.getState().thicknessMM
+      const dist = spanMM / 2 / Math.tan((camera.fov * Math.PI) / 360)
+      camera.near = dist * 0.001
+      camera.far = dist * 10
+      camera.updateProjectionMatrix()
+      const t = Math.max(1e-4, (tiltDeg * Math.PI) / 180)
+      camera.position.set(x, T / 2 + dist * Math.cos(t), -y + dist * Math.sin(t))
+      controls.target.set(x, T / 2, -y)
+      controls.update()
+      wake()
+    })
+
     return () => {
+      registerCameraAim(null)
       cancelAnimationFrame(refs.rafId)
       refs.running = false
       wakeRef.current = null

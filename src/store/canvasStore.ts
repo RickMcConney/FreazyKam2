@@ -38,3 +38,9 @@ export type ViewRectMM = { minX: number; minY: number; maxX: number; maxY: numbe
 let viewGetter: (() => ViewRectMM | null) | null = null
 export function registerViewRect(get: (() => ViewRectMM | null) | null): void { viewGetter = get }
 export function visibleRectMM(): ViewRectMM | null { return viewGetter ? viewGetter() : null }
+
+// And the other way: frame a region, as Zoom to fit frames the stock — for a script that has
+// to show the same part of the drawing every time (scripts/screenshots).
+let viewFitter: ((box: ViewRectMM) => void) | null = null
+export function registerViewFit(fit: ((box: ViewRectMM) => void) | null): void { viewFitter = fit }
+export function fitViewTo(box: ViewRectMM): void { viewFitter?.(box) }

@@ -11,7 +11,8 @@
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:quiet": "vitest run --reporter=dot",
-    "audit": "FKAM_AUDIT_DIR=scratch vitest run src/sim/projectAudit.test.ts"
+    "audit": "FKAM_AUDIT_DIR=scratch vitest run src/sim/projectAudit.test.ts",
+    "shots": "npx vite-node scripts/screenshots/shoot.mts"
   },
   "dependencies": {
     "@types/three": "^0.184.1",

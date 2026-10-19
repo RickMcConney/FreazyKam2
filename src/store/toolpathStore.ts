@@ -9,6 +9,7 @@ import type { StartFrom } from '../cam/startHeight'
 import { resolveStartZForOp } from '../cam/startHeight'
 import { usePathsStore } from './pathsStore'
 import { useToolStore } from './toolStore'
+import type { FluteBreakpoint } from '../cam/fluting'
 export type CutSide = 'inside' | 'outside' | 'centerline'
 type OperationStatus = 'pending' | 'generating' | 'done' | 'needs-update' | 'error'
 
@@ -251,6 +252,20 @@ export interface TrochoidalOperation extends BaseOperation {
   rampIn: boolean
 }
 
+export interface FlutingOperation extends BaseOperation {
+  type: 'fluting'
+  pathId: string
+  /** The deepest the profile goes (mm below where the cut starts); breakpoints are fractions of it. */
+  depthMM: number
+  stepDownMM: number
+  /** The height profile along the path — see cam/fluting.ts. */
+  profile: FluteBreakpoint[]
+  /** Monotone cubic between breakpoints rather than straight lines. */
+  smooth: boolean
+  /** The profile runs from the path's end. */
+  reverse?: boolean
+}
+
 export interface GcodeOperation extends BaseOperation {
   type: 'gcode'
   filename: string
@@ -262,7 +277,7 @@ export interface GcodeOperation extends BaseOperation {
 
 export const GCODE_IMPORT_TOOL_ID = '__gcode_import__'
 
-export type AnyOperation = ProfileOperation | PocketOperation | DrillOperation | SurfaceOperation | VCarveOperation | PhotoVCarveOperation | InlayOperation | Profile3dOperation | TrochoidalOperation | GcodeOperation
+export type AnyOperation = ProfileOperation | PocketOperation | DrillOperation | SurfaceOperation | VCarveOperation | PhotoVCarveOperation | InlayOperation | Profile3dOperation | TrochoidalOperation | FlutingOperation | GcodeOperation
 
 export type AddPayload =
   | Omit<ProfileOperation, 'id' | 'status' | 'segments' | 'color' | 'visible'>
@@ -274,6 +289,7 @@ export type AddPayload =
   | Omit<InlayOperation, 'id' | 'status' | 'segments' | 'color' | 'visible'>
   | Omit<Profile3dOperation, 'id' | 'status' | 'segments' | 'color' | 'visible'>
   | Omit<TrochoidalOperation, 'id' | 'status' | 'segments' | 'color' | 'visible'>
+  | Omit<FlutingOperation, 'id' | 'status' | 'segments' | 'color' | 'visible'>
   | Omit<GcodeOperation, 'id' | 'status' | 'segments' | 'color' | 'visible'>
 
 interface ToolpathState {
@@ -353,6 +369,7 @@ export function nothingToCut(op: AnyOperation, operations: AnyOperation[]): bool
 export function refsPathId(op: AnyOperation, pathId: string): boolean {
   if (op.type === 'profile') return op.pathId === pathId || !!op.pathIds?.includes(pathId)
   if (op.type === 'trochoidal') return op.pathId === pathId
+  if (op.type === 'fluting') return op.pathId === pathId
   if (op.type === 'pocket') return op.pathId === pathId || op.islandIds.includes(pathId)
   if (op.type === 'drill') return op.pathId === pathId
   if (op.type === 'vcarve') return op.pathId === pathId || op.islandIds.includes(pathId)

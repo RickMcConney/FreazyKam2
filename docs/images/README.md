@@ -27,7 +27,27 @@ whole panel that runs past 700 px tall (the Setup panel is the standing example)
 need a second screenshot — scale the one crop down until its tall edge hits 700; the text
 was captured at 2×, so it stays legible well below native size.
 
-## Capturing
+## Retaking them with the script
+
+Most shots are recipes in `scripts/screenshots/shots.ts`, and one command retakes them at
+exactly the size and density below, in a fresh browser profile each time, so nothing from
+the last shot or your own use of the app leaks in:
+
+```sh
+npm run shots                          # every shot that has a recipe
+npm run shots -- 01- 02-trace          # only names containing these
+npm run shots -- 01- --out scratch/shots   # somewhere else, to compare before replacing
+npm run shots -- --missing             # images in this folder with no recipe yet
+```
+
+A recipe opens a fixture project (`docs/01-circles.fkam` for chapter 1), clicks through the
+app the way the guide tells the reader to, and keeps either the whole app or a panel found
+by what is in it — so a panel that grows or moves is still found. When a shot fails, the
+screen at the failure is saved beside it as `*-FAILED.png`. Add a recipe whenever you add a
+picture; the manual routine below is for the shots that have none yet, and for gestures a
+recipe cannot hold.
+
+## Capturing by hand
 
 Use Chrome DevTools rather than a window screenshot — it gives an exact, repeatable
 viewport with no OS chrome, no window shadow, and no dependence on your display.

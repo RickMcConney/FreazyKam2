@@ -204,6 +204,7 @@ function opDesc(op: AnyOperation): string {
   if (op.type === 'vcarve') return `vcarve · ${op.angleDeg}° · ${op.maxDepthMM}mm max`
   // Line spacing is derived, so the operator can't read it off the settings — spell it out.
   if (op.type === 'photovcarve') return `photo vcarve · ${op.angleDeg}° · ${op.minDepthMM}–${op.maxDepthMM}mm · ${lineSpacingMM(op.maxDepthMM, op.angleDeg).toFixed(2)}mm lines`
+  if (op.type === 'fluting') return `fluting · ${op.depthMM}mm max · ${op.profile.length} point profile${op.smooth ? ', smooth' : ''}`
   if (op.type === 'profile3d') {
     // An op saved before waterline existed has no strategy: it is a raster.
     const strategy = op.finishStrategy === 'waterline' ? 'waterline' : 'raster'

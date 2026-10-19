@@ -1,4 +1,4 @@
-import { ProfileForm, TrochoidalForm, PocketForm, DrillForm, VCarveForm, PhotoVCarveForm, InlayForm, Profile3dForm, SurfaceForm, BooleanForm, OffsetForm, PatternForm, NestForm, TabsForm, NodeEditForm, TraceForm, AlongPathForm } from './machine'
+import { ProfileForm, TrochoidalForm, FlutingForm, PocketForm, DrillForm, VCarveForm, PhotoVCarveForm, InlayForm, Profile3dForm, SurfaceForm, BooleanForm, OffsetForm, PatternForm, NestForm, TabsForm, NodeEditForm, TraceForm, AlongPathForm } from './machine'
 import { useState, useEffect } from 'react'
 import { useToolpathStore } from '../store/toolpathStore'
 import { usePathsStore } from '../store/pathsStore'
@@ -10,7 +10,7 @@ import type { TraceEditCtx } from './machine/TraceForm'
 import type { AlongEditCtx } from './machine/AlongPathForm'
 import { OP_TYPE_COLORS } from '../colors'
 import { ICON } from '../theme'
-import { TabsIcon, AlongPathIcon } from './pathToolIcons'
+import { TabsIcon, AlongPathIcon, FlutingIcon } from './pathToolIcons'
 import { Circle, CircleDot, Target, Layers, Star, SquaresUnite, SquareSquare, LayoutGrid, Blocks, VectorSquare, Box, RefreshCw, PencilSparkles, Image as ImageIcon } from 'lucide-react'
 import { useUIStore } from '../store/uiStore'
 import { SelectionKindsBar } from './machine/SelectionKindsBar'
@@ -25,7 +25,7 @@ export const InlayIcon = ({ size = 24 }: { size?: number }) => (
 
 // ─── Operation type selector ──────────────────────────────────────────────────
 
-type OpType = 'profile' | 'trochoidal' | 'pocket' | 'drill' | 'surface' | 'vcarve' | 'photovcarve' | 'inlay' | 'profile3d' | 'boolean' | 'offset' | 'pattern' | 'nest' | 'tabs' | 'nodeedit' | 'trace' | 'along'
+type OpType = 'profile' | 'trochoidal' | 'fluting' | 'pocket' | 'drill' | 'surface' | 'vcarve' | 'photovcarve' | 'inlay' | 'profile3d' | 'boolean' | 'offset' | 'pattern' | 'nest' | 'tabs' | 'nodeedit' | 'trace' | 'along'
 type FormState = null | 'menu' | OpType
 
 const opBtnCls = 'flex flex-col items-center gap-0.5 py-1.5 rounded text-body transition-colors border border-gray-400 dark:border-neutral-600 hover:bg-gray-100 dark:hover:bg-neutral-700'
@@ -45,6 +45,7 @@ function AddOperationMenu({ onSelect }: { onSelect: (t: OpType) => void }) {
           ['photovcarve', 'Photo V-Carve', 'Raster a photo as V-grooves — dark areas cut deeper', <ImageIcon size={ICON.md} />],
           ['inlay', 'Inlay', 'V-carved sloped walls with flat pocket bottom', <InlayIcon size={ICON.md} />],
           ['profile3d', '3D Profile', 'Carve an STL or a depth map image with a ball nose', <Box size={ICON.md} />],
+          ['fluting', 'Fluting', 'Centreline carve along a path, its depth following a height profile you draw', <FlutingIcon size={ICON.md} />],
         ] as [OpType, string, string, React.ReactNode][]).map(([type, name, desc, icon]) => (
           <button key={type} onClick={() => onSelect(type)} title={desc} className={opBtnCls}>
             <span style={{ color: OP_TYPE_COLORS[type] }}>{icon}</span>
@@ -177,6 +178,8 @@ export default function MachinePanel({ fill = false }: { fill?: boolean }) {
         <ProfileForm key={editOpId ?? 'new'} onClose={closeForm} editOp={editOp?.type === 'profile' ? editOp : undefined} />
       ) : activeForm === 'trochoidal' ? (
         <TrochoidalForm key={editOpId ?? 'new'} onClose={closeForm} editOp={editOp?.type === 'trochoidal' ? editOp : undefined} />
+      ) : activeForm === 'fluting' ? (
+        <FlutingForm key={editOpId ?? 'new'} onClose={closeForm} editOp={editOp?.type === 'fluting' ? editOp : undefined} />
       ) : activeForm === 'pocket' ? (
         <PocketForm key={editOpId ?? 'new'} onClose={closeForm} editOp={editOp?.type === 'pocket' ? editOp : undefined} />
       ) : activeForm === 'drill' ? (

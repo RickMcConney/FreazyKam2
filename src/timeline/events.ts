@@ -125,6 +125,7 @@ export type TimelineEvent = TimelineEventBase & TimelineEventPayload
 export const OP_DISPLAY_NAMES: Record<string, string> = {
   profile: 'Profile',
   trochoidal: 'Trochoidal',
+  fluting: 'Fluting',
   pocket: 'Pocket',
   drill: 'Drill',
   surface: 'Surface',

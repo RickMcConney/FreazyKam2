@@ -140,10 +140,11 @@ export async function optimizeStartPoints(): Promise<void> {
 
     // Types whose output cannot depend on the entry hint: surfacing and inlay carry their
     // own entry, 3D profile, photo v-carve and imported G-code ignore startNear entirely
-    // (a raster field starts at a corner of the image, wherever the tool came from).
+    // (a raster field starts at a corner of the image, wherever the tool came from), and a
+    // flute starts where its profile does.
     // Regenerating them for a hint would cost their full generation and change nothing,
     // so they only move the cursor along — unless they are stale anyway.
-    if (op.type === 'surface' || op.type === 'inlay' || op.type === 'profile3d' || op.type === 'photovcarve' || op.type === 'gcode') {
+    if (op.type === 'surface' || op.type === 'inlay' || op.type === 'profile3d' || op.type === 'photovcarve' || op.type === 'fluting' || op.type === 'gcode') {
       if (stale) await regenerateOperation(op.id)
       const updated = useToolpathStore.getState().operations.find((o) => o.id === op.id)
       if (updated?.status !== 'done') continue

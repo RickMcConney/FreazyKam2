@@ -31,6 +31,13 @@ the answer immediately beats making you watch four minutes of cutting first. Pre
 | **Document icon** | Opens the G-code viewer, which follows along line by line |
 | **×** | Closes the simulator |
 
+![The 3D view part way through the coaster from chapter 1: the recess cut and the outline half way round, with the player under the stock — Play, the seek bar, speeds 1× to 100×, the G-code viewer and close — the position and progress bar above it and the spindle and chip load bar below](images/01-sim-3d.png)
+
+*The player under the stock: the position and progress bar above the controls, the spindle
+and chip load bar below them, and the program's messages above both.*
+
+<!-- FULL APP · 1600 px wide. The chapter 1 shot, reused: npm run shots -- 01-sim-3d. -->
+
 ### The readouts
 
 Two bars sit under the stock, and they are the reason to run a simulation rather than just
@@ -49,6 +56,14 @@ feeds it also suggests the feed that would bring you back into the band.
 
 **2D View** plays the program flat, with a trail behind the tool. It's the quicker read
 for travel moves, ordering and retracts.
+
+![The 2D view at the same moment of the same job: the pocket's raster passes cleared and the trail following the profile round the outline, coloured by chip load, with a legend under the player from under 35% through sweet spot to heavy](images/10-sim-2d.png)
+
+*The same moment in 2D. The trail is coloured by chip load against the aim — the legend
+under the player gives the bands — so a stretch cut too light or too heavy shows where it
+happened.*
+
+<!-- FULL APP · 1600 px wide. npm run shots -- 10-sim-2d. -->
 
 **3D View** removes real material from a solid block. This is the one that tells you what
 the part will look like — scallops, flat spots, an over-deep pocket. The toggles top-right

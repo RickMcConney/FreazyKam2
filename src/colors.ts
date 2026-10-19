@@ -44,6 +44,7 @@ export const OP_TYPE_COLORS: Record<string, string> = {
   inlay:    '#eab308',  // yellow-500
   profile3d:  '#34d399', // emerald-400
   trochoidal: '#fb923c', // orange-400
+  fluting:  '#f43f5e',  // rose-500 — a centreline carve, a neighbour of v-carve's pink
   boolean:  '#38bdf8',  // sky-400
   offset:   '#4ade80',  // green-400
   pattern:  '#c084fc',  // purple-400

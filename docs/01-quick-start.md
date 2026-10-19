@@ -183,7 +183,7 @@ outline — that stays true for the life of the project.
 Click the **Tool Library** tab above the canvas. The library ships with a starter set
 of cutters and is saved both with the project and in your browser between sessions.
 
-Find a **6 mm end mill**, or add one with **+**. What matters for this job:
+Find the **1/4" end mill**, or add one with **+**. What matters for this job:
 
 | Column | Means |
 |---|---|
@@ -214,7 +214,7 @@ Set:
 
 | Field | Value | Why |
 |---|---|---|
-| Tool | 6 mm end mill | |
+| Tool | 1/4" end mill | |
 | Strategy | **auto** | Picks per area — raster in the open, contour around anything in the way |
 | Start | **Auto** | Starts at the top of uncut stock |
 | Depth | `3` | A 3 mm recess |
@@ -264,7 +264,7 @@ With the **outer circle** still selected, click **Profile** under CAM Operations
 
 | Field | Value | Why |
 |---|---|---|
-| Tool | 6 mm end mill | |
+| Tool | 1/4" end mill | |
 | Cut Side | **outside** | The line is the finished edge of the part, so the tool must run outside it |
 | Start | **Auto** | |
 | Depth | `12.5` | Slightly past the 12 mm stock so the part separates cleanly |

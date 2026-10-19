@@ -74,7 +74,7 @@ export class ProjectFileError extends Error {}
 // over the union so a new operation type is a compile error here until it is listed.
 const OP_TYPES: Record<AnyOperation['type'], true> = {
   profile: true, pocket: true, drill: true, surface: true, vcarve: true, photovcarve: true,
-  inlay: true, profile3d: true, trochoidal: true, gcode: true,
+  inlay: true, profile3d: true, trochoidal: true, fluting: true, gcode: true,
 }
 
 /** A project file, validated and migrated, and not yet installed anywhere. */

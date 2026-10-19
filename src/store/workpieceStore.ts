@@ -211,7 +211,9 @@ export const useWorkpieceStore = create<WorkpieceState>()(
       accelZMmS2: 50,
       maxRateZMmMin: 600,
       junctionDeviationMM: 0.01,
-      autoFeedEnabled: false,
+      // On: the chip load, spindle speed and step-down then follow the tool, the material
+      // and the machine, which is what the guide tells a new user to rely on.
+      autoFeedEnabled: true,
       setWidth: (mm) => setProj('widthMM', mm),
       setHeight: (mm) => setProj('heightMM', mm),
       setThickness: (mm) => setProj('thicknessMM', mm),

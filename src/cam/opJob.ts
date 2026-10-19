@@ -332,6 +332,15 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       finishingPass: op.finishingPass, rampIn: op.rampIn, startNear: op.entryHint, safeHeightMM,
     }, tabsForGeneration(op.pathId)), builtWith)
 
+  } else if (op.type === 'fluting') {
+    const path = paths.find((p) => p.id === op.pathId)
+    if (!path) throw new Error('Source path not found')
+    setSegments(opId, await runInWorkerFor(opId, 'generateFluting', path.d, tool, {
+      depthMM: op.depthMM,
+      stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual),
+      profile: op.profile, smooth: op.smooth, reverse: op.reverse, safeHeightMM, startZMM,
+    }), builtWith)
+
   } else if (op.type === 'inlay') {
     const path = paths.find((p) => p.id === op.pathId)
     if (!path) throw new Error('Source path not found')

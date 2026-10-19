@@ -24,7 +24,7 @@ import { groupPathsByContainment, skipOpenPaths } from './containment'
 import { outermostPaths } from './selectionKinds'
 import {
   toolsOfType, pickToolId, profileFormDefaults, pocketFormDefaults, vcarveFormDefaults, drillFormDefaults, drillPathItem,
-  trochoidalFormDefaults, trochoidalToolSeeds, surfaceFormDefaults,
+  trochoidalFormDefaults, trochoidalToolSeeds, surfaceFormDefaults, flutingFormDefaults, flutingProfileOf, FLUTING_TOOL_TYPES,
   photoVcarveFormDefaults, norm180, profile3dFormDefaults, profile3dOpFields, profile3dSettingsOf, inlayTools, inlayFormDefaults,
   PROFILE_TOOL_TYPES, POCKET_TOOL_TYPES, VCARVE_TOOL_TYPES, HELICAL_TOOL_TYPES, TROCHOIDAL_TOOL_TYPES, SURFACE_TOOL_TYPES,
   PHOTO_VCARVE_TOOL_TYPES, PROFILE3D_FINISH_TOOL_TYPES, PROFILE3D_ROUGH_TOOL_TYPES, type Profile3dSettings,
@@ -331,6 +331,34 @@ const trochoidal: ToolpathKind = {
   },
 }
 
+const fluting: ToolpathKind = {
+  type: 'fluting',
+  summary: 'Carve along each path on its centreline with a V-bit or ball nose, the depth following a height profile along the path — a flute that swells from nothing at its ends to full depth.',
+  paths: 'One toolpath per path; open strokes are the usual case. The profile runs from each path\'s start to its end.',
+  settings: {
+    toolId: TOOL_ID,
+    depthMM: { ...DEPTH, description: 'The deepest the flute goes, mm below the surface; the profile is fractions of this' },
+    stepDownMM: STEP_DOWN,
+    smooth: { type: 'boolean', description: 'Smooth curve between the profile\'s breakpoints rather than straight lines' },
+    reverse: { type: 'boolean', description: 'Run the profile from each path\'s end instead of its start' },
+  },
+  allowedTools: (tools) => toolsOfType(tools, FLUTING_TOOL_TYPES),
+  plan(paths, s, ctx) {
+    const base = mergeWithDefaults(ctx.saved('fluting'), flutingFormDefaults(this.allowedTools(ctx.tools, s)[0]), ctx.tools)
+    const tool = chooseTool(this, ctx.tools, s, base.toolId)
+    return {
+      tool, skipped: [],
+      settings: {
+        toolId: tool.id, depthMM: s.depthMM ?? base.depthMM,
+        stepDownMM: stepDownFor(s, tool, base.toolId, base.stepDownMM), stepDownManual: s.stepDownMM !== undefined,
+        // The profile is drawn in the form; Claude gets the one the user last drew.
+        profile: flutingProfileOf(base.profile), smooth: s.smooth ?? base.smooth, reverse: s.reverse ?? base.reverse,
+      },
+      items: paths.map((p) => ({ key: p.id, name: `Fluting: ${p.name} (${tool.name})`, fields: { pathId: p.id } })),
+    }
+  },
+}
+
 const surface: ToolpathKind = {
   type: 'surface',
   summary: 'Face the whole top of the stock flat, in parallel passes.',
@@ -553,7 +581,7 @@ const inlay: ToolpathKind = {
   },
 }
 
-export const TOOLPATH_KINDS: Record<string, ToolpathKind> = { profile, pocket, vcarve, drill, trochoidal, surface, photovcarve, profile3d, inlay }
+export const TOOLPATH_KINDS: Record<string, ToolpathKind> = { profile, pocket, vcarve, drill, trochoidal, fluting, surface, photovcarve, profile3d, inlay }
 
 /** The entry for `type`, or an error listing the ones there are. */
 export function toolpathKind(type: unknown): ToolpathKind {

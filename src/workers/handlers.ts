@@ -18,6 +18,7 @@ import type { PhotoImage, PhotoRect } from '../cam/photoVcarve'
 import type { Tool } from '../store/toolStore'
 import { generateInlayFemale, generateInlayMale } from '../cam/inlay'
 import { generateTrochoidal } from '../cam/trochoidal'
+import { generateFluting } from '../cam/fluting'
 import { generateSurface } from '../cam/surfacing'
 import { nest, nestSheets } from '../tools/nestOp'
 import { traceImage } from '../tools/imageTrace'
@@ -55,6 +56,7 @@ export const handlers = {
   generateInlayMale: (...args: Parameters<typeof generateInlayMale>) =>
     withNotes(() => generateInlayMale(...args)),
   generateTrochoidal,
+  generateFluting,
   generateSurface,
   // Not a toolpath, but the same shape of job: one long synchronous solve over
   // plain geometry. A sheet of parts rasterizes the whole stock once per part

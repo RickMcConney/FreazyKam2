@@ -27,3 +27,9 @@ export const SimulateIcon = createLucideIcon('fk-simulate', [
   ['path', { d: 'M6 17v5', key: 'tip' }],
   ['path', { d: 'M12 11.75a1.25 1.25 0 0 1 1.88-1.08l7.5 4.375a1.25 1.25 0 0 1 0 2.16l-7.5 4.375A1.25 1.25 0 0 1 12 20.5Z', key: 'play' }],
 ])
+
+// Fluting: a flute seen from above — a round end (r 5 about (7,13)) swelling out of nothing
+// at a point (22,6), the two sides drawing together towards it as the depth runs out.
+export const FlutingIcon = createLucideIcon('fk-fluting', [
+  ['path', { d: 'M7 8A5 5 0 0 0 7 18C14 17.5 19 18.5 22 6C18.5 12.5 14 10 7 8Z', key: 'flute' }],
+])

@@ -5,9 +5,9 @@ import {
   Star, Heart, Shield, Orbit, Grid3x3, Cog, Snail, Type, PenTool, Copy, Import, SquaresUnite,
   SquareSquare, PencilSparkles, LayoutGrid, Target, CircleDot, Layers, Box, RefreshCw, FileCode,
   X, Image as ImageIcon, Weight, Clock, VectorSquare, Group, TrainTrack,
-  RulerDimensionLine, Webhook, Blocks, Package, 
+  RulerDimensionLine, Webhook, Blocks, Package,
 } from 'lucide-react'
-import { TabsIcon, AlongPathIcon } from './pathToolIcons'
+import { TabsIcon, AlongPathIcon, FlutingIcon } from './pathToolIcons'
 import { SignIcon, SlotIcon, BoardIcon, EscapementIcon, FingerJointIcon, DovetailIcon, BowtieIcon } from './draw/shapeIcons'
 import { usePathsStore, clearCorners, outerGroupOf, type ImportedPath } from '../store/pathsStore'
 import { useToolpathStore, pathIdsOf, type AnyOperation } from '../store/toolpathStore'
@@ -51,7 +51,7 @@ const SHAPE_ICONS: Record<string, ChipIcon> = {
 const OP_ICONS: Record<string, ChipIcon> = {
   profile: Circle, trochoidal: RefreshCw, pocket: Target, drill: CircleDot,
   surface: Layers, vcarve: Star, inlay: InlayIcon, profile3d: Box, gcode: FileCode,
-  photovcarve: ImageIcon,
+  photovcarve: ImageIcon, fluting: FlutingIcon,
 }
 
 // What a BATCH of operations is called. One operation carries its own name, which
@@ -59,7 +59,7 @@ const OP_ICONS: Record<string, ChipIcon> = {
 const OP_TYPE_NAMES: Record<string, string> = {
   profile: 'Profile', trochoidal: 'Trochoidal', pocket: 'Pocket', drill: 'Drill',
   surface: 'Surface', vcarve: 'V-Carve', inlay: 'Inlay', profile3d: '3D Profile',
-  gcode: 'G-code', photovcarve: 'Photo V-Carve',
+  gcode: 'G-code', photovcarve: 'Photo V-Carve', fluting: 'Fluting',
 }
 
 const FAMILY_STYLE: Record<ObjectChip['family'], string> = {

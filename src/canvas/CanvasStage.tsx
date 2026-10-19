@@ -12,7 +12,7 @@ import { Stage, Layer, Group, Circle } from 'react-konva'
 import type Konva from 'konva'
 import { Maximize2, ZoomIn, ZoomOut } from 'lucide-react'
 import { useWorkpieceStore, fmtLen } from '../store/workpieceStore'
-import { useCanvasStore, registerViewRect } from '../store/canvasStore'
+import { useCanvasStore, registerViewRect, registerViewFit } from '../store/canvasStore'
 import { usePathsStore, bakePathsStep, clockSpecOf, setClockSpec, useSelectedPaths, expandUserGroups } from '../store/pathsStore'
 import { flattenPath, signedArea } from '../cam/pathFlattener'
 import type { ImportedPath } from '../store/pathsStore'
@@ -971,8 +971,9 @@ export default function CanvasStage() {
       const b = screenToCNC(width, height, vp)
       return { minX: Math.min(a.x, b.x), maxX: Math.max(a.x, b.x), minY: Math.min(a.y, b.y), maxY: Math.max(a.y, b.y) }
     })
-    return () => registerViewRect(null)
-  }, [])
+    registerViewFit((box) => setViewport(fitViewport(sizeRef.current.width, sizeRef.current.height, box)))
+    return () => { registerViewRect(null); registerViewFit(null) }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const el = containerRef.current

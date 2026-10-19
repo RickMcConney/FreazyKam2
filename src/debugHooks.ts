@@ -12,7 +12,13 @@ import { usePathsStore } from './store/pathsStore'
 import { useToolpathStore } from './store/toolpathStore'
 import { useUIStore } from './store/uiStore'
 import { useTimelineStore } from './timeline/timelineStore'
-import { visibleRectMM } from './store/canvasStore'
+import { visibleRectMM, fitViewTo } from './store/canvasStore'
+import { useTabStore } from './store/tabStore'
+import { useWorkpieceStore } from './store/workpieceStore'
+import { useConstraintsStore } from './store/constraintsStore'
+import { useSimStore } from './store/simStore'
+import { loadProject } from './io/projectLoad'
+import { aimCameraFromAbove } from './three/cameraAim'
 
 declare global {
   interface Window { __fkam?: Record<string, unknown> }
@@ -24,8 +30,22 @@ if (import.meta.env.DEV) {
     ops: () => useToolpathStore.getState(),
     ui: () => useUIStore.getState(),
     timeline: () => useTimelineStore.getState(),
+    tabs: () => useTabStore.getState(),
+    workpiece: () => useWorkpieceStore.getState(),
+    constraints: () => useConstraintsStore.getState(),
+    sim: () => useSimStore.getState(),
+    /** Open a parsed .fkam as File > Open would — lets a script (scripts/screenshots) start a shot from a fixture. */
+    loadProject: (data: unknown, fileName?: string) => loadProject(data, fileName),
+    /** Any MCP bridge command (src/mcp/commands.ts) — add_shape, offset_paths, trace_image… —
+     *  so a script builds a scene through the same actions the UI and Claude use. Loaded on
+     *  first use, so the dev app does not pull the bridge in at boot. */
+    run: async (method: string, params?: unknown) => (await import('./mcp/commands')).runCommand(method, params),
     /** What the canvas shows, in CNC mm — lets a script (scripts/video) click a CNC point. */
     view: () => visibleRectMM(),
+    /** Frame this CNC-mm box on the canvas, as Zoom to fit frames the stock. */
+    /** Look down on a CNC point in the 3D view, showing `spanMM` top to bottom, tilted back `tiltDeg`. */
+    aim3d: (x: number, y: number, spanMM: number, tiltDeg?: number) => aimCameraFromAbove(x, y, spanMM, tiltDeg),
+    fitView: (box: { minX: number; minY: number; maxX: number; maxY: number }) => fitViewTo(box),
     /** The element the keyboard is talking to — an INPUT here swallows shortcuts. */
     focus: () => {
       const el = document.activeElement as HTMLElement | null
