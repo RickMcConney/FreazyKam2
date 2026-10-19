@@ -68,6 +68,7 @@ Short steps for one task.
 - [V-carve lettering](how-to/v-carve-lettering.md)
 - [Carve a photo](how-to/carve-a-photo.md)
 - [Make an inlay](how-to/make-an-inlay.md)
+- [Carve flutes](how-to/carve-flutes.md)
 - [Carve a 3D model (STL)](how-to/carve-a-3d-model.md)
 - [Cut into the floor of a pocket](how-to/cut-into-a-pocket-floor.md)
 - [Change the cut order](how-to/change-the-cut-order.md)
@@ -81,6 +82,9 @@ Short steps for one task.
 - [Make a cutting board](how-to/make-a-cutting-board.md)
 - [Make train track](how-to/make-train-track.md)
 - [Make a marble maze](how-to/make-a-marble-maze.md)
+- [Make a finger-jointed box](how-to/make-a-box.md)
+- [Join two boards with a finger joint or dovetail](how-to/join-boards.md)
+- [Inlay a bowtie key](how-to/inlay-a-bowtie-key.md)
 
 **Check and export**
 - [Simulate a job](how-to/simulate-a-job.md)

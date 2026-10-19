@@ -26,6 +26,7 @@ Field names are as they appear in each form.
 | [V-Carve](#v-carve) | Carves with depth from width | Closed path | V-bit, taper | ✓ |
 | [Photo V-Carve](#photo-v-carve) | Carves a photo as grooves | An image | V-bit | ✓ |
 | [Inlay](#inlay) | Cuts socket and plug | Closed path | Roughing: end mill · Finishing: V-bit, taper, end mill | — |
+| [Fluting](#fluting) | Carves along a line, depth from a profile you draw | Any path (usually open) | V-bit, taper, ball nose | — |
 | [3D Profile](#3d-profile) | Carves a 3D surface | An STL or image | Finishing: ball nose, bull nose, taper · Roughing: ball nose, bull nose, end mill | — |
 
 ---
@@ -136,6 +137,23 @@ Covers the whole stock. No selection needed.
 | Mirror | Male only. Flips the plug for text or non-symmetrical designs |
 
 The button reads **Generate Female Toolpath** or **Generate Male Toolpath**.
+
+## Fluting
+
+| Field | Meaning |
+|---|---|
+| Tool | V-bit or taper (V-groove), ball nose (round-bottomed flute) |
+| Depth | The deepest point of the flute. The profile is fractions of it |
+| Step Down | Depth per pass. No pass goes more than one step deeper anywhere |
+| Height Profile | Depth along the path: left = path start, right = path end, top = surface, bottom = full depth. Drag the points |
+| Points | Number of breakpoints. Changing it re-spaces them and keeps the shape |
+| Point N at · Depth | The selected point's position (%) and depth, typed exactly |
+| Smooth | A curve through the points that never overshoots them. Off: straight lines |
+| Reverse | The profile starts at the path's end |
+
+The line under Depth gives the groove's width at full depth. Dragged points snap to the
+surface, full depth and the neighbouring points' depths. The same profile is stretched
+over every selected path.
 
 ## 3D Profile
 

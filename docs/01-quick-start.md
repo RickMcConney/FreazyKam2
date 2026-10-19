@@ -48,8 +48,8 @@ something from one of them:
   The shape button shows whichever shape you used last (Circle in the picture); click it
   to arm that shape, or click the **chevron beneath it** to open the [shape
   picker](#the-shape-picker).
-- **CAM Operations** — the nine ways of cutting: Profile, Trochoidal, Pocket, Drill,
-  Surface, V-Carve, Photo V-Carve, Inlay, 3D Profile. **Select geometry first, then click
+- **CAM Operations** — the ten ways of cutting: Profile, Trochoidal, Pocket, Drill,
+  Surface, V-Carve, Photo V-Carve, Inlay, 3D Profile, Fluting. **Select geometry first, then click
   one.**
 - **Path Tools** — the six ways of changing geometry rather than cutting it: Boolean,
   Offset, Pattern, Nest, Tabs, Corners.
@@ -67,17 +67,18 @@ whole app. The rest of this chapter does it four times.
 
 The chevron under the shape button swaps the sidebar for the picker:
 
-![The shape picker filling the sidebar: nineteen shapes plus the clock designer, with Circle selected](images/01-shapes.png)
+![The shape picker filling the sidebar: twenty-three shapes plus the clock designer, with Circle selected](images/01-shapes.png)
 
 <!-- FULL APP · 1600 px wide. Picker open, Circle armed, canvas hint banner showing. -->
 
-Nineteen shapes and the clock designer, in three families:
+Twenty-three shapes and the clock designer, in four families:
 
 | Family | Buttons | |
 |---|---|---|
 | **Outlines** | Rect · Round · Sign · Circle · Ellipse · Polygon · Star · Heart · Slot · Shield | Everyday geometry, each with its own parameters |
 | **Generated patterns** | Spiro · Maze | A curve or a route computed from a rule rather than drawn |
 | **Real parts** | Board · Gear · Cam · Ratchet · Escape · Pend · Track · Clock | Working mechanisms, not lookalikes — a gear is a true involute profile, and the clock is a whole going train solved from the beat |
+| **Joinery** | Box · Finger · Dovetail · Bowtie | Joints fitted to your board's thickness and your bit, with reliefs where a round bit can't cut a square corner |
 
 Click one and the picker closes, that shape is armed, its parameters appear under the
 Draw menu, and a banner across the canvas tells you what the next click will do —

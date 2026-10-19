@@ -23,9 +23,9 @@
 |---|---|
 | End Mill | Profile, Pocket, Trochoidal, Surface, Drill (peck and helical), Inlay (roughing and finishing), 3D Profile (roughing), Nest (Shared lines) |
 | Bull Nose | Profile, Pocket, Trochoidal, Drill (peck), 3D Profile (finishing and roughing) |
-| Ball Nose | Profile, Pocket, Trochoidal, Drill (peck), 3D Profile (finishing and roughing) |
-| V-bit | Profile, V-Carve, Photo V-Carve, Drill (peck), Inlay (finishing) |
-| Taper End Mill | Profile, V-Carve, Drill (peck), Inlay (finishing), 3D Profile (finishing) |
+| Ball Nose | Profile, Pocket, Trochoidal, Drill (peck), 3D Profile (finishing and roughing), Fluting |
+| V-bit | Profile, V-Carve, Photo V-Carve, Drill (peck), Inlay (finishing), Fluting |
+| Taper End Mill | Profile, V-Carve, Drill (peck), Inlay (finishing), 3D Profile (finishing), Fluting |
 | Drill | Drill (peck) |
 
 The same, by operation:
@@ -44,6 +44,7 @@ The same, by operation:
 | Inlay: Finishing Tool | V-bit, Taper, End Mill, or None |
 | 3D Profile: Finishing Tool | Ball Nose, Bull Nose, Taper |
 | 3D Profile: Roughing Tool | Ball Nose, Bull Nose, End Mill, or None |
+| Fluting | V-bit, Taper, Ball Nose |
 | Nest: Shared lines | End Mill |
 
 **Max Z never hides a tool.** Going too deep shows *Exceeds tool Max Z*.

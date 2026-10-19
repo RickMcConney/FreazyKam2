@@ -156,9 +156,9 @@ check that a row says what you meant.
 |---|---|
 | End mill | Profile, Pocket, Trochoidal, Surface, Inlay (roughing and finishing), peck and helical drilling, 3D Profile (roughing), Nest's Shared lines |
 | Bull nose | Profile, Pocket, Trochoidal, peck drilling, 3D Profile (finishing and roughing) |
-| Ball nose | Profile, Pocket, Trochoidal, peck drilling, 3D Profile (finishing and roughing) |
-| V-bit | Profile, V-Carve, Photo V-Carve, Inlay walls, peck drilling |
-| Taper end mill | Profile, V-Carve, Inlay walls, 3D Profile (finishing), peck drilling |
+| Ball nose | Profile, Pocket, Trochoidal, peck drilling, 3D Profile (finishing and roughing), Fluting |
+| V-bit | Profile, V-Carve, Photo V-Carve, Inlay walls, Fluting, peck drilling |
+| Taper end mill | Profile, V-Carve, Inlay walls, 3D Profile (finishing), Fluting, peck drilling |
 | Drill | Peck drilling |
 
 Peck drilling lists every tool, since anything can plunge — but it warns for an end mill

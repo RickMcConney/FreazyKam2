@@ -9,8 +9,9 @@ Field names are as they appear in the Draw tab and the Properties panel.
 | Outlines | Rect · Round · Sign · Circle · Ellipse · Polygon · Star · Heart · Slot · Shield |
 | Patterns | Spiro · Maze |
 | Parts | Board · Gear · Cam · Ratchet · Escape · Pend · Track · Clock |
+| Joinery | Box · Finger · Dovetail · Bowtie |
 
-**Ignore drag-sizing:** Gear, Escapement, Pendulum, Track.
+**Ignore drag-sizing:** Gear, Escapement, Pendulum, Track, Box, Finger, Dovetail, Bowtie.
 **Lose their settings when rotated or stretched:** all shapes (they become plain paths).
 **From centre** (under the fields): a drag grows the shape from its middle.
 
@@ -152,3 +153,63 @@ bottom; the leads overhang by one pitch.
 | Radius | Size on the stock |
 | Loops | Whole number = lobe count |
 | Pen p | Pen offset. Can pass through the centre |
+
+## Joinery: common fields
+
+| Field | Meaning |
+|---|---|
+| Thickness | The board's real thickness (measure it). Notches are cut exactly this deep |
+| Finger | Target finger width. Each edge gets an odd number as close to it as fits |
+| Clearance | Gap on each side of the fit |
+| Tool Ø | The bit you will cut with. Inside corners are drawn for it |
+| Corners | **Dogbone** (round on the diagonal) · **T-bone** (round along the longer wall) · **None** |
+| Cut | Finger and Dovetail: **Joint only** (the waste at a board's end, cut with an **inside** profile) · **Whole boards** (complete boards, cut **outside**) |
+
+## Box
+
+| Field | Meaning |
+|---|---|
+| Sizes | Width, Depth and Height are **Outside** or **Inside** sizes |
+| Width · Depth · Height | Box size |
+| Lid | Adds a sixth panel |
+| Thickness · Finger · Clearance · Tool Ø · Corners | See common fields |
+
+Output: five panels (six with Lid) laid out flat. The readout gives the other set of sizes
+and the finger counts. Profile every panel **outside**, right through.
+
+## Finger
+
+| Field | Meaning |
+|---|---|
+| Cut | Joint only · Whole boards |
+| Width | Length of the joint (the boards' width) |
+| Length A · Length B | Whole boards only |
+| Thickness · Finger · Clearance · Tool Ø · Corners | See common fields |
+
+Output: **Board A** (fingers at both ends) and **Board B** (notches at both ends).
+
+## Dovetail
+
+| Field | Meaning |
+|---|---|
+| Cut | Joint only · Whole boards |
+| Seam | Length of the joint |
+| Panel A · Panel B | Whole boards only |
+| Tails | How many |
+| Tail W | A tail's wide end |
+| Tail L | How far a tail reaches into the other panel |
+| Angle | Flare of the tail's sides, 0–30° |
+| Clearance · Tool Ø | See common fields |
+
+Output: **Sockets** for panel B, **Tails** for panel A. Panel A must be **Tail L** longer
+than its finished size.
+
+## Bowtie
+
+| Field | Meaning |
+|---|---|
+| Cut with | **Straight bit** (socket and key, rounded for the bit) · **V-bit (Inlay)** (one sharp outline for the Inlay operation) |
+| Length | Across the seam |
+| Width | The ends |
+| Waist | The narrow middle, over the seam |
+| Clearance · Tool Ø | Straight bit only. The key is the clearance smaller all round |

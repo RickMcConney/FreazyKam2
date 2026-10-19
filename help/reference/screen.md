@@ -24,7 +24,7 @@
 | Group | Buttons |
 |---|---|
 | Draw | Pen · Text · Shape button (arrow opens the picker) |
-| CAM Operations | Profile · Trochoidal · Pocket · Drill · Surface · V-Carve · Photo V-Carve · Inlay · 3D Profile |
+| CAM Operations | Profile · Trochoidal · Pocket · Drill · Surface · V-Carve · Photo V-Carve · Inlay · 3D Profile · Fluting |
 | Path Tools | Boolean · Offset · Pattern · Nest · Tabs · Corners |
 
 ## Status ring on chips and rows

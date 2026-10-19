@@ -116,6 +116,7 @@ A **taper end mill** is a V-bit with a ball ground on its tip, described the way
 | V-Carve | Medial-axis depth from V-bit or taper geometry, island/letter-hole support |
 | Photo V-Carve | Rasters a photograph as V-grooves whose depth tracks image brightness (V-bit only) |
 | Inlay | Female socket (pocket + V-carved walls) and male plug generation |
+| Fluting | Centerline carve along a path with a V-bit, taper or ball nose, its depth following a height profile you draw — drag the breakpoints, set how many, smooth or straight between them. One profile stretches over every selected path, so a set of flutes on a table leg comes from one operation |
 | 3D Profile | Surface following from an imported STL or a greyscale depth-map image, with a ball nose or taper; raster or waterline finish (raster for depth maps), optional ball or end-mill roughing pass, boundary to clear the field around a relief |
 
 **Pocket strategies**

@@ -1,9 +1,10 @@
 # 6. V-carving and inlay
 
-Three operations cut with a pointed tool, and all three work the same way underneath:
-**how wide the cut is decides how deep it goes.** A V-bit at the surface cuts wide; the
-same bit deeper cuts narrower. Every operation in this chapter is an application of that
-one fact.
+Four operations cut with a pointed tool, and all four rest on one fact: **with a V-bit,
+width and depth go together.** The deeper the tip, the wider the groove. V-Carve, Photo
+V-Carve and Inlay use it one way round — the width the shape needs decides how deep the
+tip goes. [Fluting](#fluting) uses it the other way: you say how deep, and the groove
+comes out as wide as that depth makes it.
 
 ---
 
@@ -193,6 +194,56 @@ row.
 
 > **This is geometry, not a defect.** If you want a taper's fine detail somewhere, use it
 > for the V-carving in [that](#v-carve) chapter section and keep a V-bit for inlay walls.
+
+---
+
+## Fluting
+
+**Fluting** carves along a line — the flutes down a column or a table leg, a groove that
+swells from nothing to full depth and fades out again — with the depth set by a **height
+profile** you draw. The tool runs on the line itself, as a centerline cut, and only Z
+changes as it goes. Select one or more paths (open strokes are the usual case; a closed
+one works too) and open **CAM Operations → Fluting**.
+
+![Three straight strokes on the stock with the Fluting form open beside them: a 60° V-bit, 4 mm depth, the groove 4.62 mm wide at full depth, and the Height Profile graph — four points, in from the surface to full depth by 20 % and back out from 80 %, the cut shaded under the curve](images/06-fluting.png)
+
+<!-- FULL APP · 1600 px wide. npm run shots -- 06-fluting -->
+
+| Field | What it does |
+|---|---|
+| **Tool** | A **V-bit** or **taper** cuts a V-groove; a **ball nose** cuts a round-bottomed flute. A flat end mill is not offered — it would leave a step wherever the depth changes |
+| **Depth** | The deepest the flute goes. The profile is drawn as fractions of it, so changing the depth deepens the whole flute without changing its shape. The line under it gives the groove's width at full depth |
+| **Step Down** | Depth per pass. Each pass follows the profile but goes no deeper than its level, so no pass takes more than one step anywhere |
+| **Height Profile** | The groove's depth along the path. Left is the path's start, right its end; the top edge is the surface and the bottom full depth. The shaded area is what the tool takes out |
+| **Points** | How many breakpoints the profile has. Changing it re-spaces them evenly and keeps the shape already drawn |
+| **Point N at / Depth** | The selected point's position along the path (%) and depth, to type exact values |
+| **Smooth** | A curve through the points instead of straight lines between them. It never goes deeper than the deepest point or higher than the shallowest, so it cannot overshoot |
+| **Reverse** | Starts the profile at the path's end instead of its start |
+
+**Drag the points** to shape the flute. The two ends move only up and down; the points
+between move anywhere between their neighbours. A dragged point snaps to the surface, to
+full depth and to the depth of the point on either side, which makes a level run easy to
+get. Click a point to select it, then type its exact position and depth underneath.
+
+**One profile fits every path.** It is stretched over each path's own length, so the same
+settings flute a short stroke and a long one alike. A compound path takes the whole
+profile over each of its parts.
+
+**Which end is the start** depends on how the path was drawn. It only matters for a
+profile that isn't symmetrical — deep at one end, fading at the other. If it comes out the
+wrong way round, tick **Reverse** rather than redrawing anything.
+
+![The three flutes carved into maple in the 3D view, each swelling from a point at its ends to full width in the middle](images/06-fluting-3d.png)
+
+*The default profile: in from nothing to full depth over the first fifth of the path, level
+through the middle, and out again over the last fifth.*
+
+<!-- CROP · 3D view from a 2× capture. npm run shots -- 06-fluting-3d -->
+
+An open stroke is cut there and back, so the tool is already where the next pass starts
+and never lifts between passes; a closed path goes round the same way every time. Where
+the profile drops steeper than 45° the tool goes straight down at the plunge feed rather
+than diving along the slope at the cutting feed.
 
 ---
 
