@@ -51,6 +51,8 @@ export const OP_TYPE_COLORS: Record<string, string> = {
   trace:    '#2dd4bf',  // teal-400
   nest:     '#a78bfa',  // violet-400 — an arranging tool, so a neighbour of pattern's hue
   tabs:     '#f59e0b',  // amber-400
+  doublesided: '#d97706', // amber-600 — the flip axis and pins draw in it on the canvas
+  tiling:   '#0ea5e9',  // sky-500 — the seams draw in it on the canvas
   gcode:    '#6366f1',  // indigo-500
 }
 

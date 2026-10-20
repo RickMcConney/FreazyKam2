@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { nudgeStopDelta, nextStepPoint, equalSpacingSnap } from './objectSnap'
+import { nudgeStopDelta, nextStepPoint, equalSpacingSnap, collectSnapTargets } from './objectSnap'
+import { otherSideBox } from '../cam/doubleSided'
 
 const ON_LINE = 0.005
 
@@ -93,5 +94,28 @@ describe('equalSpacingSnap', () => {
     // (−15–−5 and A, a 5 gap) wants 15, 6 away. Both are within 8 — the nearer wins.
     const r = equalSpacingSnap(box(21), [box(-15), box(0), box(40)], 'x', 8)!
     expect(r.correction).toBeCloseTo(-1, 9)
+  })
+})
+
+describe('what a dragged part snaps to', () => {
+  const stock = { widthMM: 300, heightMM: 200 }
+  const part = [{ d: 'M 20 30 L 60 30 L 60 50 L 20 50 Z' }]
+
+  it("lines up with every sheet's edges and centre lines, not only the stock's", () => {
+    const t = collectSnapTargets([], stock, { sheets: [{ x: 0, y: 0 }, { x: 350, y: 0 }] })
+    expect(t.xs).toEqual(expect.arrayContaining([350, 650, 500]))
+    expect(t.ys).toEqual(expect.arrayContaining([0, 200, 100]))
+  })
+
+  it("lines up with a part's image on the other face of a double-sided board", () => {
+    const t = collectSnapTargets(part, stock, { mirror: (b) => otherSideBox('left-right', stock, b) })
+    // Side A's part, mirrored onto side B (the sheet to the right): x 20–60 → 590–630.
+    expect(t.xs).toEqual(expect.arrayContaining([20, 60, 590, 630, 610]))
+    expect(t.boxes).toHaveLength(2)
+  })
+
+  it('offers nothing extra on an ordinary job', () => {
+    const t = collectSnapTargets(part, stock)
+    expect(t.xs).toEqual([0, 300, 150, 20, 60, 40])
   })
 })

@@ -267,7 +267,8 @@ export function ToolSelector({ tools, value, onChange }: {
 export function ToggleRow<T extends string>({ label, options, value, onChange, labels }: {
   label: string
   options: readonly T[]
-  value: T
+  /** Null: nothing picked yet — no option is lit, and picking one is the action. */
+  value: T | null
   onChange: (v: T) => void
   labels?: Partial<Record<T, string>>
 }) {

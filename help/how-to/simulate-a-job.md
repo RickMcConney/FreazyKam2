@@ -8,7 +8,9 @@
 It opens showing the finished part. Play starts from bare stock.
 
 On [several sheets](use-several-sheets.md), it plays the one picked in the toolbar's
-**◀ Sheet 1 of 3 ▶** picker.
+**◀ Sheet 1 of 3 ▶** picker — and on a [tiled job](cut-a-long-board-in-tiles.md), the
+tile picked in the same place. On a [double-sided job](cut-both-sides.md) the 3D view shows
+the other side's cuts underneath.
 
 ![The 3D simulation](../../docs/images/01-sim-3d.png)
 

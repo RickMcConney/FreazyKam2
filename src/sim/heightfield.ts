@@ -74,6 +74,13 @@ export function computeCutBounds(
   }
 }
 
+/** The box covering both, or `a` alone when `b` is absent or empty. */
+export function unionCutBounds(a: CutBounds, b?: CutBounds): CutBounds {
+  if (!b || b.empty) return a
+  if (a.empty) return b
+  return { x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1), empty: false }
+}
+
 // Grid the cut region at TARGET_CELL_MM, coarsened if that would blow the sample budget.
 // `cellMM` overrides the target (tests use a fixed spacing so tolerances are predictable).
 export function gridForSegments(
@@ -82,8 +89,11 @@ export function gridForSegments(
   orgX: number, orgY: number,
   cellMM?: number,
   carvedRapids?: ReadonlySet<number>,
+  // More ground the grid must cover: the other side's cuts on a double-sided job, which
+  // the 3D view carves into the same grid from underneath (sim/otherSide.ts).
+  alsoBounds?: CutBounds,
 ): HeightfieldGrid & { bounds: CutBounds } {
-  const bounds = computeCutBounds(segments, toolStates, orgX, orgY, W, H, carvedRapids)
+  const bounds = unionCutBounds(computeCutBounds(segments, toolStates, orgX, orgY, W, H, carvedRapids), alsoBounds)
   const regionW = Math.max(bounds.x1 - bounds.x0, 1e-3)
   const regionH = Math.max(bounds.y1 - bounds.y0, 1e-3)
   const targetCell = cellMM ?? (bounds.empty ? Math.max(W, H) / 4 : TARGET_CELL_MM)

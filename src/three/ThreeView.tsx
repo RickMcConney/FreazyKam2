@@ -13,6 +13,7 @@ import { useToolStore } from '../store/toolStore'
 import { usePathsStore } from '../store/pathsStore'
 import { getCurrentSegIdx, interpolatePos, segFraction, segTool, type SimSegment } from '../sim/gcodeParser'
 import { flattenPath } from '../cam/pathFlattener'
+import { modelPreviewTrim } from '../cam/profile3d'
 import { cornerRadiusMM, fluteHelixFromName, includedAngleDeg, isVCutter, maxCutRadiusMM, type FluteHelix } from '../cam/geom'
 import { getBBox } from '../canvas/selectionUtils'
 import { THREE_BG_COLOR_THREE, MATERIAL_COLORS } from '../colors'
@@ -22,6 +23,7 @@ import { getWoodTexture, setWoodTextureListener, woodTileMM } from './woodTextur
 import SimulationPlayer from '../sim/SimulationPlayer'
 // M3 (clockwise viewed from above) is negative rotation about three's +Y.
 import { SPINDLE_VIS_RPS } from '../sim/spindleVis'
+import { otherSideKey, otherSideProgram } from '../sim/otherSide'
 import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
 import { decodeStlMesh, type StlMesh } from '../importers/stlImporter'
 import type { StlModelBounds } from '../importers/stlImporter'
@@ -107,6 +109,9 @@ interface SceneRefs {
   gridHelper: THREE.LineSegments
   heightfield: HeightfieldMaterial | null    // alternate GPU heightfield strategy
   simSegments: SimSegment[]                  // the store's (top-referenced) segments the carve was built from
+  // What the other side of a double-sided job was built from (sim/otherSide.ts) — [] when
+  // there is none — so a change to THAT side's toolpaths rebuilds the carve underneath.
+  underKey: unknown[]
   // The loaded program belongs to another sheet than the one on show (simProgramIsStale):
   // the loop then draws neither carve nor tool until the active sheet's program arrives.
   // Kept here, refreshed by the subscriptions that can change it, so the frame loop does
@@ -175,6 +180,13 @@ export default function ThreeView() {
     const sun = new THREE.DirectionalLight(0xffffff, 1.0)
     sun.position.set(1, 2, 1)
     scene.add(sun)
+    // A weaker light from BELOW, for the underside: a double-sided board is carved there too
+    // (sim/otherSide), and lit by the ambient alone every face pointing down came out one flat
+    // shade — the relief cut into it could not be seen. A surface facing up gets nothing from
+    // it, so the top of the stock looks exactly as it did.
+    const fill = new THREE.DirectionalLight(0xffffff, 0.55)
+    fill.position.set(-1, -2, -0.5)
+    scene.add(fill)
 
     const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 5000)
 
@@ -209,6 +221,7 @@ export default function ThreeView() {
       gridHelper,
       heightfield: null,
       simSegments: [],
+      underKey: [],
       simStale: simProgramIsStaleNow(),
       stlGeoCache: new Map(),
       toolpathLines: new Map(),
@@ -311,7 +324,7 @@ export default function ThreeView() {
         const pos    = interpolatePos(sim.segments, sim.elapsedTimeS)
         const wp     = useWorkpieceStore.getState()
         const T      = wp.thicknessMM
-        const org    = originWorldXY(wp.origin, wp.widthMM, wp.heightMM)
+        const org    = programOrigin()
         // sim.segments are already top-referenced (simStore.loadGcode), so pos.z is too.
 
         // Rebuild tool mesh if the current segment uses a different tool type/size
@@ -436,6 +449,7 @@ export default function ThreeView() {
     // the camera over the user's own orbit; every status or segments write during a Generate
     // rebuilt every op's toolpath; every selection click re-flattened every shape.
     const unsubWP = useWorkpieceStore.subscribe((s, p) => {
+      if (s.doubleSided !== p.doubleSided) refreshUnder()
       const sized = s.widthMM !== p.widthMM || s.heightMM !== p.heightMM || s.thicknessMM !== p.thicknessMM
       if (!sized && s.origin === p.origin && s.zOrigin === p.zOrigin && s.material === p.material) return
       rebuildWorkpiece(refs)
@@ -447,10 +461,30 @@ export default function ThreeView() {
       if (sized) fitCamera(refs)
       wake()
     })
+    // The other side's toolpaths are not in the program being played, so nothing reloads
+    // it when they change; the carve underneath is rebuilt here instead, once they settle.
+    let underTimer: ReturnType<typeof setTimeout> | null = null
+    const refreshUnder = () => {
+      if (underTimer) clearTimeout(underTimer)
+      underTimer = setTimeout(() => {
+        underTimer = null
+        if (useToolpathStore.getState().operations.some((o) => o.status === 'pending' || o.status === 'generating')) return
+        const key = useSimStore.getState().segments.length > 0 ? otherSideKey() : []
+        if (key.length === refs.underKey.length && key.every((v, i) => v === refs.underKey[i])) return
+        rebuildSim(refs)
+        wake()
+      }, 300)
+    }
+    // The model previews are trimmed by their 3D Profiles (modelPreviewTrim): rebuilt when a
+    // trim changes, not on every write a Generate makes to the operations.
+    let trimKey = previewTrimKey()
     const unsubTP = useToolpathStore.subscribe((s, p) => {
       if (s.operations === p.operations) return
+      const k = previewTrimKey()
+      if (k !== trimKey) { trimKey = k; rebuildShapes(refs) }
       rebuildToolpaths(refs)   // cached per op: only ops whose segments changed are rebuilt
       refs.simStale = simProgramIsStaleNow()
+      refreshUnder()
       wake()
     })
     // Wakes on ANY sim change, not just a new program: dragging the scrubber
@@ -477,7 +511,7 @@ export default function ThreeView() {
       wake()
     })
     const unsubSheet = useUIStore.subscribe((s, p) => {
-      if (sameCell(s.activeSheet, p.activeSheet)) return
+      if (sameCell(s.activeSheet, p.activeSheet) && s.activeTile === p.activeTile) return
       rebuildShapes(refs)
       rebuildToolpaths(refs)
       refs.simStale = simProgramIsStaleNow()
@@ -515,6 +549,7 @@ export default function ThreeView() {
       ro.disconnect()
       setWoodTextureListener(null)
       unsubWP(); unsubTP(); unsubSim(); unsubPaths(); unsubSheet()
+      if (underTimer) clearTimeout(underTimer)
       if (refs.heightfield) refs.heightfield.dispose()
       if (refs.toolMesh) disposeObject3D(refs.toolMesh)
       // The decoded model is shared (decodeStlMesh) and plain arrays; only the baked geometry is ours.
@@ -640,12 +675,24 @@ function disposeHeightfield(refs: SceneRefs) {
   }
 }
 
+/**
+ * Where the loaded program's origin is on the stock: the job origin, plus — for a tile of
+ * a tiled job — where that tile's window starts, since its program was moved back by that.
+ */
+function programOrigin(): { x: number; y: number } {
+  const wp = useWorkpieceStore.getState()
+  const org = originWorldXY(wp.origin, wp.widthMM, wp.heightMM)
+  const sim = useSimStore.getState()
+  return sim.autoReload ? { x: org.x + sim.tileAt.x, y: org.y + sim.tileAt.y } : org
+}
+
 function rebuildHeightfield(refs: SceneRefs) {
   disposeHeightfield(refs)
 
   const wp  = useWorkpieceStore.getState()
-  const { widthMM: W, heightMM: H, thicknessMM: T, material, origin, zOrigin } = wp
-  const org = originWorldXY(origin, W, H)
+  const { widthMM: W, heightMM: H, thicknessMM: T, material, zOrigin } = wp
+  // A tile's program goes back to where its window is on the board (cam/tiling).
+  const org = programOrigin()
   const { segments, toolStates } = useSimStore.getState()
   refs.simSegments = segments
 
@@ -656,7 +703,11 @@ function rebuildHeightfield(refs: SceneRefs) {
   // edge, it fills every cut that was made before it.
   const paintedCuts = useToolpathStore.getState().operations
     .some((o) => o.type === 'photovcarve' && o.visible)
-  const hf = new HeightfieldMaterial(W, H, T, segments, toolStates, org.x, org.y, getWoodTexture(material), woodTileMM(material), zOrigin, paintedCuts, MATERIAL_COLORS[material].opacity ?? 1)
+  // A double-sided job's other side, carved underneath (sim/otherSide.ts). Only under a
+  // program that is playing: with nothing loaded the stock is shown bare, as before.
+  const under = segments.length > 0 ? otherSideProgram() : null
+  refs.underKey = under ? otherSideKey() : []
+  const hf = new HeightfieldMaterial(W, H, T, segments, toolStates, org.x, org.y, getWoodTexture(material), woodTileMM(material), zOrigin, paintedCuts, MATERIAL_COLORS[material].opacity ?? 1, under)
   refs.heightfield = hf
   refs.scene.add(hf.group)
   perfLog(`[heightfield] built ${hf.topZ.length.toLocaleString()} samples @ ${hf.cellMM.toFixed(3)}mm cell`)
@@ -764,10 +815,12 @@ function rebuildShapes(refs: SceneRefs) {
           continue
         }
       }
-      const bakedKey = `${path.d}|${T}`
+      // Shown as it is CUT: sunk and trimmed by the 3D Profile on it (modelPreviewTrim).
+      const trim = modelPreviewTrim(useToolpathStore.getState().operations as never, path.id, T)
+      const bakedKey = `${path.d}|${T}|${trim?.topMM}|${trim?.depthMM}`
       if (!cached.bakedGeo || cached.bakedKey !== bakedKey) {
         cached.bakedGeo?.dispose()
-        cached.bakedGeo = buildStlGeo(cached.mesh, path.stlModelBounds, path.d, T)
+        cached.bakedGeo = buildStlGeo(cached.mesh, path.stlModelBounds, path.d, T, trim)
         cached.bakedKey = bakedKey
       }
       if (!cached.bakedGeo) continue
@@ -804,11 +857,22 @@ function rebuildShapes(refs: SceneRefs) {
 // 2D bounding rect (d string) in CNC space.  Result is cached; only rebuilt
 // when path.d or workpiece thickness changes.
 // Coordinate mapping: threeX = cncX, threeY = T + cncZ, threeZ = -cncY
+/** Every STL model's preview trim, as one string — what says the previews need rebuilding. */
+function previewTrimKey(): string {
+  const T = useWorkpieceStore.getState().thicknessMM
+  const ops = useToolpathStore.getState().operations as never
+  return usePathsStore.getState().paths
+    .filter((p) => p.stlSrc)
+    .map((p) => { const t = modelPreviewTrim(ops, p.id, T); return `${p.id}:${t?.topMM}:${t?.depthMM}` })
+    .join('|')
+}
+
 function buildStlGeo(
   mesh: StlMesh,
   bounds: StlModelBounds,
   d: string,
   T: number,
+  trim: { topMM: number; depthMM: number } | null = null,
 ): THREE.BufferGeometry | null {
   const bbox = getBBox(d)
   if (!bbox) return null
@@ -834,7 +898,10 @@ function buildStlGeo(
     const stlZ = positions[i * 3 + 2]
     const cncX = (stlX - modelCX) * scaleX + bbox.cx
     const cncY = (stlY - modelCY) * scaleY + bbox.cy
-    const cncZ = (stlZ - bounds.maxZ) * scaleZ
+    // Sunk as the cut sinks it, and flattened onto the cut's floor below that: what the
+    // model looks like once it is carved, not the whole of it.
+    const z = (stlZ - bounds.maxZ) * scaleZ - (trim?.topMM ?? 0)
+    const cncZ = trim ? Math.max(z, -trim.depthMM) : z
     newPos[i * 3]     = cncX
     newPos[i * 3 + 1] = T + cncZ
     newPos[i * 3 + 2] = -cncY

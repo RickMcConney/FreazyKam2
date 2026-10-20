@@ -168,6 +168,9 @@ so: *"1 part would not fit even on an empty sheet — parked above the stock."*
 
 Untick **Use more sheets** to keep the old behaviour: one sheet, and the rest parked.
 
+A double-sided or tiled job is one board, so it never nests onto more sheets — the option
+is replaced by a line saying so. See [14. Double-sided and tiled jobs](14-double-sided-and-tiling.md).
+
 ### Adding a sheet by hand
 
 **Drag a part off the stock to the right, or below it, and a new sheet appears under

@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest'
 import { findRapidGouges } from '../sim/rapidGouge'
 import type { SimSegment, ToolState } from '../sim/gcodeParser'
-import { buildHeightMap, generateProfile3d, StockModel, ballKernel, flatKernel, profile3dDepthMM, STOCK_SKIN_MM, modelBelowCut, type Profile3dParams } from './profile3d'
+import { buildHeightMap, generateProfile3d, StockModel, ballKernel, flatKernel, profile3dDepthMM, STOCK_SKIN_MM, modelBelowCut, modelPreviewTrim, type Profile3dParams } from './profile3d'
 import { maxCutRadiusMM, toolProfileHeightMM } from './geom'
 import type { Tool } from '../store/toolStore'
 import type { MotionSegment } from '../store/toolpathStore'
@@ -916,4 +916,23 @@ describe('a 3D Profile never moves into stock at rapid speed', () => {
       }
     }
   }
+})
+
+describe("the 3D view's model preview", () => {
+  const op = (over: Record<string, unknown> = {}) => ({ type: 'profile3d', visible: true, pathId: 'stl', maxDepthMM: 15, modelTopMM: 0.2, ...over })
+
+  it('is sunk and trimmed as its 3D Profile cuts it', () => {
+    expect(modelPreviewTrim([op()], 'stl', 31)).toEqual({ topMM: 0.2, depthMM: 15 })
+  })
+
+  it('stops where the cut stops, which is never through the stock', () => {
+    expect(modelPreviewTrim([op({ maxDepthMM: 40 })], 'stl', 31)!.depthMM).toBe(profile3dDepthMM(40, 31))
+    expect(profile3dDepthMM(40, 31)).toBeLessThan(31)
+  })
+
+  it('is shown whole when nothing cuts the model — no 3D Profile, a hidden one, or one on another model', () => {
+    expect(modelPreviewTrim([], 'stl', 31)).toBeNull()
+    expect(modelPreviewTrim([op({ visible: false })], 'stl', 31)).toBeNull()
+    expect(modelPreviewTrim([op({ pathId: 'other' }), { type: 'pocket', pathId: 'stl' }], 'stl', 31)).toBeNull()
+  })
 })

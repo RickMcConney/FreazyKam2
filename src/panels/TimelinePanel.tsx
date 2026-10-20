@@ -5,7 +5,7 @@ import {
   Star, Heart, Shield, Orbit, Grid3x3, Cog, Snail, Type, PenTool, Copy, Import, SquaresUnite,
   SquareSquare, PencilSparkles, LayoutGrid, Target, CircleDot, Layers, Box, RefreshCw, FileCode,
   X, Image as ImageIcon, Weight, Clock, VectorSquare, Group, TrainTrack,
-  RulerDimensionLine, Webhook, Blocks, Package,
+  RulerDimensionLine, Webhook, Blocks, Package, Columns3, FlipHorizontal2,
 } from 'lucide-react'
 import { TabsIcon, AlongPathIcon, FlutingIcon } from './pathToolIcons'
 import { SignIcon, SlotIcon, BoardIcon, EscapementIcon, FingerJointIcon, DovetailIcon, BowtieIcon } from './draw/shapeIcons'
@@ -20,6 +20,11 @@ import { useUIStore } from '../store/uiStore'
 import { OP_TYPE_COLORS } from '../colors'
 import { InlayIcon } from './MachinePanel'
 import { regenerateAffected } from '../cam/regenerate'
+import { isTilePinPath } from '../canvas/selectionUtils'
+import type { DoubleSided } from '../cam/doubleSided'
+import type { Tiling } from '../cam/tiling'
+import { removeTiling } from '../tools/tilingRun'
+import { makeSingleSided } from '../tools/doubleSidedRun'
 
 // The object strip docked under the 2D canvas: ONE CHIP PER THING IN THE
 // DOCUMENT — every path (a group counts once), every clock, every operation —
@@ -83,8 +88,11 @@ interface ObjectChip {
   /** Operations this chip stands for — a whole batch, or one lone operation. */
   opIds?: string[]
   clockId?: string
-  /** Which machine form this chip reopens, for the ones attached to a path. */
-  form?: 'tabs' | 'nodeedit'
+  /**
+   * Which machine form this chip reopens: Tabs or Corners for the ones attached to a
+   * path, or the Double-Sided / Tiling form for a job's chip.
+   */
+  form?: 'tabs' | 'nodeedit' | 'doublesided' | 'tiling'
   /** The constraints this chip stands for — a whole CHAIN of them. */
   constraintIds?: string[]
   /** The generated path whose form this chip reopens, if it has one. */
@@ -125,14 +133,41 @@ export function buildChips(
   tabs: Tab[] = [],
   constraints: Constraint[] = [],
   units: 'mm' | 'in' = 'mm',
+  // A double-sided or tiled job (cam/doubleSided, cam/tiling).
+  jobs: { doubleSided?: DoubleSided | null; tiling?: Tiling | null } = {},
 ): ObjectChip[] {
   const out: ObjectChip[] = []
+
+  // THE JOB COMES FIRST: one chip per double-sided or tiled job, which reopens its form
+  // (where it is ended) and whose × ends it. Its holes AND their drilling are part of it —
+  // both follow its settings and neither is edited on its own — so they are on its chip,
+  // not chips of their own.
+  const jobPathIds = new Set<string>()
+  if (jobs.doubleSided) {
+    const holes = paths.filter((p) => p.id === jobs.doubleSided!.dowelPathId || p.registration === 'dowel')
+    for (const p of holes) jobPathIds.add(p.id)
+    out.push({
+      key: 'job:doublesided', label: 'Double-Sided', Icon: FlipHorizontal2, color: OP_TYPE_COLORS.doublesided,
+      family: 'path', pathIds: holes.map((p) => p.id), form: 'doublesided',
+    })
+  }
+  if (jobs.tiling) {
+    const pins = paths.filter((p) => (jobs.tiling!.pinPathIds ?? []).includes(p.id) || isTilePinPath(p))
+    for (const p of pins) jobPathIds.add(p.id)
+    const n = jobs.tiling.seamsMM.length + 1
+    out.push({
+      key: 'job:tiling', label: `Tiling \u00d7${n}`, Icon: Columns3, color: OP_TYPE_COLORS.tiling,
+      family: 'path', pathIds: pins.map((p) => p.id), form: 'tiling',
+    })
+  }
+
   const seenGroup = new Set<string>()
   const seenClock = new Set<string>()
   const seenDef = new Set<string>()
   const seenUserGroup = new Set<string>()
 
   for (const p of paths) {
+    if (jobPathIds.has(p.id)) continue
     // A FILL IS ONE CHIP however its copies are made up. Each copy is a part in
     // its own right — a multi-part shape with its own groupId, or a user group —
     // and either of those would otherwise give every copy a chip, thirty chips
@@ -168,6 +203,18 @@ export function buildChips(
     if (p.clockId && !seenClock.has(p.clockId)) {
       seenClock.add(p.clockId)
       out.push({ key: `clock:${p.clockId}`, label: 'Clock', Icon: Clock, family: 'clock', pathIds: [], clockId: p.clockId })
+    }
+    // A TILED JOB'S PIN HOLES ARE ONE CHIP (cam/tiling): a path per station, because each
+    // is drilled by a different tile, but one set of holes kept in step with one setting.
+    if (isTilePinPath(p)) {
+      if (seenDef.has('tile-pins')) continue
+      seenDef.add('tile-pins')
+      const members = paths.filter(isTilePinPath)
+      out.push({
+        key: 'tile-pins', label: members.length === 1 ? 'Tile Pins' : `Tile Pins \u00d7${members.length}`,
+        Icon: Columns3, color: OP_TYPE_COLORS.tiling, family: 'path', pathIds: members.map((m) => m.id),
+      })
+      continue
     }
     // A user group is ONE thing — that is what grouping means — so it is one
     // chip standing for every member, at the position of the first. Its members'
@@ -247,6 +294,9 @@ export function buildChips(
   // chip never spans two kinds of form), and drawn at the first member's position.
   const seenBatch = new Set<string>()
   for (const op of ops) {
+    // A job's hole drilling is part of the job (tools/registrationOps keeps it in step),
+    // so it is on the job's chip — edited in the job's form, not on a chip of its own.
+    if (op.type === 'drill' && jobPathIds.has((op as { pathId?: string }).pathId ?? '')) continue
     const batchKey = op.batchId ? `${op.batchId}:${op.type}` : null
     if (!batchKey) {
       out.push({
@@ -336,12 +386,14 @@ export default function TimelinePanel() {
   const tabs = useTabStore((s) => s.tabs)
   const constraints = useConstraintsStore((s) => s.constraints)
   const units = useWorkpieceStore((s) => s.units)
+  const doubleSided = useWorkpieceStore((s) => s.doubleSided)
+  const tiling = useWorkpieceStore((s) => s.tiling)
   const timelineOpen = useUIStore((s) => s.timelineOpen)
   const setTimelineOpen = useUIStore((s) => s.setTimelineOpen)
 
   const chips = useMemo(
-    () => buildChips(paths, operations, tabs, constraints, units),
-    [paths, operations, tabs, constraints, units])
+    () => buildChips(paths, operations, tabs, constraints, units, { doubleSided, tiling }),
+    [paths, operations, tabs, constraints, units, doubleSided, tiling])
 
   const stripRef = useRef<HTMLDivElement>(null)
   const [stripW, setStripW] = useState(0)
@@ -441,7 +493,8 @@ export default function TimelinePanel() {
     }
     usePathsStore.getState().setSelectedIds(chip.pathIds)
     if (chip.form) {
-      // Tabs and Corners edit the SELECTION, which the line above just set.
+      // Tabs and Corners edit the SELECTION, which the line above just set. A job's form
+      // edits the job, and the selection shows its holes.
       ui.setRequestMachineForm(chip.form)
       return
     }
@@ -472,6 +525,15 @@ export default function TimelinePanel() {
       regenerateAffected(chip.pathIds[0])
     }
     if (chip.form === 'nodeedit') return () => clearCorners(chip.pathIds[0])
+    // A job's chip ENDS the job: its holes and their drilling go with it, the parts stay.
+    if (chip.form === 'doublesided') return () => {
+      const ds = useWorkpieceStore.getState().doubleSided
+      if (ds) makeSingleSided(ds)
+    }
+    if (chip.form === 'tiling') return () => {
+      const t = useWorkpieceStore.getState().tiling
+      if (t) removeTiling(t)
+    }
     // Deleting the chip releases the whole chain and leaves every part exactly
     // where it stands — nothing is cut differently, so nothing regenerates.
     if (chip.constraintIds) return () => useConstraintsStore.getState().deleteConstraints(chip.constraintIds!)

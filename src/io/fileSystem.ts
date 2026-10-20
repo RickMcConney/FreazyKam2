@@ -4,8 +4,7 @@ import { sanitizeFileName } from './filename'
 import { useProjectStore } from '../store/projectStore'
 import { useSaveDialogStore } from '../store/saveDialogStore'
 import { generateGcode, generateGcodePerTool, downloadGcode } from '../cam/gcode'
-import { buildGcodeInputs, prepareProgram, programForSheet } from './gcodeExport'
-import { sheetProgramName } from '../cam/sheets'
+import { buildGcodeInputs, prepareProgram, programCount, programFileName, programForSheet } from './gcodeExport'
 import { reachesProgram } from '../cam/programOps'
 
 // ─── File System Access API (Chromium only) — minimal local typing ──────────
@@ -122,8 +121,10 @@ export async function triggerGcodeExport(): Promise<void> {
 
 // Export a SET of G-code files: one per sheet of stock when a nest spread the parts over
 // several (cam/sheets — each moved so its corner is the machine origin), and within each
-// sheet one per tool/spindle speed when `byTool`. On Chromium the user picks a folder (one
-// prompt) and all files are written into it; elsewhere each file is downloaded in turn.
+// sheet one per tool/spindle speed when `byTool` — or one per tile of a tiled job. On
+// Chromium the user picks a folder (one prompt) and all files are written into it;
+// elsewhere, or when the folder prompt is cancelled or refused, each file is downloaded
+// in turn.
 // The directory picker is opened first so the click's user-activation is still live
 // before the async toolpath optimization.
 export async function triggerGcodeExportSplit(prefix?: string, byTool = true): Promise<void> {
@@ -133,21 +134,26 @@ export async function triggerGcodeExportSplit(prefix?: string, byTool = true): P
   if (dirPicker) {
     try {
       dir = await dirPicker()
-    } catch (e) {
-      if (isAbort(e)) return // user cancelled the folder prompt
-      dir = null // fall through to downloads
+    } catch {
+      // Cancelled, or refused: Chrome will not hand a page a top-level folder like
+      // Downloads or Desktop ("contains system files"), and its own message leaves the user
+      // a cancel. Either way the files still go out — as ordinary downloads, one after
+      // another, which is where the user was trying to put them.
+      dir = null
     }
   }
 
   const files: { filename: string; gcode: string }[] = []
   // Optimized ONCE, so every sheet's file is built from the same state of the program.
   const prepared = await prepareProgram()
-  const sheets = prepared.cells.length
-  for (let k = 0; k < sheets; k++) {
-    const { operations, toolsById, profile } = programForSheet(prepared, k)
+  // Sheets, or the tiles of a tiled job (programForSheet).
+  const count = programCount(prepared)
+  for (let k = 0; k < count; k++) {
+    const prog = programForSheet(prepared, k)
+    const { operations, toolsById, profile } = prog
     // A sheet with nothing to cut (parts with no toolpath yet) gets no file.
     if (!operations.some(reachesProgram)) continue
-    const name = sheetProgramName(baseName, k, sheets)
+    const name = programFileName(baseName, prog)
     if (byTool) files.push(...generateGcodePerTool(operations, toolsById, name, profile))
     else files.push({ filename: name, gcode: generateGcode(operations, toolsById, name, profile) })
   }

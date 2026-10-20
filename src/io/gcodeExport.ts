@@ -3,7 +3,8 @@ import { useToolpathStore, type AnyOperation } from '../store/toolpathStore'
 import { usePostProcessorStore, type PostProcessorProfile } from '../store/postProcessorStore'
 import { generateGcode, downloadGcode } from '../cam/gcode'
 import { optimizeStartPoints } from '../cam/startOptimizer'
-import { opsOnCell, STOCK_CELL, type Cell } from '../cam/sheets'
+import { opCell, opsOnCell, sameCell, sheetProgramName, STOCK_CELL, type Cell } from '../cam/sheets'
+import { tileCount, tileOps } from '../cam/tiling'
 import { sheetIndex, sheetLayoutNow } from '../canvas/useSheets'
 import { useWorkpieceStore } from '../store/workpieceStore'
 import { useUIStore } from '../store/uiStore'
@@ -26,6 +27,12 @@ import { useUIStore } from '../store/uiStore'
 //
 // Two steps, so a caller that wants every sheet (the export) optimizes ONCE and builds
 // each sheet from the same state of the program: `prepareProgram`, then `programForSheet`.
+//
+// A TILED job (cam/tiling) is one board cut in windows, so its programs are TILES, not
+// sheets: `sheet` is then a tile index, `sheets` the tile count, and each program is the
+// board's toolpaths clipped to that tile and moved to the machine's spot. Every caller
+// that walks the programs (the export, the picker, the machine, the MCP tools) gets tiles
+// that way without knowing. `programCount` is how many there are.
 export interface PreparedProgram {
   all: AnyOperation[]
   toolsById: Record<string, Tool>
@@ -40,6 +47,20 @@ export interface SheetProgram {
   sheet: number
   cell: Cell
   sheets: number
+  /** Set on a tiled job: the program is this tile (= `sheet`). */
+  tile?: number
+}
+
+/** How many programs the job is: its tiles when tiled, else its sheets. */
+export function programCount(p: Pick<PreparedProgram, 'cells'>): number {
+  const t = useWorkpieceStore.getState().tiling
+  return t ? tileCount(t) : p.cells.length
+}
+
+/** A program's file name: the base alone for a one-program job. */
+export function programFileName(base: string, prog: Pick<SheetProgram, 'sheet' | 'sheets' | 'tile'>): string {
+  if (prog.tile !== undefined) return prog.sheets > 1 ? `${base}_tile${prog.tile + 1}` : base
+  return sheetProgramName(base, prog.sheet, prog.sheets)
 }
 
 export async function prepareProgram(): Promise<PreparedProgram> {
@@ -55,6 +76,15 @@ export async function prepareProgram(): Promise<PreparedProgram> {
 
 export function programForSheet(p: PreparedProgram, sheet?: number): SheetProgram {
   const { all, toolsById, profile, cells } = p
+  const wp = useWorkpieceStore.getState()
+  if (wp.tiling) {
+    // Tiling is the stock only — anything on another sheet is not on this board.
+    const n = tileCount(wp.tiling)
+    const k = Math.max(0, Math.min(n - 1, sheet ?? useUIStore.getState().activeTile))
+    const onStock = all.filter((op) => sameCell(opCell(op, wp), STOCK_CELL))
+    const safeZ = (op: AnyOperation) => op.generatedWith?.safeHeightMM ?? wp.safeHeightMM
+    return { operations: tileOps(onStock, wp.tiling, wp, k, safeZ), toolsById, profile, sheet: k, cell: STOCK_CELL, sheets: n, tile: k }
+  }
   const sheets = cells.length
   if (sheets === 1) return { operations: all, toolsById, profile, sheet: 0, cell: STOCK_CELL, sheets }
   const k = Math.max(0, Math.min(sheets - 1, sheet ?? sheetIndex(cells, useUIStore.getState().activeSheet)))

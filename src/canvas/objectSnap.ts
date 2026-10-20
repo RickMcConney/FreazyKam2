@@ -11,19 +11,38 @@ export interface SnapTargets { xs: number[]; ys: number[]; boxes: Box[] }
 export interface Box { minX: number; minY: number; maxX: number; maxY: number }
 
 // `paths` must already be filtered to on-canvas paths excluding the dragged ones.
+//
+// `opts.sheets`: where every OTHER sheet's corner is (cam/sheets) — their edges and centre
+// lines snap like the stock's, so a part dragged on sheet 2 lines up with sheet 2.
+// `opts.mirror`: on a double-sided job, a shape's image on the other side of the board
+// (cam/doubleSided `otherSideBox`), or null — so a part on one side lines up with what is
+// on the other, as the guide draws it.
 export function collectSnapTargets(
   paths: { d: string }[],
   workpiece: { widthMM: number; heightMM: number },
+  opts: { sheets?: { x: number; y: number }[]; mirror?: (b: Box) => Box | null } = {},
 ): SnapTargets {
-  const xs: number[] = [0, workpiece.widthMM, workpiece.widthMM / 2]
-  const ys: number[] = [0, workpiece.heightMM, workpiece.heightMM / 2]
+  const W = workpiece.widthMM, H = workpiece.heightMM
+  const xs: number[] = [0, W, W / 2]
+  const ys: number[] = [0, H, H / 2]
+  for (const o of opts.sheets ?? []) {
+    if (o.x === 0 && o.y === 0) continue
+    xs.push(o.x, o.x + W, o.x + W / 2)
+    ys.push(o.y, o.y + H, o.y + H / 2)
+  }
   const boxes: Box[] = []
+  const add = (b: Box) => {
+    xs.push(b.minX, b.maxX, (b.minX + b.maxX) / 2)
+    ys.push(b.minY, b.maxY, (b.minY + b.maxY) / 2)
+    boxes.push(b)
+  }
   for (const p of paths) {
     const b = getBBox(p.d)
     if (!b) continue
-    xs.push(b.minX, b.maxX, b.cx)
-    ys.push(b.minY, b.maxY, b.cy)
-    boxes.push({ minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY })
+    const box = { minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY }
+    add(box)
+    const m = opts.mirror?.(box)
+    if (m) add(m)
   }
   return { xs, ys, boxes }
 }

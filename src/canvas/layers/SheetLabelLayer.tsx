@@ -4,7 +4,7 @@ import type { Viewport } from '../CanvasStage'
 import { useWorkpieceStore } from '../../store/workpieceStore'
 import { useUIStore } from '../../store/uiStore'
 import { cellKey, cellOffset } from '../../cam/sheets'
-import { useActiveSheet } from '../useSheets'
+import { sheetName, useActiveSheet } from '../useSheets'
 
 const FONT_PX = 12
 const LIFT_PX = 4
@@ -22,6 +22,7 @@ export const SheetLabelLayer = memo(function SheetLabelLayer({ viewport }: { vie
   const widthMM = useWorkpieceStore((s) => s.widthMM)
   const heightMM = useWorkpieceStore((s) => s.heightMM)
   const dark = useUIStore((s) => s.darkMode)
+  const ds = useWorkpieceStore((s) => s.doubleSided)
   if (cells.length < 2) return null
   return (
     <>
@@ -33,7 +34,7 @@ export const SheetLabelLayer = memo(function SheetLabelLayer({ viewport }: { vie
         return (
           <Label key={cellKey(cell)} x={sx} y={sy - LIFT_PX - FONT_PX - 4}>
             <Tag fill={dark ? '#262626' : '#f3f4f6'} opacity={0.9} cornerRadius={3} />
-            <Text text={`Sheet ${k + 1}`} fontSize={FONT_PX} padding={2}
+            <Text text={sheetName(cell, k, ds)} fontSize={FONT_PX} padding={2}
               fontStyle={k === active ? 'bold' : 'normal'}
               fill={k === active ? (dark ? '#ffffff' : '#111827') : (dark ? '#a3a3a3' : '#4b5563')} />
           </Label>

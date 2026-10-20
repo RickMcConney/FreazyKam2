@@ -594,6 +594,24 @@ function circleFromD(d: string): CircleInfo | null {
 }
 
 /**
+ * Registration holes the app places and keeps in step with a setting — a double-sided
+ * job's dowel holes, a tiled job's pin holes (`ImportedPath.registration`; paths made before
+ * the mark go by the name the app gave them). A drag box never catches one: each is ONE
+ * path of two circles far apart, so its box spans the board between them, and a box
+ * dragged across the parts touched it and handed the holes to whatever cut came next.
+ * A click still selects one, which is how they are drilled from the Drill form.
+ */
+/** A tiled job's pin-hole path (cam/tiling) — by its mark, or by the name the app gave it before paths were marked. */
+export function isTilePinPath(p: ImportedPath): boolean {
+  return p.registration === 'tile-pins' || (!p.registration && !p.shapeParams && /^Tile Pins \d+$/.test(p.name))
+}
+
+export function isRegistrationPath(p: ImportedPath): boolean {
+  if (p.registration) return true
+  return !p.shapeParams && (p.name === 'Dowel Holes' || /^Tile Pins \d+$/.test(p.name))
+}
+
+/**
  * EVERY circle in a path — one per subpath.
  *
  * A path is not one hole. A gear's pin holes, a bolt circle, an SVG whose circles

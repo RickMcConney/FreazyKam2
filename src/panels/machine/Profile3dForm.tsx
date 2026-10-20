@@ -10,6 +10,9 @@ import { useToolStore } from '../../store/toolStore'
 import { useToolpathStore, type AnyOperation, type Profile3dOperation } from '../../store/toolpathStore'
 import { useFormDefaultsStore, mergeWithDefaults } from '../../store/formDefaultsStore'
 import { usePathsStore } from '../../store/pathsStore'
+import { pathCell, sheetName, useSheetLayout } from '../../canvas/useSheets'
+import { sameCell } from '../../cam/sheets'
+import { modelLabels, pickModelPathId } from './modelPick'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 import { isWorkCancelled } from '../../workers/workerClient'
 import { generateOperation } from '../../cam/opJob'
@@ -47,6 +50,17 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
   const stlPaths = paths.filter((p) => !!p.stlSrc)
   const imagePaths = paths.filter((p) => !!p.imageSrc)
   const modelPaths = [...stlPaths, ...imagePaths]
+  const selectedIds = usePathsStore((s) => s.selectedIds)
+  // Copies of one model share its name; the list says where each is (modelPick).
+  const cells = useSheetLayout()
+  const doubleSided = useWorkpieceStore((s) => s.doubleSided)
+  const widthMM = useWorkpieceStore((s) => s.widthMM)
+  const heightMM = useWorkpieceStore((s) => s.heightMM)
+  const labels = useMemo(() => modelLabels(modelPaths, (p) => {
+    const cell = pathCell(p, { widthMM, heightMM })
+    const k = cells.findIndex((c) => sameCell(c, cell))
+    return k >= 0 ? sheetName(cell, k, doubleSided) : 'off the sheets'
+  }), [modelPaths, cells, doubleSided, widthMM, heightMM])
 
   const [form, setForm] = useState<Profile3dFormState>(() => {
     const base: Profile3dFormState = editOp ? profile3dSettingsOf(editOp)
@@ -56,6 +70,8 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
     // 'path', and Generate was disabled with nothing visible to say why.
     const staleBoundary = base.boundary === 'path' && !paths.some((p) => p.id === base.boundaryPathId)
     return { ...base,
+      // A NEW operation cuts the selected model, as every other form cuts the selection.
+      ...(editOp ? {} : { pathId: pickModelPathId(modelPaths, usePathsStore.getState().selectedIds, base.pathId) }),
       ...(staleBoundary ? { boundary: 'model' as const, boundaryPathId: '' } : {}),
       // A new operation starts on auto: a step-down pinned on the last job is not one for this.
       stepDownManual: editOp ? base.stepDownManual : false,
@@ -67,14 +83,13 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
   const [errorMsg, reportError, clearError] = useGenerateError()
   const session = useSessionOps()
 
-  // Sync pathId: saved defaults use session-specific path IDs that become stale on reload.
-  // Also handles importing a model after the form is already open.
+  // Keep the model in step: a model clicked on the canvas while the form is open becomes the
+  // one cut (not while editing an operation — that cuts its own model), and a model deleted
+  // or imported after the form opened is caught here too.
   useEffect(() => {
-    if (!modelPaths.find((p) => p.id === form.pathId)) {
-      const first = modelPaths[0]
-      if (first) setForm((f) => ({ ...f, pathId: first.id }))
-    }
-  }, [modelPaths.length]) // eslint-disable-line react-hooks/exhaustive-deps
+    const id = pickModelPathId(modelPaths, editOp ? [] : selectedIds, form.pathId)
+    if (id && id !== form.pathId) setForm((f) => ({ ...f, pathId: id }))
+  }, [modelPaths.length, selectedIds]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedTool = tools.find((t) => t.id === form.toolId)
   const selectedPath = paths.find((p) => p.id === form.pathId)
@@ -181,12 +196,12 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
           >
             {stlPaths.length > 0 && <optgroup label="STL">
               {stlPaths.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
+                <option key={p.id} value={p.id}>{labels.get(p.id) ?? p.name}</option>
               ))}
             </optgroup>}
             {imagePaths.length > 0 && <optgroup label="Depth map image">
               {imagePaths.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
+                <option key={p.id} value={p.id}>{labels.get(p.id) ?? p.name}</option>
               ))}
             </optgroup>}
           </select>

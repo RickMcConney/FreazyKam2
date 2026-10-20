@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { segTool, type SimSegment, type ToolState } from '../sim/gcodeParser'
-import { Heightfield, gridForSegments } from '../sim/heightfield'
+import { Heightfield, gridForSegments, computeCutBounds } from '../sim/heightfield'
+import type { UnderProgram } from '../sim/otherSide'
 import type { ZOrigin } from '../store/workpieceStore'
 import { Z_DATUM_COLOR_THREE } from '../colors'
 import { DEFAULT_TILE_MM } from './woodTexture'
@@ -19,6 +20,32 @@ import { DEFAULT_TILE_MM } from './woodTexture'
 // Coordinate convention matches ThreeView: workpiece bottom at three-space Y=0,
 // top at Y=thickness; threeZ = -cncY. `topZ` holds material height above the
 // bottom (0 … thickness).
+
+// THE BOARD IS TWO HEIGHTS PER COLUMN on a double-sided job (sim/otherSide.ts): this side's
+// surface `h` coming down (uHeight) and the other side's coming up from the bottom,
+// `b = T − u` where `u` is the other side's own carve (uUnder). Material is wherever h > b.
+// Every mesh below reads both through these, so a column cut from both sides until they
+// meet is a hole, and the walls of the two sides' cuts meet where they touch. With no other
+// side (uShowUnder = 0) b is 0 and all of it is the single-sided board it always was.
+//
+// Drawn heights: the top surface at max(h, b) and the bottom at b, so in a hole both sit
+// at the same height and the walls on either side run continuously from the top face to
+// the bottom one. A HOLE vertex is h − b ≤ 0.001; a fragment is dropped where all three of
+// its triangle's vertices are holes (the interpolated flag reaches 1).
+const TWO_SIDED_GLSL = /* glsl */ `
+  uniform sampler2D uUnder;
+  uniform float uShowUnder;
+  uniform float uThicknessU;
+  float _bottomAt(vec2 uv) { return uShowUnder > 0.5 ? uThicknessU - texture2D(uUnder, uv).r : 0.0; }
+  float _topAt(vec2 uv) { return max(texture2D(uHeight, uv).r, _bottomAt(uv)); }
+  float _holeAt(vec2 uv) { return texture2D(uHeight, uv).r - _bottomAt(uv) <= 0.001 ? 1.0 : 0.0; }`
+
+/** The uniforms TWO_SIDED_GLSL reads, shared by every mesh so one toggle reaches all. */
+interface UnderUniforms {
+  uUnder: { value: THREE.Texture }
+  uShowUnder: { value: number }
+  uThicknessU: { value: number }
+}
 
 function isCuttingSeg(seg: SimSegment): boolean {
   return !seg.rapid && (seg.prevZ < 0 || seg.z < 0)
@@ -64,8 +91,10 @@ function patchSurfaceShader(
   tileMM: [number, number],
   paintedCuts: boolean,
   damage: THREE.DataTexture | null,
+  under: UnderUniforms,
 ) {
   mat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, under)
     shader.uniforms.uHeight = { value: texture }
     shader.uniforms.uDamage = { value: damage ?? texture }
     shader.uniforms.uHasDamage = { value: damage ? 1 : 0 }
@@ -88,22 +117,25 @@ function patchSurfaceShader(
         uniform float uHasDamage;
         varying float vDamage;   // 1 where a rapid left the surface (interpolated: soft edge)
         varying float vH;
-        varying vec2 vWUv;       // planar wood UV in mm: (localX, localY)`)
+        varying float vHole;
+        varying vec2 vWUv;       // planar wood UV in mm: (localX, localY)
+        ${TWO_SIDED_GLSL}`)
       // Per-vertex normal from neighbouring texels (smooth shading at any res).
       // Tangents in three-space: +u → +X, +v(row) → +cncY → -threeZ.
       .replace('#include <beginnormal_vertex>', /* glsl */ `
-        float _hL = texture2D(uHeight, aHUv - vec2(uTexel.x, 0.0)).r;
-        float _hR = texture2D(uHeight, aHUv + vec2(uTexel.x, 0.0)).r;
-        float _hD = texture2D(uHeight, aHUv - vec2(0.0, uTexel.y)).r;
-        float _hU = texture2D(uHeight, aHUv + vec2(0.0, uTexel.y)).r;
+        float _hL = _topAt(aHUv - vec2(uTexel.x, 0.0));
+        float _hR = _topAt(aHUv + vec2(uTexel.x, 0.0));
+        float _hD = _topAt(aHUv - vec2(0.0, uTexel.y));
+        float _hU = _topAt(aHUv + vec2(0.0, uTexel.y));
         vec3 objectNormal = normalize(cross(
           vec3(2.0 * uSpacing.x, _hR - _hL, 0.0),
           vec3(0.0, _hU - _hD, -2.0 * uSpacing.y)));`)
       // Displace the flat plane vertex up to its sampled height.
       .replace('#include <begin_vertex>', /* glsl */ `
-        float _h = texture2D(uHeight, aHUv).r;
+        float _h = _topAt(aHUv);
         vec3 transformed = vec3(position.x, _h, position.z);
         vH = _h;
+        vHole = _holeAt(aHUv);
         vDamage = uHasDamage > 0.5 ? texture2D(uDamage, aHUv).r : 0.0;
         vWUv = vec2(position.x, -position.z);`)
 
@@ -117,11 +149,12 @@ function patchSurfaceShader(
         uniform vec3 uDamageRgb;
         varying float vDamage;
         varying float vH;
+        varying float vHole;
         varying vec2 vWUv;`)
       .replace('#include <color_fragment>', /* glsl */ `#include <color_fragment>
-        // Cut all the way through the stock (height collapsed to 0) → drop the
-        // fragment so the scene background shows through the hole instead of a floor.
-        if (vH <= 0.001) discard;
+        // Cut all the way through the stock — from this side alone, or from both until
+        // the cuts met — → drop the fragment so the background shows through the hole.
+        if (vHole > 0.999) discard;
         vec3 _wood = texture2D(uWoodTex, vWUv * uWoodScale).rgb;
         if (vH < uThickness - 0.001) {
           float _lum = dot(_wood, vec3(0.299, 0.587, 0.114));
@@ -143,25 +176,55 @@ function patchSurfaceShader(
   }
 }
 
-// The stock bottom over the cut region is a separate flat plane at Y=0 (reusing the
-// surface grid, undisplaced). It carries the wood colour like the rest of the block,
-// but discards wherever the column is fully cut so a through-hole becomes a real hole
-// rather than exposing a wood-coloured floor.
-function patchFloorShader(mat: THREE.MeshLambertMaterial, texture: THREE.DataTexture) {
+// The stock bottom over the cut region (reusing the surface grid). Flat at Y=0 on an
+// ordinary board; on a double-sided one it is the OTHER side's carve seen from below,
+// displaced up to `b` (see TWO_SIDED_GLSL). It carries the wood colour like the rest of the
+// block, lifted where it is cut as the top is, and discards wherever the column is cut
+// through so a through-hole becomes a real hole rather than exposing a wood-coloured floor.
+function patchFloorShader(
+  mat: THREE.MeshLambertMaterial, texture: THREE.DataTexture,
+  NX: number, NY: number, sx: number, sy: number, under: UnderUniforms,
+) {
   mat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, under)
     shader.uniforms.uHeight = { value: texture }
+    shader.uniforms.uTexel = { value: new THREE.Vector2(1 / NX, 1 / NY) }
+    shader.uniforms.uSpacing = { value: new THREE.Vector2(sx, sy) }
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', /* glsl */ `#include <common>
         uniform sampler2D uHeight;
+        uniform vec2 uTexel;
+        uniform vec2 uSpacing;
         attribute vec2 aHUv;
-        varying float vH;`)
-      .replace('#include <begin_vertex>', /* glsl */ `#include <begin_vertex>
-        vH = texture2D(uHeight, aHUv).r;`)
+        varying float vHole;
+        varying float vB;
+        ${TWO_SIDED_GLSL}`)
+      // The same graph-of-a-height normal as the top surface: it points up, and the
+      // DoubleSide back face (which is what is seen from below) flips it down.
+      .replace('#include <beginnormal_vertex>', /* glsl */ `
+        float _bL = _bottomAt(aHUv - vec2(uTexel.x, 0.0));
+        float _bR = _bottomAt(aHUv + vec2(uTexel.x, 0.0));
+        float _bD = _bottomAt(aHUv - vec2(0.0, uTexel.y));
+        float _bU = _bottomAt(aHUv + vec2(0.0, uTexel.y));
+        vec3 objectNormal = normalize(cross(
+          vec3(2.0 * uSpacing.x, _bR - _bL, 0.0),
+          vec3(0.0, _bU - _bD, -2.0 * uSpacing.y)));`)
+      .replace('#include <begin_vertex>', /* glsl */ `
+        float _b = _bottomAt(aHUv);
+        vec3 transformed = vec3(position.x, _b, position.z);
+        vB = _b;
+        vHole = _holeAt(aHUv);`)
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', /* glsl */ `#include <common>
-        varying float vH;`)
+        varying float vHole;
+        varying float vB;`)
       .replace('#include <color_fragment>', /* glsl */ `#include <color_fragment>
-        if (vH <= 0.001) discard;`)
+        if (vHole > 0.999) discard;
+        if (vB > 0.001) {
+          // Cut from the other side: the same fresh-cut lift as the top surface's carve.
+          float _lum = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
+          diffuseColor.rgb = pow(mix(diffuseColor.rgb, vec3(_lum), 0.2), vec3(0.5));
+        }`)
   }
 }
 
@@ -201,8 +264,10 @@ function patchSkirtShader(
   tileMM: [number, number],
   datumColor: number,
   datumTop: boolean,
+  under: UnderUniforms,
 ) {
   mat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, under)
     shader.uniforms.uHeight = { value: texture }
     shader.uniforms.uWoodTex = { value: woodTex }
     shader.uniforms.uWoodScale = { value: new THREE.Vector2(1 / tileMM[0], 1 / tileMM[1]) }
@@ -215,14 +280,15 @@ function patchSkirtShader(
         uniform sampler2D uHeight;
         attribute vec2 aHUv;     // texel-centre UV of the edge sample this vertex rides
         attribute float aTop;    // 1 = top (ride height), 0 = bottom (stay at Y=0)
-        varying float vH;
+        varying float vHole;
         varying float vWorldY;
-        varying vec2 vWUv;       // wall wood UV in mm: (along-edge, height) — matches buildStock's wall UVs`)
+        varying vec2 vWUv;       // wall wood UV in mm: (along-edge, height) — matches buildStock's wall UVs
+        ${TWO_SIDED_GLSL}`)
       .replace('#include <begin_vertex>', /* glsl */ `
-        float _h = texture2D(uHeight, aHUv).r;
-        float _y = aTop > 0.5 ? _h : 0.0;
+        // From the bottom surface (b, 0 on an ordinary board) up to the top one.
+        float _y = aTop > 0.5 ? _topAt(aHUv) : _bottomAt(aHUv);
         vec3 transformed = vec3(position.x, _y, position.z);
-        vH = _h;
+        vHole = _holeAt(aHUv);
         vWorldY = _y;
         vWUv = vec2(position.x - position.z, _y);`)
 
@@ -233,11 +299,11 @@ function patchSkirtShader(
         uniform vec3 uDatum;
         uniform float uThickness;
         uniform float uDatumTop;
-        varying float vH;
+        varying float vHole;
         varying float vWorldY;
         varying vec2 vWUv;`)
       .replace('#include <color_fragment>', /* glsl */ `#include <color_fragment>
-        if (vH <= 0.001) discard;
+        if (vHole > 0.999) discard;
         float _f = uDatumTop > 0.5 ? vWorldY / uThickness : (uThickness - vWorldY) / uThickness;
         _f = clamp(_f, 0.0, 1.0);
         vec3 _wood = texture2D(uWoodTex, vWUv * uWoodScale).rgb;
@@ -274,6 +340,15 @@ export class HeightfieldMaterial {
   private _lastPartialT = 0
   private _catchingUp = false
 
+  // A double-sided job's other side (sim/otherSide.ts): its finished program carved into a
+  // second grid, read by every mesh as the bottom surface. Carved once, under the same
+  // per-frame budget as a jump, and never reset by this side's rewinds.
+  private readonly _under: UnderProgram | null
+  private readonly _underHf: Heightfield | null
+  private readonly _underTex: THREE.DataTexture | null
+  private readonly _underUniforms: UnderUniforms
+  private _underNext = 0
+
   constructor(
     W: number, H: number, T: number,
     segments: SimSegment[],
@@ -289,6 +364,8 @@ export class HeightfieldMaterial {
     // Below 1 the stock is drawn see-through (clear acrylic), so the carve and the
     // toolpaths inside it stay visible.
     opacity = 1,
+    // A double-sided job's other side, already mirrored into this side's frame.
+    under: UnderProgram | null = null,
   ) {
     this._toolStates = toolStates
     const carvedRapids = new Set<number>()
@@ -298,8 +375,12 @@ export class HeightfieldMaterial {
     // Grid only the region that actually gets cut, so resolution concentrates
     // there rather than being spread over the whole stock. The field itself (grid +
     // carve math) lives in sim/heightfield.ts so tests can drive the same code.
-    const grid = gridForSegments(W, H, T, segments, toolStates, orgX, orgY, undefined, carvedRapids)
+    // On a double-sided job the grid covers the other side's cuts as well.
+    const underBounds = under ? computeCutBounds(under.segments, under.toolStates, orgX, orgY, W, H) : undefined
+    const grid = gridForSegments(W, H, T, segments, toolStates, orgX, orgY, undefined, carvedRapids, underBounds)
     this._hf = new Heightfield(grid)
+    this._under = under && under.segments.length > 0 ? under : null
+    this._underHf = this._under ? new Heightfield(grid) : null
     const { NX, NY, gx0, gy0, bounds } = grid
     this._sx = grid.sx
     this._sy = grid.sy
@@ -313,6 +394,23 @@ export class HeightfieldMaterial {
     this._texture.wrapS = THREE.ClampToEdgeWrapping
     this._texture.wrapT = THREE.ClampToEdgeWrapping
     this._texture.needsUpdate = true
+
+    if (this._underHf) {
+      this._underTex = new THREE.DataTexture(this._underHf.topZ, NX, NY, THREE.RedFormat, THREE.FloatType)
+      this._underTex.magFilter = THREE.NearestFilter
+      this._underTex.minFilter = THREE.NearestFilter
+      this._underTex.wrapS = THREE.ClampToEdgeWrapping
+      this._underTex.wrapT = THREE.ClampToEdgeWrapping
+      this._underTex.needsUpdate = true
+    } else {
+      this._underTex = null
+    }
+    // With no other side the sampler is bound to this side's own texture and never read.
+    this._underUniforms = {
+      uUnder: { value: this._underTex ?? this._texture },
+      uShowUnder: { value: this._underTex ? 1 : 0 },
+      uThicknessU: { value: T },
+    }
 
     if (carvedRapids.size > 0) {
       this._damage = new Uint8Array(NX * NY)
@@ -363,12 +461,12 @@ export class HeightfieldMaterial {
     this._surfaceGeo.setIndex(new THREE.BufferAttribute(indices, 1))
 
     this._surfaceMat = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide })
-    patchSurfaceShader(this._surfaceMat, this._texture, NX, NY, this._sx, this._sy, T, woodTex, tileMM, paintedCuts, this._damageTex)
+    patchSurfaceShader(this._surfaceMat, this._texture, NX, NY, this._sx, this._sy, T, woodTex, tileMM, paintedCuts, this._damageTex, this._underUniforms)
 
     // Flat bottom of the stock over the cut region — reuses the surface grid
     // (undisplaced at Y=0) and punches through where the cut goes clean through.
     this._floorMat = new THREE.MeshLambertMaterial({ map: woodTex, side: THREE.DoubleSide })
-    patchFloorShader(this._floorMat, this._texture)
+    patchFloorShader(this._floorMat, this._texture, NX, NY, this._sx, this._sy, this._underUniforms)
 
     // Static stock geometry (wood): perimeter walls + bottom face, plus a flat
     // "apron" filling the uncut stock area around the gridded cut region so the
@@ -387,7 +485,7 @@ export class HeightfieldMaterial {
     this._skirtGeo = buildSkirt(NX, NY, this._sx, this._sy, gx0, gy0, W, H)
     if (this._skirtGeo) {
       this._skirtMat = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide })
-      patchSkirtShader(this._skirtMat, this._texture, T, woodTex, tileMM, Z_DATUM_COLOR_THREE, zOrigin === 'top')
+      patchSkirtShader(this._skirtMat, this._texture, T, woodTex, tileMM, Z_DATUM_COLOR_THREE, zOrigin === 'top', this._underUniforms)
     } else {
       this._skirtMat = null
     }
@@ -447,9 +545,31 @@ export class HeightfieldMaterial {
     // this call is asking for LESS than is already cut, which only a reset can undo.
     const goingBack = segIdx - 1 < this._lastFullIdx ||
       (segIdx === this._lastPartialIdx && t < this._lastPartialT - 1e-6)
-    if (goingBack) this.reset()
+    if (goingBack) {
+      this.reset()
+      // Side A run from the start: side B is not cut yet (sim/otherSide.ts).
+      if (this._under?.hideOnRewind && this._underUniforms.uShowUnder.value !== 0) {
+        this._underUniforms.uShowUnder.value = 0
+        this._hf.dirty = true
+      }
+    }
 
     const deadline = performance.now() + budgetMs
+    // The other side first: it is the ground this side's playback stands on.
+    if (this._under && this._underHf && this._underNext < this._under.segments.length) {
+      const us = this._under.segments
+      let k = this._underNext
+      for (; k < us.length; k++) {
+        const s = us[k]
+        if (isCuttingSeg(s)) {
+          const ts = segTool(s, this._under.toolStates)
+          this._underHf.carve(s.prevX, s.prevY, s.x, s.y, s.prevZ, s.z, ts.toolVbitHalfAngleTan, ts.toolBallNose, ts.toolDiameterMM, ts.toolTipRadiusMM, ts.toolCornerRadiusMM)
+        }
+        if ((k & 255) === 255 && performance.now() >= deadline) { k++; break }
+      }
+      this._underNext = k
+      if (k < us.length) { this._catchingUp = true; return true }
+    }
     const end = Math.min(segIdx, segments.length)
     let i = this._lastFullIdx + 1
     for (; i < end; i++) {
@@ -498,6 +618,11 @@ export class HeightfieldMaterial {
   // Re-upload the heightfield texture if it changed this frame. Returns whether
   // anything was uploaded (so the caller can flag a re-render).
   flushToGPU(): boolean {
+    if (this._underHf?.dirty && this._underTex) {
+      this._underTex.needsUpdate = true
+      this._underHf.dirty = false
+      this._hf.dirty = true
+    }
     if (!this._hf.dirty) return false
     this._texture.needsUpdate = true
     if (this._damageTex) this._damageTex.needsUpdate = true
@@ -515,6 +640,7 @@ export class HeightfieldMaterial {
     this._skirtMat?.dispose()
     this._texture.dispose()
     this._damageTex?.dispose()
+    this._underTex?.dispose()
   }
 
 }

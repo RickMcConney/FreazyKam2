@@ -10,7 +10,7 @@
 | Flutes | Cutting edges |
 | Chip | Maker's rated chip load per tooth. Blank = none |
 | RPM | Spindle speed |
-| Dial | Router dial setting (only with a DeWalt/Makita spindle type) |
+| Dial | Router dial setting (only with a DeWalt, Makita or custom router spindle type) |
 | XY Feed | Cutting feed |
 | Z Feed | Plunge feed |
 | Max Z | Usable cutting length |

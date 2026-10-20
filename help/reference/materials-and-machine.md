@@ -38,12 +38,16 @@ Rigidity scales both chip size and depth per pass.
 | Manual / fixed speed | No |
 | DeWalt DW6xx (DWP611) | Yes |
 | Makita RT07 (RT0701C) | Yes |
+| Custom router (own dial chart) | Yes. Type the RPM at each dial setting 1–6 from the router's manual |
+
+Choosing a router with a dial sets **Min Spindle** and **Max Spindle** to its dial 1 and dial 6
+speeds. For a custom router, editing dial 1 or dial 6 updates them too.
 
 ## Setup panel machine fields
 
 | Section | Field | Meaning |
 |---|---|---|
-| Feeds & Speeds | Min Spindle · Max Spindle | Spindle range in RPM. Routers bottom out near 10,000 |
+| Feeds & Speeds | Min Spindle · Max Spindle | Spindle range in RPM. Routers bottom out near 10,000. A dial router fills these in from its chart |
 | Machine Limits | Table Width · Table Height · Max Z Travel | Travel the export review checks against |
 | Machine Limits | Safe Height | Height for rapid moves |
 | Machine Motion | Max Feed Rate | Hard ceiling on feed |

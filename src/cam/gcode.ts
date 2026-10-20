@@ -399,16 +399,16 @@ export function generateGcodeWithOps(
 
   // Segments are stored in workpiece-local coords (0→W, 0→H).
   // G-code must be relative to the machine zero (the origin point the user set on the workpiece).
-  const { widthMM, heightMM, thicknessMM, origin, zOrigin, spindleType } = useWorkpieceStore.getState()
+  const { widthMM, heightMM, thicknessMM, origin, zOrigin, spindleType, customDialRpm } = useWorkpieceStore.getState()
   const org = originWorldXY(origin, widthMM, heightMM)
   // Z datum offset: segment Z is top-referenced (Z=0 at top surface). For a bottom-of-stock
   // origin, shift the emitted Z up by the stock thickness so Z=0 lands at the stock bottom.
   const zOff = zDatumOffsetMM(zOrigin, thicknessMM)
 
   // Comment telling the operator which dial detent to set on a fixed-speed trim
-  // router (DeWalt/Makita) for the given RPM. Empty for VFD/manual spindles.
+  // router (DeWalt/Makita/custom) for the given RPM. Empty for VFD/manual spindles.
   const dialComment = (rpm: number): string => {
-    const label = spindleDialLabel(spindleType, rpm)
+    const label = spindleDialLabel(spindleType, rpm, customDialRpm)
     return label ? `Spindle ${rpm} RPM → ${label} (${SPINDLE_INFO[spindleType].label})` : ''
   }
 

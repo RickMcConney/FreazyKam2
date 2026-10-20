@@ -5,6 +5,7 @@
 import type { Tool } from '../store/toolStore'
 import { usePathsStore, type ImportedPath, type PathUpdate } from '../store/pathsStore'
 import { useUIStore } from '../store/uiStore'
+import { useWorkpieceStore } from '../store/workpieceStore'
 import { useProjectStore } from '../store/projectStore'
 import { applyTransformStep, placedAngleDeg, type TransformStep } from '../canvas/selectionUtils'
 import { groupPathsForNesting, nestIsStale, type NestItem } from './nestOp'
@@ -189,8 +190,9 @@ export async function runNest(input: NestRunInput): Promise<NestOutcome> {
     ...(filling && form.fillCount > 0 ? { fillCount: form.fillCount } : {}),
   }
   // MORE SHEETS for what will not fit on one (tools/nestOp nestSheets) — never for a
-  // fill, which is one part repeated across one sheet.
-  const result = filling || !form.multiSheet
+  // fill, which is one part repeated across one sheet, and never on a double-sided job,
+  // which is ONE board whose second sheet is its own back (cam/doubleSided).
+  const result = filling || !form.multiSheet || useWorkpieceStore.getState().doubleSided || useWorkpieceStore.getState().tiling
     ? { ...(await runInWorkerFor(NEST_JOB, 'nest', items, nestParams)), sheets: 1 }
     : await runInWorkerFor(NEST_JOB, 'nestSheets', items, nestParams)
 

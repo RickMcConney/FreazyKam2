@@ -50,6 +50,9 @@ function programKey(ops: AnyOperation[]): unknown[] {
   // Which sheet is playing is part of the program too, when a nest spread the parts over
   // several (cam/sheets): choosing another is choosing another program.
   if (key.length > 0) key.push('sheet', cellKey(useUIStore.getState().activeSheet))
+  // …and which TILE, on a tiled job (cam/tiling), and where the seams are.
+  const tiling = useWorkpieceStore.getState().tiling
+  if (key.length > 0 && tiling) key.push('tile', useUIStore.getState().activeTile, tiling)
   return key
 }
 
@@ -91,13 +94,13 @@ async function rebuild(): Promise<void> {
 
   building = true
   try {
-    const { operations, toolsById, profile, cell } = await buildGcodeInputs()
+    const { operations, toolsById, profile, cell, tile } = await buildGcodeInputs()
     // buildGcodeInputs awaits optimizeStartPoints, which can regenerate operations whose
     // entry point moved. If it did, that store write has re-scheduled us and the ops it
     // started are in flight — drop this build rather than emitting a half-generated one.
     if (operations.some((o) => o.status === 'pending' || o.status === 'generating')) return
     const gcode = generateGcode(operations, toolsById, useProjectStore.getState().name, profile)
-    useSimStore.getState().loadGcode(gcode, { sheet: cell })
+    useSimStore.getState().loadGcode(gcode, { sheet: cell, tile })
   } catch {
     // A failed rebuild is not worth a status message: the operations panel already shows
     // whatever went wrong with the operation, and the player simply stays as it was.
@@ -110,7 +113,7 @@ async function rebuild(): Promise<void> {
 /** Install the subscriptions. Returns an unsubscribe for React's effect cleanup. */
 export function installSimAutoReload(): () => void {
   const unsubOps = useToolpathStore.subscribe(schedule)
-  const unsubSheet = useUIStore.subscribe((u, p) => { if (!sameCell(u.activeSheet, p.activeSheet)) schedule() })
+  const unsubSheet = useUIStore.subscribe((u, p) => { if (!sameCell(u.activeSheet, p.activeSheet) || u.activeTile !== p.activeTile) schedule() })
   // Every load — ours, the Simulate button, an imported .gcode file — is the point the
   // player's contents match the program, so it defines what "unchanged" means from here.
   const unsubSim = useSimStore.subscribe((s, prev) => {
@@ -123,6 +126,8 @@ export function installSimAutoReload(): () => void {
   // Debounced: they are typed into a field one keystroke at a time.
   let retimer: ReturnType<typeof setTimeout> | null = null
   const unsubMotion = useWorkpieceStore.subscribe((w, p) => {
+    // A seam moved or tiling turned on/off is another set of programs.
+    if (w.tiling !== p.tiling) schedule()
     if (w.accelXYMmS2 === p.accelXYMmS2 && w.accelZMmS2 === p.accelZMmS2 &&
         w.maxRateZMmMin === p.maxRateZMmMin && w.junctionDeviationMM === p.junctionDeviationMM &&
         w.maxFeedMmMin === p.maxFeedMmMin) return
@@ -130,7 +135,7 @@ export function installSimAutoReload(): () => void {
     retimer = setTimeout(() => {
       retimer = null
       const sim = useSimStore.getState()
-      if (sim.gcode) sim.loadGcode(sim.gcode, sim.autoReload ? { sheet: sim.sheet } : { autoReload: false })
+      if (sim.gcode) sim.loadGcode(sim.gcode, sim.autoReload ? { sheet: sim.sheet, tile: sim.tile ?? undefined } : { autoReload: false })
     }, SETTLE_MS)
   })
   return () => {

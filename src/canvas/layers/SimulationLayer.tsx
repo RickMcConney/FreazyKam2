@@ -11,6 +11,7 @@ import { SPINDLE_VIS_RPS } from '../../sim/spindleVis'
 import { originWorldXY } from '../layers/WorkpieceLayer'
 import { cellOffset } from '../../cam/sheets'
 import { useActiveSheet, simProgramIsStale } from '../useSheets'
+import { useUIStore } from '../../store/uiStore'
 
 interface Props {
   viewport: Viewport
@@ -165,10 +166,16 @@ export const SimulationLayer = memo(function SimulationLayer({ viewport }: Props
   const { cell: activeCell } = useActiveSheet()
   const generated = useSimStore((s) => s.autoReload)
   const programCell = useSimStore((s) => s.sheet)
-  const stale = simProgramIsStale(programCell, generated, activeCell)
+  // …and a TILE of a tiled job (cam/tiling) goes back to where its window starts.
+  const programTile = useSimStore((s) => s.tile)
+  const tileAt = useSimStore((s) => s.tileAt)
+  const tiling = useWorkpieceStore((s) => s.tiling)
+  const activeTile = useUIStore((s) => s.activeTile)
+  const pickedTile = tiling ? Math.max(0, Math.min(tiling.seamsMM.length, activeTile)) : null
+  const stale = simProgramIsStale(programCell, generated, activeCell, programTile, pickedTile)
   const sheetAt = generated ? cellOffset(programCell, { widthMM, heightMM }) : { x: 0, y: 0 }
-  const ox = org.x + sheetAt.x
-  const oy = org.y + sheetAt.y
+  const ox = org.x + sheetAt.x + (generated ? tileAt.x : 0)
+  const oy = org.y + sheetAt.y + (generated ? tileAt.y : 0)
 
   // Where the trail image has to reach. Grown by the widest cut in the program so a
   // stroke at the edge isn't clipped in half.

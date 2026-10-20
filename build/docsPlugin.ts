@@ -149,7 +149,9 @@ export function collectPages(root: string, site: DocSite): DocPage[] {
   let group = ''
   for (const line of readme.split('\n')) {
     if (/^#{1,6}\s/.test(line)) { group = ''; continue }
-    const bold = /^\*\*([^*]+)\*\*\s*$/.exec(line.trim())
+    // A LABEL is bold text on its own; a bold LINK on its own line (the guide's Quick Start
+    // entry) is a page, and taking it for a label dropped it to the end of the sidebar.
+    const bold = line.includes('](') ? null : /^\*\*([^*]+)\*\*\s*$/.exec(line.trim())
     if (bold) { group = bold[1].trim(); continue }
     for (const [, url] of line.matchAll(/\]\(([^)\s#]+\.md)(?:#[^)\s]*)?\)/g)) {
       const p = posix.normalize(url)

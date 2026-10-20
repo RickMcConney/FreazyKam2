@@ -14,7 +14,7 @@
 The file goes to your downloads folder.
 
 On [several sheets](use-several-sheets.md)? You get one file per sheet, each cut from its
-own sheet's corner.
+own sheet's corner. A [tiled job](cut-a-long-board-in-tiles.md) gives one file per tile.
 
 ![The G-code review](../../docs/images/01-export-preflight.png)
 

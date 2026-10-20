@@ -282,7 +282,12 @@ is worth setting: the app knows the published speed charts for the **DeWalt DW6x
 DWP611** and the **Makita RT07 / RT0701C**, and translates every RPM into **the dial
 number you actually turn** — `dial 2`, `dial 2.5` — shown in the tool table, the
 simulation and the G-code comments. G-code `S18000` is no use if your router has no idea
-what an S-word is.
+what an S-word is. Any other router with a speed dial: choose **Custom router** and type its
+speed at each setting, 1 to 6, from the chart in its manual.
+
+Choosing a dial router also sets Min and Max Spindle to its dial 1 and dial 6 speeds, so
+auto feeds never asks for a speed the dial cannot reach. You can still lower the max if you
+would rather not run the router flat out.
 
 ### Max feed rate
 

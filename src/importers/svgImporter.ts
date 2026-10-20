@@ -93,6 +93,11 @@ export interface ImportedPath {
   // that has been turned. It also lets an IMPORTED outline carry it, which has
   // no params at all.
   fromCenter?: boolean
+  // Registration holes the app made and keeps in step with a setting: a double-sided job's
+  // dowel holes (cam/doubleSided) or a tiled job's pin holes (cam/tiling). The setting lists
+  // its paths by id, but the MARK is what lets a stray one — a station the list lost track
+  // of — be found and removed instead of being left on the board to be drilled.
+  registration?: 'dowel' | 'tile-pins'
   // What the drawing's author tagged this path as: a DXF layer name, an Inkscape layer's
   // label, or an SVG stroke colour ('#rrggbb'). Absent when the file said nothing. The
   // Select Only bar offers it; see importers/layers.ts.

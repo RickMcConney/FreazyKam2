@@ -5,6 +5,8 @@ import type { Tab } from '../store/tabStore'
 import { constraintName, type Constraint } from '../store/constraints'
 import { shapeDisplayName, type ShapeParams } from '../shapes/shapeGenerators'
 import type { Units, OriginPosition, ZOrigin, Material } from '../store/workpieceStore'
+import type { DoubleSided } from '../cam/doubleSided'
+import type { Tiling } from '../cam/tiling'
 
 // Omit distributed over a union (plain Omit collapses AnyOperation to common keys)
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never
@@ -72,6 +74,8 @@ export interface WorkpieceEventChanges {
   origin?: OriginPosition
   zOrigin?: ZOrigin
   material?: Material
+  doubleSided?: DoubleSided | null
+  tiling?: Tiling | null
 }
 
 export interface TimelineEventBase {
@@ -198,6 +202,8 @@ export function labelFor(ev: TimelineEventPayload): string {
         if (keys[0] === 'origin') return 'Origin'
         if (keys[0] === 'zOrigin') return 'Z Origin'
         if (keys[0] === 'material') return 'Material'
+        if (keys[0] === 'doubleSided') return 'Double-Sided'
+        if (keys[0] === 'tiling') return 'Tiling'
       }
       return 'Stock'
     }

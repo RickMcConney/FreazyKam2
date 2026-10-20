@@ -194,11 +194,11 @@ export default function Toolbar() {
       if (cur !== '2d' && cur !== '3d') setWorkspaceTab('2d')
       return
     }
-    const { operations: ops, toolsById, profile, cell } = await buildGcodeInputs()
+    const { operations: ops, toolsById, profile, cell, tile } = await buildGcodeInputs()
     const gcode = generateGcode(ops, toolsById, name, profile)
     // Load only — the sim opens on the finished part (loadGcode parks the clock at the
     // end). Play is what rewinds and runs it.
-    useSimStore.getState().loadGcode(gcode, { sheet: cell })
+    useSimStore.getState().loadGcode(gcode, { sheet: cell, tile })
     const cur = useUIStore.getState().workspaceTab
     if (cur !== '2d' && cur !== '3d') setWorkspaceTab('2d')
   }

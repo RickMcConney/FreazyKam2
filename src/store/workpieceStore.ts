@@ -3,7 +3,9 @@ import { persist } from 'zustand/middleware'
 import type { MotionLimits } from '../sim/motionPlanner'
 import { useTimelineStore } from '../timeline/timelineStore'
 import type { WorkpieceEventChanges } from '../timeline/events'
-import type { SpindleType } from './spindle'
+import { DEFAULT_CUSTOM_DIAL_RPM, normalizeCustomDial, spindleDialRange, type SpindleType } from './spindle'
+import { normalizeDoubleSided, type DoubleSided } from '../cam/doubleSided'
+import { normalizeTiling, type Tiling } from '../cam/tiling'
 
 export type Units = 'mm' | 'in'
 
@@ -152,7 +154,13 @@ interface WorkpieceState {
   maxRateZMmMin: number
   junctionDeviationMM: number
   spindleType: SpindleType     // router/spindle model — drives the RPM→dial readout
+  customDialRpm: number[]      // a 'custom' router's speed at dial 1..6, from its manual
   autoFeedEnabled: boolean     // when true, feeds/step-down are computed (cam/feeds.ts)
+  // A double-sided job's flip and dowel pins (cam/doubleSided.ts), or null for an ordinary
+  // one. Part of the document, so it is on the timeline and in the .fkam.
+  doubleSided: DoubleSided | null
+  // A tiled job's seams and pins (cam/tiling.ts), or null. Document state, like doubleSided.
+  tiling: Tiling | null
   setWidth: (mm: number) => void
   setHeight: (mm: number) => void
   setThickness: (mm: number) => void
@@ -169,11 +177,14 @@ interface WorkpieceState {
   setMinSpindleRpm: (rpm: number) => void
   setMaxSpindleRpm: (rpm: number) => void
   setSpindleType: (t: SpindleType) => void
+  setCustomDialRpm: (rpm: number[]) => void
   setAccelXY: (mmS2: number) => void
   setAccelZ: (mmS2: number) => void
   setMaxRateZ: (mmMin: number) => void
   setJunctionDeviation: (mm: number) => void
   setAutoFeedEnabled: (v: boolean) => void
+  setDoubleSided: (ds: DoubleSided | null) => void
+  setTiling: (t: Tiling | null) => void
 }
 
 export const useWorkpieceStore = create<WorkpieceState>()(
@@ -206,6 +217,7 @@ export const useWorkpieceStore = create<WorkpieceState>()(
       minSpindleRpm: 8000,
       maxSpindleRpm: 24000,
       spindleType: 'vfd',
+      customDialRpm: [...DEFAULT_CUSTOM_DIAL_RPM],
       // Typical of a hobby machine on Grbl/FluidNC; the user's own config replaces them.
       accelXYMmS2: 200,
       accelZMmS2: 50,
@@ -214,6 +226,8 @@ export const useWorkpieceStore = create<WorkpieceState>()(
       // On: the chip load, spindle speed and step-down then follow the tool, the material
       // and the machine, which is what the guide tells a new user to rely on.
       autoFeedEnabled: true,
+      doubleSided: null,
+      tiling: null,
       setWidth: (mm) => setProj('widthMM', mm),
       setHeight: (mm) => setProj('heightMM', mm),
       setThickness: (mm) => setProj('thicknessMM', mm),
@@ -221,6 +235,8 @@ export const useWorkpieceStore = create<WorkpieceState>()(
       setOrigin: (o) => setProj('origin', o),
       setZOrigin: (o) => setProj('zOrigin', o),
       setMaterial: (m) => setProj('material', m),
+      setDoubleSided: (ds) => setProj('doubleSided', ds),
+      setTiling: (t) => setProj('tiling', t),
       setTableLimitWidth: (mm) => set({ tableLimitWidthMM: mm }),
       setTableLimitHeight: (mm) => set({ tableLimitHeightMM: mm }),
       setTableLimitDepth: (mm) => set({ tableLimitDepthMM: mm }),
@@ -229,7 +245,16 @@ export const useWorkpieceStore = create<WorkpieceState>()(
       setMaxFeed: (mm) => set({ maxFeedMmMin: mm }),
       setMinSpindleRpm: (rpm) => set({ minSpindleRpm: rpm }),
       setMaxSpindleRpm: (rpm) => set({ maxSpindleRpm: rpm }),
-      setSpindleType: (t) => set({ spindleType: t }),
+      // A dial router can only run between its slowest and fastest detents, so choosing
+      // one (or editing a custom one's chart) sets the spindle range auto feeds works in.
+      // Without it a DeWalt kept the 8k–24k default and was handed speeds below dial 1.
+      // The range stays editable afterwards — narrowing it is how to keep a router off
+      // its top speed. A VFD or manual spindle leaves the range as it was.
+      setSpindleType: (t) => set({ spindleType: t, ...dialRangeOf(t, get().customDialRpm) }),
+      setCustomDialRpm: (rpm) => set({
+        customDialRpm: [...rpm],
+        ...(get().spindleType === 'custom' ? dialRangeOf('custom', rpm) : {}),
+      }),
       setAccelXY: (v) => set({ accelXYMmS2: Math.max(0, v) }),
       setAccelZ: (v) => set({ accelZMmS2: Math.max(0, v) }),
       setMaxRateZ: (v) => set({ maxRateZMmMin: Math.max(0, v) }),
@@ -237,9 +262,25 @@ export const useWorkpieceStore = create<WorkpieceState>()(
       setAutoFeedEnabled: (v) => set({ autoFeedEnabled: v }),
       })
     },
-    { name: 'freazykam-workpiece' }
+    {
+      name: 'freazykam-workpiece',
+      // A double-sided setting stored by an older build reads the way this one expects.
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<WorkpieceState>
+        return {
+          ...current, ...p,
+          doubleSided: normalizeDoubleSided(p.doubleSided), tiling: normalizeTiling(p.tiling),
+          customDialRpm: normalizeCustomDial(p.customDialRpm),
+        }
+      },
+    }
   )
 )
+
+function dialRangeOf(t: SpindleType, customDialRpm: number[]): Partial<WorkpieceState> {
+  const range = spindleDialRange(t, customDialRpm)
+  return range ? { minSpindleRpm: range.min, maxSpindleRpm: range.max } : {}
+}
 
 /** The machine's motion limits as the planner (sim/motionPlanner.ts) takes them. */
 export function machineMotionLimits(): MotionLimits {

@@ -21,6 +21,7 @@ import { regenerateOperation } from './cam/regenerate'
 import { opsAffectedByStockChange } from './cam/stockDependents'
 import { useSimStore } from './store/simStore'
 import { installSimAutoReload } from './sim/simAutoReload'
+import { installRegistrationSync } from './tools/registrationOps'
 import { installPathClipboard } from './io/pathClipboard'
 import { installAutosave, armAutosave, readSnapshot, clearSnapshot, applySnapshot, pruneSnapshots, tabWasDiscarded } from './io/autosave'
 
@@ -200,6 +201,11 @@ function useSimAutoReload() {
   useEffect(() => installSimAutoReload(), [])
 }
 
+// A double-sided or tiled job's holes drill themselves — see tools/registrationOps.ts.
+function useRegistrationSync() {
+  useEffect(() => installRegistrationSync(), [])
+}
+
 // Ctrl+C / Ctrl+V on the document, carrying paths as the app's own objects so a
 // gear pasted into another project is still a gear — see io/pathClipboard.ts.
 function usePathClipboard() {
@@ -268,6 +274,7 @@ export default function App() {
   useKeyboardShortcuts()
   useStockDependentSync()
   useSimAutoReload()
+  useRegistrationSync()
   usePathClipboard()
   useAutosave()
   useDarkMode()

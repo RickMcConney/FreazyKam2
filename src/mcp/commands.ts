@@ -338,9 +338,11 @@ export const commands: Record<string, Command> = {
   // The server writes the file; this hands it the program — the same text Export writes.
   export_gcode: async (p) => {
     const sheet = optInt(p, 'sheet', 0, 999)
-    const { operations, toolsById, profile, sheet: k, sheets } = await buildGcodeInputs(sheet)
+    const { operations, toolsById, profile, sheet: k, sheets, tile } = await buildGcodeInputs(sheet)
     if (sheets > 1 && sheet === undefined) {
-      throw new Error(`This job has ${sheets} sheets of stock, one program each. Give "sheet" (0 to ${sheets - 1}) and export each one.`)
+      throw new Error(tile !== undefined
+        ? `This job is cut in ${sheets} tiles, one program each. Give "sheet" (the tile, 0 to ${sheets - 1}) and export each one.`
+        : `This job has ${sheets} sheets of stock, one program each. Give "sheet" (0 to ${sheets - 1}) and export each one.`)
     }
     const gcode = generateGcode(operations, toolsById, useProjectStore.getState().name, profile)
     const lines = gcode.split('\n').length

@@ -140,6 +140,9 @@ interface UIState {
   // a sheet made or emptied elsewhere renumbers the ones after it, and the view must stay
   // on the sheet it was on. Gone altogether, it falls back to the stock (`sheetIndex`).
   activeSheet: Cell
+  // Which TILE of a tiled job (cam/tiling) the simulator plays and the machine panel runs —
+  // the sheet picker lists tiles instead of sheets then. Clamped to the tiles there are.
+  activeTile: number
   // Ask MachinePanel to open a generator form (boolean/offset/pattern) in edit
   // mode for a GENERATED PATH — the object carries the parameters (see
   // ImportedPath.definition), so the form is opened on the thing rather than on
@@ -204,6 +207,7 @@ interface UIState {
   setRequestEditOpId: (id: string | null) => void
   setReturnToToolpaths: (v: boolean) => void
   setActiveSheet: (c: Cell) => void
+  setActiveTile: (k: number) => void
   setRequestEditPathId: (id: string | null) => void
   setRequestMachineForm: (form: string | null) => void
   flashProperties: () => void
@@ -286,6 +290,7 @@ export const useUIStore = create<UIState>()(
   requestEditOpId: null,
   returnToToolpaths: false,
   activeSheet: STOCK_CELL,
+  activeTile: 0,
   requestEditPathId: null,
   requestMachineForm: null,
   propertiesFlashSeq: 0,
@@ -332,6 +337,7 @@ export const useUIStore = create<UIState>()(
     // The sheet on show is a cell of the OLD document's layout: kept, a project opened while
     // sheet 3 was showing opened on its own sheet 3 (or wherever that cell fell back to).
     activeSheet: STOCK_CELL,
+    activeTile: 0,
   }),
   setHelpOpen: (open) => set({ helpOpen: open }),
   setEscapementInfoOpen: (open) => set({ escapementInfoOpen: open }),
@@ -345,6 +351,7 @@ export const useUIStore = create<UIState>()(
   setRequestEditOpId: (id) => set(id ? { requestEditOpId: id, returnToToolpaths: false } : { requestEditOpId: null }),
   setReturnToToolpaths: (v) => set({ returnToToolpaths: v }),
   setActiveSheet: (c) => set({ activeSheet: c }),
+  setActiveTile: (k) => set({ activeTile: k }),
   setRequestEditPathId: (id) => set({ requestEditPathId: id }),
   setRequestMachineForm: (form) => set({ requestMachineForm: form }),
   flashProperties: () => set((s) => ({ propertiesFlashSeq: s.propertiesFlashSeq + 1 })),

@@ -47,6 +47,8 @@ export function NestForm({ onClose, editCtx }: { onClose: () => void; editCtx?: 
   const units = useWorkpieceStore((s) => s.units)
   const widthMM = useWorkpieceStore((s) => s.widthMM)
   const heightMM = useWorkpieceStore((s) => s.heightMM)
+  const doubleSided = useWorkpieceStore((s) => s.doubleSided)
+  const tiled = useWorkpieceStore((s) => !!s.tiling)
 
   const [form, setForm] = useState<NestFormState>(() => {
     const base = { ...NEST_DEFAULTS, ...(load('nest') as Partial<NestFormState> | null) }
@@ -269,7 +271,14 @@ export function NestForm({ onClose, editCtx }: { onClose: () => void; editCtx?: 
             Avoid other paths
           </label>
         </div>
-        {!filling && (
+        {!filling && (doubleSided || tiled) && (
+          <p className="text-label text-gray-600 dark:text-neutral-400">
+            {doubleSided
+              ? 'One sheet only — this is a double-sided job, and its second sheet is the back of the board.'
+              : 'One sheet only — this is a tiled job, one board cut in tiles.'}
+          </p>
+        )}
+        {!filling && !doubleSided && !tiled && (
           <div className="flex items-center gap-2">
             <input type="checkbox" id="nest-sheets" checked={form.multiSheet}
               onChange={(e) => up('multiSheet', e.target.checked)} className="accent-blue-500" />

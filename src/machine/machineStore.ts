@@ -27,8 +27,7 @@ import { useWorkpieceStore, zDatumOffsetMM } from '../store/workpieceStore'
 import { parseSdListing, sdDownloadPath, sdJoin, sdRunCommand, sdUploadForm, type SdListing } from './fluidnc/sdFiles'
 import { jobPreview, type JobPreview } from './jobPreview'
 import { parsePrb, probeDownCommand, zOffsetFromProbe, probeAlarmMessage, type ProbeResult } from './fluidnc/probe'
-import { buildGcodeInputs } from '../io/gcodeExport'
-import { sheetProgramName } from '../cam/sheets'
+import { buildGcodeInputs, programFileName } from '../io/gcodeExport'
 import { reachesProgram } from '../cam/programOps'
 import { generateGcode } from '../cam/gcode'
 import { asciiFileName } from '../io/filename'
@@ -1026,14 +1025,15 @@ export const useMachineStore = create<MachineState>()(
           const base = asciiFileName(project === 'Untitled Project' ? 'design' : project, 'design')
           // The ACTIVE sheet, when a nest spread the parts over several (cam/sheets) — named
           // so the card says which board it is for.
-          const { operations, toolsById, profile, sheet, sheets } = await buildGcodeInputs()
+          const prog = await buildGcodeInputs()
+          const { operations, toolsById, profile, sheet, sheets } = prog
           if (!operations.some(reachesProgram)) {
             set({ sdBusy: null, sdError: sheets > 1
-              ? `Sheet ${sheet + 1} has no toolpaths to send — generate some, or pick another sheet`
+              ? `${prog.tile !== undefined ? 'Tile' : 'Sheet'} ${sheet + 1} has no toolpaths to send — generate some, or pick another ${prog.tile !== undefined ? 'tile' : 'sheet'}`
               : 'The design has no toolpaths to send — generate some first' })
             return
           }
-          const program = sheetProgramName(base, sheet, sheets)
+          const program = programFileName(base, prog)
           const gcode = generateGcode(operations, toolsById, program, profile)
           const name = `${program}.nc`
           const file = new File([gcode], name, { type: 'text/plain' })

@@ -194,6 +194,10 @@ whose parts have no toolpaths yet gets no file.
 **Simulate G-code** and the Machine tab work on **one sheet at a time**: the one picked in
 the toolbar's **◀ Sheet 1 of 3 ▶** picker.
 
+A **tiled** job works the same way with tiles instead of sheets — *Export 4 tiles*, files
+named `<project>_tile2` and so on, each checked at its own origin. See
+[14. Double-sided and tiled jobs](14-double-sided-and-tiling.md#tiled-jobs).
+
 ### Splitting by tool
 
 If the job uses **more than one tool**, a **Split into one file per tool** option appears,

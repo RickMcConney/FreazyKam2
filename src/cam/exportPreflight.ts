@@ -1,7 +1,9 @@
-import { opsAtSheetOrigins, opsOnCell, programSheetCount } from './sheets'
+import { opCell, opsAtSheetOrigins, opsOnCell, programSheetCount, sameCell, STOCK_CELL } from './sheets'
+import { dowelDepthMM } from './doubleSided'
+import { tileCount, tileOps, tilingProblem } from './tiling'
 import { reachesProgram } from './programOps'
 import { sheetLayoutNow } from '../canvas/useSheets'
-import { useToolpathStore, nothingToCut } from '../store/toolpathStore'
+import { useToolpathStore, nothingToCut, type AnyOperation } from '../store/toolpathStore'
 import { useToolStore } from '../store/toolStore'
 import { usePostProcessorStore } from '../store/postProcessorStore'
 import { useWorkpieceStore, fmtLen, zDatumOffsetMM, machineMotionLimits, MATERIAL_INFO, type Material } from '../store/workpieceStore'
@@ -47,6 +49,8 @@ export interface ExportPreflight {
     sheets: number
     /** How many of them have something to cut — the files that export writes. */
     sheetsWithCuts: number
+    /** The programs are a tiled job's tiles (cam/tiling), not sheets. */
+    tiled: boolean
     tools: PreflightTool[]
     spindleSpeeds: number[]
     extents: { minX: number; maxX: number; minY: number; maxY: number; minZ: number; maxZ: number } | null
@@ -62,11 +66,19 @@ export interface ExportPreflight {
 export function buildExportPreflight(): ExportPreflight {
   // Each operation in the frame it is CUT in — its own sheet's (cam/sheets). Judged where
   // it lies on the canvas, every part below the first sheet reads as off the stock.
+  // A TILED job (cam/tiling) is judged tile by tile, each at its own origin, as it will be
+  // cut: the whole board at once would read as wider than the machine every time.
   const stored = useToolpathStore.getState().operations
   const stock = useWorkpieceStore.getState()
-  const operations = opsAtSheetOrigins(stored, stock)
-  const sheets = sheetLayoutNow().length
-  const sheetsWithCuts = programSheetCount(stored, stock)
+  const tiling = stock.tiling
+  const tilePrograms = tiling
+    ? Array.from({ length: tileCount(tiling) }, (_, k) => tileOps(
+      stored.filter((op) => sameCell(opCell(op, stock), STOCK_CELL)), tiling, stock, k,
+      (op) => op.generatedWith?.safeHeightMM ?? stock.safeHeightMM))
+    : null
+  const operations = tilePrograms ? tilePrograms.flat() : opsAtSheetOrigins(stored, stock)
+  const sheets = tilePrograms ? tilePrograms.length : sheetLayoutNow().length
+  const sheetsWithCuts = tilePrograms ? tilePrograms.filter((ops) => ops.some(reachesProgram)).length : programSheetCount(stored, stock)
   const { tools } = useToolStore.getState()
   const toolsById = Object.fromEntries(tools.map((t) => [t.id, t]))
   const profile = usePostProcessorStore.getState().getActiveProfile()
@@ -84,6 +96,18 @@ export function buildExportPreflight(): ExportPreflight {
   const nIsAre = (n: number) => (n === 1 ? 'is' : 'are')
 
   const doneOps = operations.filter(reachesProgram)
+
+  // A double-sided job's dowel holes go into the spoilboard ON PURPOSE (cam/doubleSided):
+  // they are judged against their own allowance, never as the job cutting through.
+  const ds = wp.doubleSided
+  const dowelOp = ds?.dowelPathId
+    ? doneOps.find((op) => op.type === 'drill' && (op as { pathId?: string }).pathId === ds.dowelPathId)
+    : undefined
+  // …and so do a tiled job's pin holes.
+  const pinPathIds = new Set(tiling?.pinPathIds ?? [])
+  const isRegistration = (op: AnyOperation) => op === dowelOp
+    || (op.type === 'drill' && pinPathIds.has((op as { pathId?: string }).pathId ?? ''))
+  let partMinZ = Infinity
 
   // Distinct tools in order of first use (roughing tool first for 3D profiles).
   const usedToolIds: string[] = []
@@ -117,6 +141,7 @@ export function buildExportPreflight(): ExportPreflight {
       if (my > maxY) maxY = my
       if (s.z < minZ) minZ = s.z
       if (s.z > maxZ) maxZ = s.z
+      if (!isRegistration(op) && s.z < partMinZ) partMinZ = s.z
       if (s.x < wpMinX) wpMinX = s.x
       if (s.x > wpMaxX) wpMaxX = s.x
       if (s.y < wpMinY) wpMinY = s.y
@@ -240,10 +265,46 @@ export function buildExportPreflight(): ExportPreflight {
     warnings.push({ level: 'warn', text: `Deepest cut ${fmt(deepestCutMM)} exceeds the max Z travel of ${fmt(tableLimitDepthMM)}.` })
   }
 
-  if (deepestCutMM > thicknessMM + 1e-3) {
+  const deepestPartCutMM = Number.isFinite(partMinZ) ? Math.max(0, -partMinZ) : 0
+  if (deepestPartCutMM > thicknessMM + 1e-3) {
     warnings.push({
       level: 'info',
-      text: `Deepest cut ${fmt(deepestCutMM)} goes through the ${fmt(thicknessMM)} stock — use a spoilboard or tabs to hold the part.`,
+      text: `Deepest cut ${fmt(deepestPartCutMM)} goes through the ${fmt(thicknessMM)} stock — use a spoilboard or tabs to hold the part.`,
+    })
+  }
+
+  if (tiling) {
+    const problem = tilingProblem(tiling, stock)
+    if (problem) warnings.push({ level: 'warn', text: problem })
+    const pinsDrilled = pinPathIds.size > 0 && doneOps.some((op) => isRegistration(op))
+    if (!pinsDrilled) {
+      warnings.push({ level: 'warn', text: 'Tiled job with no pin holes drilled — the tiles will not line up. They drill themselves once an end mill fits the small hole: pick one in the Tiling form.' })
+    }
+    warnings.push({
+      level: 'info',
+      text: `Tiled: ${sheets} tiles, one file each. Put the pins in the first holes after tile 1; after each tile slide the board ${tiling.axis === 'y' ? 'along Y' : 'along X'} until the next holes drop onto the pins. Keep the XY and Z zero.`,
+    })
+  }
+
+  if (ds) {
+    const allowedMM = dowelDepthMM(ds, thicknessMM)
+    if (!dowelOp) {
+      warnings.push({ level: 'warn', text: 'Double-sided job with no dowel holes drilled — side B will not line up with side A. They drill themselves once an end mill fits the small hole: pick one in the Double-Sided form.' })
+    } else {
+      const dowelDepth = Math.max(0, -Math.min(...dowelOp.segments.map((s) => s.z)))
+      if (dowelDepth > allowedMM + 1e-3) {
+        warnings.push({ level: 'warn', text: `The dowel holes go ${fmt(dowelDepth - thicknessMM)} into the spoilboard, deeper than the ${fmt(ds.spoilDepthMM)} allowed.` })
+      }
+      // First on SIDE A: side B is its own program, cut after the flip.
+      const firstOnA = stored.find((op) => reachesProgram(op) && sameCell(opCell(op, stock), STOCK_CELL))
+      if (firstOnA?.id !== dowelOp.id) {
+        warnings.push({ level: 'warn', text: 'The dowel holes are not the first cut — drill them before anything is cut loose, or the board can shift.' })
+      }
+    }
+    warnings.push({
+      level: 'info',
+      text: `Double-sided: cut Side A, put the pins in the dowel holes, turn the board over ${ds.flip === 'left-right' ? 'left to right' : 'top to bottom'} onto them, then cut Side B. ` +
+        `Keep the XY zero; ${zOrigin === 'top' ? 're-zero Z on the new top face' : 'Z is set from the spoilboard, so it stays'}.`,
     })
   }
 
@@ -323,9 +384,9 @@ export function buildExportPreflight(): ExportPreflight {
     const zOff = zDatumOffsetMM(zOrigin, thicknessMM)
     const org = originWorldXY(origin, widthMM, heightMM)
     const hits: { opId: string; depthMM: number; x: number; y: number; sheet: number }[] = []
-    const cells = sheetLayoutNow()
-    cells.forEach((cell, k) => {
-      const onCell = opsOnCell(stored, cell, stock)
+    // One program per sheet — or per tile, on a tiled job.
+    const programs = tilePrograms ?? sheetLayoutNow().map((cell) => opsOnCell(stored, cell, stock))
+    programs.forEach((onCell, k) => {
       if (!onCell.some(reachesProgram)) return
       const single = sheetsWithCuts <= 1 && parsed && program
       const prog = single ? program : generateGcodeWithOps(onCell, toolsById, 'estimate', profile)
@@ -342,7 +403,7 @@ export function buildExportPreflight(): ExportPreflight {
       const deepest = [...hits].sort((a, b) => b.depthMM - a.depthMM)
       const where = (h: typeof hits[number]) =>
         `${fmt(h.depthMM)} deep in ${stored.find((o) => o.id === h.opId)?.name ?? 'the program'}` +
-        `${cells.length > 1 ? ` on sheet ${h.sheet}` : ''} at X${h.x.toFixed(1)} Y${h.y.toFixed(1)}`
+        `${programs.length > 1 ? ` on ${tilePrograms ? 'tile' : 'sheet'} ${h.sheet}` : ''} at X${h.x.toFixed(1)} Y${h.y.toFixed(1)}`
       warnings.push({
         level: 'warn',
         text: `${hits.length} rapid (G0) move${nS(hits.length)} run${hits.length === 1 ? 's' : ''} into stock at full speed — ` +
@@ -414,6 +475,7 @@ export function buildExportPreflight(): ExportPreflight {
       operationCount: doneOps.length,
       sheets,
       sheetsWithCuts,
+      tiled: !!tiling,
       tools: toolList,
       spindleSpeeds,
       extents,

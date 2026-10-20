@@ -26,6 +26,23 @@ export function profile3dDepthMM(maxDepthMM: number, stockThicknessMM: number): 
 }
 
 /**
+ * How the 3D view's model preview is placed so it shows what is CUT: its top sunk
+ * `topMM` below the stock top as the cut sinks it (stlToCnc's `zOffsetMM`), and nothing
+ * drawn below `depthMM`, where the cut stops — a model deeper than the cut otherwise poked
+ * out through the bottom of the stock, and on a double-sided board through the carve on
+ * the other face. Read from the first 3D Profile on that model; none, and the model is
+ * shown whole with its top at the stock top.
+ */
+export function modelPreviewTrim(
+  ops: readonly { type: string; visible?: boolean; pathId?: string; maxDepthMM?: number; modelTopMM?: number }[],
+  pathId: string, stockThicknessMM: number,
+): { topMM: number; depthMM: number } | null {
+  const op = ops.find((o) => o.type === 'profile3d' && o.visible !== false && o.pathId === pathId)
+  if (!op || op.maxDepthMM == null) return null
+  return { topMM: op.modelTopMM ?? 0, depthMM: profile3dDepthMM(op.maxDepthMM, stockThicknessMM) }
+}
+
+/**
  * Whether a model sunk `modelTopMM` below the stock top lies wholly below a cut `depthMM`
  * deep. Then nothing of it is reached: the raster cuts one flat at the depth and the
  * waterline cuts nothing, so the job is refused rather than run.

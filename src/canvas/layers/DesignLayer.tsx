@@ -221,12 +221,17 @@ const StlPath = memo(function StlPath({ p, isSelected, liveTransform, followTran
       setHmCanvas(buildHeightMapCanvas(p))
     }, 0)
     return () => clearTimeout(timer)
-  }, [p.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [p.id, p.d]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const attrs = liveTransformToNodeAttrs(lt)
   const strokeWidth = liveStrokeWidth(lt, attrs, isSelected, scale)
 
-  const rect = extractRectInfo(p.d)
+  // PLACED BY THE PATH'S BOX, as the model is cut (cam/stlMapping) and drawn in 3D: the
+  // corners' order says nothing about where the model is. Read through extractRectInfo,
+  // a MIRRORED outline (Send to Other Side) runs its corners the other way round, and the
+  // picture landed a whole model away from the outline that is cut.
+  const bb = getBBox(p.d)
+  const rect = bb ? { p0: { x: bb.minX, y: bb.minY }, widthMM: bb.width, heightMM: bb.height, rotationDeg: 0 } : null
   const labelSize = 10 / scale
 
   return (

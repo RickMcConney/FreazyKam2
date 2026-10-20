@@ -211,3 +211,27 @@ describe('the object strip', () => {
     expect(buildChips(after, []).map((c) => c.key)).toEqual(buildChips(before, []).map((c) => c.key))
   })
 })
+
+describe("a double-sided or tiled job's chip", () => {
+  const tiling = { axis: 'x', maxTravelMM: 200, seamsMM: [150, 300, 450], pin1DiaMM: 8, pin2DiaMM: 10, pinFromStartMM: 20, pin1MM: 20, pin2MM: 20, spoilDepthMM: 8, pinPathIds: ['t1', 't2'] } as const
+  const pins = [path({ id: 't1', name: 'Tile Pins 1', registration: 'tile-pins' }), path({ id: 't2', name: 'Tile Pins 2', registration: 'tile-pins' })]
+  const drills = [op('d1', 'Tile Pins 1', { type: 'drill', pathId: 't1', batchId: 'b' } as never), op('d2', 'Tile Pins 2', { type: 'drill', pathId: 't2', batchId: 'b' } as never)]
+
+  it('comes first, opens the job’s form, and stands for its holes — which get no chip of their own', () => {
+    const chips = buildChips([path({ id: 'part' }), ...pins], [], [], [], 'mm', { tiling: tiling as never })
+    expect(chips[0]).toMatchObject({ label: 'Tiling \u00d74', form: 'tiling', pathIds: ['t1', 't2'] })
+    expect(chips.map((c) => c.key)).toEqual(['job:tiling', 'part'])
+  })
+
+  it('takes the drilling of its holes too, leaving every other operation its own chip', () => {
+    const chips = buildChips([path({ id: 'p1' }), ...pins], [...drills, op('cut', 'Profile')], [], [], 'mm', { tiling: tiling as never })
+    expect(chips.filter((c) => c.opIds).map((c) => c.opIds)).toEqual([['cut']])
+  })
+
+  it('for a double-sided job takes its dowel holes', () => {
+    const holes = path({ id: 'dh', name: 'Dowel Holes', registration: 'dowel' })
+    const chips = buildChips([path({ id: 'part' }), holes], [], [], [], 'mm', { doubleSided: { flip: 'left-right', dowelPathId: 'dh' } as never })
+    expect(chips[0]).toMatchObject({ key: 'job:doublesided', form: 'doublesided', pathIds: ['dh'] })
+    expect(chips.map((c) => c.key)).toEqual(['job:doublesided', 'part'])
+  })
+})

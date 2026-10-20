@@ -53,6 +53,12 @@ you will use on every job afterwards. The finished project is
 |---|---|
 | **[13. Working with an AI assistant](13-ai-assistants.md)** | Letting Claude or another MCP-capable assistant draw parts, make toolpaths and check the job for you: setup, what it can and can't do, undo, privacy |
 
+## Boards that need more than one setup
+
+| | |
+|---|---|
+| **[14. Double-sided and tiled jobs](14-double-sided-and-tiling.md)** | Cutting both faces of a board on dowel pins, and cutting a board longer than the machine in tiles |
+
 ---
 
 ## Conventions used here

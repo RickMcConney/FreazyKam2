@@ -28,6 +28,8 @@ Field names are as they appear in each form.
 | [Inlay](#inlay) | Cuts socket and plug | Closed path | Roughing: end mill · Finishing: V-bit, taper, end mill | — |
 | [Fluting](#fluting) | Carves along a line, depth from a profile you draw | Any path (usually open) | V-bit, taper, ball nose | — |
 | [3D Profile](#3d-profile) | Carves a 3D surface | An STL or image | Finishing: ball nose, bull nose, taper · Roughing: ball nose, bull nose, end mill | — |
+| [Double-Sided](#double-sided) | Sets up a job cut on both faces | The stock as the only sheet | End mill (for the dowel holes) | — |
+| [Tiling](#tiling) | Splits a board longer than the machine into tiles | The stock as the only sheet | End mill (for the pin holes) | — |
 
 ---
 
@@ -184,6 +186,36 @@ over every selected path.
 | Finishing Strategy | **Raster** · **Waterline** (depth maps: Raster only) |
 | Angle | Raster only. −90° to +90° |
 | Max Depth | Deepest below stock top |
+
+---
+
+## Double-Sided
+
+| Field | Notes |
+|---|---|
+| Pick the Flip to Start / Flip | **Left ↔ Right** (side B to the right) · **Top ↔ Bottom** (side B below). Changing it later carries side B with it |
+| Pin 1 Ø (small) · Pin 2 Ø (big) | Must differ by 1 mm or more. Default 8 and 10 mm |
+| Pin 1 from bottom/left · Pin 2 from top/right | Along the flip axis, each from its own end |
+| Into Spoilboard | How far the dowel holes go past the stock |
+| Tool | The end mill that bores the holes. Default: the largest that fits the small hole |
+| Show Side A / B · Send N Paths to Other Side | Pick the side to simulate and run · mirror the selection onto the other side |
+
+No Generate button: the dowel holes are drilled automatically, first. **Make Single-Sided** ends the job.
+
+## Tiling
+
+| Field | Notes |
+|---|---|
+| Pick the Slide Axis to Start / Slide the Board | **Along X** · **Along Y** |
+| Machine Travel | Usable travel along the slide axis. Starts at Machine Limits' Table Width/Height |
+| Tiles | **−** · **+** · **Even**, and each seam's position. Seams can also be dragged on the canvas |
+| Pin 1 Ø (small) · Pin 2 Ø (big) | Must differ by 1 mm or more. Default 8 and 10 mm |
+| Pin 1 from left/bottom · Pin 2 from right/top | Across the board |
+| From Tile Start | How far into each tile the pins are |
+| Into Spoilboard | How far the FIRST pair of pin holes goes past the board, for the pins. Every later pair goes only through the board |
+| Tool | The end mill that bores the holes. Default: the largest that fits the small hole |
+
+No Generate button: the pin holes are drilled automatically, first in every tile. **Make Single Board** ends the job.
 
 ---
 

@@ -3,6 +3,7 @@ import { parseGcode, getCurrentSegIdx, lineStartsOf, type SimMessage, type SimSe
 import { useWorkpieceStore, zDatumOffsetMM, machineMotionLimits } from './workpieceStore'
 import { useUIStore } from './uiStore'
 import { STOCK_CELL, type Cell } from '../cam/sheets'
+import { tileOffset } from '../cam/tiling'
 import { findRapidGouges, type RapidGouge } from '../sim/rapidGouge'
 
 export type SimSpeed = 1 | 5 | 20 | 100
@@ -48,6 +49,11 @@ interface SimState {
   // active one: a sheet change reaches the program only after simAutoReload rebuilds it,
   // and until then the loaded program is still the previous sheet's.
   sheet: Cell
+  // The TILE of a tiled job (cam/tiling) a generated program is, or null — and where that
+  // tile's window starts on the board, which is what its program was moved back by. The
+  // views put the carve and the trail back there, and hide it while another tile is picked.
+  tile: number | null
+  tileAt: { x: number; y: number }
 
   // Two kinds of program, and the options say which — see LoadGcodeOpts.
   loadGcode: (text: string, opts: LoadGcodeOpts) => void
@@ -77,12 +83,19 @@ interface SimState {
  *    defaulted: a caller that forgot it got the stock, and on a multi-sheet job that program
  *    was then hidden as another sheet's — no error, just a simulation that never appeared.
  */
-export type LoadGcodeOpts = { autoReload: false } | { autoReload?: true; sheet: Cell }
+export type LoadGcodeOpts = { autoReload: false } | { autoReload?: true; sheet: Cell; tile?: number }
+
+// Where a tile's program goes back on the board: its window's start (cam/tiling).
+function tilePlacement(opts: LoadGcodeOpts): { tile: number | null; tileAt: { x: number; y: number } } {
+  const tiling = useWorkpieceStore.getState().tiling
+  if (!('sheet' in opts) || opts.tile === undefined || !tiling) return { tile: null, tileAt: { x: 0, y: 0 } }
+  return { tile: opts.tile, tileAt: tileOffset(tiling, useWorkpieceStore.getState(), opts.tile) }
+}
 
 // Fresh arrays per call — the cleared state is handed to consumers, not shared.
 const emptyProgram = (): Partial<SimState> => ({
   gcode: '', lineStarts: new Uint32Array(0), segments: [], toolStates: [], messages: [], rapidGouges: [],
-  totalTimeS: 0, elapsedTimeS: 0, playing: false, genZOff: 0, programUnits: 'mm', sheet: STOCK_CELL,
+  totalTimeS: 0, elapsedTimeS: 0, playing: false, genZOff: 0, programUnits: 'mm', sheet: STOCK_CELL, tile: null, tileAt: { x: 0, y: 0 },
 })
 
 export const useSimStore = create<SimState>()((set, get) => ({
@@ -101,6 +114,8 @@ export const useSimStore = create<SimState>()((set, get) => ({
   genZOff: 0,
   autoReload: false,
   sheet: STOCK_CELL,
+  tile: null,
+  tileAt: { x: 0, y: 0 },
 
   loadGcode: (text, opts) => {
     const { zOrigin, thicknessMM, safeHeightMM } = useWorkpieceStore.getState()
@@ -135,6 +150,7 @@ export const useSimStore = create<SimState>()((set, get) => ({
       genZOff,
       autoReload: opts.autoReload !== false,
       sheet: 'sheet' in opts ? opts.sheet : STOCK_CELL,
+      ...tilePlacement(opts),
     })
     // The rapid check, once the player is up. A newer load (or a clear) in the meantime
     // replaced `segments`, and this result belongs to the program it was worked out for.

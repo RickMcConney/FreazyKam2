@@ -1,6 +1,7 @@
 import { SheetLabelLayer } from './layers/SheetLabelLayer'
 import { layoutExtent, cellOfPoint, cellOffset } from '../cam/sheets'
-import { useSheetLayout } from './useSheets'
+import { useSheetLayout, sheetLayoutNow } from './useSheets'
+import { otherSideBox } from '../cam/doubleSided'
 import { ptSegDistSq, pointInPolygon } from '../cam/geom'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRefState } from './useRefState'
@@ -21,6 +22,8 @@ import { nextPathColor } from '../importers/svgImporter'
 import { importFile } from '../io/importFile'
 import { GridLayer } from './layers/GridLayer'
 import { WorkpieceLayer, originWorldXY } from './layers/WorkpieceLayer'
+import { DoubleSidedGuideLayer } from './layers/DoubleSidedGuideLayer'
+import { TilingLayer } from './layers/TilingLayer'
 import { majorStepMM, minorStepMM } from './gridUtils'
 import { OriginLayer } from './layers/OriginLayer'
 import { DesignLayer } from './layers/DesignLayer'
@@ -54,7 +57,7 @@ import { SimulationLayer } from './layers/SimulationLayer'
 import SimulationPlayer from '../sim/SimulationPlayer'
 import { useSimStore } from '../store/simStore'
 import { HandleType, LiveTransform , RULER_W, RULER_H } from './types'
-import { getBBox, getMultiBBox, extractCircles, dragBoxEncloses, wholeGroupsOnly, type CircleInfo } from './selectionUtils'
+import { getBBox, getMultiBBox, extractCircles, dragBoxEncloses, wholeGroupsOnly, isRegistrationPath, type CircleInfo } from './selectionUtils'
 import type { BBox } from './selectionUtils'
 import {
   generateShapeD,
@@ -247,13 +250,25 @@ const MOVE_THRESHOLD_PX = 4  // pixels before a click is treated as a drag
  *  - `plan`: the constraint solve for this set, resolved now so each frame of
  *    the preview is arithmetic (see `constraintPlanRef`).
  */
+/**
+ * What snapping needs beyond the shapes themselves: every sheet's corner, and on a
+ * double-sided job the mirror that carries a shape to the other side of the board — so a
+ * part lines up with its own sheet and with what is on the other face.
+ */
+function snapOptions() {
+  const wp = useWorkpieceStore.getState()
+  const sheets = sheetLayoutNow().map((c) => cellOffset(c, wp))
+  const ds = wp.doubleSided
+  return { sheets, mirror: ds ? (b: Box) => otherSideBox(ds.flip, wp, b) : undefined }
+}
+
 function beginMoveSession(ids: string[]): { bbox: BBox | null; snapTargets: SnapTargets; plan: ConstraintPlan | null } {
   const allPaths = usePathsStore.getState().paths
   const { widthMM, heightMM } = useWorkpieceStore.getState()
   const moving = new Set(ids)
   return {
     bbox: getMultiBBox(allPaths.filter((p) => moving.has(p.id)).map((p) => p.d)),
-    snapTargets: collectSnapTargets(allPaths.filter((p) => onCanvas(p) && !moving.has(p.id)), { widthMM, heightMM }),
+    snapTargets: collectSnapTargets(allPaths.filter((p) => onCanvas(p) && !moving.has(p.id)), { widthMM, heightMM }, snapOptions()),
     plan: planConstraints(allPaths, useConstraintsStore.getState().constraints, { widthMM, heightMM }, ids).plan,
   }
 }
@@ -1409,7 +1424,7 @@ export default function CanvasStage() {
 
     const allPaths = usePathsStore.getState().paths
     const { widthMM, heightMM } = useWorkpieceStore.getState()
-    const snapTargets = collectSnapTargets(allPaths.filter(p => onCanvas(p) && !ids.includes(p.id)), { widthMM, heightMM })
+    const snapTargets = collectSnapTargets(allPaths.filter(p => onCanvas(p) && !ids.includes(p.id)), { widthMM, heightMM }, snapOptions())
 
     beginGesture({
       type: 'resize',
@@ -2427,6 +2442,8 @@ export default function CanvasStage() {
           const { paths: allPaths } = usePathsStore.getState()
           const caught = allPaths.filter((p) => {
             if (!onCanvas(p)) return false
+            // Dowel and tile-pin holes are clicked, never boxed (isRegistrationPath).
+            if (isRegistrationPath(p)) return false
             // The exact, cached box: the same one the selection handles draw, so a
             // box that visibly encloses a part's handles catches it.
             const bb = getBBox(p.d)
@@ -2760,6 +2777,7 @@ export default function CanvasStage() {
         <Layer x={viewport.x} y={viewport.y} scaleX={viewport.scale} scaleY={-viewport.scale}>
           <WorkpieceLayer viewport={viewport} />
           <GridLayer viewport={viewport} stageWidth={size.width} stageHeight={size.height} />
+          <DoubleSidedGuideLayer viewport={viewport} />
           <DesignLayer
             viewport={viewport}
             liveTransform={liveTransform}
@@ -2883,8 +2901,10 @@ export default function CanvasStage() {
           )}
         </Layer>
 
-        {/* Layer 3: Interactive handles — selection resize/rotate circles. */}
+        {/* Layer 3: Interactive handles — selection resize/rotate circles, and a tiled
+            job's seams (dragged along the slide axis). */}
         <Layer>
+          <TilingLayer viewport={viewport} />
           {!nodeEditPathId && !cornerPickPathId && activeTool !== 'constrain' && selectionBBox && (
             <SelectionHandleLayer
               viewport={viewport}

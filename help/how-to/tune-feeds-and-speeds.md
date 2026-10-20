@@ -15,9 +15,11 @@ The app works out feeds and speeds for you. Tell it about your machine once.
    | Commercial CNC | Industrial |
 
 4. Pick your **Spindle / Router**: VFD spindle (variable), Manual / fixed speed,
-   DeWalt DW6xx (DWP611) or Makita RT07 (RT0701C). For the DeWalt or Makita, the app shows
-   the **dial number** to set.
-5. Set **Min Spindle** and **Max Spindle** to your spindle's real range.
+   DeWalt DW6xx (DWP611), Makita RT07 (RT0701C), or Custom router. For any other router
+   with a speed dial, pick **Custom router** and type its speed at each dial setting from the
+   manual's chart. For a dial router, the app shows the **dial number** to set.
+5. Set **Min Spindle** and **Max Spindle** to your spindle's real range. A dial router fills
+   them in from its dial 1 and dial 6 speeds; lower the max if you don't want it run flat out.
 6. Under **Machine Motion**, set **Max Feed Rate** to the fastest your machine moves without
    losing steps.
 

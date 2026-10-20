@@ -49,6 +49,7 @@ label to free that direction.
 | *Stopped at N copies — the stock would take more* | A fill makes at most 400 at a time. Select one copy and fill again |
 | *The original part of this nest has been deleted* | Edit Nest rebuilds from the original. Undo the delete, or make a new fill |
 | *The drawing changed while nesting — run Nest again* | Something was edited while the nest was working. Press the button again |
+| *One sheet only — this is a double-sided / tiled job* | Such a job is one board, so it never nests onto more sheets |
 
 ## Import
 
@@ -68,6 +69,9 @@ label to free that direction.
 | Chip load out of range | Feeds and speeds |
 | Spindle can't go slow enough | Metal surface speed |
 | Male plug doesn't match female socket | Inlay settings |
+| Double-sided job with no dowel holes drilled / Tiled job with no pin holes drilled | No end mill fits the small hole. Pick one in the form, or make the pins bigger |
+| The dowel holes go … into the spoilboard, deeper than allowed | Into Spoilboard in the Double-Sided form |
+| Tile N is … — it can be at most … | Add a seam, or move one |
 
 ## Wrong result
 

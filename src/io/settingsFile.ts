@@ -10,6 +10,7 @@
 // unticked. The pure half lives in settingsMerge.ts.
 
 import { useWorkpieceStore } from '../store/workpieceStore'
+import { normalizeCustomDial } from '../store/spindle'
 import { useToolStore, DEFAULT_TOOLS, MY_TOOLS, folderOf, withFolder, withRatedChip, type Tool } from '../store/toolStore'
 import { usePostProcessorStore, BUILTIN_PROFILES, type PostProcessorProfile } from '../store/postProcessorStore'
 import { useToolpathStore } from '../store/toolpathStore'
@@ -31,7 +32,7 @@ export const SETTINGS_EXT = '.fkset'
 
 const MACHINE_KEYS = [
   'tableLimitWidthMM', 'tableLimitHeightMM', 'tableLimitDepthMM',
-  'machineRigidity', 'maxFeedMmMin', 'minSpindleRpm', 'maxSpindleRpm', 'spindleType', 'autoFeedEnabled',
+  'machineRigidity', 'maxFeedMmMin', 'minSpindleRpm', 'maxSpindleRpm', 'spindleType', 'customDialRpm', 'autoFeedEnabled',
   'accelXYMmS2', 'accelZMmS2', 'maxRateZMmMin', 'junctionDeviationMM',
 ] as const
 const STOCK_KEYS = ['widthMM', 'heightMM', 'thicknessMM', 'units', 'origin', 'zOrigin', 'material', 'safeHeightMM'] as const
@@ -305,7 +306,7 @@ export function applyRestoreBuiltins(plan: BuiltinRestorePlan) {
 const MACHINE_LABELS: Record<typeof MACHINE_KEYS[number], [string, string]> = {
   tableLimitWidthMM: ['Table width', 'mm'], tableLimitHeightMM: ['Table depth', 'mm'], tableLimitDepthMM: ['Z travel', 'mm'],
   machineRigidity: ['Rigidity', ''], maxFeedMmMin: ['Max feed', 'mm/min'], minSpindleRpm: ['Min spindle', 'rpm'],
-  maxSpindleRpm: ['Max spindle', 'rpm'], spindleType: ['Spindle type', ''], autoFeedEnabled: ['Auto feeds', ''],
+  maxSpindleRpm: ['Max spindle', 'rpm'], spindleType: ['Spindle type', ''], customDialRpm: ['Custom dial', 'rpm'], autoFeedEnabled: ['Auto feeds', ''],
   accelXYMmS2: ['Accel X/Y', 'mm/s²'], accelZMmS2: ['Accel Z', 'mm/s²'], maxRateZMmMin: ['Z max rate', 'mm/min'],
   junctionDeviationMM: ['Junction deviation', 'mm'],
 }
@@ -314,8 +315,11 @@ const MACHINE_LABELS: Record<typeof MACHINE_KEYS[number], [string, string]> = {
 export function planRestoreMachine(): string[] {
   const now = useWorkpieceStore.getState() as unknown as Record<string, unknown>
   const factory = useWorkpieceStore.getInitialState() as unknown as Record<string, unknown>
-  const show = (v: unknown) => (typeof v === 'boolean' ? (v ? 'on' : 'off') : String(v))
-  return MACHINE_KEYS.filter((k) => now[k] !== factory[k]).map((k) => {
+  const show = (v: unknown) => (typeof v === 'boolean' ? (v ? 'on' : 'off') : Array.isArray(v) ? v.join('/') : String(v))
+  // By value: the custom dial is an array, and one reloaded from storage is never the
+  // factory's own instance.
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+  return MACHINE_KEYS.filter((k) => !same(now[k], factory[k])).map((k) => {
     const [label, unit] = MACHINE_LABELS[k]
     return `${label}: ${show(now[k])} → ${show(factory[k])}${unit ? ` ${unit}` : ''}`
   })
@@ -369,7 +373,12 @@ export function applySettings(file: SettingsFile, keys: SectionKey[], modes: Par
         break
       }
       case 'machine':
-        useWorkpieceStore.setState(pickKnown(pick(useWorkpieceStore.getState(), MACHINE_KEYS), s.machine))
+        {
+          const v = pickKnown(pick(useWorkpieceStore.getState(), MACHINE_KEYS), s.machine)
+          // pickKnown checks it is an array, not that it holds six speeds.
+          if ('customDialRpm' in v) v.customDialRpm = normalizeCustomDial(v.customDialRpm)
+          useWorkpieceStore.setState(v)
+        }
         out.push('Machine settings replaced')
         break
       case 'stock': {

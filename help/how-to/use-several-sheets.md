@@ -34,5 +34,9 @@ G-code** plays and that the Machine tab's **Send to card** sends.
 Each file is cut from **its own sheet's corner**. Run sheet 1, load a fresh board, zero it
 the same way, and run sheet 2.
 
+A [double-sided](cut-both-sides.md) or [tiled](cut-a-long-board-in-tiles.md) job is one
+board, so it uses the picker for its sides or tiles instead, and doesn't nest onto more
+sheets.
+
 **Related:** [Nest parts](nest-parts.md) ·
 [User guide: More than one sheet](../../docs/09-nesting.md#more-than-one-sheet)

@@ -24,6 +24,8 @@ import type { AnyOperation } from '../store/toolpathStore'
 import type { Tool } from '../store/toolStore'
 import type { Units, OriginPosition, ZOrigin, Material } from '../store/workpieceStore'
 import type { SpindleType } from '../store/spindle'
+import { normalizeDoubleSided, type DoubleSided } from '../cam/doubleSided'
+import { normalizeTiling } from '../cam/tiling'
 
 interface SavedWorkpiece {
   widthMM: number
@@ -32,6 +34,8 @@ interface SavedWorkpiece {
   units: Units
   origin: OriginPosition
   zOrigin?: ZOrigin
+  doubleSided?: DoubleSided | null
+  tiling?: unknown
   material: Material
   tableLimitWidthMM: number
   tableLimitHeightMM: number
@@ -43,6 +47,7 @@ interface SavedWorkpiece {
   autoFeedEnabled?: boolean
   safeHeightMM?: number
   spindleType?: SpindleType
+  customDialRpm?: number[]
 }
 
 export interface ProjectData {
@@ -199,6 +204,9 @@ function installProject(project: ParsedProject, fileName?: string) {
   wps.setOrigin(wp.origin ?? 'bottom-left')
   wps.setZOrigin(wp.zOrigin ?? 'top')
   wps.setMaterial(wp.material ?? 'mdf')
+  // A project saved before double-sided jobs, or an ordinary one, has none.
+  wps.setDoubleSided(normalizeDoubleSided(wp.doubleSided))
+  wps.setTiling(normalizeTiling(wp.tiling))
   // Absent in projects saved before it was added to the file format — keep the
   // local value instead of resetting to a default.
   if (typeof wp.safeHeightMM === 'number' && Number.isFinite(wp.safeHeightMM)) wps.setSafeHeight(wp.safeHeightMM)
@@ -360,6 +368,9 @@ export function newProject() {
   useToolpathStore.getState().replaceOperations([])
   useTabStore.getState().replaceTabs([])
   useConstraintsStore.getState().replaceConstraints([])
+  // Double-sided belongs to the document, not to the machine: it does not carry over.
+  useWorkpieceStore.getState().setDoubleSided(null)
+  useWorkpieceStore.getState().setTiling(null)
   useProjectStore.getState().setName('Untitled Project')
   useProjectStore.getState().markClean()
   useTimelineStore.getState().resetToCurrentState()

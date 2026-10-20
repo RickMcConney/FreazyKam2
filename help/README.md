@@ -75,6 +75,8 @@ Short steps for one task.
 - [Add or remove paths from an operation](how-to/edit-an-operation.md)
 - [Nest parts on a sheet](how-to/nest-parts.md)
 - [Work on several sheets](how-to/use-several-sheets.md)
+- [Cut both sides of a board](how-to/cut-both-sides.md)
+- [Cut a board longer than your machine](how-to/cut-a-long-board-in-tiles.md)
 
 **Make parts**
 - [Make a gear](how-to/make-a-gear.md)
@@ -135,6 +137,7 @@ The "why" behind the app, for when you want to work things out yourself.
 - [Cut side: why parts come out the wrong size](explanation/cut-side.md)
 - [Open and closed paths](explanation/open-and-closed-paths.md)
 - [Climb vs conventional milling](explanation/climb-vs-conventional.md)
+- [Registration pins: putting a board back exactly](explanation/registration-pins.md)
 - [Chip load: why slower can be worse](explanation/chip-load.md)
 - [The five pocket strategies](explanation/pocket-strategies.md)
 - [How V-carving works](explanation/v-carving.md)

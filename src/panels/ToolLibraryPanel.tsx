@@ -10,7 +10,7 @@ import { useUIStore } from '../store/uiStore'
 import { ICON } from '../theme'
 import { useToolStore, folderNames, folderOf, MY_TOOLS, type Tool, type ToolType, type ToolSortKey } from '../store/toolStore'
 import { useWorkpieceStore, toMM, fromMM, type Units } from '../store/workpieceStore'
-import { SPINDLE_INFO, spindleDialSetting, type SpindleType } from '../store/spindle'
+import { SPINDLE_INFO, spindleDialSetting, spindleHasDial, type SpindleType } from '../store/spindle'
 import { TOOL_TYPE_ICON, TYPE_ORDER } from './toolTypes'
 
 type SortKey = ToolSortKey
@@ -103,8 +103,9 @@ function ToolRow({ tool, units, spindleType, selected, folders, onNewFolder }: {
   const { updateTool, deleteTool, selectTool, copyToMyTools, moveToFolder, tools } = useToolStore()
   const up = (updates: Partial<Omit<Tool, 'id'>>) => updateTool(tool.id, updates)
   const canDelete = tools.length > 1
-  const hasDial = !!SPINDLE_INFO[spindleType].dial
-  const dial = spindleDialSetting(spindleType, tool.rpm)
+  const customDialRpm = useWorkpieceStore((s) => s.customDialRpm)
+  const hasDial = spindleHasDial(spindleType)
+  const dial = spindleDialSetting(spindleType, tool.rpm, customDialRpm)
 
   return (
     // Clicking anywhere in the row selects it — including inside a cell's input,
@@ -290,7 +291,7 @@ export default function ToolLibraryPanel() {
   const folderLabel = openFolder || MY_TOOLS
   const units = useWorkpieceStore((s) => s.units)
   const spindleType = useWorkpieceStore((s) => s.spindleType)
-  const hasDial = !!SPINDLE_INFO[spindleType].dial
+  const hasDial = spindleHasDial(spindleType)
   const lenUnit = units === 'in' ? 'in' : 'mm'
   const feedUnit = units === 'in' ? 'in/min' : 'mm/min'
 

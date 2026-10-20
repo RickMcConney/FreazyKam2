@@ -13,7 +13,7 @@ import {
   fromMM,
   toMM,
 } from '../store/workpieceStore'
-import { SPINDLE_INFO, type SpindleType } from '../store/spindle'
+import { SPINDLE_INFO, customDialValid, spindleHasDial, type SpindleType } from '../store/spindle'
 import { NumericInput } from '../components/NumericInput'
 import { NUMERIC_HINT } from '../components/parseNumeric'
 import { rigidityInfo } from '../rigidity'
@@ -199,19 +199,25 @@ const RIGIDITY_HELP =
 const SPINDLE_HELP =
   "Auto mode picks a spindle speed in this range — as fast as needed to reach the max feed " +
   "(shorter jobs). Set the min to your spindle's real floor (routers ≈10000) and lower the " +
-  "max if a material burns at high speed."
+  "max if a material burns at high speed. Choosing a router with a speed dial sets this range " +
+  "to its dial 1 and dial 6 speeds; you can still narrow it."
+
+const CUSTOM_DIAL_HELP =
+  "Type your router's speed at each dial setting, from the speed chart in its manual. " +
+  "Spindle speeds then show the dial setting to turn to, and auto feeds keeps to the " +
+  "dial 1–6 range."
 
 
 export default function WorkpiecePanel() {
   const {
     widthMM, heightMM, thicknessMM, units, origin, zOrigin, material,
     tableLimitWidthMM, tableLimitHeightMM, tableLimitDepthMM, safeHeightMM,
-    machineRigidity, maxFeedMmMin, minSpindleRpm, maxSpindleRpm, spindleType, autoFeedEnabled,
+    machineRigidity, maxFeedMmMin, minSpindleRpm, maxSpindleRpm, spindleType, customDialRpm, autoFeedEnabled,
     accelXYMmS2, accelZMmS2, maxRateZMmMin, junctionDeviationMM,
     setAccelXY, setAccelZ, setMaxRateZ, setJunctionDeviation,
     setWidth, setHeight, setThickness, setOrigin, setZOrigin, setMaterial,
     setTableLimitWidth, setTableLimitHeight, setTableLimitDepth, setSafeHeight,
-    setMachineRigidity, setMaxFeed, setMinSpindleRpm, setMaxSpindleRpm, setSpindleType, setAutoFeedEnabled,
+    setMachineRigidity, setMaxFeed, setMinSpindleRpm, setMaxSpindleRpm, setSpindleType, setCustomDialRpm, setAutoFeedEnabled,
   } = useWorkpieceStore()
   const feedId = useId()
   const [importing, setImporting] = useState<SettingsFile | null>(null)
@@ -333,7 +339,37 @@ export default function WorkpiecePanel() {
               <option key={t} value={t}>{SPINDLE_INFO[t].label}</option>
             ))}
           </select>
-          {SPINDLE_INFO[spindleType].dial && (
+          {SPINDLE_INFO[spindleType].custom && (
+            <div className="mt-2">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-gray-500 dark:text-neutral-400 text-body">Speed at each dial setting</span>
+                <InfoPopover text={CUSTOM_DIAL_HELP} />
+              </div>
+              <div className="grid grid-cols-3 gap-x-2 gap-y-1.5">
+                {customDialRpm.map((rpm, i) => (
+                  <div key={i} className="flex items-center gap-1">
+                    <label htmlFor={`${feedId}-dial-${i}`} className="text-gray-500 dark:text-neutral-400 text-body w-3 shrink-0 text-right">{i + 1}</label>
+                    <NumericInput
+                      id={`${feedId}-dial-${i}`}
+                      value={rpm}
+                      min={1000}
+                      step={1000}
+                      integer
+                      title={`RPM at dial ${i + 1}`}
+                      onChange={(v) => setCustomDialRpm(customDialRpm.map((r, j) => (j === i ? v : r)))}
+                      className="w-full min-w-0 bg-gray-50 dark:bg-neutral-900 border border-gray-400 dark:border-neutral-600 rounded px-1.5 py-1 text-body text-gray-900 dark:text-neutral-100 focus:border-blue-500 focus:outline-none font-mono"
+                    />
+                  </div>
+                ))}
+              </div>
+              {!customDialValid(customDialRpm) && (
+                <p className="text-body text-amber-600 dark:text-amber-400 mt-1">
+                  Each setting must be faster than the one before it. Dial settings are not shown until it is.
+                </p>
+              )}
+            </div>
+          )}
+          {spindleHasDial(spindleType) && (
             <p className="text-body text-gray-600 dark:text-neutral-400 mt-1">
               Spindle speeds also show the equivalent dial setting (1–6) in the tool table and simulation.
             </p>

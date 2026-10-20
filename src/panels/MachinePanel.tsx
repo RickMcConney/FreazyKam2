@@ -1,4 +1,4 @@
-import { ProfileForm, TrochoidalForm, FlutingForm, PocketForm, DrillForm, VCarveForm, PhotoVCarveForm, InlayForm, Profile3dForm, SurfaceForm, BooleanForm, OffsetForm, PatternForm, NestForm, TabsForm, NodeEditForm, TraceForm, AlongPathForm } from './machine'
+import { ProfileForm, TrochoidalForm, FlutingForm, PocketForm, DrillForm, VCarveForm, PhotoVCarveForm, InlayForm, Profile3dForm, SurfaceForm, BooleanForm, OffsetForm, PatternForm, NestForm, TabsForm, NodeEditForm, TraceForm, AlongPathForm, DoubleSidedForm, TilingForm } from './machine'
 import { useState, useEffect } from 'react'
 import { useToolpathStore } from '../store/toolpathStore'
 import { usePathsStore } from '../store/pathsStore'
@@ -11,7 +11,7 @@ import type { AlongEditCtx } from './machine/AlongPathForm'
 import { OP_TYPE_COLORS } from '../colors'
 import { ICON } from '../theme'
 import { TabsIcon, AlongPathIcon, FlutingIcon } from './pathToolIcons'
-import { Circle, CircleDot, Target, Layers, Star, SquaresUnite, SquareSquare, LayoutGrid, Blocks, VectorSquare, Box, RefreshCw, PencilSparkles, Image as ImageIcon } from 'lucide-react'
+import { Circle, CircleDot, Target, Layers, Star, SquaresUnite, SquareSquare, LayoutGrid, Blocks, VectorSquare, FlipHorizontal2, Columns3, Box, RefreshCw, PencilSparkles, Image as ImageIcon } from 'lucide-react'
 import { useUIStore } from '../store/uiStore'
 import { SelectionKindsBar } from './machine/SelectionKindsBar'
 
@@ -25,7 +25,7 @@ export const InlayIcon = ({ size = 24 }: { size?: number }) => (
 
 // ─── Operation type selector ──────────────────────────────────────────────────
 
-type OpType = 'profile' | 'trochoidal' | 'fluting' | 'pocket' | 'drill' | 'surface' | 'vcarve' | 'photovcarve' | 'inlay' | 'profile3d' | 'boolean' | 'offset' | 'pattern' | 'nest' | 'tabs' | 'nodeedit' | 'trace' | 'along'
+type OpType = 'profile' | 'trochoidal' | 'fluting' | 'pocket' | 'drill' | 'surface' | 'vcarve' | 'photovcarve' | 'inlay' | 'profile3d' | 'boolean' | 'offset' | 'pattern' | 'nest' | 'tabs' | 'nodeedit' | 'trace' | 'along' | 'doublesided' | 'tiling'
 type FormState = null | 'menu' | OpType
 
 const opBtnCls = 'flex flex-col items-center gap-0.5 py-1.5 rounded text-body transition-colors border border-gray-400 dark:border-neutral-600 hover:bg-gray-100 dark:hover:bg-neutral-700'
@@ -46,6 +46,8 @@ function AddOperationMenu({ onSelect }: { onSelect: (t: OpType) => void }) {
           ['inlay', 'Inlay', 'V-carved sloped walls with flat pocket bottom', <InlayIcon size={ICON.md} />],
           ['profile3d', '3D Profile', 'Carve an STL or a depth map image with a ball nose', <Box size={ICON.md} />],
           ['fluting', 'Fluting', 'Centreline carve along a path, its depth following a height profile you draw', <FlutingIcon size={ICON.md} />],
+          ['doublesided', 'Double-Sided', 'Cut both faces of a board: dowel holes to flip it on, and a sheet for side B', <FlipHorizontal2 size={ICON.md} />],
+          ['tiling', 'Tiling', 'Cut a board longer than the machine in tiles, sliding it along between them on dowel pins', <Columns3 size={ICON.md} />],
         ] as [OpType, string, string, React.ReactNode][]).map(([type, name, desc, icon]) => (
           <button key={type} onClick={() => onSelect(type)} title={desc} className={opBtnCls}>
             <span style={{ color: OP_TYPE_COLORS[type] }}>{icon}</span>
@@ -210,6 +212,10 @@ export default function MachinePanel({ fill = false }: { fill?: boolean }) {
         <TabsForm onClose={closeForm} />
       ) : activeForm === 'nodeedit' ? (
         <NodeEditForm onClose={closeForm} />
+      ) : activeForm === 'doublesided' ? (
+        <DoubleSidedForm onClose={closeForm} />
+      ) : activeForm === 'tiling' ? (
+        <TilingForm onClose={closeForm} />
       ) : null}
     </div>
   )

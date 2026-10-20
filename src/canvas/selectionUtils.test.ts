@@ -3,7 +3,7 @@ import {
   getBBox, getMultiBBox, translateD, scaleAroundD, rotateAroundD, mirrorD, skewAroundD,
   extractCircles, extractRectInfo, isPlacementOnly, gestureForSteps, consolidateSteps,
   foldPlacement, applyPlacementD, applyTransformSteps, transformPoint,
-  dragBoxEncloses, wholeGroupsOnly, isIdentityStep, type TransformStep,
+  dragBoxEncloses, wholeGroupsOnly, isIdentityStep, type TransformStep, isRegistrationPath, isTilePinPath,
 } from './selectionUtils'
 import type { ImportedPath } from '../store/pathsStore'
 import { flattenPath } from '../cam/pathFlattener'
@@ -490,5 +490,25 @@ describe('isIdentityStep', () => {
 
   it('never calls a mirror the identity', () => {
     expect(isIdentityStep({ kind: 'mirror', axis: 'x', cx: 0, cy: 0 })).toBe(false)
+  })
+})
+
+describe('registration holes', () => {
+  const p = (name: string, extra: Record<string, unknown> = {}) => ({ id: name, name, d: 'M0,0 L1,1', visible: true, color: '#000', ...extra })
+
+  it('are told by their mark — a dowel or tile-pin path, whatever it is called', () => {
+    expect(isRegistrationPath(p('anything', { registration: 'dowel' }))).toBe(true)
+    expect(isTilePinPath(p('anything', { registration: 'tile-pins' }))).toBe(true)
+    expect(isTilePinPath(p('anything', { registration: 'dowel' }))).toBe(false)
+  })
+
+  it('made before paths were marked, are told by the name the app gave them', () => {
+    expect(isRegistrationPath(p('Dowel Holes'))).toBe(true)
+    expect(isTilePinPath(p('Tile Pins 3'))).toBe(true)
+  })
+
+  it('are never a shape the user drew, whatever its name', () => {
+    expect(isRegistrationPath(p('Tile Pins 3', { shapeParams: { type: 'circle', cx: 0, cy: 0, radius: 1 } }))).toBe(false)
+    expect(isRegistrationPath(p('Dowel Holes 2'))).toBe(false)
   })
 })

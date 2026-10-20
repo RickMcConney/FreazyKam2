@@ -26,10 +26,10 @@ export const PROJECT_VERSION = 5
 export function buildProjectData() {
   const { name } = useProjectStore.getState()
   const {
-    widthMM, heightMM, thicknessMM, units, origin, zOrigin, material,
+    widthMM, heightMM, thicknessMM, units, origin, zOrigin, material, doubleSided, tiling,
     tableLimitWidthMM, tableLimitHeightMM, tableLimitDepthMM,
     machineRigidity, maxFeedMmMin, minSpindleRpm, maxSpindleRpm, autoFeedEnabled,
-    safeHeightMM, spindleType,
+    safeHeightMM, spindleType, customDialRpm,
   } = useWorkpieceStore.getState()
   const { tools } = useToolStore.getState()
   const { paths } = usePathsStore.getState()
@@ -50,9 +50,11 @@ export function buildProjectData() {
     name,
     workpiece: {
       widthMM, heightMM, thicknessMM, units, origin, zOrigin, material,
+      ...(doubleSided ? { doubleSided } : {}),
+      ...(tiling ? { tiling } : {}),
       tableLimitWidthMM, tableLimitHeightMM, tableLimitDepthMM,
       machineRigidity, maxFeedMmMin, minSpindleRpm, maxSpindleRpm, autoFeedEnabled,
-      safeHeightMM, spindleType,
+      safeHeightMM, spindleType, customDialRpm,
     },
     tools,
     paths,

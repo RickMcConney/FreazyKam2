@@ -9,7 +9,7 @@ import { RotateCcw, ChevronLeft, ChevronRight } from 'lucide-react'
 import { ICON } from '../theme'
 import { useMachineStore } from '../machine/machineStore'
 import { useWorkpieceStore, fmtFeed } from '../store/workpieceStore'
-import { SPINDLE_INFO, spindleDialLabel } from '../store/spindle'
+import { SPINDLE_INFO, spindleDialLabel, spindleHasDial } from '../store/spindle'
 
 interface Props { sectionCls: string; headCls: string }
 
@@ -23,6 +23,7 @@ export default function OverridesSection({ sectionCls, headCls }: Props) {
   const m = useMachineStore()
   const units = useWorkpieceStore((s) => s.units)
   const spindleType = useWorkpieceStore((s) => s.spindleType)
+  const customDialRpm = useWorkpieceStore((s) => s.customDialRpm)
   const connected = m.link === 'connected'
   const { ov, feed, spindle } = m.position
 
@@ -62,12 +63,12 @@ export default function OverridesSection({ sectionCls, headCls }: Props) {
   const byHand = spindleType !== 'vfd'
   // The reported speed includes any spindle override left over; the dial wants the program's S.
   const asked = ov.spindle > 0 ? spindle / (ov.spindle / 100) : spindle
-  const dial = asked > 0 ? spindleDialLabel(spindleType, asked) : null
+  const dial = asked > 0 ? spindleDialLabel(spindleType, asked, customDialRpm) : null
   const spindleRow = byHand
     ? (
       <div className="flex items-center gap-1" title={`${SPINDLE_INFO[spindleType].label}: its speed is set by hand, so a spindle override would do nothing. Change the spindle type in Setup if the controller drives it.`}>
         <div className={labelCol}>
-          <span className={labelCls}>{SPINDLE_INFO[spindleType].dial ? 'Router' : 'Spindle'}</span>
+          <span className={labelCls}>{spindleHasDial(spindleType) ? 'Router' : 'Spindle'}</span>
           <span className={liveCls}>set by hand</span>
         </div>
         <span className="text-sm font-semibold tabular-nums text-gray-800 dark:text-neutral-100">

@@ -60,8 +60,8 @@ interface Snapshot {
 const stateAt: (Snapshot | undefined)[] = [{ paths: [], operations: [], tabs: [], constraints: [] }]
 
 function captureWorkpiece(): Required<WorkpieceEventChanges> {
-  const { widthMM, heightMM, thicknessMM, units, origin, zOrigin, material } = useWorkpieceStore.getState()
-  return { widthMM, heightMM, thicknessMM, units, origin, zOrigin, material }
+  const { widthMM, heightMM, thicknessMM, units, origin, zOrigin, material, doubleSided, tiling } = useWorkpieceStore.getState()
+  return { widthMM, heightMM, thicknessMM, units, origin, zOrigin, material, doubleSided, tiling }
 }
 
 function captureSnapshot(): Snapshot {
@@ -176,8 +176,8 @@ function installCursorMirror(): void {
   useTabStore.subscribe((s, p) => { if (s.tabs !== p.tabs) noteWrite('tabs', p.tabs) })
   useConstraintsStore.subscribe((s, p) => { if (s.constraints !== p.constraints) noteWrite('constraints', p.constraints) })
   useWorkpieceStore.subscribe((s, p) => {
-    const { widthMM, heightMM, thicknessMM, units, origin, zOrigin, material } = p
-    const before = { widthMM, heightMM, thicknessMM, units, origin, zOrigin, material }
+    const { widthMM, heightMM, thicknessMM, units, origin, zOrigin, material, doubleSided, tiling } = p
+    const before = { widthMM, heightMM, thicknessMM, units, origin, zOrigin, material, doubleSided, tiling }
     if ((Object.keys(before) as (keyof typeof before)[]).some((k) => s[k] !== before[k])) noteWrite('workpiece', before)
   })
 }

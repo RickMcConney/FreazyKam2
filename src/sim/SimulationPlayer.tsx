@@ -102,6 +102,7 @@ export default function SimulationPlayer() {
   const machineRigidity = useWorkpieceStore((s) => s.machineRigidity)
   const minSpindleRpm = useWorkpieceStore((s) => s.minSpindleRpm)
   const spindleType = useWorkpieceStore((s) => s.spindleType)
+  const customDialRpm = useWorkpieceStore((s) => s.customDialRpm)
   const workspaceTab = useUIStore((s) => s.workspaceTab)
   const { play, pause, stop, seekToTime, setSpeed, toggleGcodeViewer } = useSimStore()
 
@@ -205,7 +206,7 @@ export default function SimulationPlayer() {
   const totalTimeStr = formatSimTime(totalTimeS)
   const lastLineNum = segments.length > 0 ? segments[segments.length - 1].lineIdx + 1 : 0
   const wLine = Math.max(4, String(lastLineNum).length)
-  const dialLabel = spindleDialLabel(spindleType, spindleRpm)
+  const dialLabel = spindleDialLabel(spindleType, spindleRpm, customDialRpm)
   // The operator messages playback has reached — what the controller's console would be
   // showing at this point in the job.
   const reached = messagesReached(messages, segments, elapsedTimeS, totalTimeS)
