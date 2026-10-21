@@ -120,8 +120,10 @@ export function generateSurface(tool: Tool, params: SurfaceParams): MotionSegmen
         segs.push({ x: sx, y: sy, z: zDepth, rapid: false })
         firstInLevel = false
       } else {
-        // Stay at cut depth — rapid across to next scanline start, no lift
-        segs.push({ x: sx, y: sy, z: zDepth, rapid: true })
+        // Stay at cut depth and FEED across to the next scanline's start. The link
+        // runs along the stock edge into ground no pass has touched yet (the next
+        // row's start is uncut by definition), so a rapid here is a G0 into stock.
+        segs.push({ x: sx, y: sy, z: zDepth, rapid: false })
       }
       segs.push({ x: ex, y: ey, z: zDepth, rapid: false })
       lastX = ex

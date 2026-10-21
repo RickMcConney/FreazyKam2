@@ -23,10 +23,8 @@ const cuts = (segs: MotionSegment[]) => segs.filter((s) => !s.rapid)
 /**
  * The stock a tool of `radius` actually sweeps, tested on a grid.
  *
- * Only `rapid: false` moves count. The stepover links between scanlines are
- * emitted as rapids at cut depth, so they cannot be relied on to clear anything
- * — the swath either overlaps from the scanlines either side of them or the
- * stock is left standing.
+ * Only `rapid: false` moves at cut depth count — the stepover links between
+ * scanlines among them, since they are fed through stock like any other cut.
  *
  * Returns the worst uncovered sample, or null when the whole stock is swept.
  */
@@ -76,20 +74,26 @@ describe('generateSurface — the raster', () => {
 
   it('zigzags, so each pass starts where the last one finished', () => {
     const passes = cuts(generateSurface(EM6, params())).filter((s) => s.z < 0)
-    // Ends alternate between the two edges of the stock.
-    expect(passes.slice(0, 6).map((s) => s.x)).toEqual([0, 100, 0, 100, 0, 100])
+    // Each scanline is a link onto its start then the pass itself, so the pass
+    // ends alternate between the two edges of the stock.
+    expect(passes.slice(0, 6).map((s) => s.x)).toEqual([0, 100, 100, 0, 0, 100])
   })
 
-  it('steps over at cut depth rather than lifting between scanlines', () => {
+  it('feeds each stepover at cut depth — never a rapid into stock, never a lift', () => {
+    // The link runs into the next row's start, which no pass has cut yet, so it
+    // must be a G1. And the tool never climbs to safe height mid-level.
+    for (const passAngleDeg of [0, 30, 90]) {
+      const segs = generateSurface(EM6, params({ passAngleDeg }))
+      expect(segs.filter((s) => s.rapid && s.z < 0)).toHaveLength(0)
+      const atDepth = segs.filter((s) => s.z < 0)
+      // One plunge per level, then nothing leaves the level until its retract.
+      for (let i = 1; i < atDepth.length; i++) expect(atDepth[i].z).toBe(atDepth[0].z)
+    }
+    // No link is longer than a stepover: a link is any at-depth move across rows.
     const segs = generateSurface(EM6, params())
-    const scanlines = new Set(cuts(segs).filter((s) => s.z < 0).map((s) => s.y)).size
-    const midRapids = segs.filter((s) => s.rapid && s.z < 0)
-    // One link per scanline gap — the tool never climbs to safe height in the
-    // middle of a level — and no link longer than a stepover.
-    expect(midRapids).toHaveLength(scanlines - 1)
     for (let i = 1; i < segs.length; i++) {
       const a = segs[i - 1], b = segs[i]
-      if (b.rapid && b.z < 0) expect(Math.hypot(b.x - a.x, b.y - a.y)).toBeLessThanOrEqual(3 + 1e-9)
+      if (a.z < 0 && b.z < 0 && a.y !== b.y) expect(Math.hypot(b.x - a.x, b.y - a.y)).toBeLessThanOrEqual(3 + 1e-9)
     }
   })
 
