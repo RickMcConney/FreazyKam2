@@ -5,7 +5,8 @@ import { generateGcode } from '../cam/gcode'
 import { buildGcodeInputs } from '../io/gcodeExport'
 import { useProjectStore } from '../store/projectStore'
 import { useSimStore } from '../store/simStore'
-import { useWorkpieceStore } from '../store/workpieceStore'
+import { useWorkpieceStore, type WorkpieceState } from '../store/workpieceStore'
+import { useToolStore } from '../store/toolStore'
 import { useToolpathStore, type AnyOperation } from '../store/toolpathStore'
 
 /**
@@ -40,12 +41,24 @@ const SETTLE_MS = 200
 // walks, in the same order, including its skip of imported G-code ops. Segments are
 // compared by identity: store updates replace op objects rather than mutating them, so a
 // regenerated op arrives with a fresh array and an untouched one does not.
-function programKey(ops: AnyOperation[]): unknown[] {
+export function programKey(ops: AnyOperation[]): unknown[] {
   const key: unknown[] = []
+  // The TOOL, not just its id: a tool's feed, rpm and chip load are written into the
+  // program, and an edit to one replaces its object (toolStore), so identity is enough.
+  const tools = new Map(useToolStore.getState().tools.map((t) => [t.id, t]))
   for (const op of ops) {
     if (!reachesProgram(op)) continue
-    key.push(op.id, op.name, op.toolId, op.segments,
-      op.type === 'profile3d' ? op.roughingToolId : undefined)
+    key.push(op.id, op.name, op.toolId, tools.get(op.toolId), op.segments,
+      op.type === 'profile3d' ? op.roughingToolId : undefined,
+      op.type === 'profile3d' && op.roughingToolId ? tools.get(op.roughingToolId) : undefined)
+  }
+  // …and what the FEEDS AND SPEEDS are worked out from, which the G-code writer reads
+  // from the stock and machine settings rather than from the operations. Keyed on the ops
+  // alone, changing the material with auto feeds on rebuilt nothing, and the simulator
+  // went on playing the old feeds.
+  if (key.length > 0) {
+    const w = useWorkpieceStore.getState()
+    key.push('feeds', ...FEED_INPUTS.map((k) => w[k]))
   }
   // Which sheet is playing is part of the program too, when a nest spread the parts over
   // several (cam/sheets): choosing another is choosing another program.
@@ -55,6 +68,13 @@ function programKey(ops: AnyOperation[]): unknown[] {
   if (key.length > 0 && tiling) key.push('tile', useUIStore.getState().activeTile, tiling)
   return key
 }
+
+// The stock and machine settings the G-code's feeds and speeds read (cam/feeds.ts
+// `calcForTool`, and the spindle dial comment in cam/gcode.ts).
+const FEED_INPUTS = [
+  'material', 'machineRigidity', 'autoFeedEnabled', 'maxFeedMmMin', 'minSpindleRpm', 'maxSpindleRpm',
+  'spindleType', 'customDialRpm',
+] as const satisfies readonly (keyof WorkpieceState)[]
 
 function sameKey(a: unknown[], b: unknown[]): boolean {
   return a.length === b.length && a.every((v, i) => v === b[i])
@@ -113,6 +133,9 @@ async function rebuild(): Promise<void> {
 /** Install the subscriptions. Returns an unsubscribe for React's effect cleanup. */
 export function installSimAutoReload(): () => void {
   const unsubOps = useToolpathStore.subscribe(schedule)
+  // A tool edit, or a change to what the feeds are worked out from, is a different program.
+  const unsubTools = useToolStore.subscribe((t, p) => { if (t.tools !== p.tools) schedule() })
+  const unsubFeeds = useWorkpieceStore.subscribe((w, p) => { if (FEED_INPUTS.some((k) => w[k] !== p[k])) schedule() })
   const unsubSheet = useUIStore.subscribe((u, p) => { if (!sameCell(u.activeSheet, p.activeSheet) || u.activeTile !== p.activeTile) schedule() })
   // Every load — ours, the Simulate button, an imported .gcode file — is the point the
   // player's contents match the program, so it defines what "unchanged" means from here.
@@ -140,6 +163,8 @@ export function installSimAutoReload(): () => void {
   })
   return () => {
     unsubOps()
+    unsubTools()
+    unsubFeeds()
     unsubSheet()
     unsubSim()
     unsubMotion()

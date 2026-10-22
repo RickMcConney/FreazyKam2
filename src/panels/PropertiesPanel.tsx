@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Dices, PencilSparkles } from 'lucide-react'
 import { ICON } from '../theme'
-import { usePathsStore, bakePathsStep, useSelectedPaths, outerGroupOf } from '../store/pathsStore'
+import { usePathsStore, bakePathsStep, bakePathsSteps, useSelectedPaths, outerGroupOf, transformObjects } from '../store/pathsStore'
 import { useUIStore } from '../store/uiStore'
 import { splitCompoundPath } from '../canvas/nodeUtils'
 import { regenerateAffectedMany } from '../cam/regenerate'
@@ -1049,6 +1049,13 @@ export default function PropertiesPanel() {
     return pcts.every((v) => Math.abs(v - pcts[0]) < 1e-6) ? pcts[0] : null
   }, [selectedPaths])
 
+  // The objects the selection is made of (a DXF block, a group, a gear — see
+  // transformObjects), for "Scale each": a sheet of parts each carrying a label
+  // wants every label bigger where it stands, and one scale about the selection's
+  // centre spreads the labels apart as well.
+  const objects = useMemo(() => transformObjects(selectedPaths), [selectedPaths])
+  const [scaleEach, setScaleEach] = useState(false)
+
   if (selectedPaths.length === 0) return null
   if (!bbox) return null
 
@@ -1096,6 +1103,14 @@ export default function PropertiesPanel() {
   function applyScalePct(pct: number) {
     if (!bbox || !(pct > 0)) return
     const s = pct / (scalePct ?? 100)
+    if (scaleEach && objects.length > 1) {
+      bakePathsSteps(objects.map((obj) => {
+        const b = getMultiBBox(obj.map((p) => p.d))
+        const ax = b ? (b.minX + b.maxX) / 2 : 0, ay = b ? (b.minY + b.maxY) / 2 : 0
+        return { pathIds: obj.map((p) => p.id), step: { kind: 'scale', sx: s, sy: s, ax, ay } }
+      }), 'scale')
+      return
+    }
     const fromCentre = selectedPaths.every((p) => p.fromCenter)
     const ax = fromCentre ? (bbox.minX + bbox.maxX) / 2 : bbox.minX
     const ay = fromCentre ? (bbox.minY + bbox.maxY) / 2 : bbox.maxY
@@ -1247,6 +1262,16 @@ export default function PropertiesPanel() {
                 : <CommitField label="Scale" unit="%" value={scalePct ?? 100} step={5} min={0.01}
                     title="Scale X and Y together, as a percent of the original size — type 100 to put it back"
                     onCommit={applyScalePct} />)}
+              {objects.length > 1 && !selectedPaths.some((p) => isScaleLocked(p.shapeParams)) && (
+                <label
+                  className="col-span-2 flex items-center gap-1.5 cursor-pointer"
+                  title={`Scale applies to each of the ${objects.length} objects about its own centre, so they grow where they stand instead of spreading apart`}
+                >
+                  <input type="checkbox" className="accent-blue-500 w-3.5 h-3.5"
+                    checked={scaleEach} onChange={(e) => setScaleEach(e.target.checked)} />
+                  <span className="text-label text-gray-500 dark:text-neutral-400">Scale each ({objects.length}) about its own centre</span>
+                </label>
+              )}
             </div>
           </>
         )

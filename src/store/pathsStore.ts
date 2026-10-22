@@ -21,7 +21,7 @@ import { uid } from '../uid'
 export type { ImportedPath }
 // User-group helpers live in their own module (pure, no store), and are
 // re-exported here so call sites have one place to import path things from.
-export { groupKeyOf, inGroup, outerGroupOf, expandUserGroups } from './pathGroups'
+export { groupKeyOf, inGroup, outerGroupOf, expandUserGroups, transformObjects } from './pathGroups'
 
 // `transforms`: the geometric-transform recipe that produced `d`/`shapeParams`
 // (move/scale/rotate/skew/mirror only) — see selectionUtils.ts's
@@ -56,6 +56,11 @@ export type PathsAddMeta = { source?: PathsAddSource; label?: string }
 interface PathsState {
   paths: ImportedPath[]
   selectedIds: string[]
+  // The selection a drag box made, IN LOCATION ORDER (`locationOrder`) — held so that
+  // narrowing it (Select Only) can re-order what is kept by where IT lies. It describes the
+  // current selection only while it is the very same array as `selectedIds`: any other way
+  // of selecting replaces that array, so nothing has to remember to clear this.
+  locationSelection: string[] | null
   collapsedGroups: Set<string>
 
   addPaths: (newPaths: ImportedPath[], meta?: PathsAddMeta) => void
@@ -69,6 +74,8 @@ interface PathsState {
   toggleGroupCollapsed: (groupId: string) => void
   selectPath: (id: string | null, extend?: boolean) => void
   setSelectedIds: (ids: string[]) => void
+  // A selection in location order (a drag box, or Select Only narrowing one).
+  setLocationSelection: (ids: string[]) => void
   // Tie the selected paths together / dissolve the groups the selection touches.
   // Both go through applyPathEdit, so each is ONE undo step.
   groupSelected: () => void
@@ -568,6 +575,7 @@ function changedIds(before: ImportedPath[], updates: PathUpdate[]): string[] {
 export const usePathsStore = create<PathsState>()((set, get) => ({
   paths: [],
   selectedIds: [],
+  locationSelection: null,
   collapsedGroups: new Set<string>(),
 
   addPaths: (newPaths, meta) => {
@@ -629,6 +637,7 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
   }),
 
   setSelectedIds: (ids) => set({ selectedIds: ids }),
+  setLocationSelection: (ids) => set({ selectedIds: ids, locationSelection: ids }),
 
   // Groups NEST, so grouping PREPENDS: a group and a shape put together give a
   // group holding that group and that shape, and one Ungroup gives them back —
@@ -1086,12 +1095,27 @@ function transformCorners(
  * nothing and regenerates nothing. `gesture` names the timeline chip.
  */
 export function bakePathsStep(pathIds: string[], step: TransformStep, gesture: PathEditGesture): void {
-  if (isIdentityStep(step)) return
+  bakePathsSteps([{ pathIds, step }], gesture)
+}
+
+/**
+ * Several transforms at once, each to its own paths, as ONE edit — "Scale each" gives
+ * every object in the selection a scale about its own centre, and a hundred labels
+ * grown together is one gesture, so it is one undo step and one regenerate.
+ */
+export function bakePathsSteps(items: { pathIds: string[]; step: TransformStep }[], gesture: PathEditGesture): void {
+  const stepOf = new Map<string, TransformStep>()
+  for (const { pathIds, step } of items) {
+    if (isIdentityStep(step)) continue
+    for (const id of pathIds) stepOf.set(id, step)
+  }
+  if (stepOf.size === 0) return
   const { paths, applyPathEdit } = usePathsStore.getState()
-  const want = new Set(pathIds)
-  const updates: PathUpdate[] = paths.filter((p) => want.has(p.id)).map((p) => {
+  const updates: PathUpdate[] = paths.flatMap((p) => {
+    const step = stepOf.get(p.id)
+    if (!step) return []
     const r = applyTransformStep(p, step)
-    return { id: p.id, d: r.d, shapeParams: r.shapeParams, name: r.name, transforms: [step] }
+    return [{ id: p.id, d: r.d, shapeParams: r.shapeParams, name: r.name, transforms: [step] }]
   })
   if (updates.length > 0) applyPathEdit({ updates, gesture })
 }
@@ -1133,7 +1157,8 @@ export function useSelectedPaths(): ImportedPath[] {
 // subtraction keeps path 1 and cuts the rest away from it, and taking that from
 // z-order silently subtracts the wrong way round whenever the tool happens to sit
 // below the workpiece in the list. A rubber-band selection has no pick order to
-// record, so it still lands in z-order; the form shows the roles so it is visible
+// record, so it lands in LOCATION order, bottom left to top right (`locationOrder`) —
+// the order a sheet of parts is cut in; the form shows the roles so it is visible
 // either way.
 export function useSelectedPathsInOrder(): ImportedPath[] {
   const paths = usePathsStore((s) => s.paths)

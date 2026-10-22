@@ -19,6 +19,7 @@ export const LAYER_COLORS = ['#60a5fa', '#f87171', '#fbbf24', '#34d399', '#c084f
 export const MATERIAL_COLORS: Record<Material, { light: string; dark: string; three: number; opacity?: number }> = {
   pine:      { light: '#e8c98a', dark: '#7a5828', three: 0xd4a86a },
   cedar:     { light: '#d9a878', dark: '#6a4326', three: 0xc88a5a },
+  basswood:  { light: '#f2e4c4', dark: '#8a7650', three: 0xeedcb4 },
   oak:       { light: '#c8a060', dark: '#6a4820', three: 0xb5803d },
   maple:     { light: '#f0d9a8', dark: '#8a6e3a', three: 0xe8c98d },
   walnut:    { light: '#7a4a28', dark: '#3a2010', three: 0x6b3d1e },

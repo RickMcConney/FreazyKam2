@@ -16,8 +16,10 @@ import MachineControlPanel from './panels/MachineControlPanel'
 import { useMachineStore } from './machine/machineStore'
 import { useWorkpieceStore } from './store/workpieceStore'
 import { useToolpathStore } from './store/toolpathStore'
+import { useToolStore } from './store/toolStore'
 import { useTimelineStore } from './timeline/timelineStore'
-import { regenerateOperation } from './cam/regenerate'
+import { regenerateOperation, regenerateMany } from './cam/regenerate'
+import { opsWithStaleStepDown } from './cam/feedDependents'
 import { opsAffectedByStockChange } from './cam/stockDependents'
 import { useSimStore } from './store/simStore'
 import { installSimAutoReload } from './sim/simAutoReload'
@@ -192,6 +194,17 @@ function useStockDependentSync() {
       for (const op of opsAffectedByStockChange(useToolpathStore.getState().operations, prev, state)) {
         regenerateOperation(op.id)
       }
+    })
+  }, [])
+  // …and the auto step-downs: they are worked out from the material's hardness, the
+  // machine's rigidity and the Auto Feeds switch, and baked into the toolpath — so a change
+  // to any of them regenerates the toolpaths whose step-down it actually moves.
+  useEffect(() => {
+    return useWorkpieceStore.subscribe((state, prev) => {
+      if (state.material === prev.material && state.machineRigidity === prev.machineRigidity &&
+        state.autoFeedEnabled === prev.autoFeedEnabled) return
+      const stale = opsWithStaleStepDown(useToolpathStore.getState().operations, useToolStore.getState().tools)
+      if (stale.length > 0) regenerateMany(stale)
     })
   }, [])
 }

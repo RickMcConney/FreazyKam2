@@ -20,6 +20,7 @@ import { generateInlayFemale, generateInlayMale } from '../cam/inlay'
 import { generateTrochoidal } from '../cam/trochoidal'
 import { generateFluting } from '../cam/fluting'
 import { generateSurface } from '../cam/surfacing'
+import { generatePeckDrill, generateHelicalDrills } from '../cam/drill'
 import { nest, nestSheets } from '../tools/nestOp'
 import { traceImage } from '../tools/imageTrace'
 
@@ -58,6 +59,12 @@ export const handlers = {
   generateTrochoidal,
   generateFluting,
   generateSurface,
+  // Each hole is cheap, but a Generate over many selected circles is one op per circle,
+  // and on the main thread that batch never yielded: no await anywhere in it, so the
+  // browser could not paint, the batch buffer could not flush and Stop could not land
+  // until the last op was done — long enough for the "page unresponsive" dialog.
+  generatePeckDrill,
+  generateHelicalDrills,
   // Not a toolpath, but the same shape of job: one long synchronous solve over
   // plain geometry. A sheet of parts rasterizes the whole stock once per part
   // per orientation, which on nineteen tracks at 15° is seconds — long enough

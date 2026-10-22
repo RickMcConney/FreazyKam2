@@ -8,7 +8,7 @@
 // snapshot at the cursor is refreshed in a microtask after every write, so `step()`
 // flushes those before the next action reads anything.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { usePathsStore, bakePathsStep, type ImportedPath } from './pathsStore'
+import { usePathsStore, bakePathsStep, bakePathsSteps, type ImportedPath } from './pathsStore'
 import { regenerateAffectedMany } from '../cam/regenerate'
 import { useToolpathStore, type AnyOperation } from './toolpathStore'
 import { useTabStore, type Tab } from './tabStore'
@@ -308,6 +308,49 @@ describe('bakePathsStep — every gesture bake, dragged or typed', () => {
     expect(regen).not.toHaveBeenCalled()
   })
 
+})
+
+describe('locationSelection — a drag box\'s order, remembered while it is still the selection', () => {
+  it('describes the selection only while it is the same array: any other way of selecting leaves it stale', () => {
+    S().setLocationSelection(['b', 'a'])
+    expect(S().selectedIds).toBe(S().locationSelection)
+    S().setSelectedIds(['b', 'a'])
+    expect(S().selectedIds).not.toBe(S().locationSelection)
+    S().setLocationSelection(['a'])
+    S().selectPath('b', true)
+    expect(S().selectedIds).not.toBe(S().locationSelection)
+  })
+})
+
+describe('bakePathsSteps — scale each object about its own centre', () => {
+  const regen = vi.mocked(regenerateAffectedMany)
+  beforeEach(() => { regen.mockClear() })
+  const centre = (id: string) => {
+    const b = getBBox(S().paths.find((p) => p.id === id)!.d)!
+    return [(b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2, b.maxX - b.minX]
+  }
+
+  it('grows two labels 100 mm apart where they stand: centres fixed, each three times as wide, one undo step', async () => {
+    // A label of two strokes beside each part. One scale about the selection's centre
+    // would push them to 300 mm apart; scaled each, they stay 100 mm apart.
+    await load({ paths: [path('a1', { d: rectD(0, 0, 4, 1) }), path('a2', { d: rectD(5, 0, 4, 1) }), path('b1', { d: rectD(100, 0, 9, 1) })] })
+    regen.mockClear()
+    bakePathsSteps([
+      { pathIds: ['a1', 'a2'], step: { kind: 'scale', sx: 3, sy: 3, ax: 4.5, ay: 0.5 } },
+      { pathIds: ['b1'], step: { kind: 'scale', sx: 3, sy: 3, ax: 104.5, ay: 0.5 } },
+    ], 'scale')
+    await step()
+    expect(events()).toBe(1)
+    const [bx, by, bw] = centre('b1')
+    expect([bx, by, bw]).toEqual([expect.closeTo(104.5), expect.closeTo(0.5), expect.closeTo(27)])
+    // The two strokes of label A spread about THEIR shared centre, not each about its own.
+    expect(getBBox(S().paths.find((p) => p.id === 'a1')!.d)!.minX).toBeCloseTo(4.5 - 3 * 4.5)
+    expect(getBBox(S().paths.find((p) => p.id === 'a2')!.d)!.maxX).toBeCloseTo(4.5 + 3 * 4.5)
+    expect(S().paths.every((p) => Math.abs((p.scalePct ?? 100) - 300) < 1e-6)).toBe(true)
+    expect(regen.mock.calls.map(([ids]) => [...ids].sort())).toEqual([['a1', 'a2', 'b1']])
+    await undo()
+    expect(centre('b1')[2]).toBeCloseTo(9)
+  })
 })
 
 describe('a path remembers how big it stands against its original size', () => {

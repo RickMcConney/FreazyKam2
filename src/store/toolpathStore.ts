@@ -29,7 +29,16 @@ export interface MotionSegment {
 }
 
 /** The inputs a set of segments was generated from — see BaseOperation.generatedWith. */
-export type GeneratedWith = { entryHint?: { x: number; y: number }; safeHeightMM: number; startZMM?: number }
+export type GeneratedWith = {
+  entryHint?: { x: number; y: number }; safeHeightMM: number; startZMM?: number
+  /** Every AUTO step-down the generation asked for — its inputs and the answer — so a
+   *  change to what auto feeds read (material, rigidity, the switch itself) can tell which
+   *  toolpaths it actually changes (cam/feedDependents). */
+  stepDowns?: StepDownStamp[]
+}
+
+/** One `effectiveStepDownMM` call a generation made. */
+export interface StepDownStamp { toolId: string; userMM: number; depthMM: number; engagement?: number; mm: number }
 
 interface DrillPoint {
   x: number

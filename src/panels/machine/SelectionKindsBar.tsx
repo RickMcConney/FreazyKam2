@@ -15,6 +15,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { RotateCcw } from 'lucide-react'
 import { usePathsStore, type ImportedPath } from '../../store/pathsStore'
+import { useWorkpieceStore } from '../../store/workpieceStore'
+import { locationOrder } from '../../canvas/selectionUtils'
 import { ICON } from '../../theme'
 import { layerLabel } from '../../importers/layers'
 import { classifyPaths, narrowingHolds, PATH_KIND_ORDER, type PathKind } from './selectionKinds'
@@ -33,7 +35,7 @@ type Key = string
 const kindKey = (k: PathKind): Key => `kind:${k}`
 const layerKey = (p: ImportedPath): Key => `layer:${p.layer ?? ''}`
 
-interface Narrowed { base: string[]; applied: string[]; keys: Key[] }
+interface Narrowed { base: string[]; applied: string[]; keys: Key[]; byLocation: boolean }
 interface Button { key: Key; label: string; hint: string; count: number; swatch?: string }
 
 
@@ -103,14 +105,28 @@ export function SelectionKindsBar() {
     const next = extend
       ? (current.includes(key) ? current.filter((k) => k !== key) : [...current, key])
       : [key]
-    const applied = live.filter((id) => keysOf.get(id)!.some((k) => next.includes(k)))
+    const kept = live.filter((id) => keysOf.get(id)!.some((k) => next.includes(k)))
     // Nothing chosen, or a choice that covers everything: that is the whole selection again.
-    if (next.length === 0 || applied.length === live.length) { restore(); return }
-    setSelectedIds(applied)
-    setNarrow({ base: live, applied, keys: next })
+    if (next.length === 0 || kept.length === live.length) { restore(); return }
+    // A drag box's selection is in LOCATION order, and that order was worked out for what
+    // the box caught — each part block placed by its outline's corner. What is kept is
+    // ordered again by where IT lies: a label is not where its part's outline starts, and
+    // keeping the part's place sent the engraving back down to lower rows after higher ones.
+    // A selection in pick order keeps the picks.
+    const { selectedIds: nowSelected, locationSelection, paths: all } = usePathsStore.getState()
+    const byLocation = narrowed ? narrow!.byLocation : nowSelected === locationSelection
+    if (byLocation) {
+      const applied = locationOrder(kept, all, useWorkpieceStore.getState())
+      usePathsStore.getState().setLocationSelection(applied)
+      setNarrow({ base: live, applied, keys: next, byLocation })
+    } else {
+      setSelectedIds(kept)
+      setNarrow({ base: live, applied: kept, keys: next, byLocation })
+    }
   }
   function restore() {
-    setSelectedIds(live)
+    if (narrowed && narrow!.byLocation) usePathsStore.getState().setLocationSelection(live)
+    else setSelectedIds(live)
     setNarrow(null)
   }
 

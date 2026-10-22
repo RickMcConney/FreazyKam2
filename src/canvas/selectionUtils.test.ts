@@ -3,7 +3,7 @@ import {
   getBBox, getMultiBBox, translateD, scaleAroundD, rotateAroundD, mirrorD, skewAroundD,
   extractCircles, extractRectInfo, isPlacementOnly, gestureForSteps, consolidateSteps,
   foldPlacement, applyPlacementD, applyTransformSteps, transformPoint,
-  dragBoxEncloses, wholeGroupsOnly, isIdentityStep, type TransformStep, isRegistrationPath, isTilePinPath,
+  dragBoxEncloses, wholeGroupsOnly, locationOrder, isIdentityStep, type TransformStep, isRegistrationPath, isTilePinPath,
 } from './selectionUtils'
 import type { ImportedPath } from '../store/pathsStore'
 import { flattenPath } from '../cam/pathFlattener'
@@ -510,5 +510,59 @@ describe('registration holes', () => {
   it('are never a shape the user drew, whatever its name', () => {
     expect(isRegistrationPath(p('Tile Pins 3', { shapeParams: { type: 'circle', cx: 0, cy: 0, radius: 1 } }))).toBe(false)
     expect(isRegistrationPath(p('Dowel Holes 2'))).toBe(false)
+  })
+})
+
+describe('locationOrder — a box selection cuts from the bottom-left corner, nearest uncut object next', () => {
+  const sq = (id: string, x: number, y: number, s = 2, over: Partial<ImportedPath> = {}): ImportedPath =>
+    ({ id, name: id, visible: true, color: '#000', d: `M ${x} ${y} L ${x + s} ${y} L ${x + s} ${y + s} L ${x} ${y + s} Z`, ...over })
+
+  it('starts at the bottom-left corner and goes to the nearest uncut object, whatever order the paths were created in', () => {
+    // Created in the scrambled order a nest leaves behind.
+    const paths = [sq('TR', 20, 20), sq('BL', 0, 0), sq('TL', 0, 20), sq('BR', 20, 0), sq('BM', 10, 0)]
+    expect(locationOrder(paths.map((p) => p.id), paths)).toEqual(['BL', 'BM', 'BR', 'TR', 'TL'])
+  })
+
+  it('never passes a nearer label for one at the far end of the sheet', () => {
+    // The reported run: the two lowest labels, then the V-bit went to the far right end of
+    // the sheet (a strip's next label) past two labels close by and only a little higher.
+    const paths = [sq('L44I', 190, 0), sq('L46D', 245, 0), sq('L45J', 586, 6), sq('L38A', 280, 25), sq('L46C', 320, 40)]
+    expect(locationOrder(paths.map((p) => p.id).reverse(), paths)).toEqual(['L44I', 'L46D', 'L38A', 'L46C', 'L45J'])
+  })
+
+  it('cuts sheet by sheet, each from its own bottom-left corner', () => {
+    // Two sheets side by side: the stock, and the cell to its right (100 mm stock, 50 mm gap).
+    const stock = { widthMM: 100, heightMM: 100 }
+    // On sheet 2, s2a is nearest ITS corner (150, 0); measured from sheet 1's last cut,
+    // s2b would come first.
+    const paths = [sq('s2b', 152, 60), sq('s1b', 80, 60), sq('s1a', 0, 0), sq('s2a', 198, 2)]
+    expect(locationOrder(paths.map((p) => p.id), paths, stock)).toEqual(['s1a', 's1b', 's2a', 's2b'])
+  })
+
+  it('finishes one label before starting the next — every stroke of a DXF block together', () => {
+    // Two labels side by side, each a block of three strokes; stroke by stroke, the nearest
+    // stroke after A's first is B's.
+    const label = (b: string, x: number) => [0, 1, 2].map((k) =>
+      sq(`${b}${k}`, x + k * 3, k * 3, 1, { sourceGroups: [b] }))
+    const paths = [...label('A', 0), ...label('B', 2)]
+    const order = locationOrder(paths.map((p) => p.id).reverse(), paths)
+    expect(order.map((id) => id[0])).toEqual(['A', 'A', 'A', 'B', 'B', 'B'])
+  })
+
+  it('orders the labels of a part selection by where the LABELS lie, once narrowed to them', () => {
+    // Two part blocks. As whole parts the left one (nearer the corner) comes first, and its
+    // label high up with it; narrowed to the labels, the low label comes first.
+    const paths = [
+      sq('partL', 0, 0, 250, { sourceGroups: ['L'] }), sq('labL', 10, 240, 4, { sourceGroups: ['L', 'lL'] }),
+      sq('partR', 200, 0, 10, { sourceGroups: ['R'] }), sq('labR', 202, 2, 4, { sourceGroups: ['R', 'lR'] }),
+    ]
+    expect(locationOrder(paths.map((p) => p.id), paths)).toEqual(['partL', 'labL', 'partR', 'labR'])
+    expect(locationOrder(['labL', 'labR'], paths)).toEqual(['labR', 'labL'])
+  })
+
+  it('keeps a user group together, placed by the centre of the whole group', () => {
+    const paths = [sq('g2', 22, 0, 2, { userGroups: ['g'] }), sq('lone', 4, 0), sq('g1', 0, 0, 2, { userGroups: ['g'] })]
+    // The group spans 0..24 (centre 12), so the lone square (centre 5) is nearer the corner.
+    expect(locationOrder(['g2', 'lone', 'g1'], paths)).toEqual(['lone', 'g2', 'g1'])
   })
 })

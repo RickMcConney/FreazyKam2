@@ -9,7 +9,7 @@ everything that maps these tiles assume that direction.
 | pine.jpg | pine | ambientCG | [Wood092](https://ambientcg.com/view?id=Wood092) |
 | cedar.jpg | cedar | ambientCG | [Wood030](https://ambientcg.com/view?id=Wood030) |
 | oak.jpg | oak | Poly Haven | [oak_veneer_01](https://polyhaven.com/a/oak_veneer_01) |
-| maple.jpg | maple | ambientCG | [Wood095](https://ambientcg.com/view?id=Wood095) |
+| maple.jpg | maple, basswood | ambientCG | [Wood095](https://ambientcg.com/view?id=Wood095) |
 | walnut.jpg | walnut | Poly Haven | [dark_wood](https://polyhaven.com/a/dark_wood) |
 | cherry.jpg | cherry | Poly Haven | [rosewood_veneer1](https://polyhaven.com/a/rosewood_veneer1) |
 | plywood.jpg | plywood | Poly Haven | [plywood](https://polyhaven.com/a/plywood) |
@@ -23,7 +23,8 @@ to every user of the app.
 
 `brushed-metal.jpg` serves both metals: aluminum and brass differ in color, not
 in surface structure, so `tintToMaterial` recolors the one tile to each
-material's `MATERIAL_COLORS` hue on load.
+material's `MATERIAL_COLORS` hue on load. `maple.jpg` serves basswood the same way —
+both are pale, fine and even-grained, and basswood has no CC0 tile of its own here.
 
 `red-oak.jpg` is staged but unreferenced — there is no `red oak` material yet,
 and the existing `oak` entry already tracks red oak's Janka figure (~1290 lbf).

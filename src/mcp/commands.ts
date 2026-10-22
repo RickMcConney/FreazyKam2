@@ -368,7 +368,7 @@ export const commands: Record<string, Command> = {
 // step, regenerates the toolpaths it affects, and shows up in the Objects strip like
 // anything the user did.
 
-const MATERIALS: readonly Material[] = ['pine', 'cedar', 'oak', 'maple', 'walnut', 'cherry', 'mdf', 'plywood', 'hdpe', 'delrin', 'acrylic', 'aluminum', 'brass', 'other']
+const MATERIALS: readonly Material[] = ['pine', 'cedar', 'basswood', 'oak', 'maple', 'walnut', 'cherry', 'mdf', 'plywood', 'hdpe', 'delrin', 'acrylic', 'aluminum', 'brass', 'other']
 
 /** The paths named by `ids`, all of them, or an error naming the ones that are not there. */
 function pathsById(ids: string[]): ImportedPath[] {

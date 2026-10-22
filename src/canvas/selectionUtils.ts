@@ -3,7 +3,8 @@ import { parseD, stringifyD, applyMat, type Mat6, type ImportedPath } from '../i
 import { splitCompoundPath } from './nodeUtils'
 import { generateShapeD, translateShapeParams, scaleShapeParams, shapeDisplayName, type ShapeParams } from '../shapes/shapeGenerators'
 import type { PathEditGesture } from '../timeline/events'
-import { outerGroupOf } from '../store/pathGroups'
+import { outerGroupOf, transformObjects } from '../store/pathGroups'
+import { cellOfPoint, cellOffset, cellKey, STOCK_CELL, type Cell, type Stock } from '../cam/sheets'
 
 // ─── Drag-box selection ───────────────────────────────────────────────────────
 //
@@ -54,6 +55,72 @@ export function wholeGroupsOnly(
     const g = p && outerGroupOf(p)
     return !(g && partial.has(g))
   })
+}
+
+/**
+ * A box selection's order: by LOCATION, sheet by sheet — starting from the sheet's
+ * bottom-left corner, and from each object to the NEAREST one not yet cut.
+ *
+ * The selection is otherwise PICK order, and the operation forms cut in it, so clicking
+ * holes 1, 2, 3 drills them 1, 2, 3. A rubber band has no picks to record, and falling
+ * back on document order cut in creation order — which after a nest has nothing to do
+ * with where anything lies, so the drill wandered all over the sheet.
+ *
+ * Nearest-next, because every ROW scheme tried read wrong on a real nest. Rows grown from
+ * the parts let a 233 mm part take 60 parts into one "row" and cut the sheet by columns.
+ * Fixed strips sized to the objects were 2 mm high for 1 mm labels standing 50 mm apart, so
+ * every strip held a few labels scattered across the full width and the V-bit swept the
+ * sheet once per strip, passing labels nearer by. On the Charizard nest's first sheet,
+ * nearest-next is 3.7 m of travel for its labels against 12.3 m for the best strip height,
+ * and 4.0 m against 5.4 m for its parts — and "the next cut is the closest uncut one" is
+ * what the operator predicts by eye.
+ *
+ * Each object (a user group, a multi-part shape, a DXF block or SVG group — see
+ * `transformObjects` — stays together in its own order) stands at the centre of its box.
+ * Sheet by sheet (`cellOfPoint`, by that centre, as a part's sheet is read everywhere
+ * else), sheets in reading order, because each sheet is its own program.
+ */
+export function locationOrder(ids: string[], paths: ImportedPath[], stock?: Stock): string[] {
+  const byId = new Map(paths.map((p) => [p.id, p]))
+  // What "one object" means is `transformObjects`' — the same objects Scale Each grows —
+  // so a label drawn as a DXF block of strokes is engraved stroke after stroke, finishing
+  // it before the next.
+  const units = transformObjects(ids.flatMap((id) => { const p = byId.get(id); return p ? [p] : [] }))
+  type Placed = { members: ImportedPath[]; x: number; y: number; sheet: Cell }
+  const sheets = new Map<string, Placed[]>()
+  const unplaced: ImportedPath[][] = []
+  for (const members of units) {
+    const b = getMultiBBox(members.map((p) => p.d))
+    if (!b) { unplaced.push(members); continue }
+    const x = (b.minX + b.maxX) / 2, y = (b.minY + b.maxY) / 2
+    const sheet = stock ? cellOfPoint(x, y, stock) : STOCK_CELL
+    const list = sheets.get(cellKey(sheet))
+    const u = { members, x, y, sheet }
+    if (list) list.push(u); else sheets.set(cellKey(sheet), [u])
+  }
+  const out: string[] = []
+  // Sheets in reading order — across, then down — as they are numbered.
+  const sheetOrder = [...sheets.values()].sort((a, b) => a[0].sheet.row - b[0].sheet.row || a[0].sheet.col - b[0].sheet.col)
+  for (const rest of sheetOrder) {
+    // From the sheet's own bottom-left corner. Quadratic, which is a few million distance
+    // checks for a sheet of two thousand objects — well under the drag that asked for it.
+    let at = stock ? cellOffset(rest[0].sheet, stock) : { x: 0, y: 0 }
+    while (rest.length > 0) {
+      let best = 0, bestD = Infinity
+      for (let i = 0; i < rest.length; i++) {
+        const d = (rest[i].x - at.x) ** 2 + (rest[i].y - at.y) ** 2
+        if (d < bestD) { bestD = d; best = i }
+      }
+      const u = rest[best]
+      rest[best] = rest[rest.length - 1]; rest.pop()
+      out.push(...u.members.map((p) => p.id))
+      at = u
+    }
+  }
+  for (const members of unplaced) out.push(...members.map((p) => p.id))
+  // Ids with no path (none expected) keep their place at the end rather than vanish.
+  for (const id of ids) if (!byId.has(id)) out.push(id)
+  return out
 }
 
 export interface BBox {

@@ -33,7 +33,7 @@ const DESTROY = { readOnlyHint: false, destructiveHint: true }
 /** Generation can take minutes on a big job; the tab stops waiting a little sooner and says so. */
 const GENERATION_MS = 300_000
 
-const MATERIALS = ['pine', 'cedar', 'oak', 'maple', 'walnut', 'cherry', 'mdf', 'plywood', 'hdpe', 'delrin', 'acrylic', 'aluminum', 'brass', 'other']
+const MATERIALS = ['pine', 'cedar', 'basswood', 'oak', 'maple', 'walnut', 'cherry', 'mdf', 'plywood', 'hdpe', 'delrin', 'acrylic', 'aluminum', 'brass', 'other']
 
 // ─── Toolpath tools, from the registry ───────────────────────────────────────────
 

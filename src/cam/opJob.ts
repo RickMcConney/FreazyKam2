@@ -1,7 +1,7 @@
-import { generatePeckDrill, generateHelicalDrills, type HoleSpec } from './drill'
+import type { HoleSpec } from './drill'
 import { perfLog } from '../debug'
 import { runInWorkerFor } from '../workers/workerClient'
-import { useToolpathStore, withPending } from '../store/toolpathStore'
+import { useToolpathStore, withPending, type StepDownStamp } from '../store/toolpathStore'
 import { usePathsStore } from '../store/pathsStore'
 import { useToolStore, type Tool } from '../store/toolStore'
 import { useWorkpieceStore } from '../store/workpieceStore'
@@ -70,6 +70,12 @@ export function showGenNotes(notes: GenNote[]): void {
   for (const note of notes) useUIStore.getState().showStatus(note.short, 'warn')
 }
 
+/** The same holes, in the same order — what a regenerate re-derives when nothing moved. */
+function sameHoles(a: HoleSpec[], b: HoleSpec[] | undefined): boolean {
+  return !!b && a.length === b.length
+    && a.every((h, i) => h.cx === b[i].cx && h.cy === b[i].cy && h.radiusMM === b[i].radiusMM)
+}
+
 export interface GenerateOverrides {
   /** Alt-click on PocketForm: run the chosen strategy on a shape it would decline. Not a
    *  setting — an override of a measured verdict for this one Generate. */
@@ -118,7 +124,16 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
   // handed to setSegments as the stamp. Stamping at write time instead recorded whatever
   // the other operations said by then, so a floor that moved during the generation was
   // written over segments cut from the old one (see setSegments).
-  const builtWith = { entryHint: op.entryHint, safeHeightMM, startZMM }
+  // Every auto step-down asked for below is recorded on the stamp as well, inputs and
+  // answer, so a material change regenerates exactly the toolpaths it changes. A MANUAL
+  // step-down is the user's number whatever the material, so it is not recorded.
+  const stepDowns: StepDownStamp[] = []
+  const stepDown = (t: Tool, userMM: number, depthMM: number, engagement?: number, manual?: boolean): number => {
+    const mm = effectiveStepDownMM(t, userMM, depthMM, engagement, manual)
+    if (!manual) stepDowns.push({ toolId: t.id, userMM, depthMM, ...(engagement !== undefined ? { engagement } : {}), mm })
+    return mm
+  }
+  const builtWith = { entryHint: op.entryHint, safeHeightMM, startZMM, stepDowns }
 
   const _t0 = performance.now()
 
@@ -130,7 +145,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       return { d: path.d, tabs: tabsForGeneration(id) }
     })
     const result = await runInWorkerFor(opId, 'generateSharedLineProfile', parts, tool, {
-      side: op.side, depthMM: op.depthMM, stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual), direction: op.direction,
+      side: op.side, depthMM: op.depthMM, stepDownMM: stepDown(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual), direction: op.direction,
       startNear: op.entryHint, rampIn: op.rampIn, safeHeightMM, allowanceMM: op.allowanceMM, startZMM,
     }, machineRates(), { bridgeMaxMM: op.bridgeMaxMM ?? 0 })
     setSegments(opId, result.segments, builtWith)
@@ -140,7 +155,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
     const path = paths.find((p) => p.id === op.pathId)
     if (!path) throw new Error('Source path not found')
     setSegments(opId, await runInWorkerFor(opId, 'generateProfile', path.d, tool, {
-      side: op.side, depthMM: op.depthMM, stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual), direction: op.direction,
+      side: op.side, depthMM: op.depthMM, stepDownMM: stepDown(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual), direction: op.direction,
       startNear: op.entryHint, rampIn: op.rampIn, safeHeightMM,
       allowanceMM: op.allowanceMM,
       cornerToleranceMM: op.cornerToleranceMM,
@@ -158,7 +173,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
     const pocket = await runInWorkerFor(opId, 'generatePocket', boundary.d, tool, {
       strategy: op.strategy ?? 'raster',
       depthMM: op.depthMM,
-      stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM, pocketEngagementFraction(op.strategy, op.stepoverPercent), op.stepDownManual),
+      stepDownMM: stepDown(tool, op.stepDownMM, op.depthMM, pocketEngagementFraction(op.strategy, op.stepoverPercent), op.stepDownManual),
       stepoverPercent: op.stepoverPercent, direction: op.direction,
       islandDs, angle: op.passAngleDeg, autoAngle: op.autoAngle, startNear: op.entryHint, rampIn: op.rampIn,
       finishAllowanceMM: op.allowanceMM,
@@ -184,19 +199,24 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
         holes = op.helicalHoles?.length
           ? op.helicalHoles
           : [{ cx: op.helicalCenterX ?? 0, cy: op.helicalCenterY ?? 0, radiusMM: (op.helicalRadius ?? 0) + tool.diameterMM / 2 }]
-      } else {
+      } else if (!sameHoles(holes, op.helicalHoles)) {
         // Persist what was derived (yes, generation writes op params here): the edit
         // view displays it, and it is the fallback above once the source is gone.
         // Singular fields stay in step for the first hole so an older reader still
         // sees something sane.
+        //
+        // ONLY WHEN IT CHANGED. The form already stores the holes it read, so this is
+        // normally a no-op — but a store write all the same, outside the derived batch,
+        // and each one re-renders everything that draws the program. 378 holes drilled
+        // after 1653 carved labels took 40 s, nearly all of it repainting the labels.
         updateOperation(opId, {
           helicalHoles: holes,
           helicalCenterX: holes[0].cx, helicalCenterY: holes[0].cy,
           helicalRadius: Math.max(0, holes[0].radiusMM - tool.diameterMM / 2),
         } as Parameters<typeof updateOperation>[1], { record: false })
       }
-      setSegments(opId, generateHelicalDrills(holes, tool, {
-        depthMM: op.depthMM, stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual),
+      setSegments(opId, await runInWorkerFor(opId, 'generateHelicalDrills', holes, tool, {
+        depthMM: op.depthMM, stepDownMM: stepDown(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual),
         startNear: op.entryHint, safeHeightMM, startZMM,
       }), builtWith)
     } else {
@@ -206,15 +226,15 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       // Nothing else reads it — segments are what cut — so recomputing each time is
       // enough.
       const points = circles.length > 0 ? circles.map((c) => ({ x: c.cx, y: c.cy })) : op.points
-      setSegments(opId, generatePeckDrill(points, tool, {
-        depthMM: op.depthMM, stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual), startNear: op.entryHint, safeHeightMM, startZMM,
+      setSegments(opId, await runInWorkerFor(opId, 'generatePeckDrill', points, tool, {
+        depthMM: op.depthMM, stepDownMM: stepDown(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual), startNear: op.entryHint, safeHeightMM, startZMM,
       }), builtWith)
     }
 
   } else if (op.type === 'surface') {
     setSegments(opId, await runInWorkerFor(opId, 'generateSurface', tool, {
       widthMM: stockW, heightMM: stockH,
-      depthMM: op.depthMM, stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual),
+      depthMM: op.depthMM, stepDownMM: stepDown(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual),
       stepoverPercent: op.stepoverPercent, passAngleDeg: op.passAngleDeg,
       safeHeightMM,
     }), builtWith)
@@ -297,7 +317,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       roughingCornerRadiusMM: roughingTool?.type === 'bullnose' ? cornerRadiusMM(roughingTool) : undefined,
       roughingStepoverPercent: op.roughingStepoverPercent,
       roughingStepDownMM: roughingTool != null && op.roughingStepDownMM != null
-        ? effectiveStepDownMM(roughingTool, op.roughingStepDownMM, depthMM, undefined, op.stepDownManual)
+        ? stepDown(roughingTool, op.roughingStepDownMM, depthMM, undefined, op.stepDownManual)
         : op.roughingStepDownMM,
       roughingStockAllowanceMM: op.roughingStockAllowanceMM,
       roughingRasterAngleDeg: op.roughingRasterAngleDeg,
@@ -327,7 +347,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
     if (!path) throw new Error('Source path not found')
     setSegments(opId, await runInWorkerFor(opId, 'generateTrochoidal', path.d, tool, {
       side: op.side, depthMM: op.depthMM,
-      stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM, trochoidalEngagementFraction(tool, op.trochStepMM), op.stepDownManual),
+      stepDownMM: stepDown(tool, op.stepDownMM, op.depthMM, trochoidalEngagementFraction(tool, op.trochStepMM), op.stepDownManual),
       direction: op.direction, trochStepMM: op.trochStepMM, trochRadiusMM: op.trochRadiusMM,
       finishingPass: op.finishingPass, rampIn: op.rampIn, startNear: op.entryHint, safeHeightMM,
     }, tabsForGeneration(op.pathId)), builtWith)
@@ -337,7 +357,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
     if (!path) throw new Error('Source path not found')
     setSegments(opId, await runInWorkerFor(opId, 'generateFluting', path.d, tool, {
       depthMM: op.depthMM,
-      stepDownMM: effectiveStepDownMM(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual),
+      stepDownMM: stepDown(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual),
       profile: op.profile, smooth: op.smooth, reverse: op.reverse, safeHeightMM, startZMM,
     }), builtWith)
 
@@ -362,7 +382,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
     })
     const inlayParams = {
       angleDeg: op.angleDeg, pocketDepthMM: op.pocketDepthMM,
-      stepDownMM: effectiveStepDownMM(pocketTool, op.stepDownMM, op.pocketDepthMM, undefined, op.stepDownManual), stepoverPercent: op.stepoverPercent,
+      stepDownMM: stepDown(pocketTool, op.stepDownMM, op.pocketDepthMM, undefined, op.stepDownManual), stepoverPercent: op.stepoverPercent,
       glueLineMM: op.glueLineMM, clearanceMM: op.clearanceMM,
       rampIn: op.rampIn, mirrorX: op.mirrorX, mirrorAxisX: op.mirrorAxisX, vFloorStepMM: op.vFloorStepMM,
       islandDs: islandEntries.map((e) => e.d),
@@ -381,7 +401,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
     // The linked half is built by this same call, so its stamp is taken now as well.
     const linkedAtStart = op.linkedOpId ? operations.find((o) => o.id === op.linkedOpId) : undefined
     const linkedBuiltWith = {
-      entryHint: linkedAtStart?.entryHint, safeHeightMM,
+      entryHint: linkedAtStart?.entryHint, safeHeightMM, stepDowns,
       startZMM: linkedAtStart
         ? resolveStartZForOp(linkedAtStart, operations, paths, { widthMM: stockW, heightMM: stockH }, tools).zMM
         : 0,

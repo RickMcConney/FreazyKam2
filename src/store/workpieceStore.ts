@@ -28,7 +28,7 @@ export function zDatumOffsetMM(zOrigin: ZOrigin, thicknessMM: number): number {
 }
 
 export type Material =
-  | 'pine' | 'cedar' | 'oak' | 'maple' | 'walnut' | 'cherry'
+  | 'pine' | 'cedar' | 'basswood' | 'oak' | 'maple' | 'walnut' | 'cherry'
   | 'mdf' | 'plywood' | 'hdpe' | 'delrin' | 'acrylic' | 'aluminum' | 'brass' | 'other'
 
 // What a material does with heat and a thin chip — the one thing a single hardness
@@ -62,7 +62,7 @@ export interface MaterialInfo {
 // chip — only the step-down (harder = shallower passes) and the dropdown order.
 // Wood values track Janka hardness ratings (lbf) from The Wood Database
 // (https://www.wood-database.com), scaled so MDF ≈ 0.8: cedar (W. red) ~350, pine
-// (E. white) ~380, cherry ~950, walnut ~1010, maple (hard) ~1450, oak (red) ~1290.
+// (E. white) ~380, basswood (American) ~410, cherry ~950, walnut ~1010, maple (hard) ~1450, oak (red) ~1290.
 // Metals are scaled by relative cutting resistance, not Janka. Delrin machines
 // cleanly and dry, level with plywood; acrylic is brittle and chips or crazes
 // under a deep pass, so it sits a step above.
@@ -82,6 +82,7 @@ export interface MaterialInfo {
 export const MATERIAL_INFO: Record<Material, MaterialInfo> = {
   pine: { label: 'Pine', kind: 'wood', hardness: 0.6, chipLoadMM: 0.15 },
   cedar: { label: 'Cedar', kind: 'wood', hardness: 0.5, chipLoadMM: 0.15 },
+  basswood: { label: 'Basswood', kind: 'wood', hardness: 0.65, chipLoadMM: 0.15 }, // soft and even-grained; carving and model stock
   oak: { label: 'Oak', kind: 'wood', hardness: 1.4, chipLoadMM: 0.10 },
   maple: { label: 'Maple', kind: 'wood', hardness: 1.3, chipLoadMM: 0.10 },
   walnut: { label: 'Walnut', kind: 'wood', hardness: 1.1, chipLoadMM: 0.11 },
@@ -128,7 +129,7 @@ export const inchStepFor = (stepMM: number): number => {
   return INCH_STEPS.reduce((best, s) => (Math.abs(s - target) < Math.abs(best - target) ? s : best))
 }
 
-interface WorkpieceState {
+export interface WorkpieceState {
   widthMM: number
   heightMM: number
   thicknessMM: number

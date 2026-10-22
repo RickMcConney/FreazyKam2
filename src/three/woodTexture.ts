@@ -45,6 +45,7 @@ const TILE_MM: Partial<Record<Material, [number, number]>> = {
   plywood:  [500, 500],    // Poly Haven: 500 mm
   cedar:    [800, 800],    // estimated — ambientCG publishes no size for Wood030
   maple:    [800, 400],    // estimated — Wood095 likewise; image is 2:1, so area is
+  basswood: [800, 400],    // maple's tile (below)
   aluminum: [400, 400],    // estimated — a brushed lay has no meaningful true size
   brass:    [400, 400],
 }
@@ -60,6 +61,7 @@ const WOOD_FILES: Partial<Record<Material, string>> = {
   cedar:    'cedar.jpg',     // ambientCG Wood030
   oak:      'oak.jpg',       // Poly Haven oak_veneer_01
   maple:    'maple.jpg',     // ambientCG Wood095
+  basswood: 'maple.jpg',     // same tile, tinted: both pale, fine and even-grained
   walnut:   'walnut.jpg',    // Poly Haven dark_wood
   cherry:   'cherry.jpg',    // Poly Haven rosewood_veneer1
   plywood:  'plywood.jpg',   // Poly Haven plywood
@@ -83,7 +85,7 @@ const PROCEDURAL: Record<string, { kind: 'speckle' } | { kind: 'flat'; tone: num
 // Brushed aluminum and brass differ in color and reflectance, not in surface
 // structure — same abrasive, same lay — so one brushed-metal photo drives both,
 // and they come out as a matched pair in a way two unrelated photos never would.
-const TINTED: Partial<Record<Material, true>> = { aluminum: true, brass: true }
+const TINTED: Partial<Record<Material, true>> = { aluminum: true, brass: true, basswood: true }
 
 let onTextureLoaded: (() => void) | null = null
 

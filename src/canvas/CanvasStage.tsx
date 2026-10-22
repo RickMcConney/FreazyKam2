@@ -57,7 +57,7 @@ import { SimulationLayer } from './layers/SimulationLayer'
 import SimulationPlayer from '../sim/SimulationPlayer'
 import { useSimStore } from '../store/simStore'
 import { HandleType, LiveTransform , RULER_W, RULER_H } from './types'
-import { getBBox, getMultiBBox, extractCircles, dragBoxEncloses, wholeGroupsOnly, isRegistrationPath, type CircleInfo } from './selectionUtils'
+import { getBBox, getMultiBBox, extractCircles, dragBoxEncloses, wholeGroupsOnly, locationOrder, isRegistrationPath, type CircleInfo } from './selectionUtils'
 import type { BBox } from './selectionUtils'
 import {
   generateShapeD,
@@ -2461,7 +2461,10 @@ export default function CanvasStage() {
           // enclosed parts, which is not a thing the user can see or click), then
           // drop any group with a part left outside. Hidden members are not in the
           // running either way, so they cannot hold a group out of the selection.
-          setSelectedIds(enclose ? wholeGroupsOnly(ids, caught, allPaths) : ids)
+          // In LOCATION order, bottom left to top right: a box has no picks to record,
+          // and the forms cut in selection order (see locationOrder).
+          usePathsStore.getState().setLocationSelection(
+            locationOrder(enclose ? wholeGroupsOnly(ids, caught, allPaths) : ids, allPaths, useWorkpieceStore.getState()))
         } else if (useUIStore.getState().activeTool === 'region') {
           // A click off every line: pick the enclosed area there, or deselect
           // when nothing encloses it, as a click on empty canvas always does.
