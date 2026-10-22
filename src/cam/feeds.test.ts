@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import {
   targetChipLoad, aimChipLoad, minChipLoad, rigidityChipFactor, rigidityFeedCeilingMmMin, toolChipCeilingMM,
+  ratedChipInMaterialMM, materialFeedFactor, feedCeilingMmMin,
   feedsForTool, effectiveStepDownMM, seedStepDownMM, trochoidalEngagementFraction,
 } from './feeds'
 import { useWorkpieceStore, MATERIAL_INFO } from '../store/workpieceStore'
@@ -68,15 +69,26 @@ describe('targetChipLoad', () => {
   })
 
   it('keeps a stiff machine\'s aim at or under the maker\'s figure, whatever its rigidity factor', () => {
-    const maker = targetChipLoad('endmill', 6, 'pine') / 2
-    expect(aimChipLoad('endmill', 6, 'pine', 5, maker)).toBeLessThanOrEqual(maker)
+    const maker = targetChipLoad('endmill', 6, 'oak') / 2
+    expect(aimChipLoad('endmill', 6, 'oak', 5, maker)).toBeLessThanOrEqual(maker)
   })
 
-  it('never goes above the bit maker\'s own chip load, where the tool carries one', () => {
-    const free = targetChipLoad('endmill', 6, 'pine')
-    expect(targetChipLoad('endmill', 6, 'pine', free / 2)).toBeCloseTo(free / 2, 12)
-    expect(targetChipLoad('endmill', 6, 'pine', free * 2)).toBeCloseTo(free, 12)      // a looser maker figure changes nothing
-    expect(targetChipLoad('endmill', 6, 'pine', 0)).toBeCloseTo(free, 12)             // 0 means no figure
+  it('in a hardwood, never goes above the bit maker\'s own chip load, where the tool carries one', () => {
+    const free = targetChipLoad('endmill', 6, 'oak')
+    expect(targetChipLoad('endmill', 6, 'oak', free / 2)).toBeCloseTo(free / 2, 12)
+    expect(targetChipLoad('endmill', 6, 'oak', free * 2)).toBeCloseTo(free, 12)      // a looser maker figure changes nothing
+    expect(targetChipLoad('endmill', 6, 'oak', 0)).toBeCloseTo(free, 12)             // 0 means no figure
+  })
+
+  it('reads the maker\'s figure as a hardwood one: a softwood takes more, a metal less, never over 1.3×', () => {
+    // One rating per bit erased the material when it was a flat ceiling — every wood ran
+    // the 1/4" end mill's 0.047 mm, which is a burning chip in cedar.
+    const rated = 0.05
+    expect(ratedChipInMaterialMM(rated, 'oak')).toBeCloseTo(rated, 12)
+    expect(ratedChipInMaterialMM(rated, 'walnut')).toBeCloseTo(1.1 * rated, 12)
+    expect(ratedChipInMaterialMM(rated, 'cedar')).toBeCloseTo(1.3 * rated, 12)   // 1.5× by the table, held to 1.3×
+    expect(ratedChipInMaterialMM(rated, 'aluminum')).toBeCloseTo(0.5 * rated, 12)
+    expect(targetChipLoad('endmill', 6, 'cedar', rated)).toBeGreaterThan(targetChipLoad('endmill', 6, 'oak', rated))
   })
 
   it('is set by the material, not its hardness — Delrin is harder than MDF and still takes a thicker chip', () => {
@@ -138,7 +150,7 @@ describe('toolChipCeilingMM — the tool\'s rated chip load', () => {
 
 describe('feedsForTool — held to the tool\'s rated chip load', () => {
   it('runs at the rating when it is lighter than the material would take', () => {
-    machine({ material: 'pine', machineRigidity: 5, maxFeedMmMin: 0 })
+    machine({ material: 'oak', machineRigidity: 5, maxFeedMmMin: 0 })
     const freeFz = chipOf(feedsForTool(EM6), EM6)
     const held: Tool = { ...EM6, chipLoadMM: freeFz / 3 }
     expect(chipOf(feedsForTool(held), held)).toBeLessThanOrEqual(freeFz / 3 + 1e-9)
@@ -151,8 +163,10 @@ describe('feedsForTool — held to the tool\'s rated chip load', () => {
   it('thins below the material\'s rubbing floor if the rating says so — a broken bit is worse than a warm one', () => {
     machine({ material: 'delrin', machineRigidity: 3 })
     const floorFree = minChipLoad('endmill', 6, 'delrin')
-    const held: Tool = { ...EM6, chipLoadMM: floorFree / 2 }
-    expect(chipOf(feedsForTool(held), held)).toBeLessThanOrEqual(floorFree / 2 + 1e-9)
+    const held: Tool = { ...EM6, chipLoadMM: floorFree / 3 }
+    const rated = ratedChipInMaterialMM(floorFree / 3, 'delrin')
+    expect(rated).toBeLessThan(floorFree)
+    expect(chipOf(feedsForTool(held), held)).toBeLessThanOrEqual(rated + 1e-9)
   })
 })
 
@@ -182,7 +196,8 @@ describe('feedsForTool — auto feeds ON', () => {
     // when the machine should feed slower the fix is to slow the SPINDLE — which is
     // why rpm is an output here and not an input.
     const f = feedsForTool(EM6)
-    expect(chip(f, EM6)).toBeCloseTo(aimChipLoad('endmill', 6, 'oak', 3), 9)
+    // To the rpm's rounding: the spindle is a whole number, the feed target is not.
+    expect(chip(f, EM6) / aimChipLoad('endmill', 6, 'oak', 3)).toBeCloseTo(1, 4)
   })
 
   it('cuts a 3 mm single-flute bit in Delrin on a hobby machine with a chip that clears its heat', () => {
@@ -203,7 +218,31 @@ describe('feedsForTool — auto feeds ON', () => {
     const stiff = feedsForTool(EM6)
     expect(stiff.xyFeedMmMin).toBeGreaterThan(soft.xyFeedMmMin)
     expect(stiff.rpm).toBeGreaterThan(soft.rpm)
-    expect(soft.xyFeedMmMin).toBeCloseTo(rigidityFeedCeilingMmMin(1), 0)
+    expect(soft.xyFeedMmMin).toBeCloseTo(feedCeilingMmMin(1, 'oak'), 0)
+  })
+
+  it('feeds a hardwood slower than a softwood on the same machine', () => {
+    // Cutting force grows with hardness, so the rigidity's feed ceiling falls as
+    // 1/√hardness above 1 — and is never raised for a soft material.
+    expect(materialFeedFactor('oak')).toBeCloseTo(1 / Math.sqrt(1.4), 12)
+    expect(materialFeedFactor('cedar')).toBe(1)
+    for (const R of [1, 2, 3, 4, 5]) {
+      machine({ material: 'cedar', machineRigidity: R })
+      const cedar = feedsForTool(EM6)
+      machine({ material: 'oak', machineRigidity: R })
+      const oak = feedsForTool(EM6)
+      expect(oak.xyFeedMmMin, `R${R}`).toBeLessThan(cedar.xyFeedMmMin)
+    }
+  })
+
+  it('feeds a rated bit slower in a hardwood than a softwood, not the same feed in every wood', () => {
+    // The reported bug: the IDC-rated 1/4" end mill at 0.047 mm/tooth ran 1797 mm/min at
+    // 24,000 rpm in cedar, pine, walnut, oak and maple alike.
+    const idc: Tool = { ...EM6, diameterMM: 6.35, chipLoadMM: 1778 / (19000 * 2) }
+    const feed = (material: string) => { machine({ material, machineRigidity: 3, maxFeedMmMin: 3000 }); return feedsForTool(idc).xyFeedMmMin }
+    expect(feed('oak')).toBeLessThan(feed('walnut'))
+    expect(feed('walnut')).toBeLessThan(feed('cedar'))
+    expect(feed('cedar')).toBeGreaterThan(1.2 * feed('oak'))
   })
 
   it('in a plastic, gives a softer machine the SAME chip at a slower spindle', () => {

@@ -369,6 +369,22 @@ export default function WorkpiecePanel() {
               )}
             </div>
           )}
+          {SPINDLE_INFO[spindleType].dial && (
+            <div className="mt-2">
+              <span className="block text-gray-500 dark:text-neutral-400 text-body mb-1">Speed at each dial setting</span>
+              <div className="grid grid-cols-3 gap-x-2 gap-y-1.5">
+                {SPINDLE_INFO[spindleType].dial!.map((d) => (
+                  <div key={d.setting} className="flex items-center gap-1" title={`RPM at dial ${d.setting}`}>
+                    <span className="text-gray-500 dark:text-neutral-400 text-body w-3 shrink-0 text-right">{d.setting}</span>
+                    <span className="w-full min-w-0 border border-gray-300 dark:border-neutral-700 rounded px-1.5 py-1 text-body text-gray-700 dark:text-neutral-300 font-mono">{d.rpm}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-body text-gray-600 dark:text-neutral-400 mt-1">
+                The router's published chart. If yours measures differently, choose Custom router and type its speeds.
+              </p>
+            </div>
+          )}
           {spindleHasDial(spindleType) && (
             <p className="text-body text-gray-600 dark:text-neutral-400 mt-1">
               Spindle speeds also show the equivalent dial setting (1–6) in the tool table and simulation.

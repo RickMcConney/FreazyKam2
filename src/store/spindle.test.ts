@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { spindleDialLabel, spindleDialSetting, spindleDialRange, spindleHasDial, normalizeCustomDial, DEFAULT_CUSTOM_DIAL_RPM } from './spindle'
-import { useWorkpieceStore } from './workpieceStore'
+import { spindleDialLabel, spindleDialSetting, spindleDialRange, spindleHasDial, normalizeCustomDial, clampToChartedRange, DEFAULT_CUSTOM_DIAL_RPM } from './spindle'
+import { useWorkpieceStore, mergePersistedWorkpiece } from './workpieceStore'
 
 const KOBALT_LIKE = [12000, 15000, 18000, 21000, 24000, 27000]
 
@@ -41,7 +41,7 @@ describe('choosing a dial router sets the spindle range auto feeds works in', ()
 
   it('a charted router takes its dial 1 and dial 6 speeds as min and max', () => {
     useWorkpieceStore.getState().setSpindleType('dewalt-compact')
-    expect(useWorkpieceStore.getState()).toMatchObject({ minSpindleRpm: 16000, maxSpindleRpm: 30000 })
+    expect(useWorkpieceStore.getState()).toMatchObject({ minSpindleRpm: 16200, maxSpindleRpm: 26900 })
   })
 
   it('a custom router follows its own chart, and editing dial 1 or 6 moves the range with it', () => {
@@ -68,5 +68,38 @@ describe('choosing a dial router sets the spindle range auto feeds works in', ()
     s.setMaxSpindleRpm(25000)
     s.setSpindleType('vfd')
     expect(useWorkpieceStore.getState()).toMatchObject({ minSpindleRpm: 10000, maxSpindleRpm: 25000 })
+  })
+})
+
+describe('the charted routers', () => {
+  it('a DeWalt DWP611 tops out at its rated 27,000 rpm, not a Makita\'s 30,000', () => {
+    // The old table ran to 30,000, so a planned 24,000 rpm read as dial 4 — which turns 21,100.
+    expect(spindleDialRange('dewalt-compact')).toEqual({ min: 16200, max: 26900 })
+    expect(spindleDialSetting('dewalt-compact', 21100)).toBe(4)
+    expect(spindleDialSetting('dewalt-compact', 24000)).toBe(5)
+  })
+
+  it('a Makita RT0701C runs 10,000 to 30,000 rpm', () => {
+    expect(spindleDialRange('makita-rt07')).toEqual({ min: 10000, max: 30000 })
+  })
+})
+
+describe('a saved spindle range is held inside a charted router\'s chart on load', () => {
+  it('brings a DeWalt setup saved against the old chart down to the router\'s real top speed', () => {
+    expect(clampToChartedRange('dewalt-compact', 16000, 30000)).toEqual({ minSpindleRpm: 16200, maxSpindleRpm: 26900 })
+  })
+
+  it('keeps a range the user narrowed inside the chart', () => {
+    expect(clampToChartedRange('dewalt-compact', 17000, 20000)).toEqual({ minSpindleRpm: 17000, maxSpindleRpm: 20000 })
+  })
+
+  it('leaves a VFD\'s and a custom router\'s range alone', () => {
+    expect(clampToChartedRange('vfd', 8000, 24000)).toEqual({ minSpindleRpm: 8000, maxSpindleRpm: 24000 })
+    expect(clampToChartedRange('custom', 5000, 40000)).toEqual({ minSpindleRpm: 5000, maxSpindleRpm: 40000 })
+  })
+
+  it('is applied when the persisted settings are read back', () => {
+    const out = mergePersistedWorkpiece({ spindleType: 'dewalt-compact', minSpindleRpm: 16000, maxSpindleRpm: 30000 }, useWorkpieceStore.getState())
+    expect(out).toMatchObject({ minSpindleRpm: 16200, maxSpindleRpm: 26900 })
   })
 })

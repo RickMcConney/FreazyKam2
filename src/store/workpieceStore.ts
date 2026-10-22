@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware'
 import type { MotionLimits } from '../sim/motionPlanner'
 import { useTimelineStore } from '../timeline/timelineStore'
 import type { WorkpieceEventChanges } from '../timeline/events'
-import { DEFAULT_CUSTOM_DIAL_RPM, normalizeCustomDial, spindleDialRange, type SpindleType } from './spindle'
+import { DEFAULT_CUSTOM_DIAL_RPM, normalizeCustomDial, spindleDialRange, clampToChartedRange, type SpindleType } from './spindle'
 import { normalizeDoubleSided, type DoubleSided } from '../cam/doubleSided'
 import { normalizeTiling, type Tiling } from '../cam/tiling'
 
@@ -265,18 +265,23 @@ export const useWorkpieceStore = create<WorkpieceState>()(
     },
     {
       name: 'freazykam-workpiece',
-      // A double-sided setting stored by an older build reads the way this one expects.
-      merge: (persisted, current) => {
-        const p = (persisted ?? {}) as Partial<WorkpieceState>
-        return {
-          ...current, ...p,
-          doubleSided: normalizeDoubleSided(p.doubleSided), tiling: normalizeTiling(p.tiling),
-          customDialRpm: normalizeCustomDial(p.customDialRpm),
-        }
-      },
+      merge: mergePersistedWorkpiece,
     }
   )
 )
+
+// Settings stored by an older build read the way this one expects: a double-sided setting,
+// and a spindle range saved against an older dial chart.
+export function mergePersistedWorkpiece<S extends WorkpieceState>(persisted: unknown, current: S): S {
+  const p = (persisted ?? {}) as Partial<WorkpieceState>
+  const merged = { ...current, ...p }
+  return {
+    ...merged,
+    ...clampToChartedRange(merged.spindleType, merged.minSpindleRpm, merged.maxSpindleRpm),
+    doubleSided: normalizeDoubleSided(p.doubleSided), tiling: normalizeTiling(p.tiling),
+    customDialRpm: normalizeCustomDial(p.customDialRpm),
+  }
+}
 
 function dialRangeOf(t: SpindleType, customDialRpm: number[]): Partial<WorkpieceState> {
   const range = spindleDialRange(t, customDialRpm)

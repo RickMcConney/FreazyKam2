@@ -72,6 +72,20 @@ export function rigidityFeedCeilingMmMin(rigidity: number): number {
   return RIGIDITY_FEED_CEILING_MM_MIN[clamp(Math.round(rigidity), 1, 5) - 1]
 }
 
+// Cutting force grows with the material's hardness as well as with the chip, so the
+// rigidity's feed ceiling is lowered by 1/√hardness in anything harder than the
+// reference (hardness 1) — the same law the step-down already follows. Never raised in
+// a soft one: the ceiling is what the gantry should be asked for, whatever it cuts.
+// Without it the feed sat on the ceiling in every wood, and oak was cut as fast as
+// cedar with only the spindle turning faster.
+export function materialFeedFactor(material: Material): number {
+  const h = MATERIAL_INFO[material].hardness
+  return h > 1 ? 1 / Math.sqrt(h) : 1
+}
+export function feedCeilingMmMin(rigidity: number, material: Material): number {
+  return rigidityFeedCeilingMmMin(rigidity) * materialFeedFactor(material)
+}
+
 // Axial depth-of-cut aggressiveness by machine rigidity (before the material and
 // diameter caps). R1–R3 take shallower passes than the old linear ramp so light
 // machines aren't handed near-full-diameter step-downs. Indexed by rigidity 1..5.
@@ -91,8 +105,8 @@ export function chipDiameterScale(diameterMM: number): number {
   return (SMALL_BIT_KNEE_MM / REFERENCE_DIAMETER_MM) * Math.pow(d / SMALL_BIT_KNEE_MM, SMALL_BIT_EXPONENT)
 }
 
-// THE CHIP-LOAD CEILING is the tool's RATED chip load (`Tool.chipLoadMM`) — the maker's
-// recommendation, fixed, never derived from the feed and rpm it is there to judge. The
+// THE CHIP-LOAD CEILING is the tool's RATED chip load (`Tool.chipLoadMM`), scaled to the
+// material by `ratedChipInMaterialMM` — the maker's recommendation, fixed, never derived from the feed and rpm it is there to judge. The
 // reference everything judges by is the LOWER of it and the material-and-size model:
 // Auto Feeds aims there, and with Auto Feeds off the chip gauge and the export check
 // warn when the user's own feed and rpm run the bit too hot or too cold against it.
@@ -104,6 +118,21 @@ export function toolChipCeilingMM(tool: Tool): number | undefined {
   return tool.chipLoadMM !== undefined && tool.chipLoadMM > 0 ? tool.chipLoadMM : undefined
 }
 
+// A maker quotes ONE chip load per bit, and it is a hardwood figure — IDC's, and the
+// factory tools' numbers derived from them, are. Read as a ceiling in every material it
+// erased the material entirely: the 1/4" end mill's 0.047 mm sits under what any wood
+// would take, so cedar and maple ran the same feed at the same rpm — and cedar ran a
+// chip a third of its own, which is the chip that burns. So the rating is scaled by the
+// material's chip against hardwood's (RATING_REFERENCE_CHIP_MM): oak and maple get the
+// maker's number as it stands, a harder or metal stock less, and a softer one more —
+// but never more than RATING_MAX_SCALE over it, so a soft material cannot talk a bit
+// far past what its maker rated.
+const RATING_REFERENCE_CHIP_MM = 0.10
+const RATING_MAX_SCALE = 1.3
+export function ratedChipInMaterialMM(ceilingMM: number, material: Material): number {
+  return ceilingMM * Math.min(MATERIAL_INFO[material].chipLoadMM / RATING_REFERENCE_CHIP_MM, RATING_MAX_SCALE)
+}
+
 // Intrinsic recommended chip load (mm per tooth) for a tool in a given material —
 // a property of the tool type + diameter + material only (this is what manufacturer
 // chip-load charts give). Machine rigidity does NOT enter here. `ceilingMM` is the
@@ -112,7 +141,7 @@ export function toolChipCeilingMM(tool: Tool): number | undefined {
 // rubbing floor — is derived from this, so the ceiling reaches all of them.
 export function targetChipLoad(toolType: ToolType, diameterMM: number, material: Material, ceilingMM?: number): number {
   const fz = MATERIAL_INFO[material].chipLoadMM * (CHIP_LOAD_FACTOR[toolType] ?? 1) * chipDiameterScale(diameterMM)
-  return ceilingMM !== undefined && ceilingMM > 0 ? Math.min(fz, ceilingMM) : fz
+  return ceilingMM !== undefined && ceilingMM > 0 ? Math.min(fz, ratedChipInMaterialMM(ceilingMM, material)) : fz
 }
 
 // The chip auto feeds actually aims for on this machine: the intrinsic chip trimmed
@@ -125,7 +154,7 @@ export function aimChipLoad(toolType: ToolType, diameterMM: number, material: Ma
   )
   // A stiff machine's rigidity factor runs ABOVE 1; it still may not take the bit past
   // the tool's own ceiling.
-  return ceilingMM !== undefined && ceilingMM > 0 ? Math.min(aim, ceilingMM) : aim
+  return ceilingMM !== undefined && ceilingMM > 0 ? Math.min(aim, ratedChipInMaterialMM(ceilingMM, material)) : aim
 }
 
 // The thinnest chip this tool should ever run in this material before it rubs.
@@ -201,12 +230,12 @@ function computeFeeds(input: FeedCalcInput): FeedCalcResult {
   // Spindle speed is a computed output, not taken from the tool: pick the rpm that
   // lets the feed reach the target feed at the aimed chip, bounded by the machine's
   // spindle range. The target is the machine's hard max feed, lowered to what this
-  // rigidity should cut at — so a light machine gets a slower SPINDLE and the same
+  // rigidity should cut at in this material — so a light machine gets a slower SPINDLE and the same
   // chip, not a thinner chip at full rpm.
   const denom = fzAim * flutes
   const loRpm = minSpindleRpm > 0 ? minSpindleRpm : 1
   let hiRpm = Math.max(maxSpindleRpm, loRpm)
-  const targetFeed = Math.min(maxFeed, rigidityFeedCeilingMmMin(R))
+  const targetFeed = Math.min(maxFeed, feedCeilingMmMin(R, material))
 
   // A surface-speed (Vc) ceiling keeps the edge from overheating at the high RPMs
   // wood prefers: rpm = Vc / (π·d). This tightens the top of the rpm range (never

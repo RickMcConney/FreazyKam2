@@ -2,9 +2,13 @@
 // router rather than a continuously-variable VFD spindle, so the G-code RPM has to
 // be translated to the physical dial setting (1–6) the operator actually turns.
 //
-// Dial→RPM figures are the manufacturers' published speed charts:
-//   • DeWalt DWP611 / DW611 compact router (the "DW6xx" series).
-//   • Makita RT0701C (a.k.a. RT07 / 3709 trim router).
+// Dial→RPM figures are the routers' speed charts:
+//   • DeWalt DWP611 / DW611 compact router (the "DW6xx" series) — DeWalt rates it
+//     16,000–27,000 rpm. The table used to run on to 30,000 (a Makita's top speed), so
+//     dial 4–6 read 12–18% fast: auto feeds planned speeds the router never reached and
+//     every chip came out that much thicker than it meant.
+//   • Makita RT0701C (a.k.a. RT07 / 3709 trim router) — 10,000–30,000 rpm, within ~4%
+//     of a tachometer at every detent.
 // VFD and manual spindles are continuously variable, so they carry no dial table —
 // the raw RPM is the whole story for them. Any other router is 'custom': the user types
 // the six speeds from its manual (`customDialRpm` in the workpiece store), so a new
@@ -33,12 +37,12 @@ export const SPINDLE_INFO: Record<SpindleType, SpindleInfo> = {
   'dewalt-compact': {
     label: 'DeWalt DW6xx (DWP611)',
     dial: [
-      { setting: 1, rpm: 16000 },
-      { setting: 2, rpm: 18200 },
-      { setting: 3, rpm: 21400 },
-      { setting: 4, rpm: 24800 },
-      { setting: 5, rpm: 27600 },
-      { setting: 6, rpm: 30000 },
+      { setting: 1, rpm: 16200 },
+      { setting: 2, rpm: 17700 },
+      { setting: 3, rpm: 19450 },
+      { setting: 4, rpm: 21100 },
+      { setting: 5, rpm: 23500 },
+      { setting: 6, rpm: 26900 },
     ],
   },
   'makita-rt07': {
@@ -90,7 +94,19 @@ export function spindleDialRange(type: SpindleType, customDialRpm?: readonly num
   return d ? { min: d[0].rpm, max: d[d.length - 1].rpm } : null
 }
 
-// Interpolated dial setting for a target RPM (e.g. 19800 → 2.5 on the DeWalt). RPM
+/** A stored spindle range held inside a CHARTED router's dial range. The range is set
+ *  only when the router is chosen, so a setup saved against an old chart kept its old
+ *  top speed; this is applied on load. A range the user narrowed stays narrowed. A custom
+ *  router's chart is the user's own and is left alone, as is a VFD's. */
+export function clampToChartedRange(type: SpindleType, minRpm: number, maxRpm: number): { minSpindleRpm: number; maxSpindleRpm: number } {
+  const d = SPINDLE_INFO[type]?.dial
+  if (!d) return { minSpindleRpm: minRpm, maxSpindleRpm: maxRpm }
+  const lo = d[0].rpm, hi = d[d.length - 1].rpm
+  const max = Math.min(Math.max(maxRpm, lo), hi)
+  return { minSpindleRpm: Math.min(Math.max(minRpm, lo), max), maxSpindleRpm: max }
+}
+
+// Interpolated dial setting for a target RPM (e.g. 18600 → 2.5 on the DeWalt). RPM
 // below the slowest / above the fastest detent clamps to the end setting. Returns
 // null for spindles without a dial table or a non-positive RPM.
 function spindleDial(type: SpindleType, rpm: number, customDialRpm?: readonly number[]): number | null {

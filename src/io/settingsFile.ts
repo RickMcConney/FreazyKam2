@@ -10,7 +10,7 @@
 // unticked. The pure half lives in settingsMerge.ts.
 
 import { useWorkpieceStore } from '../store/workpieceStore'
-import { normalizeCustomDial } from '../store/spindle'
+import { normalizeCustomDial, clampToChartedRange } from '../store/spindle'
 import { useToolStore, DEFAULT_TOOLS, MY_TOOLS, folderOf, withFolder, withRatedChip, type Tool } from '../store/toolStore'
 import { usePostProcessorStore, BUILTIN_PROFILES, type PostProcessorProfile } from '../store/postProcessorStore'
 import { useToolpathStore } from '../store/toolpathStore'
@@ -378,6 +378,8 @@ export function applySettings(file: SettingsFile, keys: SectionKey[], modes: Par
           // pickKnown checks it is an array, not that it holds six speeds.
           if ('customDialRpm' in v) v.customDialRpm = normalizeCustomDial(v.customDialRpm)
           useWorkpieceStore.setState(v)
+          const w = useWorkpieceStore.getState()
+          useWorkpieceStore.setState(clampToChartedRange(w.spindleType, w.minSpindleRpm, w.maxSpindleRpm))
         }
         out.push('Machine settings replaced')
         break
