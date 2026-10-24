@@ -134,6 +134,12 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
     return mm
   }
   const builtWith = { entryHint: op.entryHint, safeHeightMM, startZMM, stepDowns }
+  // The sheet's bridges (cam/bridges): a cut that goes THROUGH the stock lifts where it
+  // crosses one. Only a through-cut frees a part; a shallower one — the label engravings on
+  // a sheet of parts — cuts across a bridge as if it were not there.
+  const { bridges: sheetBridges, thicknessMM } = useWorkpieceStore.getState()
+  const cutsThrough = 'depthMM' in op && (startZMM ?? 0) - (op as { depthMM: number }).depthMM <= -thicknessMM + 1e-6
+  const bridges = sheetBridges && cutsThrough ? sheetBridges : undefined
 
   const _t0 = performance.now()
 
@@ -146,7 +152,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
     })
     const result = await runInWorkerFor(opId, 'generateSharedLineProfile', parts, tool, {
       side: op.side, depthMM: op.depthMM, stepDownMM: stepDown(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual), direction: op.direction,
-      startNear: op.entryHint, rampIn: op.rampIn, safeHeightMM, allowanceMM: op.allowanceMM, startZMM,
+      startNear: op.entryHint, rampIn: op.rampIn, safeHeightMM, allowanceMM: op.allowanceMM, startZMM, bridges,
     }, machineRates(), { bridgeMaxMM: op.bridgeMaxMM ?? 0 })
     setSegments(opId, result.segments, builtWith)
     notes.push(...result.notes)
@@ -160,7 +166,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       allowanceMM: op.allowanceMM,
       cornerToleranceMM: op.cornerToleranceMM,
       finishPassMM: op.finishPassMM, springPass: op.springPass,
-      startZMM,
+      startZMM, bridges,
     }, tabsForGeneration(op.pathId)), builtWith)
 
   } else if (op.type === 'pocket') {
@@ -349,7 +355,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       side: op.side, depthMM: op.depthMM,
       stepDownMM: stepDown(tool, op.stepDownMM, op.depthMM, trochoidalEngagementFraction(tool, op.trochStepMM), op.stepDownManual),
       direction: op.direction, trochStepMM: op.trochStepMM, trochRadiusMM: op.trochRadiusMM,
-      finishingPass: op.finishingPass, rampIn: op.rampIn, startNear: op.entryHint, safeHeightMM,
+      finishingPass: op.finishingPass, rampIn: op.rampIn, startNear: op.entryHint, safeHeightMM, bridges,
     }, tabsForGeneration(op.pathId)), builtWith)
 
   } else if (op.type === 'fluting') {

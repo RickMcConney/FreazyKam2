@@ -75,7 +75,8 @@ FreazyKam runs entirely in your browser — no account, no server, no install. Y
 - **More than one sheet** — drag a part to the right of or below the stock and a new sheet of the same stock appears under it; empty a sheet and it goes. Each sheet is simulated and exported as its own program, cut from its own corner; the toolbar's **◀ Sheet N of M ▶** picker chooses which one is shown
 - **Constraints** — hold one part a stated distance from another and keep it there as either is edited. Press **C**, click a point on one part (corner, edge midpoint, centre, or the centre of a round feature), then a point on another — or *drag* the second part into place with the dimension reading out live, and let go where you want it. Numbers are measured in the first part's own frame, so four holes 10 mm in from the corners of a plate stay 10 mm in from the corners when the plate is resized *or rotated*; the second part can be held at its angle to the first as well, so a slot turns with the plate it sits in. Parts can also be held off an edge of the stock, which is ground and wins over a drag. There is no root — drag any part of a chain and the rest follow — and a contradiction is reported rather than half-applied
 - **Measure** — press **M** and click two points (each snaps to a part's corners, edge middles and centre) for the length, ΔX, ΔY and angle; Shift holds it to 15° steps. Or, with a part selected, hold **Alt** and hover another part — or the stock — to see the gaps between them
-- Holding tabs: configure count, length, height; drag individual tabs along path
+- Holding tabs: configure count, length, height; drag individual tabs along path. Tab a whole selection at once — one chip and one undo for the lot
+- **Holding strips for tight nests** — on a close-packed sheet a tab holds a part to waste the next cut frees, so both go. Strips instead join every part to its neighbours across the gaps, and through them to the sheet's edge: a network in which nothing can come loose. Each join is square across one gap and clear of every other part, joins spread round each part so it is held from different sides (set how many per part), and every cut through the stock lifts over them — holes and engravings cut straight through
 - Group / ungroup (`Ctrl+G` / `Ctrl+Shift+G`) — groups nest, and Alt-click reaches a single path inside one
 - Copy and paste paths between projects (`Ctrl+C` / `Ctrl+V`) — a pasted gear is still a gear, with its parameters, corner treatments and grouping intact
 - Undo/redo for everything
@@ -162,6 +163,7 @@ Depths are always measured *from* the start surface, and the tool-reach and past
 - **Rapids that cut** — any G0 move that runs into stock is listed above the player (click one to go to it) and in the export review, and the 3D view carves it and tints red any surface it leaves on the finished part
 - **Operator messages** — `(MSG, …)` and `(PRINT, …)` lines in the program appear in the player as playback reaches them, as the controller's console would show them
 - **G-code viewer** — line-synchronized highlight during simulation
+- **Resume a stopped job** — after a broken bit, a power cut or a cancel, pick the line it stopped at and write a restart file: carry on from that line, redo the interrupted pass, recut the part, or skip to the next part. The machine's state at that line is put back first, and the entry comes in from safe height — works on G-code from any CAM program
 - Imported G-code from other CAM programs simulates too
 
 ### Export

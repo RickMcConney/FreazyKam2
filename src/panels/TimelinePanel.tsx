@@ -19,11 +19,13 @@ import { shapeDisplayName } from '../shapes/shapeGenerators'
 import { useUIStore } from '../store/uiStore'
 import { OP_TYPE_COLORS } from '../colors'
 import { InlayIcon } from './MachinePanel'
-import { regenerateAffected } from '../cam/regenerate'
+import { regenerateAffectedMany } from '../cam/regenerate'
 import { isTilePinPath } from '../canvas/selectionUtils'
 import type { DoubleSided } from '../cam/doubleSided'
 import type { Tiling } from '../cam/tiling'
 import { removeTiling } from '../tools/tilingRun'
+import { removeBridges } from '../tools/bridgesRun'
+import type { BridgeSet } from '../cam/bridges'
 import { makeSingleSided } from '../tools/doubleSidedRun'
 
 // The object strip docked under the 2D canvas: ONE CHIP PER THING IN THE
@@ -134,9 +136,10 @@ export function buildChips(
   constraints: Constraint[] = [],
   units: 'mm' | 'in' = 'mm',
   // A double-sided or tiled job (cam/doubleSided, cam/tiling).
-  jobs: { doubleSided?: DoubleSided | null; tiling?: Tiling | null } = {},
+  jobs: { doubleSided?: DoubleSided | null; tiling?: Tiling | null; bridges?: BridgeSet | null } = {},
 ): ObjectChip[] {
   const out: ObjectChip[] = []
+  const tabChips = tabChipIndex(tabs)
 
   // THE JOB COMES FIRST: one chip per double-sided or tiled job, which reopens its form
   // (where it is ended) and whose × ends it. Its holes AND their drilling are part of it —
@@ -158,6 +161,18 @@ export function buildChips(
     out.push({
       key: 'job:tiling', label: `Tiling \u00d7${n}`, Icon: Columns3, color: OP_TYPE_COLORS.tiling,
       family: 'path', pathIds: pins.map((p) => p.id), form: 'tiling',
+    })
+  }
+
+  // The sheet's HOLDING STRIPS (cam/bridges): one setting with parameters, so one chip. It selects
+  // the parts they were placed through and reopens Tabs; its × takes them all away.
+  if (jobs.bridges) {
+    const on = new Set(paths.map((p) => p.id))
+    const n = jobs.bridges.lines.length
+    out.push({
+      key: 'job:bridges', label: n === 1 ? 'Holding Strip' : `Strips \u00d7${n}`, Icon: TabsIcon,
+      color: OP_TYPE_COLORS.tabs, family: 'attached',
+      pathIds: jobs.bridges.pathIds.filter((id) => on.has(id)), form: 'tabs',
     })
   }
 
@@ -230,7 +245,7 @@ export function buildChips(
         key: `ugroup:${ugroup}`, label: `Group \u00d7${members.length}`, Icon: Group,
         family: 'path', pathIds: members.map((m) => m.id),
       })
-      for (const m of members) out.push(...attachedChips(m, tabs))
+      for (const m of members) out.push(...attachedChips(m, tabChips))
       continue
     }
     if (p.groupId) {
@@ -239,7 +254,7 @@ export function buildChips(
       const members = paths.filter((q) => q.groupId === p.groupId)
       const editable = members.find((m) => m.definition && m.definition.kind !== 'duplicate')
       out.push({ key: p.groupId, ...pathVisual(p), family: 'path', pathIds: members.map((m) => m.id), editPathId: editable?.id })
-      for (const m of members) out.push(...attachedChips(m, tabs))
+      for (const m of members) out.push(...attachedChips(m, tabChips))
     } else if (defGroupId(p)) {
       // ONE CHIP PER GENERATOR CLICK, for the same reason a batch of operations
       // gets one: a pattern of six copies, or an offset of four selected paths,
@@ -258,13 +273,13 @@ export function buildChips(
         label: members.length === 1 ? vis.label : `${vis.label} \u00d7${members.length}`,
         family: 'path', pathIds: members.map((m) => m.id), editPathId: p.id,
       })
-      for (const m of members) out.push(...attachedChips(m, tabs))
+      for (const m of members) out.push(...attachedChips(m, tabChips))
     } else {
       out.push({
         key: p.id, ...pathVisual(p), family: 'path', pathIds: [p.id],
         editPathId: undefined,
       })
-      out.push(...attachedChips(p, tabs))
+      out.push(...attachedChips(p, tabChips))
     }
   }
 
@@ -328,13 +343,48 @@ function defGroupId(p: ImportedPath): string | null {
   return def && def.kind !== 'duplicate' ? def.id : null
 }
 
+// The tabs, read once per build: how many each path has, and which BATCH it is in. One
+// Apply over several paths is one chip, as one Generate is (`Tab.batchId`) — it was a chip
+// per path, so tabbing a sheet of parts put hundreds in the strip. Counted up front: a
+// filter per path was paths × tabs on every render.
+interface TabChipIndex {
+  count: Map<string, number>
+  batchOf: Map<string, string>
+  members: Map<string, string[]>
+  drawn: Set<string>
+}
+function tabChipIndex(tabs: Tab[]): TabChipIndex {
+  const count = new Map<string, number>()
+  const batchOf = new Map<string, string>()
+  const members = new Map<string, string[]>()
+  for (const t of tabs) {
+    count.set(t.pathId, (count.get(t.pathId) ?? 0) + 1)
+    if (!t.batchId || batchOf.has(t.pathId)) continue
+    batchOf.set(t.pathId, t.batchId)
+    const m = members.get(t.batchId)
+    if (m) m.push(t.pathId); else members.set(t.batchId, [t.pathId])
+  }
+  return { count, batchOf, members, drawn: new Set() }
+}
+
 // What is attached to one path: its holding tabs, its corner treatments. Each
 // sits straight after the path it belongs to, so the strip reads as the thing
-// and then what has been done to it.
-function attachedChips(p: ImportedPath, tabs: Tab[]): ObjectChip[] {
+// and then what has been done to it. A batch of tabs sits after the FIRST of its
+// paths in the strip, as a batch of operations is drawn at its first member.
+function attachedChips(p: ImportedPath, tabs: TabChipIndex): ObjectChip[] {
   const out: ObjectChip[] = []
-  const n = tabs.filter((t) => t.pathId === p.id).length
-  if (n > 0) out.push({
+  const n = tabs.count.get(p.id) ?? 0
+  const batch = tabs.batchOf.get(p.id)
+  const members = batch ? tabs.members.get(batch)! : []
+  if (n > 0 && members.length > 1) {
+    if (!tabs.drawn.has(batch!)) {
+      tabs.drawn.add(batch!)
+      out.push({
+        key: `tabs:${batch}`, label: `Tabs on ${members.length} paths`, Icon: TabsIcon,
+        color: OP_TYPE_COLORS.tabs, family: 'attached', pathIds: members, form: 'tabs',
+      })
+    }
+  } else if (n > 0) out.push({
     key: `tabs:${p.id}`, label: n === 1 ? 'Tab' : `Tabs ×${n}`, Icon: TabsIcon,
     color: OP_TYPE_COLORS.tabs, family: 'attached', pathIds: [p.id], form: 'tabs',
   })
@@ -388,12 +438,13 @@ export default function TimelinePanel() {
   const units = useWorkpieceStore((s) => s.units)
   const doubleSided = useWorkpieceStore((s) => s.doubleSided)
   const tiling = useWorkpieceStore((s) => s.tiling)
+  const bridges = useWorkpieceStore((s) => s.bridges)
   const timelineOpen = useUIStore((s) => s.timelineOpen)
   const setTimelineOpen = useUIStore((s) => s.setTimelineOpen)
 
   const chips = useMemo(
-    () => buildChips(paths, operations, tabs, constraints, units, { doubleSided, tiling }),
-    [paths, operations, tabs, constraints, units, doubleSided, tiling])
+    () => buildChips(paths, operations, tabs, constraints, units, { doubleSided, tiling, bridges }),
+    [paths, operations, tabs, constraints, units, doubleSided, tiling, bridges])
 
   const stripRef = useRef<HTMLDivElement>(null)
   const [stripW, setStripW] = useState(0)
@@ -520,9 +571,10 @@ export default function TimelinePanel() {
     // tabs go, or the corner treatments are undone back to the sharp outline.
     // Both change what the machine would cut, so both regenerate — the tabs
     // here, the corners inside the path edit clearCorners makes.
+    if (chip.key === 'job:bridges') return removeBridges
     if (chip.form === 'tabs') return () => {
-      useTabStore.getState().deletePathTabs(chip.pathIds[0])
-      regenerateAffected(chip.pathIds[0])
+      useTabStore.getState().deleteTabsOf(chip.pathIds)
+      regenerateAffectedMany(chip.pathIds)
     }
     if (chip.form === 'nodeedit') return () => clearCorners(chip.pathIds[0])
     // A job's chip ENDS the job: its holes and their drilling go with it, the parts stay.

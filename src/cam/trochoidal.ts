@@ -1,7 +1,8 @@
 import { flattenPath, ensureWinding, signedArea, rotatePolylineNear, arcFitPolyline, splitSelfIntersecting, requireClosedSubpaths, isOpenSubpath, type Pt2 } from './pathFlattener'
 import { inflatePathsD, JoinType, EndType } from 'clipper2-ts'
 import { zPasses, arcLengths, interpPt, stripClosingDuplicate, pushAll } from './geom'
-import { designPathAtT, nearestArcLen, polylinePassWithTabs } from './profile'
+import { designPathAtT, nearestArcLen, polylinePassWithTabs, withBridges } from './profile'
+import type { BridgeSet } from './bridges'
 import type { MotionSegment } from '../store/toolpathStore'
 import type { Tool } from '../store/toolStore'
 import type { CutSide } from '../store/toolpathStore'
@@ -24,6 +25,8 @@ export interface TrochoidalParams {
   rampIn?: boolean
   startNear?: { x: number; y: number }
   safeHeightMM?: number
+  /** The sheet's bridges (cam/bridges); an inside cut does not lift for them. */
+  bridges?: BridgeSet
 }
 
 // Build a smooth (G1-continuous) unit-tangent sampler for a closed polyline.
@@ -429,5 +432,6 @@ export function generateTrochoidal(
     segs.push({ x: lastX, y: lastY, z: safeZ, rapid: true })
   }
 
-  return segs
+  // The sheet's bridges (cam/bridges), held off the finished loops all at once.
+  return withBridges(segs, tool, params, 0)
 }

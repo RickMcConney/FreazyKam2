@@ -17,4 +17,6 @@ Click **Unlock** and check the machine before continuing.
 STOP needs WiFi. Keep a power switch for the machine **and** the router within reach.
 The app can't turn a trim router off.
 
-**Related:** [STOP behaviour](../reference/machine-tab.md#stop)
+**Stopped part way, or broke a bit?** [Restart from where it stopped](resume-a-job.md).
+
+**Related:** [STOP behaviour](../reference/machine-tab.md#stop) · [Restart a job](resume-a-job.md)

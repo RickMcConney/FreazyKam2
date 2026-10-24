@@ -60,8 +60,8 @@ interface Snapshot {
 const stateAt: (Snapshot | undefined)[] = [{ paths: [], operations: [], tabs: [], constraints: [] }]
 
 function captureWorkpiece(): Required<WorkpieceEventChanges> {
-  const { widthMM, heightMM, thicknessMM, units, origin, zOrigin, material, doubleSided, tiling } = useWorkpieceStore.getState()
-  return { widthMM, heightMM, thicknessMM, units, origin, zOrigin, material, doubleSided, tiling }
+  const { widthMM, heightMM, thicknessMM, units, origin, zOrigin, material, doubleSided, tiling, bridges } = useWorkpieceStore.getState()
+  return { widthMM, heightMM, thicknessMM, units, origin, zOrigin, material, doubleSided, tiling, bridges }
 }
 
 function captureSnapshot(): Snapshot {
@@ -176,8 +176,8 @@ function installCursorMirror(): void {
   useTabStore.subscribe((s, p) => { if (s.tabs !== p.tabs) noteWrite('tabs', p.tabs) })
   useConstraintsStore.subscribe((s, p) => { if (s.constraints !== p.constraints) noteWrite('constraints', p.constraints) })
   useWorkpieceStore.subscribe((s, p) => {
-    const { widthMM, heightMM, thicknessMM, units, origin, zOrigin, material, doubleSided, tiling } = p
-    const before = { widthMM, heightMM, thicknessMM, units, origin, zOrigin, material, doubleSided, tiling }
+    const { widthMM, heightMM, thicknessMM, units, origin, zOrigin, material, doubleSided, tiling, bridges } = p
+    const before = { widthMM, heightMM, thicknessMM, units, origin, zOrigin, material, doubleSided, tiling, bridges }
     if ((Object.keys(before) as (keyof typeof before)[]).some((k) => s[k] !== before[k])) noteWrite('workpiece', before)
   })
 }
@@ -271,6 +271,7 @@ function coalesce(last: TimelineEvent, payload: TimelineEventPayload): TimelineE
   switch (payload.kind) {
     case 'op.update': {
       if (last.kind !== 'op.update' || last.opId !== payload.opId) return null
+      if ((last.linked ?? []).join() !== (payload.linked ?? []).join()) return null
       return { ...last, updates: { ...last.updates, ...payload.updates } }
     }
     case 'tabs.moveT': {
@@ -425,9 +426,9 @@ export type TipRef = { op: string } | { path: string } | { tabsOf: string }
 function defines(ev: TimelineEvent, ref: TipRef): boolean {
   if ('op' in ref) {
     if (ev.kind === 'op.add') return ev.op.id === ref.op || !!ev.linked?.some((o) => o.id === ref.op)
-    return ev.kind === 'op.update' && ev.opId === ref.op
+    return ev.kind === 'op.update' && (ev.opId === ref.op || !!ev.linked?.includes(ref.op))
   }
-  if ('tabsOf' in ref) return ev.kind === 'tabs.apply' && ev.pathId === ref.tabsOf
+  if ('tabsOf' in ref) return ev.kind === 'tabs.apply' && (ev.pathId === ref.tabsOf || !!ev.linked?.includes(ref.tabsOf))
   const id = ref.path
   switch (ev.kind) {
     case 'paths.add': return ev.paths.some((p) => p.id === id)

@@ -78,6 +78,63 @@ cut or sanded off afterwards.
 Height is a trade: enough to hold the part through the last pass, little enough to part
 with a chisel. Two to three millimetres suits most wood.
 
+### Tabs on several parts at once
+
+Select every part first — drag a box over a sheet — and the form tabs them all with one
+click: **Apply Tabs to N Paths**. Each gets the same count, length and height, replacing any
+tabs it had. It is **one undo step and one chip** (*Tabs on N paths*); click the chip to
+select those parts again and change the settings, or delete it to take every one of those
+tabs off. With several paths selected the form lists them, with how many tabs each has, and
+**Clear Tabs on N Paths** takes them all off together.
+
+### Holding strips: a tight nest
+
+On a sheet nested tight, tabs stop working. A tab holds a part to whatever is beside it —
+and between closely packed parts that is waste the neighbouring cuts have already cut loose,
+so the part and the waste holding it come free together. What actually keeps a part down
+is a chain of uncut material all the way out to the edge of the sheet.
+
+**Holding strips** are that chain. With several parts selected the Tabs form offers two ways
+to hold them — choose **Joined by strips** instead of **Tabs on each path**. Each strip is a
+short join laid square across the gap between two neighbouring parts, or between a part and
+the edge of the sheet, and every cut through the stock lifts over it there. Together they make
+a network: every part hangs on the sheet's edge through its neighbours, so nothing comes loose
+however the waste between them is cut up.
+
+| Field | Meaning |
+|---|---|
+| **Joins Per Part** | How many joins each part makes into the network — each is a tab on the part |
+| **Width** | How wide each strip is across the gap |
+| **Height** | How much material is left under the cutter, as for a tab |
+
+Press **Place Strips**. They are drawn on the canvas as amber bands so you can check them
+before cutting, get one chip in the Objects strip (*Strips ×N*), and are one undo step.
+**Re-place Strips** replaces the whole set; **Remove Strips**, or deleting the chip, takes
+them off. They are saved with the project.
+
+How they are placed:
+
+- **Only the parts are joined.** Drag a box over a sheet and it catches the labels and holes
+  too; the strips join only the paths a cut sets free — an outside or centerline profile
+  through the stock — and the form says how many that is.
+- **Every join is square across one gap** and goes nowhere near any other part's edge, so it
+  lifts exactly two short stretches of cut: the two parts it joins.
+- **Joins spread round each part.** Each new join faces a different way off the part from the
+  ones it already has before any side gets a second, so a long thin part is held at both ends
+  and on both long sides rather than all along the side facing its neighbour.
+- **A join to the sheet's edge stops about 20 mm out.** The stock beyond is joined to the
+  edge already; the strip only has to bridge the part's own cut.
+- **Holes cut straight through them.** A hole lies inside its part, so cutting it cannot
+  break the chain the part itself carries on. Label engravings and other shallow cuts are not
+  lifted either — they cannot free anything.
+
+**How many joins?** Two holds a part at two points, usually both ends of it. Four holds it
+from every side, and is the better choice for long thin parts, which can flex and pivot about
+two. More joins hold better but leave more to clean up — each join is a tab to trim off.
+
+Strips are not the same thing as **Bridge Gaps Through Waste** in a Profile's Optimize Path:
+that one *cuts* straight across waste to join toolpaths; strips *leave* material standing.
+
 ---
 
 ## Pocket

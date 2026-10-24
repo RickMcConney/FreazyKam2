@@ -79,13 +79,18 @@ export function wholeGroupsOnly(
  * `transformObjects` — stays together in its own order) stands at the centre of its box.
  * Sheet by sheet (`cellOfPoint`, by that centre, as a part's sheet is read everywhere
  * else), sheets in reading order, because each sheet is its own program.
+ *
+ * `singly` makes every PATH its own object. Drilling wants that: a part's holes sit in
+ * the part's DXF block, so as one object they were bored in file order — across a 200 mm
+ * part and back — and there is nothing to finish about a part before the next hole.
  */
-export function locationOrder(ids: string[], paths: ImportedPath[], stock?: Stock): string[] {
+export function locationOrder(ids: string[], paths: ImportedPath[], stock?: Stock, singly = false): string[] {
   const byId = new Map(paths.map((p) => [p.id, p]))
   // What "one object" means is `transformObjects`' — the same objects Scale Each grows —
   // so a label drawn as a DXF block of strokes is engraved stroke after stroke, finishing
   // it before the next.
-  const units = transformObjects(ids.flatMap((id) => { const p = byId.get(id); return p ? [p] : [] }))
+  const found = ids.flatMap((id) => { const p = byId.get(id); return p ? [p] : [] })
+  const units = singly ? found.map((p) => [p]) : transformObjects(found)
   type Placed = { members: ImportedPath[]; x: number; y: number; sheet: Cell }
   const sheets = new Map<string, Placed[]>()
   const unplaced: ImportedPath[][] = []

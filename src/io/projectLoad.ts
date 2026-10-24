@@ -26,6 +26,7 @@ import type { Units, OriginPosition, ZOrigin, Material } from '../store/workpiec
 import type { SpindleType } from '../store/spindle'
 import { normalizeDoubleSided, type DoubleSided } from '../cam/doubleSided'
 import { normalizeTiling } from '../cam/tiling'
+import { normalizeBridges } from '../cam/bridges'
 
 interface SavedWorkpiece {
   widthMM: number
@@ -36,6 +37,7 @@ interface SavedWorkpiece {
   zOrigin?: ZOrigin
   doubleSided?: DoubleSided | null
   tiling?: unknown
+  bridges?: unknown
   material: Material
   tableLimitWidthMM: number
   tableLimitHeightMM: number
@@ -207,6 +209,7 @@ function installProject(project: ParsedProject, fileName?: string) {
   // A project saved before double-sided jobs, or an ordinary one, has none.
   wps.setDoubleSided(normalizeDoubleSided(wp.doubleSided))
   wps.setTiling(normalizeTiling(wp.tiling))
+  wps.setBridges(normalizeBridges(wp.bridges))
   // Absent in projects saved before it was added to the file format — keep the
   // local value instead of resetting to a default.
   if (typeof wp.safeHeightMM === 'number' && Number.isFinite(wp.safeHeightMM)) wps.setSafeHeight(wp.safeHeightMM)
@@ -371,6 +374,7 @@ export function newProject() {
   // Double-sided belongs to the document, not to the machine: it does not carry over.
   useWorkpieceStore.getState().setDoubleSided(null)
   useWorkpieceStore.getState().setTiling(null)
+  useWorkpieceStore.getState().setBridges(null)
   useProjectStore.getState().setName('Untitled Project')
   useProjectStore.getState().markClean()
   useTimelineStore.getState().resetToCurrentState()

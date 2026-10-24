@@ -172,6 +172,25 @@ describe('editing an operation', () => {
     await step()
     expect(events()).toBe(2)
   })
+
+  it('records ONE step for one write over many ops — a batch Regenerate — and one undo takes it all back', async () => {
+    // One step per op was 831 steps for 831 drill holes: a snapshot each (95 s) and the
+    // rest of the history pushed past its limit.
+    const ids = T().addOperations([pocket('a'), pocket('b'), pocket('c')])
+    await step()
+    usePathsStore.getState().addPaths([path('rect')])
+    await step()
+    T().updateOperations(ids.map((id) => ({ id, updates: { depthMM: 5 } as Partial<AnyOperation> })))
+    await step()
+    expect(events()).toBe(3)
+    // Changed again straight away (a second Regenerate) it is still that one step.
+    T().updateOperations(ids.map((id) => ({ id, updates: { depthMM: 6 } as Partial<AnyOperation> })))
+    await step()
+    expect(events()).toBe(3)
+    await undo()
+    expect(ids.map((id) => (get(id) as { depthMM: number }).depthMM)).toEqual([3, 3, 3])
+    expect(usePathsStore.getState().paths.map((p) => p.id)).toEqual(['rect'])
+  })
 })
 
 describe('replacing and revising a generated set', () => {

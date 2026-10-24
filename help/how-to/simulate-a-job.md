@@ -41,4 +41,7 @@ It closes the simulation too, even when you've hidden the player in the 3D view.
 
 Change an operation and the simulation updates by itself.
 
+A job stopped part way on the machine? Pause on the line where it stopped and use
+**Resume from line N** in the G-code viewer: [Restart a job](resume-a-job.md).
+
 **Related:** [What a simulation can't tell you](../explanation/simulation-limits.md)

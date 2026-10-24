@@ -7,6 +7,7 @@ import { shapeDisplayName, type ShapeParams } from '../shapes/shapeGenerators'
 import type { Units, OriginPosition, ZOrigin, Material } from '../store/workpieceStore'
 import type { DoubleSided } from '../cam/doubleSided'
 import type { Tiling } from '../cam/tiling'
+import type { BridgeSet } from '../cam/bridges'
 
 // Omit distributed over a union (plain Omit collapses AnyOperation to common keys)
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never
@@ -76,6 +77,7 @@ export interface WorkpieceEventChanges {
   material?: Material
   doubleSided?: DoubleSided | null
   tiling?: Tiling | null
+  bridges?: BridgeSet | null
 }
 
 export interface TimelineEventBase {
@@ -101,7 +103,11 @@ export type TimelineEventPayload =
   // roughing + finishing phases are two operations but one user action, and the
   // timeline records actions. `op` is the one a chip click opens for editing.
   | { kind: 'op.add'; op: SerializedOperation; linked?: SerializedOperation[] }
-  | { kind: 'op.update'; opId: string; opType?: string; updates: Partial<SerializedOperation> }
+  // `linked` is the other ops ONE write edited — a batch Regenerate rewrites every member's
+  // settings at once, and that is one step, not one per operation (831 drill holes recorded
+  // 831 steps, each snapshotting the program: 95 s, and the rest of the undo history gone
+  // past the 500-step limit). `updates` is `opId`'s; the members' are the same settings.
+  | { kind: 'op.update'; opId: string; opType?: string; updates: Partial<SerializedOperation>; linked?: string[] }
   | { kind: 'op.delete'; opIds: string[]; opType?: string }
   | { kind: 'op.reorder'; order: string[] }
   // Hiding an operation is not a view toggle: generateGcode skips invisible ops, so it
@@ -109,7 +115,9 @@ export type TimelineEventPayload =
   // replay restores it instead of quietly showing everything again.
   | { kind: 'op.setVisible'; opIds: string[]; visible: boolean; opType?: string }
   // ---- tabs ----
-  | { kind: 'tabs.apply'; pathId: string; tabs: Tab[] }  // replaces all tabs of pathId
+  // Replaces all tabs of pathId — and of every `linked` path, tabbed by the same click
+  // (one undo step for a sheet of parts). `tabs` holds all of them.
+  | { kind: 'tabs.apply'; pathId: string; tabs: Tab[]; linked?: string[] }
   | { kind: 'tabs.delete'; tabIds: string[] }
   | { kind: 'tabs.moveT'; tabId: string; t01: number }
   // ---- constraints ----
@@ -204,6 +212,7 @@ export function labelFor(ev: TimelineEventPayload): string {
         if (keys[0] === 'material') return 'Material'
         if (keys[0] === 'doubleSided') return 'Double-Sided'
         if (keys[0] === 'tiling') return 'Tiling'
+        if (keys[0] === 'bridges') return 'Holding Strips'
       }
       return 'Stock'
     }

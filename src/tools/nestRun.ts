@@ -14,6 +14,7 @@ import { copyOperationsForParts, type PartCopy } from './copyOperations'
 import { useToolpathStore } from '../store/toolpathStore'
 import { regenerateMany } from '../cam/regenerate'
 import { useTabStore } from '../store/tabStore'
+import { rebatchTabs } from '../store/copyPaths'
 import { uid } from '../uid'
 import { runInWorkerFor } from '../workers/workerClient'
 import type { FillParams, PathDefinition } from '../importers/svgImporter'
@@ -324,9 +325,9 @@ export async function runNest(input: NestRunInput): Promise<NestOutcome> {
   // operations generate, so a profile on a copy cuts round its tabs.
   if (partCopies.length > 0) {
     const ts = useTabStore.getState()
-    const copiedTabs = partCopies.flatMap((c) => ts.tabs
+    const copiedTabs = partCopies.flatMap((c) => rebatchTabs(ts.tabs
       .filter((t) => c.pathIds.has(t.pathId))
-      .map((t) => ({ ...t, id: uid('tab'), pathId: c.pathIds.get(t.pathId)! })))
+      .map((t) => ({ ...t, id: uid('tab'), pathId: c.pathIds.get(t.pathId)! }))))
     if (copiedTabs.length > 0) ts.replaceTabs([...ts.tabs, ...copiedTabs])
   }
   let opsCopied = 0

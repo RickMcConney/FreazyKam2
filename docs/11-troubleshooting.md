@@ -226,6 +226,36 @@ G-code. Start with Z zero and workholding.
 
 ---
 
+## Parts came loose on a nested sheet
+
+**Tabs can't hold a tight nest.** A tab holds a part to the material beside it, and on a
+close-packed sheet that material is waste the next part's cut has already cut free — so both
+go. Use **holding strips** instead: select the sheet's parts, open **Tabs**, choose
+**Joined by strips** and **Place Strips**. See
+[Holding strips](05-pockets.md#holding-strips-a-tight-nest).
+
+If the strips are placed and parts still move:
+
+- **Long thin parts flex about two joins.** Raise **Joins Per Part** to 4 — they are then held
+  on both long sides as well as at the ends.
+- **Were the parts profiled through the stock when you placed them?** Strips join only parts
+  some cut sets free; the form says how many it joined. Profile first, then **Re-place
+  Strips**.
+- **Height** — too little and the strips snap on the last pass; two to three millimetres
+  suits most wood, as for tabs.
+
+---
+
+## A job stopped part way through
+
+A broken bit, a power cut, a cancel: don't start again from the top. Simulate the job, find
+the line where it stopped in the G-code viewer, and press **Resume from line N** to write a
+restart file — carry on from that line, redo the pass or the part, or skip to the next part.
+**Zero X, Y and Z exactly as for the original run first.** See
+[Restarting a job that stopped](10-export.md#restarting-a-job-that-stopped).
+
+---
+
 ## Peck drilling with an end mill
 
 > *Peck drilling with an end mill — it must be centre-cutting to plunge.*

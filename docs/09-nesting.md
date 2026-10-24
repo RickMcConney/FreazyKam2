@@ -242,6 +242,13 @@ Nesting moves your parts. Two things follow:
   copies — but a tab that was in a sensible place before may now be facing a neighbour with
   3 mm between them.
 
+**On a tight nest, use holding strips instead of tabs.** Between closely packed parts, the
+waste a tab holds a part to is itself cut loose by the neighbouring cuts, and the two come
+free together. Select the sheet's parts, open **Tabs**, choose **Joined by strips** and
+**Place Strips**: every part is joined to its neighbours across the gaps, and through them
+to the sheet's edge. Profile the parts first — the strips join only parts that are cut
+through. See [Holding strips](05-pockets.md#holding-strips-a-tight-nest).
+
 ---
 
 ## Next

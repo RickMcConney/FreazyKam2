@@ -6,6 +6,7 @@ import type { WorkpieceEventChanges } from '../timeline/events'
 import { DEFAULT_CUSTOM_DIAL_RPM, normalizeCustomDial, spindleDialRange, clampToChartedRange, type SpindleType } from './spindle'
 import { normalizeDoubleSided, type DoubleSided } from '../cam/doubleSided'
 import { normalizeTiling, type Tiling } from '../cam/tiling'
+import { normalizeBridges, type BridgeSet } from '../cam/bridges'
 
 export type Units = 'mm' | 'in'
 
@@ -162,6 +163,8 @@ export interface WorkpieceState {
   doubleSided: DoubleSided | null
   // A tiled job's seams and pins (cam/tiling.ts), or null. Document state, like doubleSided.
   tiling: Tiling | null
+  // The sheet's bridges (cam/bridges.ts), or null. Document state, like doubleSided.
+  bridges: BridgeSet | null
   setWidth: (mm: number) => void
   setHeight: (mm: number) => void
   setThickness: (mm: number) => void
@@ -186,6 +189,7 @@ export interface WorkpieceState {
   setAutoFeedEnabled: (v: boolean) => void
   setDoubleSided: (ds: DoubleSided | null) => void
   setTiling: (t: Tiling | null) => void
+  setBridges: (b: BridgeSet | null) => void
 }
 
 export const useWorkpieceStore = create<WorkpieceState>()(
@@ -229,6 +233,7 @@ export const useWorkpieceStore = create<WorkpieceState>()(
       autoFeedEnabled: true,
       doubleSided: null,
       tiling: null,
+      bridges: null,
       setWidth: (mm) => setProj('widthMM', mm),
       setHeight: (mm) => setProj('heightMM', mm),
       setThickness: (mm) => setProj('thicknessMM', mm),
@@ -238,6 +243,7 @@ export const useWorkpieceStore = create<WorkpieceState>()(
       setMaterial: (m) => setProj('material', m),
       setDoubleSided: (ds) => setProj('doubleSided', ds),
       setTiling: (t) => setProj('tiling', t),
+      setBridges: (b) => setProj('bridges', b),
       setTableLimitWidth: (mm) => set({ tableLimitWidthMM: mm }),
       setTableLimitHeight: (mm) => set({ tableLimitHeightMM: mm }),
       setTableLimitDepth: (mm) => set({ tableLimitDepthMM: mm }),
@@ -279,6 +285,7 @@ export function mergePersistedWorkpiece<S extends WorkpieceState>(persisted: unk
     ...merged,
     ...clampToChartedRange(merged.spindleType, merged.minSpindleRpm, merged.maxSpindleRpm),
     doubleSided: normalizeDoubleSided(p.doubleSided), tiling: normalizeTiling(p.tiling),
+    bridges: normalizeBridges(p.bridges),
     customDialRpm: normalizeCustomDial(p.customDialRpm),
   }
 }

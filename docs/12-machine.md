@@ -407,6 +407,11 @@ and you would need to re-zero.
 After a **Stop** or any alarm, press **Unlock** beside the state, then check the machine
 before carrying on.
 
+**To pick up a job that stopped part way** — a broken bit, a power cut, a Cancel — make a
+resume file from the simulator's G-code viewer: carry on from the line it stopped at, redo
+the interrupted pass or part, or skip to the next part. See
+[Restarting a job that stopped](10-export.md#restarting-a-job-that-stopped).
+
 ---
 
 ## Overrides

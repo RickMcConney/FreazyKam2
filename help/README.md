@@ -61,6 +61,7 @@ Short steps for one task.
 **Cut**
 - [Cut out a part](how-to/cut-out-a-part.md)
 - [Add holding tabs](how-to/add-holding-tabs.md)
+- [Hold parts on a tightly nested sheet](how-to/hold-a-nested-sheet.md)
 - [Clear a pocket](how-to/clear-a-pocket.md)
 - [Cut a slot](how-to/cut-a-slot.md)
 - [Drill holes](how-to/drill-holes.md)
@@ -106,6 +107,7 @@ Short steps for one task.
 - [Turn the map to match where you sit](how-to/rotate-the-map.md)
 - [Send and run a job](how-to/run-a-job.md)
 - [Pause, stop or end a job early](how-to/stop-a-job.md)
+- [Restart a job that stopped part way](how-to/resume-a-job.md)
 - [Change speed during a job](how-to/use-overrides.md)
 - [Save G-code as a macro](how-to/use-macros.md)
 - [Fix a weak WiFi link](how-to/fix-wifi.md)

@@ -928,8 +928,7 @@ const tabCommands: Record<string, Command> = {
     const ops = useToolpathStore.getState().operations
     const tooTall = ops.filter((o): o is Extract<AnyOperation, { type: 'profile' | 'trochoidal' }> => (o.type === 'profile' || o.type === 'trochoidal') && ids.includes(o.pathId) && heightMM >= o.depthMM)
     if (tooTall.length) throw new Error(`A ${heightMM} mm tab is as tall as the ${tooTall[0].depthMM} mm cut of ${tooTall[0].name}; make it lower.`)
-    const { applyTabs } = useTabStore.getState()
-    for (const path of paths) applyTabs(path.id, count, path.d, lengthMM, heightMM)
+    useTabStore.getState().applyTabsMany(paths, count, lengthMM, heightMM)
     regenerateAffectedMany(ids)
     await waitForGeneration(GENERATION_WAIT_MS)
     const affected = useToolpathStore.getState().operations.filter((o) => (o.type === 'profile' || o.type === 'trochoidal') && ids.includes(o.pathId))

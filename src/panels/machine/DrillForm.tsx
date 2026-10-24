@@ -2,7 +2,7 @@
 import { FormShell, PathChip, PathListSection, PathRevisionHint, usePathToggle, ExcludedAfter, useExcludedPathIds, ToolSelector, DepthRow, GenerateBtn, useSessionOps, StartRow, useStartZ, toolsOfType, pickToolId, FormError, useBatchGenerate, generateLabel } from './shared'
 import type { BatchItem } from './batchGenerate'
 import { reviseBatch } from './reviseBatch'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { ICON } from '../../theme'
 import { AlertCircle, X } from 'lucide-react'
 import { useToolStore } from '../../store/toolStore'
@@ -12,7 +12,7 @@ import { usePathsStore, type ImportedPath } from '../../store/pathsStore'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 import { useUIStore } from '../../store/uiStore'
 import { seedStepDownMM } from '../../cam/feeds'
-import { extractCircles, type CircleInfo } from '../../canvas/selectionUtils'
+import { extractCircles, locationOrder, type CircleInfo } from '../../canvas/selectionUtils'
 import { type StartFrom } from '../../cam/startHeight'
 import { drillFormDefaults, drillPathItem, HELICAL_TOOL_TYPES } from './opDefaults'
 
@@ -32,6 +32,7 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
   const tools = useToolStore((s) => s.tools)
   const paths = usePathsStore((s) => s.paths)
   const selectedIds = usePathsStore((s) => s.selectedIds)
+  const locationSelection = usePathsStore((s) => s.locationSelection)
   const operations = useToolpathStore((s) => s.operations)
   const activeTool = useUIStore((s) => s.activeTool)
   const setActiveTool = useUIStore((s) => s.setActiveTool)
@@ -95,13 +96,24 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
   // Within ONE path the holes keep the order the outline gives them and the travel
   // optimizer is free to re-order them — a pin ring was selected as a ring, not as eight
   // separate picks, so there is no order of the user's to honour there.
-  const byId = new Map(paths.map((p) => [p.id, p]))
-  const selectionHoles = selectedIds
-    .flatMap((id) => { const p = byId.get(id); return p ? [p] : [] })
-    .flatMap((p) => {
-      const holes = extractCircles(p)
-      return holes.length > 0 ? [{ path: p, holes }] : []
-    })
+  //
+  // A DRAG BOX's selection is re-ordered by where each HOLE lies, one path at a time
+  // (`locationOrder`'s `singly`). The box's order placed whole objects, and a part's holes
+  // are in the part's DXF block — so each part's holes came out in file order, zigzagging
+  // across the part, and the program wandered. A pick-order selection keeps the picks.
+  const selectionHoles = useMemo(() => {
+    const byId = new Map(paths.map((p) => [p.id, p]))
+    const found = selectedIds
+      .flatMap((id) => { const p = byId.get(id); return p ? [p] : [] })
+      .flatMap((p) => {
+        const holes = extractCircles(p)
+        return holes.length > 0 ? [{ path: p, holes }] : []
+      })
+    if (selectedIds !== locationSelection || found.length < 2) return found
+    const at = new Map(found.map((h) => [h.path.id, h]))
+    return locationOrder(found.map((h) => h.path.id), paths, useWorkpieceStore.getState(), true)
+      .flatMap((id) => { const h = at.get(id); return h ? [h] : [] })
+  }, [paths, selectedIds, locationSelection])
   const selectedHoles = editOp ? [] : selectionHoles
   const holeCount = selectedHoles.reduce((n, g) => n + g.holes.length, 0)
 
@@ -142,7 +154,15 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
       radiusMM: (op.helicalRadius ?? 0) + (tools.find((t) => t.id === op.toolId)?.diameterMM ?? 0) / 2,
     }]
   }
-  const editHoles = editOp ? holesOf(editOp) : null
+  // An edited batch may change mode only when every member is drilled from a path: the
+  // holes are re-read from it in the new mode. Hand-placed peck points have no circle to
+  // bore helically.
+  const canSwitchMode = !editOp || pathBatch
+  const switched = !!editOp && form.drillMode !== editOp.drillMode
+  // Switched, the holes the new mode will read: the path's circles, not what the op stored.
+  const editPath = editPairs.find((e) => e.op.id === editOp?.id)?.path
+  const editCircles = switched && editPath ? extractCircles(editPath) : []
+  const editHoles = !editOp ? null : switched ? (editCircles.length > 0 ? editCircles : null) : holesOf(editOp)
   const editHoleCount = editBatch.reduce((n, op) => n + (holesOf(op)?.length ?? op.points.length), 0)
 
   // See PocketForm: ops this session already generated are not cuts preceding themselves.
@@ -177,7 +197,17 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
     const { toolId, depthMM, stepDownMM, stepDownManual, startFrom } = form
     // The holes of one path, read the way the form's mode reads them — one op per path.
     const pathItem = (path: ImportedPath, holes: CircleInfo[]): BatchItem => drillPathItem(path, holes, tool, form.drillMode)
-    const kept = (op: DrillOperation): BatchItem => ({ key: op.pathId ?? op.id, op, name: op.name, fields: {} })
+    // A batch switched to the other mode re-reads each member's holes from its path in the
+    // new mode — the same fields a new op of that mode gets, name included, on the same op.
+    const kept = (op: DrillOperation): BatchItem => {
+      const path = switched && op.pathId ? paths.find((p) => p.id === op.pathId) : undefined
+      const holes = path ? extractCircles(path) : []
+      if (path && holes.length > 0) {
+        const it = pathItem(path, holes)
+        return { ...it, op, fields: { ...it.fields, name: it.name } }
+      }
+      return { key: op.pathId ?? op.id, op, name: op.name, fields: {} }
+    }
 
     let items: BatchItem[]
     let batchSession = session
@@ -220,9 +250,9 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
     : selectedTool.type === 'taper' ? 'Peck drilling with a taper — cuts a round-bottomed cone, not a straight-walled hole.'
     : 'Peck drilling with a V-bit — cuts a cone, not a straight-walled hole.'
   const isDrillTool = selectedTool?.type === 'drill'
-  const peckReady = editOp ? editBatch.some((op) => op.points.length > 0)
+  const peckReady = editOp ? (switched ? pathBatch : editBatch.some((op) => op.points.length > 0))
     : pendingDrillPoints.length > 0 || !!sessionPeckOp || selectedHoles.length > 0
-  const helicalReady = editOp ? editBatch.some((op) => !!holesOf(op)) : selectedHoles.length > 0
+  const helicalReady = editOp ? (switched ? pathBatch : editBatch.some((op) => !!holesOf(op))) : selectedHoles.length > 0
   const canGenerate = !!selectedTool && !generating && form.depthMM > 0 &&
     ((form.drillMode === 'peck' && peckReady) || (form.drillMode === 'helical' && helicalReady && !isDrillTool))
   const peckFromCircles = form.drillMode === 'peck' && !editOp
@@ -233,18 +263,19 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
 
   return (
     <FormShell title={editOp ? `Edit Drill${editBatch.length > 1 ? ` — ${editBatch.length} paths` : ''}` : 'New Drill'} onClose={handleClose}>
-      {/* Mode toggle — read-only when editing */}
+      {/* Mode toggle — read-only when editing hand-placed points */}
       <div>
         <div className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">Mode</div>
         <div className="flex gap-1">
           {(['peck', 'helical'] as const).map((m) => (
-            <button key={m} onClick={() => { if (!editOp && m !== form.drillMode) up('drillMode', m) }}
+            <button key={m} onClick={() => { if (canSwitchMode && m !== form.drillMode) up('drillMode', m) }}
+              title={canSwitchMode ? undefined : 'Hand-placed points have no circle to bore helically'}
               className={[
                 'flex-1 py-1 text-body rounded border transition-colors capitalize',
                 form.drillMode === m
                   ? 'bg-blue-600 border-blue-500 text-white'
                   : 'bg-gray-50 dark:bg-neutral-900 border-gray-400 dark:border-neutral-700 text-gray-500 dark:text-neutral-400 hover:text-gray-800 dark:hover:text-neutral-200',
-                editOp ? 'opacity-60 cursor-default' : '',
+                canSwitchMode ? '' : 'opacity-60 cursor-default',
               ].join(' ')}>
               {m === 'peck' ? 'Peck at Points' : 'Helical (Circle)'}
             </button>

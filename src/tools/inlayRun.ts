@@ -110,7 +110,10 @@ export interface InlayRunArgs {
 export function runInlayGenerate(args: InlayRunArgs): Promise<void> {
   const { form, groups, selPaths, editOp, editBoundary, vbitTool, pocketTool, finishIsNone, session, groupKey, staleOps, staleDeleteIds, reportError } = args
   const operations = useToolpathStore.getState().operations
-  const { addOperations, updateOperation, replaceGeneratedOperations } = useToolpathStore.getState()
+  const { addOperations, updateOperations, replaceGeneratedOperations } = useToolpathStore.getState()
+  // Every write below that covers several ops goes in ONE updateOperations call, which is
+  // one undo step — a call per op recorded a step per op (see `linked` in timeline/events).
+  type OpWrite = { id: string; updates: Partial<AnyOperation> }
   let finish!: () => void
   const finished = new Promise<void>((r) => { finish = r })
   const done = () => { args.onDone(); finish() }
@@ -253,14 +256,14 @@ export function runInlayGenerate(args: InlayRunArgs): Promise<void> {
         toolId: editOp.phase === 'vbit' ? form.vbitToolId : form.pocketToolId,
         status: 'generating' as const,
       }
-      updateOperation(editOp.id, sharedUpdate as Partial<AnyOperation>)
-      if (linkedOp) {
-        updateOperation(linkedOp.id, {
+      updateOperations([
+        { id: editOp.id, updates: sharedUpdate as Partial<AnyOperation> },
+        ...(linkedOp ? [{ id: linkedOp.id, updates: {
           ...sharedOpFields, ...bandOf(editBoundary.id),
           toolId: linkedOp.phase === 'vbit' ? form.vbitToolId : form.pocketToolId,
           status: 'generating',
-        } as Partial<AnyOperation>)
-      }
+        } as Partial<AnyOperation> }] : []),
+      ])
       const cutoutIds = addCutoutProfiles()
       setTimeout(async () => {
         try {
@@ -292,15 +295,16 @@ export function runInlayGenerate(args: InlayRunArgs): Promise<void> {
       // instead of appending a contradictory second one. Replacing amends the chip that
       // created them, the way a depth edit does, rather than recording a delete and an add.
       const soloPayloads: Parameters<typeof addOperations>[0] = []
+      const soloWrites: OpWrite[] = []
       const soloSlots = groups.map(({ boundary, islands, islandPlugs, field, fieldPlugs }) => {
         // Re-Generate on a boundary this form already generated for updates that op in place.
         const existingId = session.liveOpId(groupKey(boundary.id))
         const name = `Inlay ${roleLabel} (End Mill): ${boundary.name}`
         if (existingId) {
-          updateOperation(existingId, { ...sharedOpFields, phase: 'endmill', toolId: form.pocketToolId,
+          soloWrites.push({ id: existingId, updates: { ...sharedOpFields, phase: 'endmill', toolId: form.pocketToolId,
             islandIds: islands.map((p) => p.id), islandPlugIds: islandPlugs.map((ps) => ps.map((p) => p.id)),
             ...fieldFields(role, field, fieldPlugs), ...bandOf(boundary.id),
-            name, status: 'generating' } as Partial<AnyOperation>)
+            name, status: 'generating' } as Partial<AnyOperation> })
           return existingId
         }
         return soloPayloads.push({ ...opBase, phase: 'endmill', toolId: form.pocketToolId,
@@ -308,11 +312,12 @@ export function runInlayGenerate(args: InlayRunArgs): Promise<void> {
           islandPlugIds: islandPlugs.map((ps) => ps.map((p) => p.id)),
           ...fieldFields(role, field, fieldPlugs), ...bandOf(boundary.id), name }) - 1
       })
+      updateOperations(soloWrites)
       const soloNew = staleDeleteIds.length > 0
         ? replaceGeneratedOperations({ anchorId: staleDeleteIds[0], deleteIds: staleDeleteIds, add: soloPayloads })
         : addOperations(soloPayloads)
       if (staleOps.length > 0) session.forget(staleOps.map((e) => e.key))
-      for (const id of soloNew) updateOperation(id, { status: 'generating' })
+      updateOperations(soloNew.map((id) => ({ id, updates: { status: 'generating' } })))
       const ids = soloSlots.map((slot) => typeof slot === 'string' ? slot : soloNew[slot])
       groups.forEach(({ boundary }, i) => {
         if (typeof soloSlots[i] === 'number') session.remember(groupKey(boundary.id), ids[i])
@@ -371,6 +376,7 @@ export function runInlayGenerate(args: InlayRunArgs): Promise<void> {
     // (they used to record one chip each). A slot is either an existing op's id or
     // an index into `newOps`, resolved once the ids come back.
     const newOps: Parameters<typeof addOperations>[0] = []
+    const pairWrites: OpWrite[] = []
     const phaseSlots = ([firstPhase, secondPhase] as const).map((phase) => {
       const toolId = phase === firstPhase ? firstToolId : secondToolId
       return groups.map(({ boundary, islands, islandPlugs, field, fieldPlugs }, i) => {
@@ -378,10 +384,10 @@ export function runInlayGenerate(args: InlayRunArgs): Promise<void> {
         const pair = existingPairs[i]
         if (pair) {
           const id = phase === firstPhase ? pair.firstId : pair.secondId
-          updateOperation(id, { ...sharedOpFields, phase, toolId,
+          pairWrites.push({ id, updates: { ...sharedOpFields, phase, toolId,
             islandIds: islands.map((p) => p.id), islandPlugIds: islandPlugs.map((ps) => ps.map((p) => p.id)),
             ...fieldFields(role, field, fieldPlugs), ...bandOf(boundary.id),
-            name, status: 'generating' } as Partial<AnyOperation>)
+            name, status: 'generating' } as Partial<AnyOperation> })
           return id
         }
         return newOps.push({ ...opBase, phase, toolId,
@@ -393,6 +399,7 @@ export function runInlayGenerate(args: InlayRunArgs): Promise<void> {
     // Same replace-don't-append rule as the roughing-only path above: an Invert toggle
     // re-reads the SAME selection into a different set of boundaries, so the pair this
     // session made for the old reading is a revision of this Generate, not a separate one.
+    updateOperations(pairWrites)
     const newIds = staleDeleteIds.length > 0
       ? replaceGeneratedOperations({ anchorId: staleDeleteIds[0], deleteIds: staleDeleteIds, add: newOps })
       : addOperations(newOps)
@@ -400,14 +407,14 @@ export function runInlayGenerate(args: InlayRunArgs): Promise<void> {
     const resolve = (slot: string | number) => typeof slot === 'number' ? newIds[slot] : slot
     const firstIds = phaseSlots[0].map(resolve)
     const secondIds = phaseSlots[1].map(resolve)
-    for (const id of newIds) updateOperation(id, { status: 'generating' })
+    updateOperations(newIds.map((id) => ({ id, updates: { status: 'generating' } })))
     groups.forEach(({ boundary }, i) => session.remember(groupKey(boundary.id), firstIds[i]))
 
     // Link paired ops so edit/regenerate can update both together.
-    for (let i = 0; i < groups.length; i++) {
-      updateOperation(firstIds[i],  { linkedOpId: secondIds[i]  } as Partial<AnyOperation>)
-      updateOperation(secondIds[i], { linkedOpId: firstIds[i]   } as Partial<AnyOperation>)
-    }
+    updateOperations(groups.flatMap((_, i) => [
+      { id: firstIds[i],  updates: { linkedOpId: secondIds[i] } as Partial<AnyOperation> },
+      { id: secondIds[i], updates: { linkedOpId: firstIds[i] } as Partial<AnyOperation> },
+    ]))
 
     const cutoutIds = addCutoutProfiles()
     setTimeout(async () => {

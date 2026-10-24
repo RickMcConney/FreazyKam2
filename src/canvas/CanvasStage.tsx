@@ -24,6 +24,7 @@ import { GridLayer } from './layers/GridLayer'
 import { WorkpieceLayer, originWorldXY } from './layers/WorkpieceLayer'
 import { DoubleSidedGuideLayer } from './layers/DoubleSidedGuideLayer'
 import { TilingLayer } from './layers/TilingLayer'
+import { BridgeLayer } from './layers/BridgeLayer'
 import { majorStepMM, minorStepMM } from './gridUtils'
 import { OriginLayer } from './layers/OriginLayer'
 import { DesignLayer } from './layers/DesignLayer'
@@ -2809,6 +2810,7 @@ export default function CanvasStage() {
             />
           )}
           <ToolpathLayer viewport={viewport} />
+          <BridgeLayer />
           <TabLayer viewport={viewport} />
           <SimulationLayer viewport={viewport} />
           <ShapePreviewLayer viewport={viewport} d={liveShapeD} />

@@ -229,6 +229,48 @@ Then cut it.
 
 ---
 
+## Restarting a job that stopped
+
+A broken bit, a power cut, a job you had to cancel half way: the program can be restarted
+from where it stopped instead of from the top. A bare "start from line N" in a sender is not
+a restart — line N then runs in whatever state the machine happens to be in, while the
+program's state at that line was built up by everything before it. FreazyKam writes a new
+file that puts that state back first.
+
+1. **Simulate** the job and open the **G-code viewer** (the document icon on the player).
+2. **Find the line where it stopped** — scrub the simulator to where the cutting stopped, or
+   click the line in the viewer. The simulator shows the stock as it stands at that line.
+3. Press **Resume from line N** at the top of the viewer. (It is hidden while playing —
+   pause first.)
+4. Choose where to restart. Picking one moves the simulator to its line, so you can see
+   where it begins; **Cancel** puts it back.
+
+| Restart | Begins | Use it when |
+|---|---|---|
+| **Carry on from where it stopped** | At that line, coming straight down through the cut already made | The stop was clean and nothing moved |
+| **Redo the interrupted pass** | Where the tool last came down from safe height | The pass in progress may be spoilt — a bit broke part way |
+| **Recut this part from its start** | The part's first pass, running the ones already cut again through air | You don't trust anything cut on this part |
+| **Skip to the next part** | The next part's first pass, leaving this one as it is | Recut the damaged part later with a program of its own |
+
+The panel shows the tool in force, where the tool comes in and how — **up to safe Z, across,
+then down at the plunge feed** — and any warnings. Tick **Pause after the spindle command**
+when your router is switched by hand: the file stops (M0) once the spindle should be running,
+so you can check it before anything moves. Then **Download resume file** and run it like any
+other.
+
+**Zero must be exactly where it was for the original run.** If the machine lost power,
+alarmed, or the stock moved, find X, Y and Z again first — the resume file goes back to the
+coordinates the job was using, and has no way to know they have moved.
+
+The file is the original program's own text from the restart line on, with only the entry
+move added, so it works for any controller and for G-code from any CAM program, not only
+FreazyKam's. A few states cannot be resumed from a line of G-code alone, and the panel says
+so rather than guessing: relative or inverse-time moves, cutter compensation, inside a canned
+cycle, after the coordinate system was changed (G92/G10), rotary axes, or before the program
+has set X, Y and Z.
+
+---
+
 ## Next
 
 - **[11. When something goes wrong](11-troubleshooting.md)** — failures, refusals, and what they mean

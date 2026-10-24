@@ -34,7 +34,7 @@
 
 import { flattenPath, isOpenSubpath, splitSelfIntersecting, ensureWinding, signedArea, type Pt2 } from './pathFlattener'
 import {
-  generateProfile, offsetClosedSubpaths, emitProfilePath, designPathAtT, nearestArcLen, tabClearRadiusMM, fitPassCoarse,
+  generateProfile, offsetClosedSubpaths, emitProfilePath, designPathAtT, nearestArcLen, tabClearRadiusMM, withBridges, fitPassCoarse,
   type ProfileParams, type PathEmitContext, type TabRange,
 } from './profile'
 import { planCommonLineCut, segmentLength, type CommonLineIssue } from './commonLine'
@@ -667,5 +667,7 @@ export function generateSharedLineProfile(
       }
     }
   }
-  return { segments, sharedLengthMM, toolpaths, bridges: bridges.length }
+  // The sheet's bridges (cam/bridges) — not the `bridges` above, which are waste cuts this
+  // network may take — held off over the whole network at once.
+  return { segments: withBridges(segments, tool, params, startZ), sharedLengthMM, toolpaths, bridges: bridges.length }
 }

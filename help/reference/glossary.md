@@ -14,6 +14,7 @@
 | **Feed hold** | Controlled stop that keeps position |
 | **Flutes** | Cutting edges on a bit |
 | **G-code** | The program a CNC controller runs |
+| **Holding strip** | A short strip left uncut across the gap between two nested parts, or a part and the sheet's edge. Together they hold every part to the sheet. See [Hold a nested sheet](../how-to/hold-a-nested-sheet.md) |
 | **Island** | A shape inside a pocket left standing |
 | **Max Z** | A bit's usable cutting length |
 | **Module** | Gear tooth size. Pitch diameter = module × teeth |
@@ -22,6 +23,7 @@
 | **Post-processor** | Rules for writing G-code for your controller |
 | **Relay** | Small file on a FluidNC controller that lets FreazyKam connect |
 | **Rest-machining** | Cutting only what earlier passes left |
+| **Resume file** | A G-code file that restarts a stopped job from a chosen line, with the machine's state put back first. See [Restart a job](../how-to/resume-a-job.md) |
 | **Scallop** | Ridge left between passes of a round bit |
 | **Seam** | Where one tile ends and the next begins |
 | **Sheet** | One board of stock. A job can span several, each exported as its own file |

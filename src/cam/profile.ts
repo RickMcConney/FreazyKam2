@@ -6,6 +6,7 @@ import type { MotionSegment } from '../store/toolpathStore'
 import type { Tool, CuttingDirection } from '../store/toolStore'
 import type { CutSide } from '../store/toolpathStore'
 import type { Tab } from '../store/tabStore'
+import { clampToBridges, type BridgeSet } from './bridges'
 
 export interface ProfileParams {
   side: CutSide
@@ -36,6 +37,22 @@ export interface ProfileParams {
   // Surface the cut starts from (0 = stock top, negative = the floor an earlier op left).
   // depthMM and tab heights are both measured from here.
   startZMM?: number
+  /** The sheet's bridges (cam/bridges): an outside or centerline cut lifts wherever it
+   *  crosses one. An inside cut does not — a hole cannot part a strip its part carries. */
+  bridges?: BridgeSet
+}
+
+/** How far the tool CENTRE must keep from a bridge's strip: its radius at the bridge's
+ *  height above the tip, as for a tab (`tabClearRadiusMM`). */
+export function bridgeClearRadiusMM(tool: Tool, heightMM: number): number {
+  return Math.max(tool.diameterMM / 2, toolRadiusAtHeight(tool, heightMM))
+}
+
+/** A finished cut held off the sheet's bridges (cam/bridges), unless it is an inside one.
+ *  The bridge stands `heightMM` above the bottom of THIS cut, as a tab does. */
+export function withBridges(segs: MotionSegment[], tool: Tool, params: { side: CutSide; depthMM: number; bridges?: BridgeSet }, startZ: number): MotionSegment[] {
+  const b = params.side !== 'inside' && params.bridges?.lines.length ? params.bridges : undefined
+  return b ? clampToBridges(segs, b, bridgeClearRadiusMM(tool, b.heightMM), Math.min(startZ, startZ - params.depthMM + b.heightMM)) : segs
 }
 
 function fitCircle(pts: Pt2[]): { cx: number; cy: number; r: number } | null {
@@ -122,7 +139,15 @@ export function polylinePassWithTabs(
   }
 
   const total = arcLens[arcLens.length - 1]
-  const sorted = [...tabRanges].sort((a, b) => a.start - b.start)
+  // OVERLAPPING ranges are merged, at the higher of their lifts: walked one after another,
+  // the second started behind where the first had already taken the tool and drove it back
+  // along the path. Tabs close together did it, and a bridge crossing a tabbed edge does.
+  const sorted: { start: number; end: number; tabZ: number }[] = []
+  for (const tr of [...tabRanges].sort((a, b) => a.start - b.start)) {
+    const last = sorted[sorted.length - 1]
+    if (last && tr.start <= last.end) { last.end = Math.max(last.end, tr.end); last.tabZ = Math.max(last.tabZ, tr.tabZ) }
+    else sorted.push({ ...tr })
+  }
 
   const segs: MotionSegment[] = []
   let curZ = zDepth
@@ -383,7 +408,30 @@ export function generateProfile(
     for (const pts of finishPaths) emitProfilePath(segs, pts, false, finishCtx)
   }
 
-  return segs
+  return withBridges(segs, tool, params, startZ)
+}
+
+// How far along a closed loop of length `total` the lifts covering its START reach: 0 when
+// the start is clear, else just past the end of the run of lifts (wrapping) it sits in.
+function liftEndCovering(ranges: { start: number; end: number }[], total: number): number {
+  const sorted = ranges.flatMap((r) => (r.start < 0 ? [{ start: r.start + total, end: total }, { start: 0, end: r.end }] : [r]))
+    .sort((a, b) => a.start - b.start)
+  const covers = (s: number) => sorted.some((r) => s >= r.start - 1e-9 && s <= r.end + 1e-9)
+  if (!covers(0) && !covers(total)) return 0
+  let at = 0
+  for (const r of sorted) if (r.start <= at + 1e-9 && r.end > at) at = r.end
+  // The whole loop under lifts: nowhere clear to plunge, so leave it as it was.
+  return at >= total - 1e-6 ? 0 : at + 1e-3
+}
+
+// The closed loop `closed` (first point repeated last, arc lengths `lens`) restarted `s`
+// along it — the open ring, beginning at the new start.
+function loopFromArc(closed: Pt2[], lens: number[], s: number): Pt2[] {
+  const start = interpPt(closed, lens, s)
+  const out: Pt2[] = [start]
+  for (let i = 1; i < closed.length; i++) if (lens[i] > s + 1e-9) out.push(closed[i])
+  for (let i = 1; i < closed.length && lens[i] <= s + 1e-9; i++) out.push(closed[i])
+  return out
 }
 
 /** A stretch of a cut path, by arc length, over which the tool rises to `tabZ`. */
@@ -618,18 +666,28 @@ export function emitProfilePath(segs: MotionSegment[], rawPts: Pt2[], isOpen: bo
       segs.push({ x: sx, y: sy, z: safeZ, rapid: true })
     }
   } else {
-    const rotated = params.startNear
+    let rotated = params.startNear
       ? rotatePolylineNear(oriented, params.startNear.x, params.startNear.y)
       : oriented
-    const [sx, sy] = rotated[0]
 
     // Append start point so the closing edge is a real segment (needed for tab arc-length math).
-    const closed: Pt2[] = [...rotated, rotated[0]]
-
-    const { lens } = arcLengths(closed)
+    let closed: Pt2[] = [...rotated, rotated[0]]
+    let { lens } = arcLengths(closed)
 
     // Tab ranges over the full closed path (used by both ramp and non-ramp branches)
-    const tabRanges = ctx.tabRangesOn(closed, lens)
+    let tabRanges = ctx.tabRangesOn(closed, lens)
+    // THE PLUNGE MUST LAND OUTSIDE EVERY LIFT. The loop is plunged at its start and the lift
+    // is only reached by cutting along it, so a tab or bridge over the start point was cut
+    // into at full depth: a circle's start falls exactly where a bridge crosses it. Start
+    // instead where the lifts covering the start end.
+    const clearFrom = liftEndCovering(tabRanges, lens[lens.length - 1])
+    if (clearFrom > 0) {
+      rotated = loopFromArc(closed, lens, clearFrom)
+      closed = [...rotated, rotated[0]]
+      ;({ lens } = arcLengths(closed))
+      tabRanges = ctx.tabRangesOn(closed, lens)
+    }
+    const [sx, sy] = rotated[0]
 
     if (params.rampIn) {
       const rampLen = 2 * feedDiameterMM(tool)

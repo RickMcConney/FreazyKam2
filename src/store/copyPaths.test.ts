@@ -52,6 +52,17 @@ describe('copyPaths', () => {
     expect(out.tabs[0].t).toBe(0.25)
   })
 
+  it('gives copied tabs a batch of their own, so a copy\'s tabs are not on the original\'s chip', () => {
+    const tabs: Tab[] = [
+      { id: 't1', pathId: 'a', t: 0.25, lengthMM: 6, heightMM: 2, batchId: 'tb' },
+      { id: 't2', pathId: 'b', t: 0.25, lengthMM: 6, heightMM: 2, batchId: 'tb' },
+    ]
+    const out = copyPaths([path({ id: 'a' }), path({ id: 'b' })], tabs, [], DUPLICATE)
+    const batches = new Set(out.tabs.map((t) => t.batchId))
+    expect(batches.size).toBe(1)
+    expect(batches.has('tb')).toBe(false)
+  })
+
   // The other drift: a boolean copied WITH its hidden operands keeps its recipe, pointing at
   // the copied operands — for a paste now exactly as for a duplicate.
   it('keeps a boolean recipe pointing at the copied operands, whichever gesture copied it', () => {

@@ -172,6 +172,34 @@ describe('the object strip', () => {
     expect(chips[2].pathIds).toEqual(['b'])
   })
 
+  // One Apply over a selection is one decision, as one Generate is.
+  it('draws ONE chip for tabs one click put on several paths, after the first of them', () => {
+    const tab = (id: string, pathId: string, batchId?: string) => ({ id, pathId, t: 0.5, lengthMM: 5, heightMM: 2, batchId })
+    const chips = buildChips([path({ id: 'a' }), path({ id: 'b' }), path({ id: 'c' }), path({ id: 'd' })], [], [
+      tab('1', 'b', 'tb'), tab('2', 'b', 'tb'), tab('3', 'c', 'tb'), tab('4', 'c', 'tb'), tab('5', 'd'),
+    ])
+    expect(chips.map((c) => c.key)).toEqual(['a', 'b', 'tabs:tb', 'c', 'd', 'tabs:d'])
+    const batch = chips.find((c) => c.key === 'tabs:tb')!
+    expect(batch.label).toBe('Tabs on 2 paths')
+    expect(batch.pathIds).toEqual(['b', 'c'])
+    expect(batch.form).toBe('tabs')
+  })
+
+  it('gives the sheet\'s holding strips one chip, selecting the parts they were placed through', () => {
+    const bridges = { lines: [{ x1: 5, y1: 0, x2: 5, y2: 10 }, { x1: 0, y1: 5, x2: 10, y2: 5 }], widthMM: 5, heightMM: 2, pathIds: ['a', 'gone'] }
+    const chips = buildChips([path({ id: 'a' })], [], [], [], 'mm', { bridges })
+    const chip = chips.find((c) => c.key === 'job:bridges')!
+    expect(chip.label).toBe('Strips \u00d72')
+    expect(chip.pathIds).toEqual(['a'])
+    expect(chip.form).toBe('tabs')
+  })
+
+  it('goes back to a chip of its own for a batch left with one path', () => {
+    // The others were re-tabbed on their own, which takes them out of the batch.
+    const chips = buildChips([path({ id: 'a' })], [], [{ id: '1', pathId: 'a', t: 0.5, lengthMM: 5, heightMM: 2, batchId: 'tb' }])
+    expect(chips.map((c) => c.key)).toEqual(['a', 'tabs:a'])
+  })
+
   it('gives a corner-treated path a Corners chip', () => {
     const chips = buildChips([path({
       id: 'a',

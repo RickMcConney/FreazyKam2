@@ -565,4 +565,14 @@ describe('locationOrder — a box selection cuts from the bottom-left corner, ne
     // The group spans 0..24 (centre 12), so the lone square (centre 5) is nearer the corner.
     expect(locationOrder(['g2', 'lone', 'g1'], paths)).toEqual(['lone', 'g2', 'g1'])
   })
+
+  it('drills hole after nearest hole when each path stands alone, even inside one part block', () => {
+    // One part's holes, in the file order that zigzagged across the part. As one object
+    // they keep that order; `singly`, each hole goes to the nearest one left.
+    const hole = (id: string, x: number, y: number) => sq(id, x, y, 2, { sourceGroups: ['part'] })
+    const paths = [hole('h1', 0, 0), hole('h2', 200, 0), hole('h3', 10, 0), hole('h4', 190, 0)]
+    const ids = paths.map((p) => p.id)
+    expect(locationOrder(ids, paths)).toEqual(['h1', 'h2', 'h3', 'h4'])
+    expect(locationOrder(ids, paths, undefined, true)).toEqual(['h1', 'h3', 'h4', 'h2'])
+  })
 })

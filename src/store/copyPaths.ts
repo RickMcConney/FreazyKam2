@@ -194,9 +194,9 @@ export function copyPaths(
 
   // Holding tabs belong TO a path and reference nothing else, so they travel with it —
   // repointed at the copy, with ids of their own.
-  const outTabs = tabs
+  const outTabs = rebatchTabs(tabs
     .filter((t) => newIdOf.has(t.pathId))
-    .map((t) => ({ ...t, id: uid('tab'), pathId: newIdOf.get(t.pathId)! }))
+    .map((t) => ({ ...t, id: uid('tab'), pathId: newIdOf.get(t.pathId)! })))
 
   const ids = new Set(newIdOf.keys())
   const outConstraints = constraintsWithin(constraints, ids).map((c) => {
@@ -205,4 +205,19 @@ export function copyPaths(
   })
 
   return { paths: out, tabs: outTabs, constraints: outConstraints, newIdOf }
+}
+
+/**
+ * Tabs copied onto copies of their paths get batch ids of their own, one per batch copied:
+ * the copies' tabs are a set like the originals', and sharing the id would put a pasted
+ * part's tabs on the ORIGINAL's chip — where deleting the chip took both.
+ */
+export function rebatchTabs(tabs: Tab[]): Tab[] {
+  const fresh = new Map<string, string>()
+  return tabs.map((t) => {
+    if (!t.batchId) return t
+    let id = fresh.get(t.batchId)
+    if (!id) { id = uid('tabs'); fresh.set(t.batchId, id) }
+    return { ...t, batchId: id }
+  })
 }

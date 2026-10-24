@@ -14,7 +14,8 @@
    | Pack From | **Left Edge** or **Bottom Edge** |
 
 4. Click **Nest on Stock**.
-5. Regenerate any amber operations, and check your tabs.
+5. Regenerate any amber operations, and check your tabs. Packed tight? Use
+   [holding strips](hold-a-nested-sheet.md) instead.
 
 ![Nine parts nested to the left](../../docs/images/09-nest.png)
 

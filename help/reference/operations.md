@@ -226,6 +226,6 @@ No Generate button: the pin holes are drilled automatically, first in every tile
 | **Boolean** | Operation: union · intersect · subtract | Apply Boolean |
 | **Offset** | Distance (+ outset, − inset) · Keep shape · Keep generated shapes · Corner Style: miter · round · square | Apply Offset |
 | **Pattern** | Mode: linear (Rows, Cols, X Gap, Y Gap) · circular (Count, Radius, Start°, End°, Rotate items) | Apply Pattern |
-| **Tabs** | Count · Height · Length | Apply Tabs |
+| **Tabs** | Several paths: Hold With: Joined by strips · Tabs on each path. Tabs: Count · Height · Length. Strips: Joins Per Part · Height · Width | Apply Tabs (Apply Tabs to N Paths) · Place Strips / Re-place Strips · Remove Strips |
 | **Corners** | Corner Treatment: Outer Round · Inner Round · Chamfer · Dogbone · None · Radius (**Tool Radius** for Dogbone) | Apply to All Corners / Apply to N Selected Corners |
 | **Nest** | Shared lines (+ end mill) · Part Gap · Edge Margin · Rotation Step: None · 90° · 45° · 15° · Pack From: Left Edge · Bottom Edge · Fill stock with copies (+ Parts, Copy toolpaths) · Nest inside holes · Avoid other paths | Nest on Stock (Fill Stock when filling; Update Nest from a Nest chip) |

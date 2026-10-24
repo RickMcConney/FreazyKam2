@@ -642,19 +642,25 @@ export const useToolpathStore = create<ToolpathState>()((set, get) => ({
     }) }))
     if (opts?.record === false) return
     let edited = false
+    // A settings edit joins the op's defining step (usually its op.add) while that is the
+    // latest step — changing a just-made pocket's depth is an argument edit to that call.
+    // The ops defined further back get ONE op.update between them, so the write is one
+    // undo step however many ops it covers (see `linked` in timeline/events).
+    const tl = useTimelineStore.getState()
+    const own: { id: string; recordable: Record<string, unknown> }[] = []
     for (const { id, updates } of entries) {
       const recordable = { ...updates } as Record<string, unknown>
       for (const k of DERIVED_OP_KEYS) delete recordable[k]
       if (Object.keys(recordable).length === 0) continue
       edited = true
-      // A settings edit joins the op's defining step (usually its op.add) while that is
-      // the latest step — changing a just-made pocket's depth is an argument edit to
-      // that call. An op defined further back gets an op.update of its own, so the edit
-      // is its own undo step (see joinsTip in timelineStore).
-      const tl = useTimelineStore.getState()
-      if (!tl.joinsTip([{ op: id }])) {
-        tl.record({ kind: 'op.update', opId: id, opType: typeOf.get(id), updates: recordable as Partial<SerializedOperation> })
-      }
+      if (!tl.joinsTip([{ op: id }])) own.push({ id, recordable })
+    }
+    if (own.length > 0) {
+      tl.record({
+        kind: 'op.update', opId: own[0].id, opType: typeOf.get(own[0].id),
+        updates: own[0].recordable as Partial<SerializedOperation>,
+        ...(own.length > 1 ? { linked: own.slice(1).map((o) => o.id) } : {}),
+      })
     }
     // A settings edit here can move this op's floor (depth, boundary, islands, its own
     // start reference), which is a change to everything sitting ON that floor. Derived
