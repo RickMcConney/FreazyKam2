@@ -966,9 +966,22 @@ export const useMachineStore = create<MachineState>()(
           if (!link?.isOpen) return
           const dir = get().sdPath
           set({ sdBusy: `Uploading ${file.name}…`, sdError: null })
+          // Read into memory HERE, as Send to card's file already is. A picked or dropped
+          // File is only a handle onto the disk; handed to the relay window (another
+          // origin, another process) it is read there while the XHR streams, and any
+          // failure to read it — the file re-exported since it was picked, say — reaches
+          // us only as a bare "relay: network error". The controller and request shape
+          // were cleared by uploading the same file with the same fields from curl.
+          let data: File
+          try {
+            data = new File([await file.arrayBuffer()], file.name, { type: file.type })
+          } catch (e) {
+            set({ sdBusy: null, sdError: `Could not read ${file.name}: ${(e as Error).message} — pick the file again` })
+            return
+          }
           const r = await link.http({
             method: 'POST', path: '/upload',
-            form: sdUploadForm(dir, file, file.name, new Date(file.lastModified)),
+            form: sdUploadForm(dir, data, file.name, new Date(file.lastModified)),
             onProgress: (loaded, total) => {
               if (total > 0) set({ sdBusy: `Uploading ${file.name} ${Math.round((100 * loaded) / total)}%` })
             },
@@ -981,7 +994,7 @@ export const useMachineStore = create<MachineState>()(
           // (This also replaces a loaded job of the same name, whose preview would
           // otherwise be of a file that no longer exists.)
           if (onCard(file.name)) {
-            set({ job: { dir, name: file.name, preview: jobPreview(await file.text()) } })
+            set({ job: { dir, name: file.name, preview: jobPreview(await data.text()) } })
           } else if (r.status === 200) {
             set({ sdError: `${file.name} did not appear on the card after uploading` })
           }

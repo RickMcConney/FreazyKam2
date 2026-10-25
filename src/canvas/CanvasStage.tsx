@@ -510,7 +510,9 @@ export default function CanvasStage() {
   const [pickDrag, setPickDrag] = useState<{ dx: number; dy: number } | null>(null)
   // Ref-backed like liveTransform: mouseup reads the ref, so a release that lands before
   // React commits the last mousemove's box selects with THAT box, not the frame before.
-  const [dragBox, dragBoxRef, setDragBox] = useRefState<{ sx: number; sy: number; ex: number; ey: number } | null>(null)
+  // `op`: Shift held at the press ADDS what the box catches to the selection, Alt
+  // REMOVES it; neither replaces it.
+  const [dragBox, dragBoxRef, setDragBox] = useRefState<{ sx: number; sy: number; ex: number; ey: number; op: 'replace' | 'add' | 'remove' } | null>(null)
   const [snapGuides, setSnapGuides] = useState<SnapGuides | null>(null)
   // Object-snapped cursor while the pen tool is active — feeds the pen live
   // preview so it shows exactly where a click would land.
@@ -1815,9 +1817,12 @@ export default function CanvasStage() {
       // Region picking (on while the Pocket form is open) decides on mouseup: a
       // press that never moves picks the enclosed area under it, so the selection
       // has to survive until then — a drag is still a drag box.
-      if (activeTool !== 'region') selectPath(null)
+      // Shift or Alt edits the selection the box starts from, so it has to survive
+      // the press — a Shift/Alt click on empty canvas deselects nothing.
+      const op = activeTool === 'region' ? 'replace' : e.evt.shiftKey ? 'add' : e.evt.altKey ? 'remove' : 'replace'
+      if (activeTool !== 'region' && op === 'replace') selectPath(null)
       beginGesture({ type: 'dragbox', startScreen: { x: stagePointer.x, y: stagePointer.y } })
-      setDragBox({ sx: stagePointer.x, sy: stagePointer.y, ex: stagePointer.x, ey: stagePointer.y })
+      setDragBox({ sx: stagePointer.x, sy: stagePointer.y, ex: stagePointer.x, ey: stagePointer.y, op })
     }
   }, [selectPath, setMode2, beginGesture, startDrawShape, startPenDraw, exitNodeEdit, getFlat,
       onConstrainClick, bodyOfRef, pickHeldRef, pickHotRef])
@@ -2474,8 +2479,29 @@ export default function CanvasStage() {
           // running either way, so they cannot hold a group out of the selection.
           // In LOCATION order, bottom left to top right: a box has no picks to record,
           // and the forms cut in selection order (see locationOrder).
-          usePathsStore.getState().setLocationSelection(
-            locationOrder(enclose ? wholeGroupsOnly(ids, caught, allPaths) : ids, allPaths, useWorkpieceStore.getState()))
+          const boxed = enclose ? wholeGroupsOnly(ids, caught, allPaths) : ids
+          const ps = usePathsStore.getState()
+          const order = (list: string[]) => locationOrder(list, allPaths, useWorkpieceStore.getState())
+          if (dragBox.op === 'replace') {
+            ps.setLocationSelection(order(boxed))
+          } else {
+            // Shift adds, Alt removes. A selection that was itself a box's (or is
+            // empty) stays in location order, re-ordered over what it now holds; one
+            // made by picking keeps its picks, with what a box adds after them.
+            const base = ps.selectedIds
+            const wasLocation = base.length === 0 || ps.locationSelection === base
+            const boxedSet = new Set(boxed)
+            if (dragBox.op === 'add') {
+              const have = new Set(base)
+              const added = boxed.filter((id) => !have.has(id))
+              if (wasLocation) ps.setLocationSelection(order([...base, ...added]))
+              else ps.setSelectedIds([...base, ...order(added)])
+            } else {
+              const kept = base.filter((id) => !boxedSet.has(id))
+              if (wasLocation && kept.length) ps.setLocationSelection(order(kept))
+              else ps.setSelectedIds(kept)
+            }
+          }
         } else if (useUIStore.getState().activeTool === 'region') {
           // A click off every line: pick the enclosed area there, or deselect
           // when nothing encloses it, as a click on empty canvas always does.
@@ -2946,7 +2972,8 @@ export default function CanvasStage() {
           only thing on screen that says which of the two a drag is going to do. */}
       {dragBox && dragBoxStyle && (
         <div
-          className={`absolute border border-blue-400 bg-blue-400/10 pointer-events-none ${
+          className={`absolute border pointer-events-none ${
+            dragBox.op === 'remove' ? 'border-red-400 bg-red-400/10' : 'border-blue-400 bg-blue-400/10'} ${
             dragBoxEncloses(dragBox) ? '' : 'border-dashed'}`}
           style={dragBoxStyle}
         />
