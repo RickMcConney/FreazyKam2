@@ -8,6 +8,7 @@ import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
 import { BUILD_DATE } from '../version'
 import { shapeDisplayName, type ShapeType } from '../shapes/shapeGenerators'
 import { majorStepMM, minorStepMM, formatRulerLabel } from '../canvas/gridUtils'
+import { useRealScale, scaleLabel } from '../canvas/screenScale'
 
 function modeLabel(activeTool: string, nodeEditPathId: string | null): string {
   if (nodeEditPathId) return 'Edit Points'
@@ -32,6 +33,8 @@ export default function StatusBar() {
   // which is what the grid step is chosen from (see gridUtils.majorStepMM).
   const viewScale = useCanvasStore((s) => s.zoomPct)
   const darkMode = useUIStore((s) => s.darkMode)
+  const setScreenCalibrationOpen = useUIStore((s) => s.setScreenCalibrationOpen)
+  const { pxPerMM: realPx } = useRealScale()
   const { units, origin, widthMM, heightMM, thicknessMM, material, machineRigidity } = useWorkpieceStore()
 
   const orgWorld = originWorldXY(origin, widthMM, heightMM)
@@ -147,6 +150,17 @@ export default function StatusBar() {
                 sub-pixel wobble, not a real shift. */}
             Grid: <span className="inline-block min-w-[6ch] text-right">{gridLabel}</span>
           </span>
+        )}
+        {/* The view against REAL size on this screen (canvas/screenScale.ts); a click
+            recalibrates, and on a display never calibrated it is the way in. */}
+        {workspaceTab === '2d' && (
+          <button
+            className="font-mono hover:text-gray-900 dark:hover:text-neutral-100"
+            title={realPx === null ? 'Calibrate this screen so the 1:1 button shows parts at real size' : 'Zoom against real size on this screen — click to recalibrate'}
+            onClick={() => setScreenCalibrationOpen(true)}
+          >
+            {realPx === null ? 'Calibrate screen' : <>Scale: <span className="inline-block min-w-[5ch] text-right">{scaleLabel(viewScale, realPx)}</span></>}
+          </button>
         )}
         {/* nowrap because the centre cluster is flex-shrink-0: on a narrow window
             this is what gets squeezed, and wrapping would break it onto a second

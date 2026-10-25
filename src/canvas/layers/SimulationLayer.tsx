@@ -218,7 +218,7 @@ export const SimulationLayer = memo(function SimulationLayer({ viewport }: Props
   const toolRadius = Math.max(activeCutWidth / 2, 1.5 / scale)
 
   return (
-    <Group listening={false}>
+    <Group name="simulation" listening={false}>
       <CompletedTrail
         segments={segments} upToIdx={curSegIdx - 1}
         ox={ox} oy={oy} toolStates={toolStates} heat={heat}

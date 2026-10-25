@@ -28,6 +28,7 @@ import {
   photoVcarveFormDefaults, norm180, profile3dFormDefaults, profile3dOpFields, profile3dSettingsOf, inlayTools, inlayFormDefaults,
   PROFILE_TOOL_TYPES, POCKET_TOOL_TYPES, VCARVE_TOOL_TYPES, HELICAL_TOOL_TYPES, TROCHOIDAL_TOOL_TYPES, SURFACE_TOOL_TYPES,
   PHOTO_VCARVE_TOOL_TYPES, PROFILE3D_FINISH_TOOL_TYPES, PROFILE3D_ROUGH_TOOL_TYPES, type Profile3dSettings,
+  PROFILE_KEY, savedProfileFor,
 } from './opDefaults'
 import { useToolpathStore, INLAY_NO_FINISH, type InlayOperation, type Profile3dOperation } from '../../store/toolpathStore'
 import { runInlayGenerate, inlayEditGroup, type InlaySettings } from '../../tools/inlayRun'
@@ -150,7 +151,10 @@ const profile: ToolpathKind = {
   },
   allowedTools: (tools) => toolsOfType(tools, PROFILE_TOOL_TYPES),
   plan(paths, s, ctx) {
-    const base = mergeWithDefaults(ctx.saved('profile'), profileFormDefaults(this.allowedTools(ctx.tools, s)[0], ctx.thicknessMM), ctx.tools)
+    // The named side's own saved settings, as the form takes them (opDefaults
+    // `savedProfileFor`); a side never generated falls back on the last profile's.
+    const saved = savedProfileFor(ctx.saved, s.side as CutSide | undefined) ?? ctx.saved(PROFILE_KEY)
+    const base = mergeWithDefaults(saved, profileFormDefaults(this.allowedTools(ctx.tools, s)[0], ctx.thicknessMM), ctx.tools)
     const tool = chooseTool(this, ctx.tools, s, base.toolId)
     const side = (s.side ?? base.side) as CutSide
     const centerline = side === 'centerline'

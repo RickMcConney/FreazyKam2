@@ -670,20 +670,21 @@ export function GenerateBtn({ disabled, generating, onClick, label = 'Generate T
 
 /**
  * A form's Generate: `generate(args, form)` runs `runBatchGenerate` with the form's own
- * error banner, and saves `form` as the defaults for the next one.
+ * error banner, and saves `form` as the defaults for the next one — under `formKey`, or under
+ * every key it returns for this form (Profile keeps a set per cut side, `profileSaveKeys`).
  */
-export function useBatchGenerate(type: BatchGenerateArgs['type'], formKey: string) {
+export function useBatchGenerate<F extends object>(type: BatchGenerateArgs['type'], formKey: string | ((form: F) => string[])) {
   const [generating, setGenerating] = useState(false)
   const [errorMsg, reportError, clearError] = useGenerateError()
   const save = useFormDefaultsStore((s) => s.save)
-  const generate = async (args: Omit<BatchGenerateArgs, 'type' | 'onError'>, form: object) => {
+  const generate = async (args: Omit<BatchGenerateArgs, 'type' | 'onError'>, form: F) => {
     clearError()
     setGenerating(true)
     try {
       await runBatchGenerate({ ...args, type, onError: reportError })
     } finally {
       setGenerating(false)
-      save(formKey, form)
+      for (const key of typeof formKey === 'string' ? [formKey] : formKey(form)) save(key, form)
     }
   }
   return { generating, errorMsg, generate }

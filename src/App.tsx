@@ -7,7 +7,7 @@ import ToolLibraryPanel from './panels/ToolLibraryPanel'
 import PostProcessorPanel from './panels/PostProcessorPanel'
 import { useUIStore, type WorkspaceTab } from './store/uiStore'
 import { usePathsStore } from './store/pathsStore'
-import { openProjectFile, requestNewProject } from './io/projectLoad'
+import { openProjectFile, requestNewProject, clearDocumentStock, reloadWouldLoseWork } from './io/projectLoad'
 import { triggerProjectSave } from './io/fileSystem'
 import SaveDialog from './components/SaveDialog'
 import EscapementInfoPanel from './panels/EscapementInfoPanel'
@@ -264,8 +264,14 @@ function useAutosave() {
             : 'Could not restore the last session — the backup was unreadable.',
           ok ? 'info' : 'error',
         )
-      } else if (snap) {
-        await clearSnapshot()
+      } else {
+        if (snap) await clearSnapshot()
+        // Nothing came back, so nothing of the last document may stay either: its strips,
+        // tiling and double-sided setting are persisted with the stock (projectLoad
+        // `clearDocumentStock`). Each of those writes records an undo step, so the log is
+        // restarted after them — Ctrl+Z must not bring the old strips back.
+        clearDocumentStock()
+        useTimelineStore.getState().resetToCurrentState()
       }
       armAutosave()
       // Last, and unawaited: the records of tabs that closed weeks ago are
@@ -273,6 +279,24 @@ function useAutosave() {
       void pruneSnapshots()
     })()
     return dispose
+  }, [])
+}
+
+// ASK BEFORE A RELOAD THROWS THE UNDO HISTORY AWAY. The drawing survives a reload (the
+// autosave, or the file it was saved to) but the history does not, and a reload is easy to
+// hit by mistake. The browser shows its own "Leave site?" dialog — a page can ask for it,
+// not word it — and only once the user has interacted with the page. It also asks on
+// closing the tab, and on the dev server's full reload, which loses the history just the
+// same. A tab DISCARD fires no beforeunload, which is what the autosave is for.
+function useLeaveGuard() {
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!reloadWouldLoseWork()) return
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
   }, [])
 }
 
@@ -290,6 +314,7 @@ export default function App() {
   useRegistrationSync()
   usePathClipboard()
   useAutosave()
+  useLeaveGuard()
   useDarkMode()
   const activeTool = useUIStore(s => s.activeTool)
   useEffect(() => {

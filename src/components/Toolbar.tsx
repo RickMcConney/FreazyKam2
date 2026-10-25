@@ -20,6 +20,7 @@ import { buildExportPreflight, type ExportPreflight } from '../cam/exportPreflig
 import ExportPreflightDialog from './ExportPreflightDialog'
 import DxfUnitsDialog from './DxfUnitsDialog'
 import ConfirmNewProjectDialog from './ConfirmNewProjectDialog'
+import ScreenCalibrationDialog from './ScreenCalibrationDialog'
 import { importFile, loadImportedGcode } from '../io/importFile'
 import { openProjectFile, requestNewProject } from '../io/projectLoad'
 import HelpPanel from '../panels/HelpPanel'
@@ -352,6 +353,7 @@ export default function Toolbar() {
       {/* DXF units prompt modal (uiStore-driven; shared with canvas drop) */}
       <DxfUnitsDialog />
       <ConfirmNewProjectDialog />
+      <ScreenCalibrationDialog />
     </header>
   )
 }

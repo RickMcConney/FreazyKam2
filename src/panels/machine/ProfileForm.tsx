@@ -12,7 +12,7 @@ import { usePathsStore, type ImportedPath } from '../../store/pathsStore'
 import { useSelectedPathsInOrder } from '../../store/pathsStore'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 import { seedStepDownMM } from '../../cam/feeds'
-import { DEFAULT_BRIDGE_MAX_MM, DEFAULT_CORNER_TOLERANCE_MM, DEFAULT_FINISH_PASS_MM, PROFILE_TOOL_TYPES, profileFormDefaults } from './opDefaults'
+import { DEFAULT_BRIDGE_MAX_MM, DEFAULT_CORNER_TOLERANCE_MM, DEFAULT_FINISH_PASS_MM, PROFILE_TOOL_TYPES, profileFormDefaults, profileSaveKeys, savedProfileFor } from './opDefaults'
 import { maxCutRadiusMM, toolRadiusAtHeight } from '../../cam/geom'
 
 interface ProfileFormState {
@@ -71,7 +71,7 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
       bridgeMaxMM: (editOp.bridgeMaxMM ?? 0) > 0 ? editOp.bridgeMaxMM! : DEFAULT_BRIDGE_MAX_MM,
       // Legacy ops stay on stock top — see PocketForm.
       startFrom: editOp.startFrom ?? { mode: 'stock' },
-    } : { ...mergeWithDefaults(load('profile'), profileFormDefaults(defaultTool, thicknessMM), tools), startFrom: { mode: 'auto' } as StartFrom, stepDownManual: false }
+    } : { ...mergeWithDefaults(savedProfileFor(load), profileFormDefaults(defaultTool, thicknessMM), tools), startFrom: { mode: 'auto' } as StartFrom, stepDownManual: false }
     return { ...base, toolId: pickToolId(base.toolId, cutters) }
   })
   // A sided cut needs an interior to be on a side of, so open paths in the selection (a
@@ -86,7 +86,7 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
   const { outer: selPaths, skipped: skippedInner } = form.side === 'outside'
     ? outermostPaths(sidedPaths)
     : { outer: sidedPaths, skipped: 0 }
-  const { generating, errorMsg, generate } = useBatchGenerate('profile', 'profile')
+  const { generating, errorMsg, generate } = useBatchGenerate<ProfileFormState>('profile', profileSaveKeys)
   const session = useSessionOps()
 
   // Editing covers every operation created by the same Generate click — profiling five
@@ -171,6 +171,20 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
     setForm((f) => ({ ...f, [k]: v }))
   }
 
+  // A NEW profile switching side takes that side's own saved settings — its tool, depth and
+  // the rest (opDefaults `savedProfileFor`); a side never generated keeps what the form has.
+  // An EDITED one only changes side: that is adjusting this operation, and swapping its tool
+  // and depth out from under it would be a surprise. Start From stays, and the step-down
+  // goes back to auto as it does for any new operation (see StepDownField).
+  function changeSide(side: CutSide) {
+    const own = editOp ? null : savedProfileFor(load, side)
+    if (!own) { up('side', side); return }
+    setForm((f) => {
+      const merged = mergeWithDefaults<ProfileFormState & Record<string, unknown>>(own, { ...f }, tools)
+      return { ...merged, side, startFrom: f.startFrom, stepDownManual: false, toolId: pickToolId(merged.toolId, cutters) }
+    })
+  }
+
   async function handleGenerate() {
     if (selectedPaths.length === 0 || !selectedTool) return
     const tool = selectedTool
@@ -213,7 +227,7 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
     <FormShell title={editOp ? `Edit Profile${selectedPaths.length > 1 ? ` — ${selectedPaths.length} paths` : ''}` : 'New Profile'} onClose={onClose}>
       {selectedPaths.length === 0 && <NoPathBanner editing={!!editOp} />}
       <ToolSelector tools={cutters} value={form.toolId} onChange={handleToolChange} />
-      <ToggleRow label="Cut Side" options={['inside', 'outside', 'centerline'] as CutSide[]} value={form.side} onChange={(v) => up('side', v)} />
+      <ToggleRow label="Cut Side" options={['inside', 'outside', 'centerline'] as CutSide[]} value={form.side} onChange={changeSide} />
       <StartRow value={form.startFrom} onChange={(v) => up('startFrom', v)} resolved={startZ} opId={selfOpId} />
       <DepthRow depthMM={form.depthMM} stepDownMM={form.stepDownMM}
         onDepth={(v) => up('depthMM', v)} onStep={(v) => up('stepDownMM', v)}

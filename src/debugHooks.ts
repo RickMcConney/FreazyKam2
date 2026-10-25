@@ -19,6 +19,7 @@ import { useConstraintsStore } from './store/constraintsStore'
 import { useSimStore } from './store/simStore'
 import { loadProject } from './io/projectLoad'
 import { aimCameraFromAbove } from './three/cameraAim'
+import { perf } from './canvas/perfProbe'
 
 declare global {
   interface Window { __fkam?: Record<string, unknown> }
@@ -46,6 +47,8 @@ if (import.meta.env.DEV) {
     /** Look down on a CNC point in the 3D view, showing `spanMM` top to bottom, tilted back `tiltDeg`. */
     aim3d: (x: number, y: number, spanMM: number, tiltDeg?: number) => aimCameraFromAbove(x, y, spanMM, tiltDeg),
     fitView: (box: { minX: number; minY: number; maxX: number; maxY: number }) => fitViewTo(box),
+    /** Canvas draw timings — `await __fkam.perf.layers()`, `await __fkam.perf.frames(5000)` (canvas/perfProbe.ts). */
+    perf,
     /** The element the keyboard is talking to — an INPUT here swallows shortcuts. */
     focus: () => {
       const el = document.activeElement as HTMLElement | null

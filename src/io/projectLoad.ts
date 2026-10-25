@@ -361,6 +361,34 @@ export function requestNewProject(): void {
   useUIStore.getState().setConfirmNewProject(true)
 }
 
+/**
+ * The stock settings that belong to the DOCUMENT, not the machine: double-sided, tiling and
+ * the sheet's holding strips. They live in the workpiece store, which is persisted to
+ * localStorage with the machine-local settings, so they survive a page load the document
+ * does not — a reload over a saved project (whose snapshot boot drops) came back to an empty
+ * drawing with the last project's strips still across it. New Project clears them, and so
+ * does a boot that restores nothing (App.tsx).
+ */
+export function clearDocumentStock(): void {
+  useWorkpieceStore.getState().setDoubleSided(null)
+  useWorkpieceStore.getState().setTiling(null)
+  useWorkpieceStore.getState().setBridges(null)
+}
+
+/**
+ * Would a reload lose anything? The drawing comes back from the autosave when it is unsaved
+ * and from its file when it is not — but the UNDO HISTORY is in neither, so any document
+ * with history behind it has something a reload throws away. A just-loaded or just-restored
+ * document has none (its log starts empty), and an empty one has nothing at all.
+ */
+export function reloadWouldLoseWork(): boolean {
+  if (useTimelineStore.getState().events.length === 0) return false
+  return (
+    usePathsStore.getState().paths.length > 0 ||
+    useToolpathStore.getState().operations.length > 0
+  )
+}
+
 export function newProject() {
   useUIStore.getState().setConfirmNewProject(false)
   leaveDocument()
@@ -371,10 +399,7 @@ export function newProject() {
   useToolpathStore.getState().replaceOperations([])
   useTabStore.getState().replaceTabs([])
   useConstraintsStore.getState().replaceConstraints([])
-  // Double-sided belongs to the document, not to the machine: it does not carry over.
-  useWorkpieceStore.getState().setDoubleSided(null)
-  useWorkpieceStore.getState().setTiling(null)
-  useWorkpieceStore.getState().setBridges(null)
+  clearDocumentStock()
   useProjectStore.getState().setName('Untitled Project')
   useProjectStore.getState().markClean()
   useTimelineStore.getState().resetToCurrentState()

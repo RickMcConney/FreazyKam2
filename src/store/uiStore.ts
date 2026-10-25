@@ -178,6 +178,10 @@ interface UIState {
   // (io/projectLoad.ts) and ConfirmNewProjectDialog renders when this is true.
   confirmNewProject: boolean
   setConfirmNewProject: (open: boolean) => void
+  // The Calibrate screen dialog (canvas/screenScale.ts) — opened from the canvas's 1:1
+  // button on an uncalibrated display and from the status bar's scale readout.
+  screenCalibrationOpen: boolean
+  setScreenCalibrationOpen: (open: boolean) => void
   setMachineFormActive: (active: boolean) => void
   setTabsFormActive: (active: boolean) => void
   setShapesPanelOpen: (open: boolean) => void
@@ -306,6 +310,8 @@ export const useUIStore = create<UIState>()(
   setPendingDxfImport: (p) => set({ pendingDxfImport: p }),
   confirmNewProject: false,
   setConfirmNewProject: (open) => set({ confirmNewProject: open }),
+  screenCalibrationOpen: false,
+  setScreenCalibrationOpen: (open) => set({ screenCalibrationOpen: open }),
   setMachineFormActive: (active) => set({ machineFormActive: active }),
   setTabsFormActive: (active) => set({ tabsFormActive: active }),
   setShapesPanelOpen: (open) => set({ shapesPanelOpen: open }),

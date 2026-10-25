@@ -1,10 +1,12 @@
-import { memo, Fragment } from 'react'
-import { Group, Shape, Circle } from 'react-konva'
+import { memo, useMemo } from 'react'
+import { Group, Shape } from 'react-konva'
+import type Konva from 'konva'
 import type { Viewport } from '../CanvasStage'
-import { useToolpathStore, type MotionSegment } from '../../store/toolpathStore'
+import { useToolpathStore, type MotionSegment, type AnyOperation } from '../../store/toolpathStore'
 import { usePostProcessorStore, linksAsRapids } from '../../store/postProcessorStore'
-import { useToolStore } from '../../store/toolStore'
+import { useToolStore, type Tool } from '../../store/toolStore'
 import { maxCutRadiusMM } from '../../cam/geom'
+import { makeBatch, groupInto, runBox, strokeBatches, drawFrame, nativeCtx, type Box, type BatchItem, type StrokeBatch } from '../batchDraw'
 
 interface Props {
   viewport: Viewport
@@ -102,40 +104,145 @@ function groupsFor(segments: MotionSegment[]): SegmentGroups {
   return g
 }
 
-// One stroke over a set of runs — one beginPath and one strokeShape however many runs there
-// are. The dash is set in mm-per-pixel terms by the caller and cleared again afterwards so it
-// does not leak into the next shape drawn on the layer's context.
-function RunStroke({ runs, stroke, strokeWidth, opacity, dash }: {
-  runs: number[][]
-  stroke: string
-  strokeWidth: number
-  opacity: number
-  dash?: number[]
-}) {
-  return (
-    <Shape
-      sceneFunc={(ctx, shape) => {
-        ctx.beginPath()
-        if (dash) (ctx as unknown as CanvasRenderingContext2D).setLineDash(dash)
-        for (const pts of runs) {
-          if (pts.length < 4) continue
-          ctx.moveTo(pts[0], pts[1])
-          for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1])
-        }
-        ctx.strokeShape(shape)
-        if (dash) (ctx as unknown as CanvasRenderingContext2D).setLineDash([])
-      }}
-      stroke={stroke}
-      strokeWidth={strokeWidth}
-      lineJoin="round"
-      lineCap="round"
-      opacity={opacity}
-      listening={false}
-    />
-  )
+// ── Batched drawing ───────────────────────────────────────────────────────────
+// ALL toolpaths of a style are ONE stroke (canvas/batchDraw), not four Konva nodes and a
+// start circle per toolpath: a nest of 2,675 toolpaths was ~13,000 nodes repainted on
+// every pan frame. Each toolpath's runs of a style are one `Path2D` with its box, cached on
+// the segments array like the grouping above, so a zoomed-in frame strokes only toolpaths
+// in view and a regenerate rebuilds only the combined paths, not every op's.
+
+type Style = 'cutting' | 'rapid' | 'travel' | 'bridge'
+const runItems = new WeakMap<number[][], BatchItem | null>()
+function itemOfRuns(runs: number[][]): BatchItem | null {
+  if (runItems.has(runs)) return runItems.get(runs)!
+  let item: BatchItem | null = null
+  if (runs.length > 0) {
+    const path = new Path2D()
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const pts of runs) {
+      if (pts.length < 4) continue
+      path.moveTo(pts[0], pts[1])
+      for (let i = 2; i < pts.length; i += 2) path.lineTo(pts[i], pts[i + 1])
+      const b = runBox(pts)
+      if (b.minX < minX) minX = b.minX
+      if (b.minY < minY) minY = b.minY
+      if (b.maxX > maxX) maxX = b.maxX
+      if (b.maxY > maxY) maxY = b.maxY
+    }
+    if (isFinite(minX)) item = { path, minX, minY, maxX, maxY }
+  }
+  runItems.set(runs, item)
+  return item
 }
 
-export const ToolpathLayer = memo(function ToolpathLayer({ viewport }: Props) {
+/** A marker drawn at a constant screen size: the cut's start, or a drill hole without a tool. */
+interface Dot { x: number; y: number }
+
+interface Drawn {
+  strokes: StrokeBatch[]
+  /** Drill holes at the tool's radius, in mm — a batch per colour. */
+  holes: StrokeBatch[]
+  /** Start markers by colour: filled, white-rimmed, 3.5 px. */
+  starts: Map<string, Dot[]>
+  /** Drill holes whose tool is gone, by colour: a 3.5 px ring. */
+  looseHoles: Map<string, Dot[]>
+}
+
+function build(operations: AnyOperation[], tools: Tool[], rapidLinks: boolean): Drawn {
+  const visible = operations.filter((o) => o.visible && o.status === 'done' && o.segments.length > 0)
+  const entries: { key: string; item: BatchItem }[] = []
+  const holeEntries: { key: string; item: BatchItem }[] = []
+  const starts = new Map<string, Dot[]>()
+  const looseHoles = new Map<string, Dot[]>()
+  const push = (m: Map<string, Dot[]>, k: string, d: Dot) => {
+    const l = m.get(k)
+    if (l) l.push(d)
+    else m.set(k, [d])
+  }
+  for (const op of visible) {
+    const g = groupsFor(op.segments)
+    const add = (style: Style, color: string) => {
+      const item = itemOfRuns(g[style])
+      if (item) entries.push({ key: `${style}|${color}`, item })
+    }
+    add('cutting', op.color)
+    add('rapid', '#e53e3e')
+    add('bridge', '#f97316')
+    add('travel', rapidLinks ? '#e53e3e' : '#38a169')
+    if (op.type === 'drill') {
+      const tool = tools.find((t) => t.id === op.toolId)
+      const r = tool ? maxCutRadiusMM(tool) : 0
+      for (const pt of op.points) {
+        if (r > 0) {
+          const path = new Path2D()
+          path.arc(pt.x, pt.y, r, 0, 2 * Math.PI)
+          holeEntries.push({ key: op.color, item: { path, minX: pt.x - r, minY: pt.y - r, maxX: pt.x + r, maxY: pt.y + r } })
+        } else push(looseHoles, op.color, pt)
+      }
+    } else if (g.firstCut) {
+      push(starts, op.color, { x: g.firstCut[0], y: g.firstCut[1] })
+    }
+  }
+  const STYLE: Record<Style, Omit<StrokeBatch, 'color' | 'batch'>> = {
+    cutting: { widthPx: 1.5, opacity: 0.9, round: true },
+    rapid: { widthPx: 1.2, opacity: 0.75, round: true, dashPx: [5, 4] },
+    bridge: { widthPx: 2.2, opacity: 0.95, round: true },
+    travel: { widthPx: 1.2, opacity: 0.75, round: true, dashPx: rapidLinks ? [5, 4] : [4, 3] },
+  }
+  // Drawn in the order the per-op nodes stacked: cuts, rapids, bridges, links.
+  const order: Style[] = ['cutting', 'rapid', 'bridge', 'travel']
+  const grouped = [...groupInto(entries)]
+  const strokes: StrokeBatch[] = []
+  for (const style of order) {
+    for (const [key, items] of grouped) {
+      const i = key.indexOf('|')
+      if (key.slice(0, i) !== style) continue
+      strokes.push({ ...STYLE[style], color: key.slice(i + 1), batch: makeBatch(items) })
+    }
+  }
+  const holes = [...groupInto(holeEntries)].map(([color, items]) => (
+    { color, widthPx: 1.5, opacity: 0.9, batch: makeBatch(items) }
+  ))
+  return { strokes, holes, starts, looseHoles }
+}
+
+const MARKER_PX = 3.5
+// A start marker is 3.5 px up close but never more than this across the stock, so zoomed
+// out it shrinks with the parts: a fixed screen size on a nest of thousands of toolpaths
+// was a carpet of dots over the drawing.
+const START_MAX_MM = 1
+
+function drawDots(c: CanvasRenderingContext2D, dots: Map<string, Dot[]>, ppu: number, view: Box, filled: boolean) {
+  const r = filled ? Math.min(MARKER_PX / ppu, START_MAX_MM) : MARKER_PX / ppu
+  for (const [color, list] of dots) {
+    const p = new Path2D()
+    let any = false
+    for (const d of list) {
+      if (d.x + r < view.minX || d.x - r > view.maxX || d.y + r < view.minY || d.y - r > view.maxY) continue
+      p.moveTo(d.x + r, d.y)
+      p.arc(d.x, d.y, r, 0, 2 * Math.PI)
+      any = true
+    }
+    if (!any) continue
+    c.save()
+    if (filled) {
+      c.globalAlpha = 0.95
+      c.fillStyle = color
+      c.fill(p)
+      c.strokeStyle = '#ffffff'
+      // The rim shrinks with the dot, or a tiny dot is all rim.
+      c.lineWidth = Math.min(1 / ppu, r * 0.3)
+    } else {
+      c.globalAlpha = 0.9
+      c.strokeStyle = color
+      c.lineWidth = 1.5 / ppu
+    }
+    c.stroke(p)
+    c.restore()
+  }
+}
+
+export const ToolpathLayer = memo(function ToolpathLayer(_props: Props) {
   // Selectors, not whole-store destructuring: the tool store has nothing to say about a
   // toolpath but its drill radius, and the toolpath store's other fields change on writes
   // this layer does not draw.
@@ -145,92 +252,30 @@ export const ToolpathLayer = memo(function ToolpathLayer({ viewport }: Props) {
   // post-processor emits them as G0 (linksAsRapids), the green link style when they go out
   // as G1 at a travel feed. The segments carry `travel` either way; only the G-code differs.
   const rapidLinks = usePostProcessorStore((s) => linksAsRapids(s.profiles.find((p) => p.id === s.activeId) ?? s.profiles[0]))
-  const { scale } = viewport
 
-  const visible = operations.filter((o) => o.visible && o.status === 'done' && o.segments.length > 0)
-  const dashScale = 1 / scale
+  // Nothing here depends on the viewport: widths, dashes and markers are in screen pixels,
+  // converted inside the draw, so a pan or zoom only repaints.
+  // The scene function is the same object until the toolpaths change — a new one would
+  // make Konva redraw the layer on every stage re-render (the cursor readout is enough).
+  const sceneFunc = useMemo(() => {
+    const drawn = build(operations, tools, rapidLinks)
+    return (ctx: Konva.Context, shape: Konva.Shape) => {
+      strokeBatches(ctx, shape, drawn.strokes)
+      strokeBatches(ctx, shape, drawn.holes)
+      const { ppu, view } = drawFrame(shape)
+      const c = nativeCtx(ctx)
+      drawDots(c, drawn.looseHoles, ppu, view, false)
+      drawDots(c, drawn.starts, ppu, view, true)
+    }
+  }, [operations, tools, rapidLinks])
 
   return (
-    <Group>
-      {visible.map((op) => {
-        const { cutting, rapid, travel, bridge, firstCut } = groupsFor(op.segments)
-
-        return (
-          <Fragment key={op.id}>
-            <RunStroke
-              key={`${op.id}-c`}
-              runs={cutting}
-              stroke={op.color}
-              strokeWidth={1.5 / scale}
-              opacity={0.9}
-            />
-
-            {rapid.length > 0 && (
-              <RunStroke
-                key={`${op.id}-r`}
-                runs={rapid}
-                stroke="#e53e3e"
-                strokeWidth={1.2 / scale}
-                opacity={0.75}
-                dash={[5 * dashScale, 4 * dashScale]}
-              />
-            )}
-
-            {bridge.length > 0 && (
-              <RunStroke
-                key={`${op.id}-b`}
-                runs={bridge}
-                stroke="#f97316"
-                strokeWidth={2.2 / scale}
-                opacity={0.95}
-              />
-            )}
-
-            {travel.length > 0 && (
-              <RunStroke
-                key={`${op.id}-t`}
-                runs={travel}
-                stroke={rapidLinks ? '#e53e3e' : '#38a169'}
-                strokeWidth={1.2 / scale}
-                opacity={0.75}
-                dash={rapidLinks ? [5 * dashScale, 4 * dashScale] : [4 * dashScale, 3 * dashScale]}
-              />
-            )}
-
-            {op.type === 'drill'
-              ? (() => {
-                  const tool = tools.find((t) => t.id === op.toolId)
-                  const r = tool ? maxCutRadiusMM(tool) : 3.5 / scale
-                  return op.points.map((pt, i) => (
-                    <Circle
-                      key={`${op.id}-dp-${i}`}
-                      x={pt.x}
-                      y={pt.y}
-                      radius={r}
-                      fill="transparent"
-                      stroke={op.color}
-                      strokeWidth={1.5 / scale}
-                      opacity={0.9}
-                      listening={false}
-                    />
-                  ))
-                })()
-              : firstCut && (
-                  <Circle
-                    key={`${op.id}-start`}
-                    x={firstCut[0]}
-                    y={firstCut[1]}
-                    radius={3.5 / scale}
-                    fill={op.color}
-                    stroke="#ffffff"
-                    strokeWidth={1 / scale}
-                    opacity={0.95}
-                    listening={false}
-                  />
-                )}
-          </Fragment>
-        )
-      })}
+    <Group name="toolpaths" listening={false}>
+      <Shape
+        sceneFunc={sceneFunc}
+        listening={false}
+        perfectDrawEnabled={false}
+      />
     </Group>
   )
 })

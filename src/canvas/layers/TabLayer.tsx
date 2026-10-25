@@ -1,7 +1,8 @@
 // Renders tab markers on paths. When the Tabs form is open, tabs are draggable along the path.
 
-import { memo, useState } from 'react'
-import { Group, Rect, Circle } from 'react-konva'
+import { memo, useMemo, useState } from 'react'
+import { Group, Rect, Circle, Shape } from 'react-konva'
+import type Konva from 'konva'
 import type { Viewport } from '../CanvasStage'
 import { usePathsStore } from '../../store/pathsStore'
 import { useTabStore } from '../../store/tabStore'
@@ -9,6 +10,7 @@ import { useUIStore } from '../../store/uiStore'
 import { flattenPath } from '../../cam/pathFlattener'
 import { regenerateAffected } from '../../cam/regenerate'
 import type { Pt2 } from '../../cam/pathFlattener'
+import { drawFrame, nativeCtx, overlaps } from '../batchDraw'
 
 interface TabVisual {
   id: string
@@ -31,15 +33,19 @@ interface TabVisual {
 // the `d` string, which is what actually decides the answer: an edit gives a
 // new string and a new entry, and the map is bounded by how many distinct
 // outlines carry tabs.
-const flatCache = new Map<string, Pt2[][]>()
+//
+// Two generations rather than a cap-and-clear: a nest has HUNDREDS of tabbed parts, and a
+// 64-entry map cleared when full re-flattened every one of them on every render. An outline
+// still drawn is carried over from the old generation; one edited away ages out.
+const FLAT_GEN_MAX = 4096
+let flatCur = new Map<string, Pt2[][]>()
+let flatOld = new Map<string, Pt2[][]>()
 function flatFor(d: string): Pt2[][] {
-  const hit = flatCache.get(d)
-  if (hit) return hit
-  const polys = flattenPath(d, 0.05)
-  // A tabbed path that has been edited away is landfill; keep the map small
-  // rather than tracking which strings are still live.
-  if (flatCache.size > 64) flatCache.clear()
-  flatCache.set(d, polys)
+  let polys = flatCur.get(d)
+  if (polys) return polys
+  polys = flatOld.get(d) ?? flattenPath(d, 0.05)
+  if (flatCur.size >= FLAT_GEN_MAX) { flatOld = flatCur; flatCur = new Map() }
+  flatCur.set(d, polys)
   return polys
 }
 
@@ -131,6 +137,57 @@ const TAB_COLOR = '#f59e0b'
 const TAB_HOVER_COLOR = '#fcd34d'
 const TAB_DRAG_COLOR = '#fde68a'
 
+// One tab's marker as two paths in CNC mm: the rotated bar and the dot on it.
+function tabShapes(v: TabVisual, dotRadius: number): { bar: Path2D; dot: Path2D } {
+  const halfLen = v.lengthMM / 2, halfW = v.heightMM / 2
+  const ux = v.tx, uy = v.ty, nx = -v.ty, ny = v.tx
+  const bar = new Path2D()
+  bar.moveTo(v.x - ux * halfLen - nx * halfW, v.y - uy * halfLen - ny * halfW)
+  bar.lineTo(v.x + ux * halfLen - nx * halfW, v.y + uy * halfLen - ny * halfW)
+  bar.lineTo(v.x + ux * halfLen + nx * halfW, v.y + uy * halfLen + ny * halfW)
+  bar.lineTo(v.x - ux * halfLen + nx * halfW, v.y - uy * halfLen + ny * halfW)
+  bar.closePath()
+  const dot = new Path2D()
+  dot.arc(v.x, v.y, dotRadius, 0, 2 * Math.PI)
+  return { bar, dot }
+}
+
+// THE TABS AS ONE SHAPE while the Tabs form is shut — nothing can be hovered or dragged
+// then, and a nest's tabs as three Konva nodes each were repainted on every pan frame.
+// Same look as the interactive markers: bar at 0.7, dot rimmed in white.
+const TabBatch = memo(function TabBatch({ visuals }: { visuals: TabVisual[] }) {
+  const sceneFunc = useMemo(() => {
+    const items = visuals.map((v) => {
+      const r = Math.max(v.lengthMM, v.heightMM) / 2
+      return { ...tabShapes(v, v.heightMM / 2 * 0.6), minX: v.x - r, minY: v.y - r, maxX: v.x + r, maxY: v.y + r }
+    })
+    return (ctx: Konva.Context, shape: Konva.Shape) => {
+      const { ppu, view } = drawFrame(shape)
+      const bars = new Path2D(), dots = new Path2D()
+      let any = false
+      for (const it of items) {
+        if (!overlaps(it, view)) continue
+        bars.addPath(it.bar)
+        dots.addPath(it.dot)
+        any = true
+      }
+      if (!any) return
+      const c = nativeCtx(ctx)
+      c.save()
+      c.fillStyle = TAB_COLOR
+      c.globalAlpha = 0.7
+      c.fill(bars)
+      c.globalAlpha = 1
+      c.fill(dots)
+      c.strokeStyle = '#ffffff'
+      c.lineWidth = 0.5 / ppu
+      c.stroke(dots)
+      c.restore()
+    }
+  }, [visuals])
+  return <Shape sceneFunc={sceneFunc} listening={false} perfectDrawEnabled={false} />
+})
+
 // Memoised for the same reason DesignLayer is: the stage re-renders on every
 // mouse move and this one walks every path in the document looking for tabs.
 export const TabLayer = memo(function TabLayer({ viewport }: Props) {
@@ -143,21 +200,33 @@ export const TabLayer = memo(function TabLayer({ viewport }: Props) {
   const [hoveredTabId, setHoveredTabId] = useState<string | null>(null)
   const [draggingTabId, setDraggingTabId] = useState<string | null>(null)
 
-  const visuals: TabVisual[] = []
-  for (const path of paths) {
-    if (!path.visible || path.hidden) continue
-    const tabs = allTabs.filter((t) => t.pathId === path.id)
-    for (const tab of tabs) {
-      const pos = evalPathAtT(path.d, tab.t)
-      if (!pos) continue
-      visuals.push({ id: tab.id, pathId: path.id, pathD: path.d, x: pos.x, y: pos.y, tx: pos.tx, ty: pos.ty, lengthMM: tab.lengthMM, heightMM: tab.heightMM })
+  // Off the paths and tabs alone, so a pan (the viewport prop) recomputes nothing. Tabs are
+  // indexed by path once: filtering the whole tab list per path is paths × tabs.
+  const visuals = useMemo(() => {
+    const byPath = new Map<string, typeof allTabs>()
+    for (const t of allTabs) {
+      const l = byPath.get(t.pathId)
+      if (l) l.push(t)
+      else byPath.set(t.pathId, [t])
     }
-  }
+    const out: TabVisual[] = []
+    if (byPath.size === 0) return out
+    for (const path of paths) {
+      if (!path.visible || path.hidden) continue
+      for (const tab of byPath.get(path.id) ?? []) {
+        const pos = evalPathAtT(path.d, tab.t)
+        if (!pos) continue
+        out.push({ id: tab.id, pathId: path.id, pathD: path.d, x: pos.x, y: pos.y, tx: pos.tx, ty: pos.ty, lengthMM: tab.lengthMM, heightMM: tab.heightMM })
+      }
+    }
+    return out
+  }, [paths, allTabs])
 
   if (visuals.length === 0) return null
+  if (!tabsFormActive) return <Group name="tabs" listening={false}><TabBatch visuals={visuals} /></Group>
 
   return (
-    <Group listening={tabsFormActive}>
+    <Group name="tabs" listening={tabsFormActive}>
       {visuals.map((v) => {
         const halfLen = v.lengthMM / 2
         const halfW = v.heightMM / 2

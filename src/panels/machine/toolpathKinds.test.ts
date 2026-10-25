@@ -130,3 +130,33 @@ describe('a toolpath type refuses a tool it cannot cut with', () => {
     expect(() => TOOLPATH_KINDS.drill.plan([], { drillMode: 'helical', toolId: 'drill-a' }, ctx, [])).toThrow(/helical drill cannot use tool "drill-a"/)
   })
 })
+
+describe('a profile made through create_toolpath uses the saved settings of its side', () => {
+  const profile = TOOLPATH_KINDS.profile
+  // Lettering with a V-bit on the centerline was generated first, then a part cut out on
+  // the outside with an end mill — so outside is the last profile generated.
+  const saved: Record<string, Record<string, unknown>> = {
+    'profile:centerline': { side: 'centerline', toolId: 'vbit-a', depthMM: 1 },
+    'profile:outside': { side: 'outside', toolId: 'endmill-b', depthMM: 6 },
+    profile: { side: 'outside', toolId: 'endmill-b', depthMM: 6 },
+  }
+  const c: PlanContext = { ...ctx, saved: (k) => saved[k] ?? null }
+  const plan = (s: Record<string, unknown>) => profile.plan([], s, c, []).settings
+
+  it('takes the tool and depth saved for the side it is asked for', () => {
+    expect(plan({ side: 'centerline' })).toMatchObject({ side: 'centerline', toolId: 'vbit-a', depthMM: 1 })
+    expect(plan({ side: 'outside' })).toMatchObject({ side: 'outside', toolId: 'endmill-b', depthMM: 6 })
+  })
+
+  it('cuts on the side generated last when no side is asked for', () => {
+    expect(plan({})).toMatchObject({ side: 'outside', toolId: 'endmill-b', depthMM: 6 })
+  })
+
+  it('falls back on the last profile\'s settings for a side never generated', () => {
+    expect(plan({ side: 'inside' })).toMatchObject({ side: 'inside', toolId: 'endmill-b', depthMM: 6 })
+  })
+
+  it('lets a setting given to create override the side\'s saved one', () => {
+    expect(plan({ side: 'centerline', depthMM: 0.5 })).toMatchObject({ toolId: 'vbit-a', depthMM: 0.5 })
+  })
+})

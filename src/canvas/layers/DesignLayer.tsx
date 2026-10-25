@@ -1,5 +1,6 @@
-import { useEffect, useState, memo } from 'react'
-import { Group, Path, Image as KonvaImage, Text as KonvaText } from 'react-konva'
+import { useEffect, useState, useMemo, useCallback, memo } from 'react'
+import type Konva from 'konva'
+import { Group, Path, Shape, Image as KonvaImage, Text as KonvaText } from 'react-konva'
 import type { Viewport } from '../CanvasStage'
 import { usePathsStore } from '../../store/pathsStore'
 import { useUIStore } from '../../store/uiStore'
@@ -9,6 +10,7 @@ import type { ImportedPath } from '../../store/pathsStore'
 import { getBBox, extractRectInfo } from '../selectionUtils'
 import { decodeStlMesh } from '../../importers/stlImporter'
 import { buildHeightMap } from '../../cam/profile3d'
+import { makeBatch, groupInto, strokeBatches, type BatchItem, type StrokeBatch } from '../batchDraw'
 
 interface Props {
   viewport: Viewport
@@ -279,13 +281,61 @@ const StlPath = memo(function StlPath({ p, isSelected, liveTransform, followTran
   )
 })
 
+// ── Batched vector paths ─────────────────────────────────────────────────────
+// Every plain outline goes through canvas/batchDraw: one stroke per (colour, width), each
+// outline's `Path2D` parsed once per path OBJECT (a path is replaced, never mutated, when it
+// changes), and only what is in view stroked when zoomed in. Selected paths draw last, so
+// on top. Each live transform's paths are a batch of their own, under a Group carrying the
+// transform's attrs — the batch itself is built once per gesture, since what is moving does
+// not change mid-drag.
+
+const itemCache = new WeakMap<ImportedPath, BatchItem | null>()
+function itemOf(p: ImportedPath): BatchItem | null {
+  if (itemCache.has(p)) return itemCache.get(p)!
+  const b = getBBox(p.d)
+  const it = b ? { path: new Path2D(p.d), minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY } : null
+  itemCache.set(p, it)
+  return it
+}
+
+const PLAIN_PX = 1.5
+const SELECTED_PX = 2
+
+function strokeSets(ps: ImportedPath[], selected: Set<string>, selectedColor: string): StrokeBatch[] {
+  const entries: { key: string; item: BatchItem }[] = []
+  // Unselected first, so the selected strokes land on top.
+  for (const pass of [false, true]) {
+    for (const p of ps) {
+      if (selected.has(p.id) !== pass) continue
+      const item = itemOf(p)
+      if (item) entries.push({ key: pass ? `s|${selectedColor}` : `u|${p.color}`, item })
+    }
+  }
+  return [...groupInto(entries)].map(([key, items]) => ({
+    color: key.slice(2),
+    widthPx: key[0] === 's' ? SELECTED_PX : PLAIN_PX,
+    batch: makeBatch(items),
+  }))
+}
+
+const PathBatches = memo(function PathBatches({ sets }: { sets: StrokeBatch[] }) {
+  const sceneFunc = useCallback((ctx: Konva.Context, shape: Konva.Shape) => strokeBatches(ctx, shape, sets), [sets])
+  return (
+    <Shape
+      sceneFunc={sceneFunc}
+      listening={false}
+      perfectDrawEnabled={false}
+    />
+  )
+})
+
 // ── Main layer ────────────────────────────────────────────────────────────────
 // MEMOISED BECAUSE THE STAGE RE-RENDERS ON EVERY MOUSE MOVE and this is the one
-// layer whose size is the document's — a gear project reconciled a hundred-odd
-// Path elements per move for nothing. Its own props hold still through a
-// gesture that is not moving geometry (a point-edit connect preview, the cursor
-// readout), and the store subscriptions inside re-render it regardless of memo,
-// so nothing goes stale.
+// layer whose size is the document's. Its own props hold still through a gesture
+// that is not moving geometry (a point-edit connect preview, the cursor readout),
+// and the store subscriptions inside re-render it regardless of memo, so nothing
+// goes stale. A pan or zoom re-renders it (the viewport prop) but rebuilds nothing:
+// the batches depend on the paths, the selection and what is moving, never the view.
 export const DesignLayer = memo(function DesignLayer({ viewport, liveTransform, followTransforms, excludePathId, excludeGroupId, excludeClockId }: Props) {
   // Individual selectors — whole-store destructuring re-rendered this layer on
   // every store change, including pure undo-stack pushes (tofix.md H3).
@@ -295,59 +345,74 @@ export const DesignLayer = memo(function DesignLayer({ viewport, liveTransform, 
   const C = canvasTheme(darkMode)
   const { scale } = viewport
 
+  const shown = useMemo(() => paths.filter((p) => p.visible && !p.hidden && p.id !== excludePathId
+    && !(excludeGroupId && p.groupId === excludeGroupId)
+    && !(excludeClockId && p.clockId === excludeClockId)), [paths, excludePathId, excludeGroupId, excludeClockId])
+
+  // Which transform each plain path is moving under: -1 for none, k for followTransforms[k],
+  // followTransforms.length for liveTransform. A new LiveTransform (and Set) arrives every
+  // frame of a drag, so this is reduced to a string key and the batches below are keyed on
+  // that — rebuilt when a gesture starts or ends, not per frame.
+  const transforms = useMemo(() => [...(followTransforms ?? []), ...(liveTransform ? [liveTransform] : [])],
+    [followTransforms, liveTransform])
+  let movingKey = ''
+  if (transforms.length > 0) {
+    const parts: string[] = []
+    for (const p of shown) {
+      if (p.imageSrc || p.stlSrc) continue
+      const k = transforms.findIndex((t) => t.pathIds.has(p.id))
+      if (k >= 0) parts.push(`${k}:${p.id}`)
+    }
+    movingKey = parts.join(',')
+  }
+
+  const batches = useMemo(() => {
+    const selected = new Set(selectedIds)
+    const owner = new Map<string, number>()
+    for (const e of movingKey ? movingKey.split(',') : []) {
+      const i = e.indexOf(':')
+      owner.set(e.slice(i + 1), +e.slice(0, i))
+    }
+    const plain = shown.filter((p) => !p.imageSrc && !p.stlSrc)
+    const still = strokeSets(plain.filter((p) => !owner.has(p.id)), selected, C.path.selected)
+    const moving = new Map<number, StrokeBatch[]>()
+    const byOwner = new Map<number, ImportedPath[]>()
+    for (const p of plain) {
+      const k = owner.get(p.id)
+      if (k === undefined) continue
+      const list = byOwner.get(k)
+      if (list) list.push(p)
+      else byOwner.set(k, [p])
+    }
+    for (const [k, ps] of byOwner) moving.set(k, strokeSets(ps, selected, C.path.selected))
+    return { still, moving }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- movingKey stands for `transforms`' membership
+  }, [shown, selectedIds, movingKey, C.path.selected])
+
   return (
-    <Group listening={false}>
-      {paths.filter((p) => p.visible && !p.hidden && p.id !== excludePathId
-        && !(excludeGroupId && p.groupId === excludeGroupId)
-        && !(excludeClockId && p.clockId === excludeClockId)).map((p) => {
+    <Group name="design" listening={false}>
+      {shown.map((p) => {
+        if (!p.imageSrc && !p.stlSrc) return null
         const isSelected = selectedIds.includes(p.id)
-
-        // Image-backed paths get special rendering
-        if (p.imageSrc) {
-          return (
-            <ImagePath
-              key={p.id}
-              p={p}
-              isSelected={isSelected}
-              liveTransform={liveTransform}
-              followTransforms={followTransforms}
-              scale={scale}
-              darkMode={darkMode}
-            />
-          )
-        }
-
-        // STL-backed paths: dashed bounding box + label
-        if (p.stlSrc) {
-          return (
-            <StlPath
-              key={p.id}
-              p={p}
-              isSelected={isSelected}
-              liveTransform={liveTransform}
-              followTransforms={followTransforms}
-              scale={scale}
-              darkMode={darkMode}
-            />
-          )
-        }
-
-        // Normal vector path
-        const lt = transformFor(p.id, liveTransform, followTransforms)
-        const attrs = liveTransformToNodeAttrs(lt)
-        const strokeWidth = liveStrokeWidth(lt, attrs, isSelected, scale)
-
+        const Comp = p.imageSrc ? ImagePath : StlPath
         return (
-          <Path
+          <Comp
             key={p.id}
-            data={p.d}
-            stroke={isSelected ? C.path.selected : p.color}
-            strokeWidth={strokeWidth}
-            listening={false}
-            {...attrs}
+            p={p}
+            isSelected={isSelected}
+            liveTransform={liveTransform}
+            followTransforms={followTransforms}
+            scale={scale}
+            darkMode={darkMode}
           />
         )
       })}
+      <PathBatches sets={batches.still} />
+      {[...batches.moving].map(([k, sets]) => (
+        <Group key={k} {...liveTransformToNodeAttrs(transforms[k] ?? null)} listening={false}>
+          <PathBatches sets={sets} />
+        </Group>
+      ))}
     </Group>
   )
 })

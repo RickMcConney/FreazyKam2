@@ -79,6 +79,35 @@ export function profileFormDefaults(defaultTool: Tool | undefined, thicknessMM: 
   }
 }
 
+// ─── A profile's saved settings are kept PER CUT SIDE ─────────────────────────
+// Inside, outside and centerline are different jobs, not one job three ways: a centerline
+// cut is lettering with a V-bit 1 mm deep, an outside one is cutting the part free with an
+// end mill at the stock's thickness. One saved set made every switch between them a re-pick
+// of the tool and a re-type of the depth. So each side keeps its own (`profile:<side>`), and
+// the plain `profile` key still holds the last Generate — which is how a new form knows
+// which side to open on.
+
+export const PROFILE_KEY = 'profile'
+export const profileSideKey = (side: CutSide) => `${PROFILE_KEY}:${side}`
+
+/** The keys a Generate saves the profile form under: the last-used, and its side's own. */
+export const profileSaveKeys = (form: { side: CutSide }) => [PROFILE_KEY, profileSideKey(form.side)]
+
+/**
+ * The saved settings for `side`, or for the side last generated when none is named; null when
+ * that side has never been generated. Settings saved before they were kept per side belong to
+ * the side they were saved on, so nobody's last profile is lost by the change.
+ */
+export function savedProfileFor(
+  load: (key: string) => Record<string, unknown> | null,
+  side?: CutSide,
+): Record<string, unknown> | null {
+  const last = load(PROFILE_KEY)
+  const s = side ?? (last?.side as CutSide | undefined)
+  if (!s) return null
+  return load(profileSideKey(s)) ?? (last?.side === s ? last : null)
+}
+
 export function pocketFormDefaults(defaultTool: Tool | undefined, thicknessMM: number) {
   return {
     toolId: defaultTool?.id ?? '',

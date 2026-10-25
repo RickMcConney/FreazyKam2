@@ -1,6 +1,7 @@
 import { SheetLabelLayer } from './layers/SheetLabelLayer'
 import { layoutExtent, cellOfPoint, cellOffset } from '../cam/sheets'
 import { useSheetLayout, sheetLayoutNow } from './useSheets'
+import { useRealScale } from './screenScale'
 import { otherSideBox } from '../cam/doubleSided'
 import { ptSegDistSq, pointInPolygon } from '../cam/geom'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -1237,6 +1238,15 @@ export default function CanvasStage() {
       }
     })
   }, [setViewport, size])
+
+  // ACTUAL SIZE: zoom so a millimetre on the stock is a millimetre on the glass, about the
+  // selection or the middle of the view as the other zoom buttons are. A display nobody has
+  // calibrated has no such zoom (canvas/screenScale.ts), so the button asks for one instead.
+  const { pxPerMM: realPx } = useRealScale()
+  const zoomToActualSize = useCallback(() => {
+    if (realPx === null) { useUIStore.getState().setScreenCalibrationOpen(true); return }
+    zoomBy(realPx / viewportRef.current.scale)
+  }, [realPx, zoomBy])
 
   const handleWheel = useCallback((e: Konva.KonvaEventObject<WheelEvent>) => {
     const pointer = stageRef.current?.getPointerPosition()
@@ -2812,7 +2822,6 @@ export default function CanvasStage() {
           <ToolpathLayer viewport={viewport} />
           <BridgeLayer />
           <TabLayer viewport={viewport} />
-          <SimulationLayer viewport={viewport} />
           <ShapePreviewLayer viewport={viewport} d={liveShapeD} />
           <TracePreviewLayer viewport={viewport} />
           {activeTool === 'region' && <ShapePreviewLayer viewport={viewport} d={regionPreviewD} />}
@@ -2867,8 +2876,16 @@ export default function CanvasStage() {
           )}
         </Layer>
 
+        {/* Layer 2: The 2D simulation, on a canvas of its own. It changes every frame of a
+            playback, and on layer 1 that repainted every path and toolpath of the drawing
+            sixty times a second to move one tool marker — on a nest of thousands of parts
+            the whole cost of a 2D sim. Drawn above everything in layer 1, so the previews
+            that sat after it there (shape, trace, pen, drill points) now sit under it. */}
+        <Layer x={viewport.x} y={viewport.y} scaleX={viewport.scale} scaleY={-viewport.scale} listening={false}>
+          <SimulationLayer viewport={viewport} />
+        </Layer>
 
-        {/* Layer 2: Screen-space overlay — origin indicator, selection outline, rulers. */}
+        {/* Layer 3: Screen-space overlay — origin indicator, selection outline, rulers. */}
         <Layer listening={false}>
           <OriginLayer viewport={viewport} />
           <SheetLabelLayer viewport={viewport} />
@@ -2906,7 +2923,7 @@ export default function CanvasStage() {
           )}
         </Layer>
 
-        {/* Layer 3: Interactive handles — selection resize/rotate circles, and a tiled
+        {/* Layer 4: Interactive handles — selection resize/rotate circles, and a tiled
             job's seams (dragged along the slide axis). */}
         <Layer>
           <TilingLayer viewport={viewport} />
@@ -3031,6 +3048,12 @@ export default function CanvasStage() {
         </button>
         <button onClick={() => zoomBy(1 / ZOOM_BUTTON_STEP)} title={selectedIds.length > 0 ? 'Zoom out from the selection' : 'Zoom out'} className={ZOOM_BTN_CLASS}>
           <ZoomOut size={ICON.md} />
+        </button>
+        {/* Text rather than an icon: "1:1" says what it does, where a ruler glyph would not. */}
+        <button onClick={zoomToActualSize}
+          title={realPx === null ? 'Actual size — calibrate this screen first' : 'Actual size — parts at their real size on this screen'}
+          className={`${ZOOM_BTN_CLASS} font-mono text-[11px] leading-[18px] font-semibold`}>
+          1:1
         </button>
       </div>
     </div>
