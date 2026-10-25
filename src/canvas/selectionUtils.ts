@@ -83,6 +83,12 @@ export function wholeGroupsOnly(
  * `singly` makes every PATH its own object. Drilling wants that: a part's holes sit in
  * the part's DXF block, so as one object they were bored in file order — across a 200 mm
  * part and back — and there is nothing to finish about a part before the next hole.
+ *
+ * An object is only kept together where its members actually LIE together
+ * (`togetherPieces`). A DXF block says what the drawing tied up, not where it is now: on
+ * the Charizard nest 58 label strokes sat in other parts than the block they came from,
+ * one of them on another sheet, and the block's centre — between the two — sent the V-bit
+ * across the sheets and back for every one of them.
  */
 export function locationOrder(ids: string[], paths: ImportedPath[], stock?: Stock, singly = false): string[] {
   const byId = new Map(paths.map((p) => [p.id, p]))
@@ -90,7 +96,7 @@ export function locationOrder(ids: string[], paths: ImportedPath[], stock?: Stoc
   // so a label drawn as a DXF block of strokes is engraved stroke after stroke, finishing
   // it before the next.
   const found = ids.flatMap((id) => { const p = byId.get(id); return p ? [p] : [] })
-  const units = singly ? found.map((p) => [p]) : transformObjects(found)
+  const units = singly ? found.map((p) => [p]) : transformObjects(found).flatMap(togetherPieces)
   type Placed = { members: ImportedPath[]; x: number; y: number; sheet: Cell }
   const sheets = new Map<string, Placed[]>()
   const unplaced: ImportedPath[][] = []
@@ -126,6 +132,47 @@ export function locationOrder(ids: string[], paths: ImportedPath[], stock?: Stoc
   // Ids with no path (none expected) keep their place at the end rather than vanish.
   for (const id of ids) if (!byId.has(id)) out.push(id)
   return out
+}
+
+/**
+ * An object's members split into the runs that stand TOGETHER: two members are together
+ * when their boxes come within the smaller one's own size of each other — a letter's
+ * width for a label's strokes, an overlap for a part's label inside its outline — and
+ * that chains (single linkage). Each piece keeps its members in their own order; a
+ * member with no box stays with the first piece. Strict on purpose: a piece split off
+ * wrongly (an i's dot) is still the nearest thing to its label and is cut beside it, while
+ * one kept wrongly costs a trip across the sheet. No label of the Charizard DXFs splits.
+ *
+ * Only the DRAWING's grouping is split. A user group was tied by hand and a multi-part
+ * shape is one shape, wherever their parts stand.
+ */
+export function togetherPieces(members: ImportedPath[]): ImportedPath[][] {
+  if (members.length < 2) return [members]
+  const m = members[0]
+  if (outerGroupOf(m) || (m.groupId && m.shapePart !== undefined)) return [members]
+  const boxes = members.map((p) => getBBox(p.d))
+  const parent = members.map((_, i) => i)
+  const root = (i: number): number => { while (parent[i] !== i) i = parent[i] = parent[parent[i]]; return i }
+  for (let i = 0; i < members.length; i++) {
+    const a = boxes[i]
+    if (!a) continue
+    for (let j = i + 1; j < members.length; j++) {
+      const b = boxes[j]
+      if (!b) continue
+      const reach = Math.min(Math.max(a.width, a.height), Math.max(b.width, b.height))
+      const gapX = Math.max(a.minX, b.minX) - Math.min(a.maxX, b.maxX)
+      const gapY = Math.max(a.minY, b.minY) - Math.min(a.maxY, b.maxY)
+      if (gapX <= reach && gapY <= reach) parent[root(j)] = root(i)
+    }
+  }
+  const firstBoxed = boxes.findIndex((b) => b !== null)
+  const pieces = new Map<number, ImportedPath[]>()
+  members.forEach((p, i) => {
+    const k = root((boxes[i] || firstBoxed < 0) ? i : firstBoxed)
+    const list = pieces.get(k)
+    if (list) list.push(p); else pieces.set(k, [p])
+  })
+  return [...pieces.values()]
 }
 
 export interface BBox {

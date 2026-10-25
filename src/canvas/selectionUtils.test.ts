@@ -540,10 +540,10 @@ describe('locationOrder — a box selection cuts from the bottom-left corner, ne
   })
 
   it('finishes one label before starting the next — every stroke of a DXF block together', () => {
-    // Two labels side by side, each a block of three strokes; stroke by stroke, the nearest
-    // stroke after A's first is B's.
+    // Two labels side by side, each a block of three strokes a letter-gap apart; stroke by
+    // stroke, the nearest stroke after A's first is B's.
     const label = (b: string, x: number) => [0, 1, 2].map((k) =>
-      sq(`${b}${k}`, x + k * 3, k * 3, 1, { sourceGroups: [b] }))
+      sq(`${b}${k}`, x + k * 3, k * 3, 2, { sourceGroups: [b] }))
     const paths = [...label('A', 0), ...label('B', 2)]
     const order = locationOrder(paths.map((p) => p.id).reverse(), paths)
     expect(order.map((id) => id[0])).toEqual(['A', 'A', 'A', 'B', 'B', 'B'])
@@ -568,11 +568,25 @@ describe('locationOrder — a box selection cuts from the bottom-left corner, ne
 
   it('drills hole after nearest hole when each path stands alone, even inside one part block', () => {
     // One part's holes, in the file order that zigzagged across the part. As one object
-    // they keep that order; `singly`, each hole goes to the nearest one left.
+    // (the outline holds them together) they keep that order; `singly`, each hole goes to
+    // the nearest one left.
     const hole = (id: string, x: number, y: number) => sq(id, x, y, 2, { sourceGroups: ['part'] })
     const paths = [hole('h1', 0, 0), hole('h2', 200, 0), hole('h3', 10, 0), hole('h4', 190, 0)]
     const ids = paths.map((p) => p.id)
-    expect(locationOrder(ids, paths)).toEqual(['h1', 'h2', 'h3', 'h4'])
+    const outline = sq('out', -5, -5, 210, { sourceGroups: ['part'] })
+    expect(locationOrder([...ids, 'out'], [...paths, outline])).toEqual(['h1', 'h2', 'h3', 'h4', 'out'])
     expect(locationOrder(ids, paths, undefined, true)).toEqual(['h1', 'h3', 'h4', 'h2'])
+  })
+
+  it('cuts a block\'s strokes that stand on another sheet with THAT sheet, not with the block', () => {
+    // Block A's label is split: two strokes by its part on sheet 1, two left on sheet 2.
+    // Taken whole, its centre lands between the sheets and the bit crosses back for them.
+    const stock = { widthMM: 100, heightMM: 100 }
+    const paths = [
+      sq('a1', 10, 10, 3, { sourceGroups: ['A'] }), sq('a2', 14, 10, 3, { sourceGroups: ['A'] }),
+      sq('a3', 160, 10, 3, { sourceGroups: ['A'] }), sq('a4', 164, 10, 3, { sourceGroups: ['A'] }),
+      sq('b1', 80, 80, 3, { sourceGroups: ['B'] }), sq('c1', 230, 80, 3, { sourceGroups: ['C'] }),
+    ]
+    expect(locationOrder(paths.map((p) => p.id), paths, stock)).toEqual(['a1', 'a2', 'b1', 'a3', 'a4', 'c1'])
   })
 })

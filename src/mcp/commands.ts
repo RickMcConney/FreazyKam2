@@ -107,6 +107,10 @@ function pathSummary(p: ImportedPath, includeGeometry: boolean) {
     // A multi-part shape's parts carry groupName too ("Gear"), and they were not imported.
     ...(p.groupName ? (p.shapePart ? { partOf: p.groupName, part: p.shapePart } : { importedFrom: p.groupName }) : {}),
     ...(p.userGroups?.length ? { group: p.userGroups[0] } : {}),
+    // Which part of the DRAWING this path was (a DXF block insert, an SVG <g>): an agent
+    // fitting a sheet's labels had only the boxes to go by, took the strokes of a label
+    // hanging over a neighbour for the neighbour's, and moved them off with it.
+    ...(p.sourceGroups?.length ? { drawnIn: p.sourceGroups[0], ...(p.sourceGroupNames?.[0] ? { drawnInName: p.sourceGroupNames[0] } : {}) } : {}),
     ...(includeGeometry ? { d: p.d, ...(p.shapeParams ? { shapeParams: p.shapeParams } : {}) } : {}),
   }
 }

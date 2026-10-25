@@ -65,7 +65,11 @@ export const TOOLS: ToolDef[] = [
     description:
       'The drawn and imported paths (vectors) in the project: id, name, the shape that made it ' +
       '(rectangle, circle, gear, ... or null for an import), whether it is closed, its bounding ' +
-      'box in mm from the stock\'s bottom-left corner, and how many tabs it has. Set ' +
+      'box in mm from the stock\'s bottom-left corner, and how many tabs it has. An imported ' +
+      'path carries drawnIn (and drawnInName, e.g. a DXF block name) when the file drew it as ' +
+      'part of one object: paths sharing drawnIn are one part — its outline, holes and label ' +
+      'strokes — so move or scale them together, and never assign a label stroke to a part by ' +
+      'where it lies. Set ' +
       'includeGeometry to also get each path\'s SVG d string (CNC mm, Y up) — large on imported ' +
       'drawings, so ask for specific ids when you can.',
     inputSchema: input({ ids: ids('Only these paths', 0), includeGeometry: bool() }),
