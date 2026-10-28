@@ -10,6 +10,7 @@ import { useWorkpieceStore, fmtLen, zDatumOffsetMM, machineMotionLimits, MATERIA
 import { feedsForTool, aimChipLoad, toolChipCeilingMM } from './feeds'
 import { feedDiameterMM } from './geom'
 import { generateGcodeWithOps, initialToolId } from './gcode'
+import { movesToDrawing, toMachine } from './machineFrame'
 import { parseGcode, segTool, toolTypeOf, feedDiameterOf, type ParsedGcode } from '../sim/gcodeParser'
 import { lengthBelowSpeed } from '../sim/motionPlanner'
 import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
@@ -88,6 +89,10 @@ export function buildExportPreflight(): ExportPreflight {
     maxFeedMmMin, minSpindleRpm, maxSpindleRpm, safeHeightMM, machineRigidity, autoFeedEnabled,
     tableLimitWidthMM, tableLimitHeightMM, tableLimitDepthMM,
   } = wp
+  const xDir = wp.machineXDir ?? 'right'
+  // The table's width and height are as the drawing shows it; name each by the machine
+  // axis that runs that way, which a turned machine swaps.
+  const [wAxis, hAxis] = xDir === 'right' || xDir === 'left' ? ['X', 'Y'] : ['Y', 'X']
 
   const fmt = (mm: number) => fmtLen(mm, units, 1)
   // These warnings are read while deciding whether to run a job, so the grammar has to
@@ -256,10 +261,10 @@ export function buildExportPreflight(): ExportPreflight {
   }
 
   if (tableLimitWidthMM > 0 && spanX > tableLimitWidthMM) {
-    warnings.push({ level: 'warn', text: `Toolpath X span ${fmt(spanX)} exceeds the table travel of ${fmt(tableLimitWidthMM)}.` })
+    warnings.push({ level: 'warn', text: `Toolpath ${wAxis} span ${fmt(spanX)} exceeds the table travel of ${fmt(tableLimitWidthMM)}.` })
   }
   if (tableLimitHeightMM > 0 && spanY > tableLimitHeightMM) {
-    warnings.push({ level: 'warn', text: `Toolpath Y span ${fmt(spanY)} exceeds the table travel of ${fmt(tableLimitHeightMM)}.` })
+    warnings.push({ level: 'warn', text: `Toolpath ${hAxis} span ${fmt(spanY)} exceeds the table travel of ${fmt(tableLimitHeightMM)}.` })
   }
   if (tableLimitDepthMM > 0 && deepestCutMM > tableLimitDepthMM) {
     warnings.push({ level: 'warn', text: `Deepest cut ${fmt(deepestCutMM)} exceeds the max Z travel of ${fmt(tableLimitDepthMM)}.` })
@@ -392,11 +397,15 @@ export function buildExportPreflight(): ExportPreflight {
       const prog = single ? program : generateGcodeWithOps(onCell, toolsById, 'estimate', profile)
       const p = single ? parsed : parseGcode(prog.gcode)
       // The check wants TOP-referenced Z, as the simulator holds it.
-      const segs = zOff ? p.segments.map((g) => ({ ...g, z: g.z - zOff, prevZ: g.prevZ - zOff })) : p.segments
+      // ...and on the drawing's axes, which the stock box is in (cam/machineFrame.ts).
+      const segs = zOff || xDir !== 'right' ? p.segments.map((g) => ({ ...g, z: g.z - zOff, prevZ: g.prevZ - zOff })) : p.segments
+      movesToDrawing(segs, xDir)
       for (const g of findRapidGouges(segs, p.toolStates, { widthMM, heightMM, thicknessMM, orgX: org.x, orgY: org.y })) {
         let j = 0
         while (j + 1 < prog.opStarts.length && g.lineIdx >= prog.opStarts[j + 1].line) j++
-        hits.push({ opId: prog.opStarts[j]?.opId ?? '', depthMM: g.depthMM, x: g.x, y: g.y, sheet: k + 1 })
+        // Reported in the PROGRAM's X/Y, so it can be found in the file and on the machine.
+        const [x, y] = toMachine(g.x, g.y, xDir)
+        hits.push({ opId: prog.opStarts[j]?.opId ?? '', depthMM: g.depthMM, x, y, sheet: k + 1 })
       }
     })
     if (hits.length > 0) {

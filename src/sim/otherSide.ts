@@ -19,6 +19,7 @@
 
 import type { SimSegment, ToolState } from './gcodeParser'
 import { parseGcode } from './gcodeParser'
+import { movesToDrawing } from '../cam/machineFrame'
 import { generateGcode } from '../cam/gcode'
 import { programForSheet } from '../io/gcodeExport'
 import { sheetLayoutNow, sheetIndex } from '../canvas/useSheets'
@@ -119,6 +120,7 @@ export function otherSideProgram(): UnderProgram | null {
   const parsed = parseGcode(gcode, wp.safeHeightMM + genZOff)
   // Top-referenced, as simStore.loadGcode makes the program being played.
   if (genZOff) for (const s of parsed.segments) { s.z -= genZOff; s.prevZ -= genZOff }
+  movesToDrawing(parsed.segments, wp.machineXDir)
   const org = originWorldXY(wp.origin, wp.widthMM, wp.heightMM)
   cached = {
     segments: mirrorForOtherSide(parsed.segments, sd.flip, wp.widthMM, wp.heightMM, org.x, org.y),

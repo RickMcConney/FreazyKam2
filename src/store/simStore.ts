@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { movesToDrawing } from '../cam/machineFrame'
 import { parseGcode, getCurrentSegIdx, lineStartsOf, type SimMessage, type SimSegment, type ToolState } from '../sim/gcodeParser'
 import { useWorkpieceStore, zDatumOffsetMM, machineMotionLimits } from './workpieceStore'
 import { useUIStore } from './uiStore'
@@ -130,6 +131,9 @@ export const useSimStore = create<SimState>()((set, get) => ({
     // To top-referenced, once and in place: these are this parse's own objects, so
     // nothing else holds them, and every consumer reads this one array.
     if (genZOff) for (const s of parsed.segments) { s.z -= genZOff; s.prevZ -= genZOff }
+    // And onto the drawing's axes: a program is in the MACHINE's, which may run turned
+    // (cam/machineFrame.ts). An imported file too — it was written for the machine.
+    movesToDrawing(parsed.segments, useWorkpieceStore.getState().machineXDir)
     set({
       gcode: text,
       lineStarts: lineStartsOf(text),

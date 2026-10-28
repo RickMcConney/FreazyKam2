@@ -23,6 +23,7 @@ import { flattenPath, ensureWinding, type Pt2 } from '../cam/pathFlattener'
 import { ringsBBox } from '../cam/geom'
 import { toCP, fromCP } from '../cam/clipperAdapters'
 import { parseGcode, type SimSegment, type ToolState } from './gcodeParser'
+import { movesToDrawing } from '../cam/machineFrame'
 import { Heightfield, computeCutBounds, type HeightfieldGrid } from './heightfield'
 import { useWorkpieceStore, zDatumOffsetMM } from '../store/workpieceStore'
 import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
@@ -237,13 +238,14 @@ export function auditGcode(
   // coordinates, so shift Z back to top-referenced (simStore.genZOff) and hand the heightfield
   // the origin offset it adds to every XY (ThreeView passes originWorldXY the same way).
   // Getting this wrong scores the whole job as uncut, which is a harness bug, not a CAM one.
-  const { origin, zOrigin } = useWorkpieceStore.getState()
+  const { origin, zOrigin, machineXDir } = useWorkpieceStore.getState()
   const org = originWorldXY(origin, W, H)
   const zOff = zDatumOffsetMM(zOrigin, T)
   const parsed = parseGcode(gcode)
   const segments = zOff
     ? parsed.segments.map(s => ({ ...s, z: s.z - zOff, prevZ: s.prevZ - zOff }))
     : parsed.segments
+  movesToDrawing(segments, machineXDir)   // back onto the drawing's axes (cam/machineFrame.ts)
   const grid = auditGrid(W, H, T, segments, parsed.toolStates, intents, cellMM, org.x, org.y)
   const hf = new Heightfield(grid)
   hf.carveAll(segments, parsed.toolStates)

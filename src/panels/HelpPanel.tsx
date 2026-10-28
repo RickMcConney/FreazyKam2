@@ -208,7 +208,9 @@ export default function HelpPanel() {
             <p className="text-xs text-gray-500 dark:text-neutral-400 leading-relaxed">
               All dimensions are in CNC space (mm, Y-up, origin at stock bottom-left by default).
               The canvas applies a Y-flip so positive Y appears upward on screen, matching conventional
-              CAD orientation.
+              CAD orientation. If your machine&apos;s axes run another way (X away from you, say), set
+              Setup → Machine Axes: the origin arrows turn to show it, and the G-code is turned to match
+              your machine while the drawing stays as the stock sits on the table.
             </p>
           </section>
         </div>

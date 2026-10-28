@@ -109,8 +109,9 @@ describe('buildResume — the entry', () => {
   beforeEach(() => {
     text = program('fluidnc-mm')
     lines = text.split('\n')
-    // The second pass of Profile 1: a straight cut at Z-2 following the plunge.
-    n = lines.findIndex((l) => /^G1 X30\.000 Y10\.000 Z-2\.000/.test(l)) + 1
+    // The second pass of Profile 1: a straight cut at Z-2 following the plunge. Found by
+    // what it DOES — the line says only `X30.000 F1500`, the rest being modal.
+    n = parseGcode(text).segments.find((s) => s.z === -2 && s.x === 30 && s.prevX === 10 && s.y === 10)!.lineIdx + 1
   })
 
   it('goes straight up first, then across at safe height, then down at the plunge feed', () => {
@@ -131,15 +132,26 @@ describe('buildResume — the entry', () => {
   it('writes the coordinates as the file wrote them, so an arc on line N starts where its I/J were measured from', () => {
     const arcLine = lines.findIndex((l) => /^G3 /.test(l)) + 1
     const r = ok(buildResume(text, arcLine))
-    const prev = lines[arcLine - 2].match(/X(\S+) Y(\S+) Z(\S+)/)!
-    expect(head(r)).toContain(`G0 X${prev[1]} Y${prev[2]}`)
-    expect(head(r)).toContain(`G1 Z${prev[3]} F400`)
+    // The line before the arc says only `X30.000 F1500`; Y and Z are what earlier lines
+    // wrote, and the entry carries all three in the file's own text.
+    expect(lines[arcLine - 2]).not.toMatch(/Y/)
+    expect(head(r)).toContain('G0 X30.000 Y10.000')
+    expect(head(r)).toContain('G1 Z-1.000 F400')
   })
 
   it('restores the cutting feed after the plunge', () => {
     const arcLine = lines.findIndex((l) => /^G3 /.test(l)) + 1
     const h = head(ok(buildResume(text, arcLine)))
     expect(h.slice(-2)).toEqual(['G1 Z-1.000 F400', 'F1500'])
+  })
+
+  it('restates the feed in force when the entry has no descent, since line N may not carry one', () => {
+    // A program that writes only what changes: line 7 moves at F800 without saying so.
+    const t = ['G21', 'G90', 'M3 S18000', 'G0 X0 Y0 Z5', 'G1 X10 F800', 'X20', 'X30'].join('\n')
+    const r = ok(buildResume(t, 7))
+    expect(lastOf(head(r))).toBe('F800')
+    const move = parseGcode(r.text).segments.find((s) => s.lineIdx === r.lineInResume - 1)!
+    expect(move).toMatchObject({ x: 30, prevX: 20, feedRateMmMin: 800 })
   })
 
   it('leaves the feed alone when the one in force is the plunge feed', () => {
@@ -185,7 +197,7 @@ describe('buildResume — the entry', () => {
     const r1 = ok(buildResume(text, n))
     expect(r1).toMatchObject({ operation: 'Profile 1', toolChangesBefore: 0, spindleOn: true, units: 'mm' })
     expect(r1.warnings).toEqual([])
-    const inOp2 = lines.findIndex((l) => /^G1 X70\.000 Y40\.000 Z-1\.000/.test(l)) + 1
+    const inOp2 = parseGcode(text).segments.find((s) => s.z === -1 && s.x === 70 && s.y === 40 && s.prevX === 50)!.lineIdx + 1
     const r2 = ok(buildResume(text, inOp2))
     expect(r2.operation).toBe('Pocket 2')
     expect(r2.toolChangesBefore).toBe(1)

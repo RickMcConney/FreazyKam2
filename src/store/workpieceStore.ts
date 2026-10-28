@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { MotionLimits } from '../sim/motionPlanner'
+import type { MachineXDir } from '../cam/machineFrame'
 import { useTimelineStore } from '../timeline/timelineStore'
 import type { WorkpieceEventChanges } from '../timeline/events'
 import { DEFAULT_CUSTOM_DIAL_RPM, normalizeCustomDial, spindleDialRange, clampToChartedRange, type SpindleType } from './spindle'
@@ -156,6 +157,9 @@ export interface WorkpieceState {
   maxRateZMmMin: number
   junctionDeviationMM: number
   spindleType: SpindleType     // router/spindle model — drives the RPM→dial readout
+  // Which way the machine's +X runs on the drawing (cam/machineFrame.ts). The G-code is
+  // turned to match on the way out and turned back wherever it is laid over the drawing.
+  machineXDir: MachineXDir
   customDialRpm: number[]      // a 'custom' router's speed at dial 1..6, from its manual
   autoFeedEnabled: boolean     // when true, feeds/step-down are computed (cam/feeds.ts)
   // A double-sided job's flip and dowel pins (cam/doubleSided.ts), or null for an ordinary
@@ -181,6 +185,7 @@ export interface WorkpieceState {
   setMinSpindleRpm: (rpm: number) => void
   setMaxSpindleRpm: (rpm: number) => void
   setSpindleType: (t: SpindleType) => void
+  setMachineXDir: (d: MachineXDir) => void
   setCustomDialRpm: (rpm: number[]) => void
   setAccelXY: (mmS2: number) => void
   setAccelZ: (mmS2: number) => void
@@ -222,6 +227,7 @@ export const useWorkpieceStore = create<WorkpieceState>()(
       minSpindleRpm: 8000,
       maxSpindleRpm: 24000,
       spindleType: 'vfd',
+      machineXDir: 'right',
       customDialRpm: [...DEFAULT_CUSTOM_DIAL_RPM],
       // Typical of a hobby machine on Grbl/FluidNC; the user's own config replaces them.
       accelXYMmS2: 200,
@@ -258,6 +264,7 @@ export const useWorkpieceStore = create<WorkpieceState>()(
       // The range stays editable afterwards — narrowing it is how to keep a router off
       // its top speed. A VFD or manual spindle leaves the range as it was.
       setSpindleType: (t) => set({ spindleType: t, ...dialRangeOf(t, get().customDialRpm) }),
+      setMachineXDir: (d) => set({ machineXDir: d }),
       setCustomDialRpm: (rpm) => set({
         customDialRpm: [...rpm],
         ...(get().spindleType === 'custom' ? dialRangeOf('custom', rpm) : {}),

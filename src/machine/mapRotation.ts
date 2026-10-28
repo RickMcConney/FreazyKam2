@@ -8,7 +8,15 @@
 //   ( cosθ·x + sinθ·y ,  sinθ·x − cosθ·y )
 // That matrix is a reflection, so it is its own inverse.
 
+import type { MachineXDir } from '../cam/machineFrame'
+
 export type MapRotation = 0 | 90 | 180 | 270
+
+/** The turn that lays the map like the drawing: machine axes pointing where Setup → Machine
+ *  Axes says they run (cam/machineFrame.ts). The map's own rotate button turns on from it. */
+export function mapRotationFor(dir: MachineXDir): MapRotation {
+  return ({ right: 0, down: 90, left: 180, up: 270 } as const)[dir]
+}
 
 const cs = (rot: MapRotation) => {
   const r = (rot * Math.PI) / 180

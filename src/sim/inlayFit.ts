@@ -66,6 +66,7 @@ import { generateInlayFemale, generateInlayMale, type InlayParams } from '../cam
 import { generateGcode } from '../cam/gcode'
 import { flattenPath } from '../cam/pathFlattener'
 import { parseGcode } from './gcodeParser'
+import { movesToDrawing } from '../cam/machineFrame'
 import { Heightfield, type HeightfieldGrid } from './heightfield'
 import {
   AUDIT_POST, regionFromPaths, offsetRegion, rasterizeRegion, clusterMask, type AuditCluster,
@@ -253,6 +254,7 @@ export async function auditInlayFit(opts: InlayFitOptions): Promise<InlayFitResu
     const segments = zOff
       ? parsed.segments.map(s => ({ ...s, z: s.z - zOff, prevZ: s.prevZ - zOff }))
       : parsed.segments
+    movesToDrawing(segments, useWorkpieceStore.getState().machineXDir)   // back onto the drawing's axes
     const hf = new Heightfield(grid)
     hf.carveAll(segments, parsed.toolStates)
     return { hf, warnings: parsed.warnings }

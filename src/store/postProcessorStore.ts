@@ -26,6 +26,11 @@ export interface PostProcessorProfile {
    *  path half a millimetre over the floor can clip a wall. Absent = the factory default for
    *  a built-in profile, off for any other (see linksAsRapids). */
   linksAsRapids?: boolean
+  /** Leave out of each move the words the controller already holds — G0/G1/G2/G3, X, Y, Z
+   *  and F are modal in RS274, so a move need only say what changed (cam/gcode.ts,
+   *  compactMotionLine). Absent = on: every controller we ship a preset for is modal. Off
+   *  for a firmware that wants every word on every line (Marlin without GCODE_MOTION_MODES). */
+  modalOutput?: boolean
   /** True for the factory controller presets shipped with the app. User-created
    *  and duplicated profiles omit this. Lets the UI offer "reset to default" and
    *  drives the persist merge that seeds newly-added presets for existing users. */
@@ -182,6 +187,10 @@ export function linksAsRapids(p: PostProcessorProfile): boolean {
   if (p.linksAsRapids !== undefined) return p.linksAsRapids
   if (!p.builtin) return false
   return BUILTIN_PROFILES.find((b) => b.id === p.id)?.linksAsRapids ?? false
+}
+
+export function omitsModalWords(p: PostProcessorProfile): boolean {
+  return p.modalOutput !== false
 }
 
 // Order here is the order shown in the panel sidebar.

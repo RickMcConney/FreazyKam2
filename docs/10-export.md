@@ -88,13 +88,13 @@ alone.
 Controllers disagree about the details of G-code. A **post-processor profile** is the set
 of rules for turning toolpaths into the dialect yours speaks.
 
-![The Post-Processor tab: Restore Built-ins, Import, Export, Duplicate, Add Profile and Delete across the top, the seven profiles listed on the left, and the editor showing start and end G-code, tool change, spindle, move and arc templates](images/10-post-processor.png)
+![The Post-Processor tab: Restore Built-ins, Import, Export, Duplicate, Add Profile and Delete across the top, the nine built-in profiles listed on the left with FluidNC (mm) selected, and the editor showing the name, unit mode and comment style, start and end G-code, tool change, spindle and move templates, and the Links as rapids, Compact G-code and Output arc moves switches](images/10-post-processor.png)
 
 <!-- FULL APP · 1600 px wide, downscaled from a 2× capture. -->
 
-Seven profiles are built in — **Grbl (mm)**, **Grbl (inches)**, **grblHAL**, **LinuxCNC**,
-**Mach3**, **UCCNC** and a **Generic** one. Grbl (mm) is the default and covers most hobby
-machines.
+Nine profiles are built in — **FluidNC (mm)**, **FluidNC (inches)**, **Grbl (mm)**,
+**Grbl (inches)**, **grblHAL**, **LinuxCNC**, **Mach3**, **UCCNC** and a **Generic** one.
+FluidNC (mm) is the default; it and the Grbl profiles cover most hobby machines.
 
 The buttons across the top act on the profile selected in the list: **Duplicate** copies
 it, **Export** saves it as a `.fkset` file to share, and **Delete** removes it (the last
@@ -119,9 +119,24 @@ duplicate a profile and edit the copy.
 | **Spindle on / off** | `{s}` is the speed |
 | **Rapid / Cut move** | `{x} {y} {z} {f}` |
 | **Arc CW / CCW** | `{i} {j}` centre offsets — and a switch to turn arcs off entirely |
+| **Compact G-code** | On by default: each move writes only the G, X, Y, Z and F that changed |
 
 **Unit mode is the only thing that decides whether the file is in inches or millimetres.**
 The toolbar's mm/in toggle is a display setting and has no effect on the exported file.
+
+**Keep the placeholders on their own axes** — `X{x} Y{y}`, `I{i} J{j}`. If your machine's
+axes run the other way round, set **Setup → Machine Axes** ([Machine
+axes](03-stock-and-tools.md#machine-axes)) rather than swapping them here: a swap mirrors
+the part and runs every arc backwards, and the move and arc fields say so in amber if a
+template does it.
+
+**Compact G-code** leaves out of each move whatever the controller already holds. G0/G1,
+the axes and the feed are all *modal* — they stay in force until changed — so after
+`G1 X10 Y5 Z-1 F800`, a move to X12 is written as just `X12`. The file comes out much
+smaller and the controller runs it exactly the same; the simulator and Resume read it either
+way. Every built-in profile is for a controller that works this way. **Turn it off** only
+for firmware that needs every word on every line (Marlin, unless it was built with motion
+modes).
 
 **Turn off Output arc moves** if your controller's arc handling is unreliable — everything
 comes out as short straight moves instead. Bigger file, no arcs to misinterpret.

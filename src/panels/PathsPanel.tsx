@@ -11,6 +11,15 @@ import { usePathsStore, groupKeyOf, outerGroupOf, type ImportedPath } from '../s
 import { sourceTree, type SourceItem } from './sourceTree'
 
 const iconBtn = 'opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-gray-300 dark:hover:bg-neutral-600 text-gray-500 dark:text-neutral-400 hover:text-gray-800 dark:hover:text-neutral-200 transition-opacity'
+// The list is ALPHABETICAL at every level, folders before rows — natural order, so
+// "Part 2" comes before "Part 10". Document order still lives in the Objects strip.
+const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare
+function sortItems(items: SourceItem[]): SourceItem[] {
+  const nameOf = (it: SourceItem) => (it.kind === 'path' ? it.path.name : it.name)
+  return [...items].sort((a, b) =>
+    (a.kind === 'folder' ? 0 : 1) - (b.kind === 'folder' ? 0 : 1) || byName(nameOf(a), nameOf(b)))
+}
+
 const deleteBtn = 'opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-900/40 text-gray-500 dark:text-neutral-400 hover:text-red-400 transition-opacity'
 
 /** One path inside a folder. */
@@ -53,7 +62,7 @@ function SourceItems({ items, open, onToggle }: {
   const { setSelectedIds, setPathsVisible, applyPathEdit } = usePathsStore.getState()
   return (
     <ul className="ml-5 space-y-0.5 mt-0.5">
-      {items.map((it) => {
+      {sortItems(items).map((it) => {
         if (it.kind === 'path') return <MemberRow key={it.path.id} p={it.path} />
         const isOpen = open.has(it.id)
         const ids = it.paths.map((p) => p.id)
@@ -111,7 +120,7 @@ export default function PathsPanel() {
     if (next.has(id)) next.delete(id); else next.add(id)
     return next
   })
-  // Separate grouped vs ungrouped paths; preserve original order within groups
+  // Separate grouped vs ungrouped paths (both sorted by name below)
   const groupOrder: string[] = []
   const groupMap = new Map<string, typeof paths>()
   const ungrouped: typeof paths = []
@@ -132,6 +141,15 @@ export default function PathsPanel() {
     }
   }
 
+  // A user group has no name of its own — it is whatever the user put in it — so it
+  // is labelled for what it is, with the member count already shown beside it.
+  const groupNameOf = (groupId: string) => {
+    const first = groupMap.get(groupId)![0]
+    return outerGroupOf(first) === groupId ? 'Group' : first.groupName ?? groupId
+  }
+  groupOrder.sort((a, b) => byName(groupNameOf(a), groupNameOf(b)))
+  ungrouped.sort((a, b) => byName(a.name, b.name))
+
   return (
     <div className="flex flex-col h-full overflow-y-auto">
       {/* Path list */}
@@ -148,12 +166,7 @@ export default function PathsPanel() {
           {groupOrder.map((groupId) => {
             const members = groupMap.get(groupId)!
             const collapsed = collapsedGroups.has(groupId)
-            // A user group has no name of its own — it is whatever the user put
-            // in it — so it is labelled for what it is, with the member count
-            // already shown beside it.
-            const groupName = outerGroupOf(members[0]) === groupId
-              ? 'Group'
-              : members[0].groupName ?? groupId
+            const groupName = groupNameOf(groupId)
             const allVisible = members.every((p) => p.visible)
             const anySelected = members.some((p) => selectedIds.includes(p.id))
 

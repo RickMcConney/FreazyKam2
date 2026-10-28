@@ -33,7 +33,7 @@ export const SETTINGS_EXT = '.fkset'
 const MACHINE_KEYS = [
   'tableLimitWidthMM', 'tableLimitHeightMM', 'tableLimitDepthMM',
   'machineRigidity', 'maxFeedMmMin', 'minSpindleRpm', 'maxSpindleRpm', 'spindleType', 'customDialRpm', 'autoFeedEnabled',
-  'accelXYMmS2', 'accelZMmS2', 'maxRateZMmMin', 'junctionDeviationMM',
+  'accelXYMmS2', 'accelZMmS2', 'maxRateZMmMin', 'junctionDeviationMM', 'machineXDir',
 ] as const
 const STOCK_KEYS = ['widthMM', 'heightMM', 'thicknessMM', 'units', 'origin', 'zOrigin', 'material', 'safeHeightMM'] as const
 const MACHINE_TAB_KEYS = ['address', 'jogStepIndex', 'jogStepIndexZ', 'jogFeedXY', 'jogFeedZ', 'hasHoming', 'macros', 'mapRotation'] as const
@@ -146,7 +146,7 @@ function profilesIn(v: unknown): PostProcessorProfile[] {
   const list = (v as { profiles?: unknown })?.profiles
   const template = usePostProcessorStore.getState().profiles[0]
   if (!Array.isArray(list) || !template) return []
-  return list.map((p) => wholeLike(template, p, ['builtin', 'linksAsRapids'])).filter((p): p is PostProcessorProfile => !!p)
+  return list.map((p) => wholeLike(template, p, ['builtin', 'linksAsRapids', 'modalOutput'])).filter((p): p is PostProcessorProfile => !!p)
 }
 
 /**
@@ -308,7 +308,7 @@ const MACHINE_LABELS: Record<typeof MACHINE_KEYS[number], [string, string]> = {
   machineRigidity: ['Rigidity', ''], maxFeedMmMin: ['Max feed', 'mm/min'], minSpindleRpm: ['Min spindle', 'rpm'],
   maxSpindleRpm: ['Max spindle', 'rpm'], spindleType: ['Spindle type', ''], customDialRpm: ['Custom dial', 'rpm'], autoFeedEnabled: ['Auto feeds', ''],
   accelXYMmS2: ['Accel X/Y', 'mm/s²'], accelZMmS2: ['Accel Z', 'mm/s²'], maxRateZMmMin: ['Z max rate', 'mm/min'],
-  junctionDeviationMM: ['Junction deviation', 'mm'],
+  junctionDeviationMM: ['Junction deviation', 'mm'], machineXDir: ['Machine +X points', ''],
 }
 
 /** Each machine setting that differs from the factory value, as "Name: now → default". */

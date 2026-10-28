@@ -301,7 +301,10 @@ cutting around a shape can look as if the marker is a side or more **ahead of th
 the two are in step and the picture is simply turned a quarter-turn from your view.
 
 **Rotate** (on the Go to header) turns the map a quarter-turn clockwise per press; the header
-shows the current angle, e.g. **Rotate · 90°**. Pick the angle for where you sit:
+shows the current angle, e.g. **Rotate · 90°**. Pressing **Rotate** under Setup → [Machine
+Axes](03-stock-and-tools.md#machine-axes) also turns the map, so it lies like the drawing for
+a machine whose axes run the other way round; turn it on from there to suit where you sit.
+Pick the angle for where you sit:
 
 | You sit… | Rotate | On screen: up is | right is |
 |---|---|---|---|

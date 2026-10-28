@@ -2,7 +2,7 @@ import type { AnyOperation, MotionSegment, ProfileOperation } from '../store/too
 import { BUILD_DATE } from '../version'
 import { perfLog } from '../debug'
 import type { Tool } from '../store/toolStore'
-import { linksAsRapids, type PostProcessorProfile } from '../store/postProcessorStore'
+import { linksAsRapids, omitsModalWords, type PostProcessorProfile } from '../store/postProcessorStore'
 import { useWorkpieceStore, zDatumOffsetMM, MM_PER_INCH as MM_PER_IN } from '../store/workpieceStore'
 import { SPINDLE_INFO, spindleDialLabel } from '../store/spindle'
 import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
@@ -13,6 +13,7 @@ import { lineSpacingMM } from './photoVcarve'
 import { asciiFileName } from '../io/filename'
 import { downloadText } from '../io/download'
 import { reachesProgram } from './programOps'
+import { toMachine, type MachineXDir } from './machineFrame'
 
 
 function f(n: number, decimals = 3) { return n.toFixed(decimals) }
@@ -50,6 +51,68 @@ function toolShapeComments(tool: Tool, angleDeg: number | undefined, c: (s: stri
 
 function sub(template: string, vals: Record<string, string | number>): string {
   return template.replace(/\{(\w+)\}/g, (_, k) => String(vals[k] ?? ''))
+}
+
+/** What the controller already holds: the motion mode, the last X/Y/Z written and the
+ *  feed. null = not known, so the next word for it is written whatever its value. */
+export interface ModalWords { g: number | null; x: number | null; y: number | null; z: number | null; f: number | null }
+export const unknownModal = (): ModalWords => ({ g: null, x: null, y: null, z: null, f: null })
+
+const MOTION_WORD_RE = /([A-Za-z])\s*([-+]?(?:\d+\.?\d*|\.\d+))/g
+
+/**
+ * A motion line with every word the controller already holds left out — G0/G1/G2/G3, X, Y,
+ * Z and F are all MODAL in RS274, so `G1 X10 Y5 Z-1 F800` followed by `G1 X12 Y5 Z-1 F800`
+ * only needs to say `X12`. Works on the line the TEMPLATE produced, so a user's own template
+ * is compacted the same way, and updates `st` to what the line leaves in force. Returns ''
+ * for a line that would move nothing — dropping it changes nothing the controller does.
+ * An arc keeps X and Y (Grbl refuses a G2/G3 with no axis word in the plane, error 26, and a
+ * full circle's end IS its start) and always keeps I/J. A line carrying a comment is left
+ * whole: what it says may be about the words on it.
+ */
+export function compactMotionLine(line: string, st: ModalWords): string {
+  if (line.includes('(') || line.includes(';')) { modalAfter(line, st); return line }
+  const words: { letter: string; text: string; v: number }[] = []
+  MOTION_WORD_RE.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = MOTION_WORD_RE.exec(line)) !== null) words.push({ letter: m[1].toUpperCase(), text: m[0], v: parseFloat(m[2]) })
+  let g = st.g
+  for (const w of words) if (w.letter === 'G' && w.v >= 0 && w.v <= 3 && Number.isInteger(w.v)) g = w.v
+  const arc = g === 2 || g === 3
+  const kept: string[] = []
+  let moves = false
+  for (const w of words) {
+    const L = w.letter
+    if (L === 'G' && w.v === g && Number.isInteger(w.v) && w.v <= 3) { if (g !== st.g) kept.push(w.text); continue }
+    if (L === 'X' || L === 'Y' || L === 'Z') {
+      const key = L.toLowerCase() as 'x' | 'y' | 'z'
+      if (st[key] !== w.v || (arc && key !== 'z')) { kept.push(w.text); moves = true }
+      continue
+    }
+    if (L === 'F') { if (st.f !== w.v) kept.push(w.text); continue }
+    if (L === 'I' || L === 'J' || L === 'R') moves = true
+    kept.push(w.text)
+  }
+  if (!moves) return ''
+  modalAfter(line, st)
+  return kept.join(' ')
+}
+
+/** Fold what `line` sets into `st`, unchanged in its wording. */
+function modalAfter(line: string, st: ModalWords): void {
+  MOTION_WORD_RE.lastIndex = 0
+  const code = line.replace(/\([^)]*\)/g, '').replace(/;.*$/, '')
+  let m: RegExpExecArray | null
+  while ((m = MOTION_WORD_RE.exec(code)) !== null) {
+    const v = parseFloat(m[2])
+    switch (m[1].toUpperCase()) {
+      case 'G': if (v >= 0 && v <= 3 && Number.isInteger(v)) st.g = v; break
+      case 'X': st.x = v; break
+      case 'Y': st.y = v; break
+      case 'Z': st.z = v; break
+      case 'F': st.f = v; break
+    }
+  }
 }
 
 // THE LONGEST LINE ANY CONTROLLER IS SURE TO TAKE. Grbl's line buffer is 80 characters.
@@ -133,16 +196,20 @@ function toolDefFields(tool: Tool, k: number): string {
 /** The header lines, in the program's units and coordinates. Empty with comments off. */
 export function stockSimHeader(
   tools: Tool[], profile: PostProcessorProfile,
-  stock: { widthMM: number; heightMM: number; thicknessMM: number; orgX: number; orgY: number; zOffMM: number },
+  stock: { widthMM: number; heightMM: number; thicknessMM: number; orgX: number; orgY: number; zOffMM: number; xDir?: MachineXDir },
 ): string[] {
   const style = profile.commentStyle
   if (style !== 'semicolon' && style !== 'parenthesis') return []
   const k = profile.unitMode === 'in' ? 1 / MM_PER_IN : 1
   const v = (mm: number) => num4(mm * k)
+  // The stock's box in MACHINE axes — the drawing's box turned, as the moves are.
+  const dir = stock.xDir ?? 'right'
+  const [ax, ay] = toMachine(-stock.orgX, -stock.orgY, dir)
+  const [bx, by] = toMachine(stock.widthMM - stock.orgX, stock.heightMM - stock.orgY, dir)
   const out = [
     commentLine(`CNCSIM 1 UNITS=${profile.unitMode === 'in' ? 'in' : 'mm'}`, style),
-    commentLine(`Stock: XMIN=${v(-stock.orgX)} XMAX=${v(stock.widthMM - stock.orgX)} ` +
-      `YMIN=${v(-stock.orgY)} YMAX=${v(stock.heightMM - stock.orgY)} ` +
+    commentLine(`Stock: XMIN=${v(Math.min(ax, bx))} XMAX=${v(Math.max(ax, bx))} ` +
+      `YMIN=${v(Math.min(ay, by))} YMAX=${v(Math.max(ay, by))} ` +
       `ZMIN=${v(stock.zOffMM - stock.thicknessMM)} ZMAX=${v(stock.zOffMM)}`, style),
   ]
   tools.forEach((tool, i) => {
@@ -173,14 +240,20 @@ function controllerMessage(kind: 'MSG' | 'PRINT', text: string, prefix = ''): st
 // The tool-change template's bare `M0` with a comment naming the tool — which is what the
 // viewer above counts as a tool change, and (as a MSG) what FluidNC shows the operator while
 // it waits. Any other line, or a template without an M0, is left exactly as the user wrote it.
+// Tool first, wording after: a pendant shows the start of the line and cuts the rest off.
+// The NAME gives way to the length limit, never the words after it — resume counts an M0
+// as a tool change by the word "tool" in its comment.
 function tagToolChangeM0(line: string, n: number, tool: Tool, style: PostProcessorProfile['commentStyle']): string {
   if (!/^\s*M0?0\s*$/i.test(line) || (style !== 'semicolon' && style !== 'parenthesis')) return line
   const bare = line.trim()
-  if (style === 'parenthesis') return controllerMessage('MSG', `Change to tool T${n}: ${tool.name}`, `${bare} `)
-  const head = `Tool change: T${n}`
-  const room = MAX_GCODE_LINE - `${bare} ${commentLine(`${head} `, style)}`.length
-  const name = tool.name.trim().replace(/\s+/g, ' ').slice(0, Math.max(0, room)).trim()
-  return `${bare} ${commentLine(name ? `${head} ${name}` : head, style)}`
+  const tail = ' - change tool'
+  // The line with no name in it; the name and the space before it get what is left.
+  const frame = style === 'parenthesis'
+    ? controllerMessage('MSG', `T${n}${tail}`, `${bare} `)
+    : `${bare} ${commentLine(`T${n}${tail}`, style)}`
+  const name = tool.name.trim().replace(/\s+/g, ' ').slice(0, Math.max(0, MAX_GCODE_LINE - frame.length - 1)).trim()
+  const text = `T${n}${name ? ` ${name}` : ''}${tail}`
+  return style === 'parenthesis' ? controllerMessage('MSG', text, `${bare} `) : `${bare} ${commentLine(text, style)}`
 }
 
 // A roughing pass and its finishing pass differ ONLY by the allowance, so without this
@@ -399,8 +472,13 @@ export function generateGcodeWithOps(
 
   // Segments are stored in workpiece-local coords (0→W, 0→H).
   // G-code must be relative to the machine zero (the origin point the user set on the workpiece).
-  const { widthMM, heightMM, thicknessMM, origin, zOrigin, spindleType, customDialRpm } = useWorkpieceStore.getState()
+  const { widthMM, heightMM, thicknessMM, origin, zOrigin, spindleType, customDialRpm, machineXDir } = useWorkpieceStore.getState()
+  const xDir: MachineXDir = machineXDir ?? 'right'
   const org = originWorldXY(origin, widthMM, heightMM)
+  // A drawing point → machine X/Y in mm: relative to the work origin, then turned to the
+  // machine's axes (cam/machineFrame.ts). The origin stays the corner the user picked ON THE
+  // DRAWING — that is where they zero the machine, whichever way its axes run.
+  const mach = (x: number, y: number) => toMachine(x - org.x, y - org.y, xDir)
   // Z datum offset: segment Z is top-referenced (Z=0 at top surface). For a bottom-of-stock
   // origin, shift the emitted Z up by the stock thickness so Z=0 lands at the stock bottom.
   const zOff = zDatumOffsetMM(zOrigin, thicknessMM)
@@ -409,15 +487,28 @@ export function generateGcodeWithOps(
   // router (DeWalt/Makita/custom) for the given RPM. Empty for VFD/manual spindles.
   const dialComment = (rpm: number): string => {
     const label = spindleDialLabel(spindleType, rpm, customDialRpm)
-    return label ? `Spindle ${rpm} RPM → ${label} (${SPINDLE_INFO[spindleType].label})` : ''
+    // Setting first: the pendant shows the start of a line, and the dial is what to act on.
+    return label ? `${label[0].toUpperCase()}${label.slice(1)} - ${rpm} RPM - ${SPINDLE_INFO[spindleType].label}` : ''
   }
+
+  const doneOps = operations.filter(reachesProgram)
+  // The bit the program starts with, so the head of the file says what to load and where to
+  // set the dial before anything runs — what the operator checks when loading the job.
+  const firstOp = doneOps.find((op) => toolsById[op.toolId])
+  const startTool = firstOp ? toolsById[initialToolId(firstOp)] ?? toolsById[firstOp.toolId] : undefined
 
   c(`${projectName}`) // file name (no extension) — first line, for a quick check when loading on the machine
   // The version is the build's commit date, as the status bar shows it.
-  c(`Generated by FreazyKam ${BUILD_DATE}`)
-  c(`Generated: ${date}`)
+  // What matters first on each line — a pendant shows only the start of one.
+  c(`${date}  Generated by FreazyKam ${BUILD_DATE}`)
+  if (startTool) {
+    c(`T1 ${startTool.name} - start with this tool`)
+    const dc = profile.spindleOnTemplate.trim() ? dialComment(feedsForTool(startTool).rpm) : ''
+    if (dc) c(dc)
+  }
   c(`Post-processor: ${profile.name}`)
   c(`Origin: ${origin}  offset X${f(org.x)} Y${f(org.y)}`)
+  if (xDir !== 'right') c(`Machine axes: +X points ${xDir} on the drawing`)
   c(`Z origin: ${zOrigin} of stock (Z0 = ${zOrigin === 'bottom' ? 'stock bottom' : 'top surface'})`)
   // The stock-simulation header goes HERE, but which tools it lists is only known once the
   // program is written — so the place is held and the lines spliced in at the end.
@@ -448,7 +539,6 @@ export function generateGcodeWithOps(
   }
   lines.push('')
 
-  const doneOps = operations.filter(reachesProgram)
   if (doneOps.length === 0) {
     c('No toolpaths to export.')
     lines.push('M30')
@@ -497,10 +587,11 @@ export function generateGcodeWithOps(
       } else if (!lastToolId && profile.commentStyle === 'parenthesis') {
         // Every later bit is named by the M0 that waits for it; the first has no M0, so
         // without this the operator is never told what to load before pressing Start.
-        lines.push(controllerMessage('MSG', `Start with tool T1: ${firstTool.name}`))
+        lines.push(controllerMessage('MSG', `T1 ${firstTool.name} - start with this tool`))
       }
       if (profile.spindleOnTemplate.trim()) {
-        const dc = dialComment(firstFeeds.rpm); if (dc) c(dc)
+        // The first tool's dial setting is in the header; later ones are given at the change.
+        if (lastToolId) { const dc = dialComment(firstFeeds.rpm); if (dc) c(dc) }
         lines.push(sub(profile.spindleOnTemplate, { s: firstFeeds.rpm }))
       }
       if (firstFeeds.rpmAdjusted) {
@@ -520,6 +611,7 @@ export function generateGcodeWithOps(
     // showed up on tight corner arcs.
     const coordDecimals = profile.unitMode === 'in' ? 4 : 3
     const rapidLinks = linksAsRapids(profile)
+    const compact = omitsModalWords(profile)
     const rnd = (n: number) => Number(n.toFixed(coordDecimals))
     // Grbl's tolerance is in mm regardless of the file's unit mode — it converts
     // before checking — so the guard below has to convert back to compare.
@@ -532,6 +624,15 @@ export function generateGcodeWithOps(
     let prevX = NaN, prevY = NaN, prevZ = NaN
     let currentTool = firstTool
     let currentFeeds = firstFeeds
+    // What the controller holds, for leaving unchanged words out of each move. Forgotten at
+    // the start of every op and after every tool change: a user's tool-change block or
+    // spindle line may move the machine or say anything, so the first move after one is
+    // written whole — and an op that starts whole can be read (or run) on its own.
+    const modal = unknownModal()
+    const move = (line: string) => {
+      const out = compact ? compactMotionLine(line, modal) : line
+      if (out) lines.push(out)
+    }
 
     // Collapse dense straight-line cut runs into G2/G3 arcs (skipped if the post
     // can't output arcs — they'd just be expanded straight back to lines).
@@ -554,10 +655,11 @@ export function generateGcodeWithOps(
         // the stock — and the new tool's first rapid then ran diagonally out of the cut.
         // Lift there FIRST, with the old tool still in, then change.
         if (seg.x !== prevX || seg.y !== prevY || seg.z !== prevZ) {
-          const xn = rnd(toOut(seg.x - org.x, profile))
-          const yn = rnd(toOut(seg.y - org.y, profile))
+          const [mx, my] = mach(seg.x, seg.y)
+          const xn = rnd(toOut(mx, profile))
+          const yn = rnd(toOut(my, profile))
           const zn = rnd(toOut(seg.z + zOff, profile))
-          lines.push(sub(profile.rapidTemplate, {
+          move(sub(profile.rapidTemplate, {
             x: xn.toFixed(coordDecimals), y: yn.toFixed(coordDecimals), z: zn.toFixed(coordDecimals),
           }))
           emitX = xn; emitY = yn
@@ -580,6 +682,7 @@ export function generateGcodeWithOps(
           currentTool = newTool
           currentFeeds = newFeeds
           lastToolId = seg.toolChange
+          Object.assign(modal, unknownModal())
         }
         prevX = seg.x; prevY = seg.y; prevZ = seg.z
         continue
@@ -589,9 +692,10 @@ export function generateGcodeWithOps(
       // Arc segments (full circle) have start == end, so posChanged is false — never skip them.
       if (!posChanged && !seg.arc) { prevX = seg.x; prevY = seg.y; prevZ = seg.z; continue }
 
-      // Convert workpiece-local → machine-relative by subtracting origin offset
-      const xn = rnd(toOut(seg.x - org.x, profile))
-      const yn = rnd(toOut(seg.y - org.y, profile))
+      // Convert workpiece-local → machine-relative: subtract the origin, turn to the machine's axes
+      const [mx, my] = mach(seg.x, seg.y)
+      const xn = rnd(toOut(mx, profile))
+      const yn = rnd(toOut(my, profile))
       const zn = rnd(toOut(seg.z + zOff, profile))
       const x = xn.toFixed(coordDecimals)
       const y = yn.toFixed(coordDecimals)
@@ -605,8 +709,10 @@ export function generateGcodeWithOps(
       let arcOk = false
       let ii = '', jj = ''
       if (seg.arc) {
-        const iN = rnd(toOut(seg.arc.cx - org.x, profile) - emitX)
-        const jN = rnd(toOut(seg.arc.cy - org.y, profile) - emitY)
+        // A turn keeps an arc's hand, so G2 stays G2; only the centre turns with it.
+        const [mcx, mcy] = mach(seg.arc.cx, seg.arc.cy)
+        const iN = rnd(toOut(mcx, profile) - emitX)
+        const jN = rnd(toOut(mcy, profile) - emitY)
         const rStart = Math.hypot(iN, jN)
         const rEnd = Math.hypot(xn - (emitX + iN), yn - (emitY + jN))
         const dR = Math.abs(rEnd - rStart) * toMM
@@ -618,13 +724,13 @@ export function generateGcodeWithOps(
       }
 
       if (seg.rapid) {
-        lines.push(sub(profile.rapidTemplate, { x, y, z }))
+        move(sub(profile.rapidTemplate, { x, y, z }))
       } else if (seg.arc && profile.outputArcs && arcOk) {
         const isHelical = seg.z !== prevZ
         const feedMm = (isHelical || currentTool.xyFeedMmMin === 0) ? currentFeeds.plungeMmMin : currentFeeds.xyFeedMmMin
         const feed = fmtFeed(feedMm, profile)
         const template = seg.arc.cw ? profile.arcCWTemplate : profile.arcCCWTemplate
-        lines.push(sub(template, { x, y, z, i: ii, j: jj, f: feed }))
+        move(sub(template, { x, y, z, i: ii, j: jj, f: feed }))
       } else if (seg.arc) {
         // Either the post can't output arcs, or the rounded arc failed the radius
         // check above and the controller would reject it (error 33). Both expand
@@ -660,10 +766,11 @@ export function generateGcodeWithOps(
           // flipping the last digit, so the move ends on the exact coordinates
           // the next segment will measure its own I/J against.
           const last = k === steps && !isFullCircle
-          const ax = last ? x : f(toOut(cx + rt * Math.cos(a) - org.x, profile), coordDecimals)
-          const ay = last ? y : f(toOut(cy + rt * Math.sin(a) - org.y, profile), coordDecimals)
+          const [cmx, cmy] = mach(cx + rt * Math.cos(a), cy + rt * Math.sin(a))
+          const ax = last ? x : f(toOut(cmx, profile), coordDecimals)
+          const ay = last ? y : f(toOut(cmy, profile), coordDecimals)
           const az = f(toOut(prevZ + (seg.z - prevZ) * t, profile), coordDecimals)
-          lines.push(sub(profile.cutTemplate, { x: ax, y: ay, z: az, f: feed }))
+          move(sub(profile.cutTemplate, { x: ax, y: ay, z: az, f: feed }))
         }
       } else {
         const xyChanged = seg.x !== prevX || seg.y !== prevY
@@ -681,10 +788,10 @@ export function generateGcodeWithOps(
           // A link as a RAPID: what CAM programs normally emit, priced as one by the time
           // estimate and left unjudged by the simulator's chip gauge. Only where the profile
           // says its G0 is a straight line (see PostProcessorProfile.linksAsRapids).
-          lines.push(sub(profile.rapidTemplate, { x, y, z }))
+          move(sub(profile.rapidTemplate, { x, y, z }))
         } else {
           const feed = fmtFeed(feedMm * (seg.feedScale ?? 1), profile)
-          lines.push(sub(profile.cutTemplate, { x, y, z, f: feed }))
+          move(sub(profile.cutTemplate, { x, y, z, f: feed }))
         }
       }
 
@@ -710,7 +817,7 @@ export function generateGcodeWithOps(
   }
 
   const simHeader = stockSimHeader(toolSeq, profile, {
-    widthMM, heightMM, thicknessMM, orgX: org.x, orgY: org.y, zOffMM: zOff,
+    widthMM, heightMM, thicknessMM, orgX: org.x, orgY: org.y, zOffMM: zOff, xDir,
   })
   lines.splice(simHeaderAt, 0, ...simHeader)
   for (const s of opStarts) s.line += simHeader.length
@@ -828,6 +935,20 @@ const WORST_CASE_PLACEHOLDER: Record<string, string> = {
  * so the comment wrapping cannot help it. Placeholders are measured filled with
  * their longest values. Line numbers are 1-based within the template.
  */
+/**
+ * Whether a motion template writes one axis's value under another axis's word — `X{y}`,
+ * `Y{x}`, `I{j}` … — the hand-made way of fitting a machine whose X runs up the drawing.
+ * A swap is a MIRROR, not a turn: the part comes out reflected and every arc runs the wrong
+ * way. Setup → Machine Axes turns the coordinates instead (cam/machineFrame.ts), and the
+ * two stack if both are set.
+ */
+export function templateSwapsAxes(template: string): boolean {
+  for (const m of template.matchAll(/\b([XYIJ])\s*\{([xyij])\}/gi)) {
+    if (m[1].toLowerCase() !== m[2].toLowerCase()) return true
+  }
+  return false
+}
+
 export function templateLongLines(template: string): { line: number; length: number }[] {
   const out: { line: number; length: number }[] = []
   template.split('\n').forEach((raw, i) => {

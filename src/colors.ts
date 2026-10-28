@@ -84,3 +84,7 @@ export const THREE_BG_COLOR_THREE = 0xbfdbfe   // Three.js integer format
 // (2D) that marks which face Z0 sits on (top surface vs. stock bottom).
 export const Z_DATUM_COLOR       = '#38bdf8'   // sky-400
 export const Z_DATUM_COLOR_THREE = 0x38bdf8    // Three.js integer format
+
+// The machine's axes wherever they are drawn or named: the canvas origin arrows, the Setup
+// axis picture, and the X/Y/Z words in the G-code viewer. Z is the datum colour.
+export const AXIS_COLORS = { x: '#ef4444', y: '#22c55e', z: Z_DATUM_COLOR } as const

@@ -44,6 +44,46 @@ Whichever you choose, **the export review restates it back to you** before the f
 written. Read that line against how you actually zeroed the machine. Getting this wrong
 is the fastest way to plunge a cutter through a spoilboard.
 
+### Machine axes
+
+Most machines run **+X to the right and +Y away from you**, which is how the canvas draws
+the stock. Some run the other way round — X along the table's length, away from you, and Y
+across it. On those the drawing and the machine don't agree, and a part drawn landscape is
+cut portrait.
+
+Tell the app which way your machine's axes run under **Setup → Machine Limits → Machine
+Axes**. The small picture shows your machine's X (red) and Y (green) as they lie on the
+drawing; **Rotate** turns them a quarter-turn at a time, and the line under the button says
+it in words:
+
+| Setting | Your machine's +X runs | and +Y runs |
+|---|---|---|
+| **+X right, +Y up** (default) | Right on the drawing | Up |
+| **+X up, +Y left** | Up | Left |
+| **+X left, +Y down** | Left | Down |
+| **+X down, +Y right** | Down | Right |
+
+The axis arrows at the origin on the canvas turn with it, so you can check the setting
+against the stock at a glance. Nothing else on the canvas moves: you keep drawing the stock
+as it sits on the table. What changes is the **G-code** — every coordinate is turned to your
+machine's axes as the file is written, and turned back wherever the app reads a program over
+the drawing (the simulator, the export review), so the toolpaths stay on their shapes.
+
+- **The origin stays the corner you picked on the drawing.** Zero the machine on that corner
+  of the stock and it is X0 Y0, whichever way the axes run. On a turned machine some of the
+  job will be in negative X or Y — that is correct.
+- **It is a turn, never a swap.** Machines are right-handed, so with +X up the drawing, +Y has
+  to point left. Swapping X and Y in the post-processor instead would mirror the part and run
+  every arc backwards — the post-processor editor warns if a template does that.
+- **The table width and height** in Machine Limits are still the table as the drawing shows
+  it, across and up.
+- **The Machine tab's go-to map** turns to match when you press Rotate here, so it lies like
+  the drawing.
+
+The setting belongs to your machine, not to a project: it is kept with your other machine
+settings and travels in a settings file (`.fkset`), never in a `.fkam`. A project someone
+sends you comes out right on your machine.
+
 ### Material
 
 The material is not decoration. Each has a **hardness factor** that drives the automatic

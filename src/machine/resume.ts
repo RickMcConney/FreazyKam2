@@ -402,7 +402,10 @@ export function buildResume(text: string, line: number, opts: ResumeOptions = {}
   if (st.flood) out.push('M8')
   out.push(`G0 X${x.raw} Y${y.raw}`)
   if (descends) out.push(`G1 Z${z.raw} F${plungeRaw}`)
-  if (descends && st.F !== null && st.F !== plungeRaw) out.push(`F${st.F}`)
+  // The feed in force, unless the descent just set it. Needed even with no descent: a
+  // program that writes only the words that change has no F on line N when it is the one
+  // already in force, and the new file has not set one.
+  if (st.F !== null && !(descends && st.F === plungeRaw)) out.push(`F${st.F}`)
 
   // 4. The rest of the program, verbatim but for the motion mode on its first move.
   const lineInResume = out.length + 1

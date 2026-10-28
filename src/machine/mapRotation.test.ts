@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { workToMap, screenDirToWork, type MapRotation } from './mapRotation'
+import { workToMap, screenDirToWork, mapRotationFor, type MapRotation } from './mapRotation'
+import { fromMachine, MACHINE_X_DIRS } from '../cam/machineFrame'
 
 const ROTS: MapRotation[] = [0, 90, 180, 270]
 // Screen up, as an SVG (y-down) vector, is (0, −1).
@@ -31,5 +32,16 @@ describe('turning the go-to map', () => {
   it('beside the machine (a quarter-turn), the up arrow jogs X−', () => {
     expect(screenDirToWork(0, 1, 90)).toEqual({ x: -1, y: 0 })
     expect(screenDirToWork(1, 0, 90)).toEqual({ x: 0, y: 1 })
+  })
+})
+
+describe('mapRotationFor — the map lies like the drawing', () => {
+  it('points each machine axis on the map where the canvas draws it', () => {
+    for (const d of MACHINE_X_DIRS) {
+      for (const [mx, my] of [[1, 0], [0, 1]]) {
+        const [dx, dy] = fromMachine(mx, my, d)   // on the drawing, Y up
+        expect(workToMap(mx, my, mapRotationFor(d)), d).toEqual([dx, -dy + 0])
+      }
+    }
   })
 })

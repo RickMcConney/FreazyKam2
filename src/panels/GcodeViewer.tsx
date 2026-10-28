@@ -4,6 +4,8 @@ import { X, Copy, Check, ListStart } from 'lucide-react'
 import { useSimStore } from '../store/simStore'
 import { getCurrentSegIdx, lineAt } from '../sim/gcodeParser'
 import ResumeDialog from '../components/ResumeDialog'
+import { axisPieces } from './gcodeTokens'
+import { AXIS_COLORS } from '../colors'
 
 const ROW_H = 20  // px per line — matches text-body + leading-5 + py-px
 
@@ -142,7 +144,10 @@ export default function GcodeViewer({ fill = false }: { fill?: boolean }) {
                     {lineIdx + 1}
                   </span>
                   <span className={isActive ? 'text-yellow-100' : 'text-gray-600 dark:text-neutral-400'}>
-                    {line}
+                    {/* Axis words in the axes' own colours, as the canvas draws them. */}
+                    {axisPieces(line).map((p, k) => p.axis
+                      ? <span key={k} style={{ color: AXIS_COLORS[p.axis] }}>{p.text}</span>
+                      : p.text)}
                   </span>
                 </div>
               )

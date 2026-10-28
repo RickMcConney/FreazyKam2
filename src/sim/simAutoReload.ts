@@ -70,10 +70,12 @@ export function programKey(ops: AnyOperation[]): unknown[] {
 }
 
 // The stock and machine settings the G-code's feeds and speeds read (cam/feeds.ts
-// `calcForTool`, and the spindle dial comment in cam/gcode.ts).
+// `calcForTool`, and the spindle dial comment in cam/gcode.ts) — and the machine's axis
+// direction, which turns every coordinate in the file (the trail lands in the same place,
+// but the program in the viewer would be the old one).
 const FEED_INPUTS = [
   'material', 'machineRigidity', 'autoFeedEnabled', 'maxFeedMmMin', 'minSpindleRpm', 'maxSpindleRpm',
-  'spindleType', 'customDialRpm',
+  'spindleType', 'customDialRpm', 'machineXDir',
 ] as const satisfies readonly (keyof WorkpieceState)[]
 
 function sameKey(a: unknown[], b: unknown[]): boolean {

@@ -7,8 +7,9 @@ import {
   type PostProcessorProfile,
   type CommentStyle,
   linksAsRapids,
+  omitsModalWords,
 } from '../store/postProcessorStore'
-import { templateLongLines, MAX_GCODE_LINE } from '../cam/gcode'
+import { templateLongLines, templateSwapsAxes, MAX_GCODE_LINE } from '../cam/gcode'
 import { exportPostProcessor, pickSectionFile } from '../io/settingsFile'
 import type { SettingsFile } from '../io/settingsMerge'
 import ImportPreviewDialog from '../components/ImportPreviewDialog'
@@ -23,6 +24,16 @@ function lengthWarning(template: string, multiline: boolean): string | undefined
     ? long.map((l) => `line ${l.line} (${l.length})`).join(', ')
     : `${long[0].length} characters`
   return `Too long: ${what} — over ${MAX_GCODE_LINE} characters, a controller may stop the job here with "Line too long". Split it, or shorten the comment.`
+}
+
+// A motion template that swaps the axes — said here, because the program it writes looks
+// fine and only the part on the machine shows it is mirrored.
+const SWAP_WARNING = 'Swaps the axes — this mirrors the part and runs every arc the wrong way. ' +
+  'Put the placeholders back ({x} after X, {y} after Y) and set Setup → Machine Axes instead.'
+
+function motionWarning(template: string): string | undefined {
+  return [lengthWarning(template, false), templateSwapsAxes(template) ? SWAP_WARNING : undefined]
+    .filter(Boolean).join(' ') || undefined
 }
 
 const inputCls =
@@ -114,10 +125,10 @@ function ProfileEditor({ profile }: { profile: PostProcessorProfile }) {
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Rapid move" hint="Placeholders: {x} {y} {z}" warn={lengthWarning(profile.rapidTemplate, false)}>
+        <Field label="Rapid move" hint="Placeholders: {x} {y} {z}" warn={motionWarning(profile.rapidTemplate)}>
           <input type="text" value={profile.rapidTemplate} onChange={(e) => up({ rapidTemplate: e.target.value })} className={inputCls} />
         </Field>
-        <Field label="Cut move" hint="Placeholders: {x} {y} {z} {f}" warn={lengthWarning(profile.cutTemplate, false)}>
+        <Field label="Cut move" hint="Placeholders: {x} {y} {z} {f}" warn={motionWarning(profile.cutTemplate)}>
           <input type="text" value={profile.cutTemplate} onChange={(e) => up({ cutTemplate: e.target.value })} className={inputCls} />
         </Field>
       </div>
@@ -134,6 +145,16 @@ function ProfileEditor({ profile }: { profile: PostProcessorProfile }) {
 
       <div>
         <label className="flex items-center gap-2 cursor-pointer select-none">
+          <input type="checkbox" checked={omitsModalWords(profile)} onChange={(e) => up({ modalOutput: e.target.checked })} className="accent-blue-500" />
+          <span className="text-body text-gray-700 dark:text-neutral-300">Compact G-code</span>
+        </label>
+        <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5 ml-6">
+          Each move writes only the G, X, Y, Z and F that changed — a smaller file the controller reads the same. Turn off for a firmware that needs every word on every line.
+        </p>
+      </div>
+
+      <div>
+        <label className="flex items-center gap-2 cursor-pointer select-none">
           <input type="checkbox" checked={profile.outputArcs} onChange={(e) => up({ outputArcs: e.target.checked })} className="accent-blue-500" />
           <span className="text-body text-gray-700 dark:text-neutral-300">Output arc moves (G2/G3)</span>
         </label>
@@ -141,10 +162,10 @@ function ProfileEditor({ profile }: { profile: PostProcessorProfile }) {
 
       {profile.outputArcs && (
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Arc CW (G2)" hint="{x} {y} {i} {j} {f}" warn={lengthWarning(profile.arcCWTemplate, false)}>
+          <Field label="Arc CW (G2)" hint="{x} {y} {i} {j} {f}" warn={motionWarning(profile.arcCWTemplate)}>
             <input type="text" value={profile.arcCWTemplate} onChange={(e) => up({ arcCWTemplate: e.target.value })} className={inputCls} />
           </Field>
-          <Field label="Arc CCW (G3)" hint="{x} {y} {i} {j} {f}" warn={lengthWarning(profile.arcCCWTemplate, false)}>
+          <Field label="Arc CCW (G3)" hint="{x} {y} {i} {j} {f}" warn={motionWarning(profile.arcCCWTemplate)}>
             <input type="text" value={profile.arcCCWTemplate} onChange={(e) => up({ arcCCWTemplate: e.target.value })} className={inputCls} />
           </Field>
         </div>

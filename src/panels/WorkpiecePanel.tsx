@@ -19,6 +19,10 @@ import { NUMERIC_HINT } from '../components/parseNumeric'
 import { rigidityInfo } from '../rigidity'
 import { exportSettings, pickSettingsFile } from '../io/settingsFile'
 import type { SettingsFile } from '../io/settingsMerge'
+import { MACHINE_X_DIRS, fromMachine, type MachineXDir } from '../cam/machineFrame'
+import { useMachineStore } from '../machine/machineStore'
+import { AXIS_COLORS } from '../colors'
+import { mapRotationFor } from '../machine/mapRotation'
 import ImportSettingsDialog from '../components/ImportSettingsDialog'
 
 function DimInput({
@@ -207,13 +211,46 @@ const CUSTOM_DIAL_HELP =
   "Spindle speeds then show the dial setting to turn to, and auto feeds keeps to the " +
   "dial 1–6 range."
 
+const X_DIR_LABELS: Record<MachineXDir, string> = {
+  right: '+X right, +Y up', up: '+X up, +Y left', left: '+X left, +Y down', down: '+X down, +Y right',
+}
+
+// The machine's axes as the canvas origin draws them, so the setting reads as a picture
+// of the table rather than a word. Same colours as OriginLayer: X red, Y green.
+function MachineAxes({ dir }: { dir: MachineXDir }) {
+  const L = 17, C = L + 18   // arrow length, and centre: room for the label past the tip and a margin, px
+  const arrow = (mx: number, my: number, color: string, text: string) => {
+    const [dx, dy] = fromMachine(mx, my, dir)
+    const ex = C + dx * L, ey = C - dy * L   // SVG is y-down
+    const hx = -dx * 4, hy = dy * 4, px = -dy * 2.5, py = -dx * 2.5   // arrowhead: back along, then across
+    return (
+      <g>
+        <line x1={C} y1={C} x2={ex} y2={ey} stroke={color} strokeWidth={1.5} />
+        <path d={`M${ex} ${ey} L${ex + hx + px} ${ey + hy + py} L${ex + hx - px} ${ey + hy - py} Z`} fill={color} />
+        <text x={C + dx * (L + 8)} y={C - dy * (L + 8)} fill={color} fontSize={12} fontWeight={600} textAnchor="middle" dominantBaseline="central">{text}</text>
+      </g>
+    )
+  }
+  return (
+    <svg width={2 * C} height={2 * C} className="shrink-0 rounded border border-gray-300 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-900" aria-hidden>
+      {arrow(1, 0, AXIS_COLORS.x, 'X')}
+      {arrow(0, 1, AXIS_COLORS.y, 'Y')}
+      <circle cx={C} cy={C} r={2} className="fill-gray-700 dark:fill-white" />
+    </svg>
+  )
+}
+const X_DIR_HELP =
+  "Which way your machine's +X axis runs on the drawing, with the stock laid out as it sits " +
+  "on the table. The G-code is turned to match, and the simulator turns it back, so the " +
+  "toolpaths stay on the shapes."
+
 
 export default function WorkpiecePanel() {
   const {
     widthMM, heightMM, thicknessMM, units, origin, zOrigin, material,
     tableLimitWidthMM, tableLimitHeightMM, tableLimitDepthMM, safeHeightMM,
     machineRigidity, maxFeedMmMin, minSpindleRpm, maxSpindleRpm, spindleType, customDialRpm, autoFeedEnabled,
-    accelXYMmS2, accelZMmS2, maxRateZMmMin, junctionDeviationMM,
+    accelXYMmS2, accelZMmS2, maxRateZMmMin, junctionDeviationMM, machineXDir, setMachineXDir,
     setAccelXY, setAccelZ, setMaxRateZ, setJunctionDeviation,
     setWidth, setHeight, setThickness, setOrigin, setZOrigin, setMaterial,
     setTableLimitWidth, setTableLimitHeight, setTableLimitDepth, setSafeHeight,
@@ -441,6 +478,27 @@ export default function WorkpiecePanel() {
           onChange={setSafeHeight}
           min={0.1}
         />
+        <div className="flex items-center gap-2 mt-2">
+          <span className="text-gray-500 dark:text-neutral-400 text-body w-24 shrink-0">Machine Axes</span>
+          <MachineAxes dir={machineXDir} />
+          <div className="flex flex-col gap-1 min-w-0">
+            <button
+              type="button"
+              title="Turn the machine's axes a quarter turn"
+              onClick={() => {
+                const next = MACHINE_X_DIRS[(MACHINE_X_DIRS.indexOf(machineXDir) + 1) % MACHINE_X_DIRS.length]
+                setMachineXDir(next)
+                // The machine panel's map turns with it, so it lies like the drawing.
+                useMachineStore.setState({ mapRotation: mapRotationFor(next) })
+              }}
+              className="flex items-center gap-1.5 px-2 py-1 rounded border border-gray-400 dark:border-neutral-600 text-body text-gray-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-800"
+            >
+              <RotateCcw size={ICON.sm} /> Rotate
+            </button>
+            <span className="text-label text-gray-600 dark:text-neutral-400">{X_DIR_LABELS[machineXDir]}</span>
+          </div>
+          <InfoPopover text={X_DIR_HELP} />
+        </div>
       </Section>
 
       <Section title="Machine Motion">
