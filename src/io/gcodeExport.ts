@@ -101,6 +101,6 @@ export async function buildGcodeInputs(sheet?: number): Promise<SheetProgram> {
 // the operator can confirm the program when loading it on the machine.
 export async function exportGcode(fileName: string): Promise<void> {
   const { operations, toolsById, profile } = await buildGcodeInputs()
-  const gcode = generateGcode(operations, toolsById, fileName, profile)
+  const gcode = generateGcode(operations, toolsById, fileName, profile, { forFile: true })
   downloadGcode(gcode, fileName)
 }

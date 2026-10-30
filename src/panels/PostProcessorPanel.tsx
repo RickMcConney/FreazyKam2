@@ -155,6 +155,16 @@ function ProfileEditor({ profile }: { profile: PostProcessorProfile }) {
 
       <div>
         <label className="flex items-center gap-2 cursor-pointer select-none">
+          <input type="checkbox" checked={profile.thumbnails ?? false} onChange={(e) => up({ thumbnails: e.target.checked })} className="accent-blue-500" />
+          <span className="text-body text-gray-700 dark:text-neutral-300">Thumbnail in file header (Klipper)</span>
+        </label>
+        <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5 ml-6">
+          Exported files start with a picture of the finished part (32×32 and 300×300 PNG) that Mainsail and Fluidd show in their file list. Written as ; comment lines whatever the comment style — adds about 30 KB.
+        </p>
+      </div>
+
+      <div>
+        <label className="flex items-center gap-2 cursor-pointer select-none">
           <input type="checkbox" checked={profile.outputArcs} onChange={(e) => up({ outputArcs: e.target.checked })} className="accent-blue-500" />
           <span className="text-body text-gray-700 dark:text-neutral-300">Output arc moves (G2/G3)</span>
         </label>

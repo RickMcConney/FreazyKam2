@@ -348,7 +348,7 @@ export const commands: Record<string, Command> = {
         ? `This job is cut in ${sheets} tiles, one program each. Give "sheet" (the tile, 0 to ${sheets - 1}) and export each one.`
         : `This job has ${sheets} sheets of stock, one program each. Give "sheet" (0 to ${sheets - 1}) and export each one.`)
     }
-    const gcode = generateGcode(operations, toolsById, useProjectStore.getState().name, profile)
+    const gcode = generateGcode(operations, toolsById, useProjectStore.getState().name, profile, { forFile: true })
     const lines = gcode.split('\n').length
     return { fileText: gcode, message: `Wrote ${lines} lines of G-code${sheets > 1 ? ` (sheet ${k + 1} of ${sheets})` : ''} to ${String(p.path)}. Run export_check first if you have not.` }
   },

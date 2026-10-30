@@ -31,6 +31,9 @@ export interface PostProcessorProfile {
    *  compactMotionLine). Absent = on: every controller we ship a preset for is modal. Off
    *  for a firmware that wants every word on every line (Marlin without GCODE_MOTION_MODES). */
   modalOutput?: boolean
+  /** Write PNG thumbnails of the finished part into the head of an exported file, in the
+   *  `; thumbnail begin` block Klipper's Moonraker reads (cam/thumbnail.ts). Absent = off. */
+  thumbnails?: boolean
   /** True for the factory controller presets shipped with the app. User-created
    *  and duplicated profiles omit this. Lets the UI offer "reset to default" and
    *  drives the persist merge that seeds newly-added presets for existing users. */

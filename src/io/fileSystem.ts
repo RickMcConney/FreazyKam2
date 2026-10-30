@@ -94,7 +94,7 @@ async function exportGcodeNative(): Promise<boolean> {
     const { operations, toolsById, profile } = await buildGcodeInputs()
     // Name the program from the file the user actually chose, so the header comment the
     // operator reads on the machine matches the filename.
-    const gcode = generateGcode(operations, toolsById, stripExt(handle.name), profile)
+    const gcode = generateGcode(operations, toolsById, stripExt(handle.name), profile, { forFile: true })
     await writeFile(handle, gcode)
     return true
   } catch (e) {
@@ -154,8 +154,8 @@ export async function triggerGcodeExportSplit(prefix?: string, byTool = true): P
     // A sheet with nothing to cut (parts with no toolpath yet) gets no file.
     if (!operations.some(reachesProgram)) continue
     const name = programFileName(baseName, prog)
-    if (byTool) files.push(...generateGcodePerTool(operations, toolsById, name, profile))
-    else files.push({ filename: name, gcode: generateGcode(operations, toolsById, name, profile) })
+    if (byTool) files.push(...generateGcodePerTool(operations, toolsById, name, profile, { forFile: true }))
+    else files.push({ filename: name, gcode: generateGcode(operations, toolsById, name, profile, { forFile: true }) })
   }
   if (files.length === 0) return
 

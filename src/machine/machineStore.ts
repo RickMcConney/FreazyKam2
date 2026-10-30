@@ -1047,7 +1047,7 @@ export const useMachineStore = create<MachineState>()(
             return
           }
           const program = programFileName(base, prog)
-          const gcode = generateGcode(operations, toolsById, program, profile)
+          const gcode = generateGcode(operations, toolsById, program, profile, { forFile: true })
           const name = `${program}.nc`
           const file = new File([gcode], name, { type: 'text/plain' })
           set({ sdBusy: `Uploading ${name}…` })
