@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Group, Line, Circle } from 'react-konva'
 import type Konva from 'konva'
-import type { Viewport } from '../CanvasStage'
+import type { Viewport } from '../viewport'
 import type { HandleType, LiveTransform } from '../types'
 import { transformPoint } from '../selectionUtils'
 import type { BBox } from '../selectionUtils'

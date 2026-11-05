@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
 import { execSync } from 'child_process'
+import { VitePWA } from 'vite-plugin-pwa'
 import { docsPlugin } from './build/docsPlugin'
 
 // The date shown in the status bar ("FreazyKam MM/DD/YYYY") is the date of the commit
@@ -61,7 +62,48 @@ export default defineConfig({
   define: {
     __BUILD_DATE__: JSON.stringify(commitDate()),
   },
-  plugins: [react(), jspolyPlugin, reloadWorkerGraph, docsPlugin()],
+  plugins: [
+    react(), jspolyPlugin, reloadWorkerGraph, docsPlugin(),
+    // Only the worker and the manifest come from here. Registering it and the update
+    // prompt are src/pwa, on purpose: see the header of src/pwa/updater.ts.
+    VitePWA({
+      registerType: 'prompt',
+      injectRegister: false,
+      // The app only. The landing page, /help/ and /docs/ stay plain web pages. The CAM
+      // worker sits outside this scope in /assets/ but is one self-contained file that the
+      // page loads, so it comes from the cache all the same; an offline test proves that.
+      scope: '/app/',
+      manifest: {
+        id: '/app/',
+        name: 'FreazyKam',
+        short_name: 'FreazyKam',
+        description: 'CNC CAM for makers and woodworkers: draw, generate and simulate toolpaths, and export G-code.',
+        start_url: '/app/',
+        scope: '/app/',
+        display: 'standalone',
+        background_color: '#171717',
+        theme_color: '#171717',
+        icons: [
+          { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+          { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+          { src: '/icons/maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+        ],
+      },
+      workbox: {
+        // Fonts because a Text shape cannot be drawn without one; textures because the 3D
+        // view needs them. Both load on demand, so nothing else would ever cache them
+        // before the first time they are wanted with no internet.
+        globPatterns: ['app/index.html', 'assets/*.{js,css}', 'fonts/*', 'textures/**/*.jpg', 'icons/*', 'favicon.*', 'logo-*.png'],
+        maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
+        navigateFallback: '/app/index.html',
+        navigateFallbackAllowlist: [/^\/app\//],
+        // Waits for src/pwa to send SKIP_WAITING: a new version never takes over by itself.
+        skipWaiting: false,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
+      },
+    }),
+  ],
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],

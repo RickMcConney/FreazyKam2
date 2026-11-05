@@ -383,7 +383,7 @@ export function parseGcode(text: string, initialZMM = 5, limits?: MotionLimits):
     let wI: number | undefined, wJ: number | undefined, wR: number | undefined
     let gm: number | undefined
     let g20 = false, g21 = false, g90 = false, g91 = false
-    let g18or19 = false, g90dot1 = false, g41or42 = false, g4 = false, hasM = false
+    let g18or19 = false, g90dot1 = false, g41or42 = false, g4 = false, g38 = false, hasM = false
     WORD_RE.lastIndex = 0
     let m: RegExpExecArray | null
     while ((m = WORD_RE.exec(clean)) !== null) {
@@ -401,6 +401,7 @@ export function parseGcode(text: string, initialZMM = 5, limits?: MotionLimits):
           if (Math.abs(v - 90.1) < 0.001) g90dot1 = true
           if (Math.abs(v - 41) < 0.001 || Math.abs(v - 42) < 0.001) g41or42 = true
           if (Math.abs(v - 4) < 0.001) g4 = true
+          if (v >= 38 && v < 39) g38 = true
           // G0-G3 motion mode
           if (gm === undefined && v >= 0 && v <= 3) gm = v
           break
@@ -443,6 +444,12 @@ export function parseGcode(text: string, initialZMM = 5, limits?: MotionLimits):
     // make the controller drain its buffer; so does an S word. The bare-G4 test is safe
     // because G4 never takes an axis word.
     if (hasM || g4 || wS !== undefined) syncPending = true
+
+    // A probe's Z is a limit, not a destination: `G38.2 Z-110` stops on the plate, wherever
+    // that is. Read as a move it took the modal G0 and bored a 110 mm hole at the probe spot,
+    // and the export check saw a rapid through the stock. The tool does not cut here and the
+    // next line retracts, so standing still simulates the cut the same. Its F still stands.
+    if (g38) continue
 
     if (wX === undefined && wY === undefined && wZ === undefined) continue
 

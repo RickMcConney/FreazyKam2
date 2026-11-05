@@ -17,6 +17,8 @@ import { useTabStore } from './store/tabStore'
 import { useWorkpieceStore } from './store/workpieceStore'
 import { useConstraintsStore } from './store/constraintsStore'
 import { useSimStore } from './store/simStore'
+import { useMachineStore } from './machine/machineStore'
+import { useAppUpdate } from './pwa/updateStore'
 import { loadProject } from './io/projectLoad'
 import { aimCameraFromAbove } from './three/cameraAim'
 import { perf } from './canvas/perfProbe'
@@ -25,7 +27,9 @@ declare global {
   interface Window { __fkam?: Record<string, unknown> }
 }
 
-if (import.meta.env.DEV) {
+// VITE_FKAM_HOOKS: a production build with these in, for what only a production build has,
+// which is the service worker (scripts/pwa-check.mts). Never set for a deployed build.
+if (import.meta.env.DEV || import.meta.env.VITE_FKAM_HOOKS) {
   window.__fkam = {
     paths: () => usePathsStore.getState(),
     ops: () => useToolpathStore.getState(),
@@ -35,6 +39,9 @@ if (import.meta.env.DEV) {
     workpiece: () => useWorkpieceStore.getState(),
     constraints: () => useConstraintsStore.getState(),
     sim: () => useSimStore.getState(),
+    machine: () => useMachineStore,
+    /** Apply a waiting update, past the button (which a linked machine disables). */
+    applyUpdate: () => useAppUpdate.getState().apply(),
     /** Open a parsed .fkam as File > Open would — lets a script (scripts/screenshots) start a shot from a fixture. */
     loadProject: (data: unknown, fileName?: string) => loadProject(data, fileName),
     /** Any MCP bridge command (src/mcp/commands.ts) — add_shape, offset_paths, trace_image… —

@@ -1,5 +1,5 @@
 import { Group, Path, Line, Circle } from 'react-konva'
-import type { Viewport } from '../CanvasStage'
+import type { Viewport } from '../viewport'
 import type { PenNode } from '../../store/uiStore'
 import { penNodesToPathD, liveSegmentD, type PenCurveType } from '../../cam/penCurves'
 import { useCanvasStore } from '../../store/canvasStore'

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Group, Path } from 'react-konva'
-import type { Viewport } from '../CanvasStage'
+import type { Viewport } from '../viewport'
 import { usePathsStore } from '../../store/pathsStore'
 import { useUIStore } from '../../store/uiStore'
 import {

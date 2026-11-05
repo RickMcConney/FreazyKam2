@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { Group, Line, Circle, Label, Tag, Text } from 'react-konva'
-import type { Viewport } from '../CanvasStage'
+import type { Viewport } from '../viewport'
 import { measureReadout } from '../measure'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 

@@ -3,7 +3,7 @@
 import { memo, useMemo, useState } from 'react'
 import { Group, Rect, Circle, Shape } from 'react-konva'
 import type Konva from 'konva'
-import type { Viewport } from '../CanvasStage'
+import type { Viewport } from '../viewport'
 import { usePathsStore } from '../../store/pathsStore'
 import { useTabStore } from '../../store/tabStore'
 import { useUIStore } from '../../store/uiStore'

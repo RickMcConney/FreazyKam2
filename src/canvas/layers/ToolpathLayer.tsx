@@ -1,7 +1,7 @@
 import { memo, useMemo } from 'react'
 import { Group, Shape } from 'react-konva'
 import type Konva from 'konva'
-import type { Viewport } from '../CanvasStage'
+import type { Viewport } from '../viewport'
 import { useToolpathStore, type MotionSegment, type AnyOperation } from '../../store/toolpathStore'
 import { usePostProcessorStore, linksAsRapids } from '../../store/postProcessorStore'
 import { useToolStore, type Tool } from '../../store/toolStore'

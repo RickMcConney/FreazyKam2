@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { RefreshCw } from 'lucide-react'
 import { useUIStore } from '../store/uiStore'
 import { useCanvasStore } from '../store/canvasStore'
 import { useWorkpieceStore, MATERIAL_INFO, MM_PER_INCH, fmtLen } from '../store/workpieceStore'
@@ -9,6 +10,8 @@ import { BUILD_DATE } from '../version'
 import { shapeDisplayName, type ShapeType } from '../shapes/shapeGenerators'
 import { majorStepMM, minorStepMM, formatRulerLabel } from '../canvas/gridUtils'
 import { useRealScale, scaleLabel } from '../canvas/screenScale'
+import { useMachineStore } from '../machine/machineStore'
+import { useAppUpdate } from '../pwa/updateStore'
 
 function modeLabel(activeTool: string, nodeEditPathId: string | null): string {
   if (nodeEditPathId) return 'Edit Points'
@@ -19,6 +22,28 @@ function modeLabel(activeTool: string, nodeEditPathId: string | null): string {
   if (activeTool === 'region') return 'Region'
   if (activeTool === 'measure') return 'Measure'
   return shapeDisplayName(activeTool as ShapeType)
+}
+
+// A new version, once one has downloaded. Says how to get it while it cannot be had yet,
+// rather than vanishing and leaving a job's end with nothing to say it was ever there.
+function UpdateButton() {
+  const ready = useAppUpdate((s) => s.ready)
+  const apply = useAppUpdate((s) => s.apply)
+  const linked = useMachineStore((s) => s.link !== 'disconnected')
+  if (!ready) return null
+  return (
+    <button
+      className="flex-shrink-0 whitespace-nowrap flex items-center gap-1 font-medium text-blue-500 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 disabled:text-gray-500 dark:disabled:text-neutral-500"
+      disabled={linked}
+      title={linked
+        ? 'Reloading would drop the machine connection. Disconnect first; a job keeps running but the app could not reconnect until it ends.'
+        : 'Reload into the new version of FreazyKam'}
+      onClick={apply}
+    >
+      <RefreshCw size={14} />
+      {linked ? 'Update ready, disconnect to install' : 'Update ready, reload'}
+    </button>
+  )
 }
 
 export default function StatusBar() {
@@ -165,6 +190,7 @@ export default function StatusBar() {
         {/* nowrap because the centre cluster is flex-shrink-0: on a narrow window
             this is what gets squeezed, and wrapping would break it onto a second
             line inside the h-7 bar. */}
+        <UpdateButton />
         <span className="flex-shrink-0 whitespace-nowrap">FreazyKam {BUILD_DATE}</span>
       </div>
     </footer>

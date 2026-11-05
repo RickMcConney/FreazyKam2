@@ -111,6 +111,41 @@ const FLUIDNC_IN: PostProcessorProfile = {
   endGcode: 'M5 (spindle off)\nG0 Z0.400 (retract clear of the work)\nG0 X0 Y0 (return to origin)\nM30 (program end)',
 }
 
+// A LowRider 4 on FluidNC with the router on a relay, zeroed by probing the top of the stock.
+// M62/M63 P1 switch the router (pin 27), so the M3/M5 of the shared motion lines change
+// nothing on a machine set up this way. G38.2's P is the probe plate's thickness, which
+// FluidNC takes off for the new Z zero. Every probe is at X10 Y10: the same spot each time,
+// so a new tool's zero is the first tool's, and near the origin, so it is on the stock for a
+// job of any size. $HZ homes Z, so it wants a Z homing switch.
+const LOWRIDER4_MM: PostProcessorProfile = {
+  ...FLUIDNC_MM,
+  id: 'lowrider4-mm',
+  name: 'LowRider (mm)',
+  startGcode: [
+    'G90',
+    'G94',
+    ';G10 L20 P0 X0 Y0 Z0 (set current location to zero, survives reboot)',
+    'G0 X10 Y10 F2000 (move to probing location)',
+    'M0 (MSG Attach probe)',
+    'G38.2 Z-110 F200 P0.5 (probe down set thickness )',
+    'G1 Z20 F900',
+    'M0 (MSG Remove probe)',
+    'M62 P1 (If used start spindle pin27 )',
+  ].join('\n'),
+  toolChangeGcode: [
+    'M63 P1 (turn off pin 27)',
+    'G4 P0 (finish move buffer before home Z)',
+    '$HZ',
+    'G0 X10 Y10 F2000 (move to probing location, match first location)',
+    'M0 (MSG, {tool} - change tool, probe)',
+    'G38.2 Z-110 F200 P0.5 (Probe set thickness)',
+    'G00 Z10.0000 F500 (Clearance)',
+    'M0 (MSG remove probe)',
+    'M62 P1 (turn on pin27)',
+  ].join('\n'),
+  endGcode: 'M63 P1 (stop spindle pin27)\nG4 P0 (finish move buffer before home Z)\n$HZ\nM30',
+}
+
 // grblHAL is Grbl-compatible but adds an explicit feed-rate mode (G94). For a
 // manual tool change we stop the spindle and M0-pause (resume on operator button)
 // rather than emit a bare M6 — we don't assign tool-table numbers, and M6 without a
@@ -202,6 +237,7 @@ export function omitsModalWords(p: PostProcessorProfile): boolean {
 export const BUILTIN_PROFILES: PostProcessorProfile[] = [
   FLUIDNC_MM,
   FLUIDNC_IN,
+  LOWRIDER4_MM,
   GRBL_MM,
   GRBL_IN,
   GRBLHAL_MM,
@@ -211,6 +247,35 @@ export const BUILTIN_PROFILES: PostProcessorProfile[] = [
   GENERIC_MM,
 ]
 
+/**
+ * What a profile says, as a short fingerprint: every field but `id` and `builtin`, in a fixed
+ * order, so the order a save wrote the keys in does not matter. The name counts, so a renamed
+ * preset reaches the people who never touched it.
+ */
+export function profilePrint(p: PostProcessorProfile): string {
+  const text = JSON.stringify(Object.entries(p)
+    .filter(([k, v]) => k !== 'id' && k !== 'builtin' && v !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : 1)))
+  // FNV-1a. This tells versions of one profile apart; it guards against nothing.
+  let h = 0x811c9dc5
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193)
+  return (h >>> 0).toString(16)
+}
+
+/**
+ * The fingerprints to save: for each preset, the shipped version the user's copy is. Worked
+ * out here, on the way to storage, because that is the one place every writer goes through
+ * (typing, Reset, Restore Built-ins, a settings import). A copy matching what ships now is
+ * that version; any other keeps the fingerprint it had, which is what marks it as edited.
+ */
+function printsToSave(profiles: PostProcessorProfile[], prints: Record<string, string>): Record<string, string> {
+  const out = { ...prints }
+  for (const b of BUILTIN_PROFILES) {
+    const mine = profiles.find((p) => p.id === b.id)
+    if (mine && profilePrint(mine) === profilePrint(b)) out[b.id] = profilePrint(b)
+  }
+  return out
+}
 
 interface PostProcessorState {
   profiles: PostProcessorProfile[]
@@ -219,6 +284,12 @@ interface PostProcessorState {
    *  consults this so a built-in the user deleted stays gone, while presets added
    *  in a later app version (ids not here yet) are still introduced. */
   seededBuiltinIds: string[]
+  /** For each preset, the fingerprint of the shipped version the saved copy came from. A
+   *  saved copy still matching it was never edited, so a newer version may replace it. No
+   *  entry, as on a copy already edited or out of date when this arrived, leaves it alone. */
+  builtinPrints: Record<string, string>
+  /** Names of the presets this load moved to a newer version, to tell the user. Not saved. */
+  updatedBuiltins: string[]
   setActiveId: (id: string) => void
   addProfile: () => void
   duplicateProfile: (id: string) => void
@@ -237,6 +308,8 @@ export const usePostProcessorStore = create<PostProcessorState>()(
       // only appends presets it has not seeded before).
       activeId: 'fluidnc-mm',
       seededBuiltinIds: BUILTIN_PROFILES.map((p) => p.id),
+      builtinPrints: printsToSave(BUILTIN_PROFILES, {}),
+      updatedBuiltins: [],
 
       setActiveId: (id) => set({ activeId: id }),
 
@@ -285,20 +358,41 @@ export const usePostProcessorStore = create<PostProcessorState>()(
       // profiles), then append built-in presets added in a newer app version so
       // existing users gain new controllers without losing their own. Functions
       // come from `current`; persisted JSON only carries `profiles` + `activeId`.
+      //
+      // A built-in is SAVED WHOLE, so a fix to one reaches nobody who already has it unless
+      // something replaces their copy. That is only safe for a copy they never edited, which
+      // is what `builtinPrints` tells apart: it is replaced where it stands, and an edited
+      // one is never touched.
+      partialize: ({ updatedBuiltins: _, ...saved }) => ({
+        ...saved, builtinPrints: printsToSave(saved.profiles, saved.builtinPrints),
+      }),
       merge: (persisted, current) => {
         const p = persisted as Partial<PostProcessorState> | undefined
         if (!p || !Array.isArray(p.profiles) || p.profiles.length === 0) return current
         // Pre-seededBuiltinIds saves treat every currently-present built-in as seeded
         // so the first load after upgrade doesn't reintroduce ones long deleted.
         const seeded = new Set(p.seededBuiltinIds ?? p.profiles.map((x) => x.id))
-        const profiles = [...p.profiles]
+        const prints = p.builtinPrints ?? {}
+        const updatedBuiltins: string[] = []
+        const profiles = p.profiles.map((saved) => {
+          const factory = BUILTIN_PROFILES.find((b) => b.id === saved.id)
+          if (!factory || prints[saved.id] !== profilePrint(saved)
+            || profilePrint(saved) === profilePrint(factory)) return saved
+          updatedBuiltins.push(factory.name)
+          return { ...factory }
+        })
         for (const b of BUILTIN_PROFILES) {
           if (!seeded.has(b.id)) profiles.push(b)
         }
         const seededBuiltinIds = [...new Set([...seeded, ...BUILTIN_PROFILES.map((b) => b.id)])]
         const activeId = profiles.some((x) => x.id === p.activeId) ? p.activeId! : profiles[0].id
-        return { ...current, profiles, activeId, seededBuiltinIds }
+        return { ...current, profiles, activeId, seededBuiltinIds, builtinPrints: prints, updatedBuiltins }
       },
     }
   )
 )
+
+// zustand saves on a change and not after a load, so what the merge just decided has to be
+// written out here. Without it an updated preset is updated again, and announced again, on
+// every load until something else happens to save.
+usePostProcessorStore.setState({})

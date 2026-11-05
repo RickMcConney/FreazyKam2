@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { Group, Line, Text, Rect } from 'react-konva'
-import type { Viewport } from '../CanvasStage'
+import type { Viewport } from '../viewport'
 import type { Box, GapMark } from '../objectSnap'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 

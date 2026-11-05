@@ -111,8 +111,8 @@ function ProfileEditor({ profile }: { profile: PostProcessorProfile }) {
         </Field>
       </div>
 
-      <Field label="Tool change G-code" hint="Emitted before each new tool" warn={lengthWarning(profile.toolChangeGcode, true)}>
-        <textarea value={profile.toolChangeGcode} onChange={(e) => up({ toolChangeGcode: e.target.value })} className={textareaCls} rows={2} />
+      <Field label="Tool change G-code" hint="Emitted before each new tool. Placeholder: {tool} = the new bit's number and name" warn={lengthWarning(profile.toolChangeGcode, true)}>
+        <textarea value={profile.toolChangeGcode} onChange={(e) => up({ toolChangeGcode: e.target.value })} className={textareaCls} rows={10} />
       </Field>
 
       <div className="grid grid-cols-2 gap-3">
@@ -260,8 +260,13 @@ export default function PostProcessorPanel() {
       {/* Editor */}
       <div className="flex-1 overflow-y-auto">
         <div className="flex items-center justify-between px-4 py-2 border-b border-gray-300 dark:border-neutral-700 flex-shrink-0">
-          <span className="flex items-center gap-2">
-            <span className="text-body font-semibold text-gray-700 dark:text-neutral-300">{active.name}</span>
+          {/* Clicking a profile in the list SELECTS it for every export as well as opening it,
+              and a highlighted row does not say so, so browsing the list silently changed the
+              post-processor. This heading is what says which one is in use. */}
+          <span className="flex items-center gap-2" title="G-code is written with this profile. Clicking one in the list switches to it.">
+            <span className="text-body text-gray-700 dark:text-neutral-300">
+              Using post-processor: <span className="font-semibold text-blue-600 dark:text-blue-300">{active.name}</span>
+            </span>
             {active.builtin && (
               <span className="text-label text-gray-600 dark:text-neutral-400 border border-gray-300 dark:border-neutral-600 rounded px-1.5 py-0.5 uppercase tracking-wider">Built-in</span>
             )}

@@ -244,7 +244,17 @@ function controllerMessage(kind: 'MSG' | 'PRINT', text: string, prefix = ''): st
 // Tool first, wording after: a pendant shows the start of the line and cuts the rest off.
 // The NAME gives way to the length limit, never the words after it — resume counts an M0
 // as a tool change by the word "tool" in its comment.
+//
+// A template with more to say than a bare M0 writes `{tool}` where the bit goes, and gets the
+// same `T2 name`. Only the comment knows it: the words around it are the template's own, so
+// they must include "tool" for resume and the viewers to count the line as a tool change.
 function tagToolChangeM0(line: string, n: number, tool: Tool, style: PostProcessorProfile['commentStyle']): string {
+  if (line.includes('{tool}')) {
+    const room = MAX_GCODE_LINE - line.replace('{tool}', `T${n} `).length
+    const name = tool.name.trim().replace(/\s+/g, ' ').slice(0, Math.max(0, room)).trim()
+      .replace(/[()]/g, (m) => (m === '(' ? '[' : ']'))
+    return line.replace('{tool}', () => `T${n}${name ? ` ${name}` : ''}`)
+  }
   if (!/^\s*M0?0\s*$/i.test(line) || (style !== 'semicolon' && style !== 'parenthesis')) return line
   const bare = line.trim()
   const tail = ' - change tool'

@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { Group, Shape } from 'react-konva'
-import type { Viewport } from '../CanvasStage'
+import type { Viewport } from '../viewport'
 import { useWorkpieceStore } from '../../store/workpieceStore'
 import { useUIStore } from '../../store/uiStore'
 import { originWorldXY } from './WorkpieceLayer'

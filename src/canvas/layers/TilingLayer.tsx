@@ -1,7 +1,7 @@
 import { memo, useMemo, useRef, useState } from 'react'
 import { Group, Label, Line, Rect, Tag, Text } from 'react-konva'
 import type Konva from 'konva'
-import type { Viewport } from '../CanvasStage'
+import type { Viewport } from '../viewport'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 import { useToolpathStore, type AnyOperation } from '../../store/toolpathStore'
 import { useToolStore } from '../../store/toolStore'

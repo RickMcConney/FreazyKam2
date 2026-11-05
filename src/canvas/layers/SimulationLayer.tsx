@@ -1,7 +1,7 @@
 import { memo, useMemo, useRef } from 'react'
 import { SIM_HEAT_COLORS, SIM_TOOL_CUTTING_COLOR, SIM_TOOL_RAPID_COLOR } from '../../colors'
 import { Group, Shape, Image as KonvaImage } from 'react-konva'
-import type { Viewport } from '../CanvasStage'
+import type { Viewport } from '../viewport'
 import { useSimStore } from '../../store/simStore'
 import { useWorkpieceStore } from '../../store/workpieceStore'
 import { getCurrentSegIdx, interpolatePos, segTool, segFeedAt, type SimSegment, type ToolState } from '../../sim/gcodeParser'

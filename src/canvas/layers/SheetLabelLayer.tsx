@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { Label, Tag, Text } from 'react-konva'
-import type { Viewport } from '../CanvasStage'
+import type { Viewport } from '../viewport'
 import { useWorkpieceStore } from '../../store/workpieceStore'
 import { useUIStore } from '../../store/uiStore'
 import { cellKey, cellOffset } from '../../cam/sheets'

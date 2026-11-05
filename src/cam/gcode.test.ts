@@ -437,6 +437,43 @@ describe('generateGcode — operator messages for FluidNC', () => {
     expect(job(PAREN)).toContain('M0 (MSG, T2 Small End Mill - change tool)')
   })
 
+  describe('{tool} in a tool change template', () => {
+    const TEMPLATE = { ...PAREN, toolChangeGcode: 'M0 (MSG, {tool} - change tool, probe)\nM0 (MSG, remove probe)' }
+    const prompt = (name: string) => {
+      const tools = { t1: TOOL, t2: { ...TOOL2, name } }
+      const ops = [makeOp([rapid(0, 0, 5), cut(0, 0, -1)]), makeOp([rapid(9, 0, 5), cut(9, 0, -1)], { id: 'op2', toolId: 't2' })]
+      return generateGcode(ops, tools, 'p', TEMPLATE).split('\n').find((l) => l.includes('change tool, probe'))!
+    }
+
+    it('becomes the bit\'s number and name, keeping the template\'s own words', () => {
+      expect(prompt('Small End Mill')).toBe('M0 (MSG, T2 Small End Mill - change tool, probe)')
+    })
+
+    it('shortens a long name to fit the line, never the words after it', () => {
+      const line = prompt('Amana 46282 Solid Carbide Compression Spiral Router Bit with a very long catalogue name')
+      expect(line.length).toBeLessThanOrEqual(MAX_GCODE_LINE)
+      expect(line).toMatch(/^M0 \(MSG, T2 Amana .* - change tool, probe\)$/)
+    })
+
+    it('cannot close the comment early with a parenthesis in the name', () => {
+      expect(prompt('End Mill (6 mm)')).toBe('M0 (MSG, T2 End Mill [6 mm] - change tool, probe)')
+    })
+
+    it('reads back as one tool change, not one per M0 in the block', () => {
+      const tools = { t1: TOOL, t2: TOOL2 }
+      const ops = [makeOp([rapid(0, 0, 5), cut(0, 0, -1)]), makeOp([rapid(9, 0, 5), cut(9, 0, -1)], { id: 'op2', toolId: 't2' })]
+      const g = generateGcode(ops, tools, 'p', TEMPLATE)
+      expect(parseGcode(g).messages.filter((m) => m.text.includes('change tool')).map((m) => m.text))
+        .toEqual(['T2 Small End Mill - change tool, probe'])
+    })
+
+    it('leaves a template without it exactly as written', () => {
+      const tools = { t1: TOOL, t2: TOOL2 }
+      const ops = [makeOp([rapid(0, 0, 5), cut(0, 0, -1)]), makeOp([rapid(9, 0, 5), cut(9, 0, -1)], { id: 'op2', toolId: 't2' })]
+      expect(generateGcode(ops, tools, 'p', { ...PAREN, toolChangeGcode: 'M0 (MSG change tool)' })).toContain('\nM0 (MSG change tool)\n')
+    })
+  })
+
   it('shortens a long tool NAME to fit the line, never the "change tool" after it', () => {
     const long = { ...TOOL2, name: 'Amana 46282-K Spektra Coated Solid Carbide Down-Cut Spiral 1/8 x 1/2' }
     for (const post of [PAREN, POST]) {

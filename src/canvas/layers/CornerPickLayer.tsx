@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Group, Circle } from 'react-konva'
-import type { Viewport } from '../CanvasStage'
+import type { Viewport } from '../viewport'
 import { usePathsStore } from '../../store/pathsStore'
 import { useUIStore } from '../../store/uiStore'
 import { getTreatableCorners } from '../../tools/cornerTreatment'

@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { Circle, Group, Line, Path, Text } from 'react-konva'
 import type Konva from 'konva'
-import type { Viewport } from '../CanvasStage'
+import type { Viewport } from '../viewport'
 import { usePathsStore } from '../../store/pathsStore'
 import { useUIStore } from '../../store/uiStore'
 import { useWorkpieceStore } from '../../store/workpieceStore'

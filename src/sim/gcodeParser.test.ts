@@ -3,6 +3,27 @@ import { parseGcode, segTool, lineAt, lineStartsOf, formatSimTime, messagesReach
 
 const last = <T,>(a: T[]) => a[a.length - 1]
 
+describe('parseGcode — probing', () => {
+  it('does not take a probe\'s Z as a move: the tool never plunges to the limit', () => {
+    const { segments } = parseGcode('G21 G90\nG0 X50 Y50 Z5\nG38.2 Z-110 F200 P0.5\nG1 Z20 F900')
+    expect(segments.length).toBe(2)
+    expect(Math.min(...segments.map((s) => s.z))).toBe(5)
+    expect(last(segments).prevZ).toBe(5)
+    expect(last(segments).z).toBe(20)
+  })
+
+  it('treats every G38 form the same', () => {
+    for (const code of ['G38.2', 'G38.3', 'G38.4', 'G38.5']) {
+      expect(parseGcode(`G0 X1\n${code} Z-5 F100`).segments.length, code).toBe(1)
+    }
+  })
+
+  it('keeps the feed a probe line sets, which stays in force on the controller', () => {
+    const { segments } = parseGcode('G38.2 Z-5 F200\nG1 X10')
+    expect(last(segments).feedRateMmMin).toBe(200)
+  })
+})
+
 describe('parseGcode — linear motion', () => {
   it('parses G0 rapids and G1 feeds with correct endpoints and duration', () => {
     const { segments, totalTimeS } = parseGcode('G21 G90\nG0 X10 Y0 Z5\nG1 X10 Y10 F100')

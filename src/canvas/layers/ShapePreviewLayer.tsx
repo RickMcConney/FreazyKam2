@@ -1,5 +1,5 @@
 import { Group, Path } from 'react-konva'
-import type { Viewport } from '../CanvasStage'
+import type { Viewport } from '../viewport'
 
 interface Props {
   viewport: Viewport

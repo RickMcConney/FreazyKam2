@@ -45,6 +45,7 @@ Short steps for one task.
 - [Import a maker's tool catalogue](how-to/import-a-tool-catalogue.md)
 - [Tune feeds and speeds for your machine](how-to/tune-feeds-and-speeds.md)
 - [Move your settings to another computer](how-to/move-your-settings.md)
+- [Install FreazyKam and use it offline](how-to/install-the-app.md)
 
 **Draw**
 - [Draw a shape](how-to/draw-a-shape.md)

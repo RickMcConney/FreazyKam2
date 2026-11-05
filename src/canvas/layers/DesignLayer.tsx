@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useCallback, memo } from 'react'
 import type Konva from 'konva'
 import { Group, Path, Shape, Image as KonvaImage, Text as KonvaText } from 'react-konva'
-import type { Viewport } from '../CanvasStage'
+import type { Viewport } from '../viewport'
 import { usePathsStore } from '../../store/pathsStore'
 import { useUIStore } from '../../store/uiStore'
 import { canvasTheme } from '../../theme'

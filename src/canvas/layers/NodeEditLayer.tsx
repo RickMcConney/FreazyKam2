@@ -1,7 +1,7 @@
 import { memo, useState } from 'react'
 import { Group, Path, Line, Circle, Shape } from 'react-konva'
 import type Konva from 'konva'
-import type { Viewport } from '../CanvasStage'
+import type { Viewport } from '../viewport'
 import type { PathNode } from '../nodeUtils'
 import { nodesToD, nearestSegmentOnPath, nearestPointOnSegment, segmentMidpoint } from '../nodeUtils'
 

@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { Group, Circle, Rect, Line } from 'react-konva'
-import type { Viewport } from '../CanvasStage'
+import type { Viewport } from '../viewport'
 import type { AnchorCandidate } from '../../store/constraints'
 
 // The Constrain tool's markers: every point of the hovered part a constraint can

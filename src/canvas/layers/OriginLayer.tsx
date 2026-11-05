@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { Group, Arrow, Circle, Text } from 'react-konva'
-import type { Viewport } from '../CanvasStage'
+import type { Viewport } from '../viewport'
 import { useWorkpieceStore } from '../../store/workpieceStore'
 import { originWorldXY } from './WorkpieceLayer'
 import { Z_DATUM_COLOR, AXIS_COLORS } from '../../colors'

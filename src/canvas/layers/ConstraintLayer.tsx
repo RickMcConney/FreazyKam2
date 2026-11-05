@@ -1,6 +1,6 @@
 import { memo, useMemo } from 'react'
 import { Group, Line, Text, Rect, Circle } from 'react-konva'
-import type { Viewport } from '../CanvasStage'
+import type { Viewport } from '../viewport'
 import { usePathsStore } from '../../store/pathsStore'
 import { useConstraintsStore } from '../../store/constraintsStore'
 import { constraintEnds, constraintsInFocus, type Constraint } from '../../store/constraints'

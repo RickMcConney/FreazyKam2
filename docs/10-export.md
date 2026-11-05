@@ -92,9 +92,13 @@ of rules for turning toolpaths into the dialect yours speaks.
 
 <!-- FULL APP · 1600 px wide, downscaled from a 2× capture. -->
 
-Nine profiles are built in — **FluidNC (mm)**, **FluidNC (inches)**, **Grbl (mm)**,
-**Grbl (inches)**, **grblHAL**, **LinuxCNC**, **Mach3**, **UCCNC** and a **Generic** one.
-FluidNC (mm) is the default; it and the Grbl profiles cover most hobby machines.
+Ten profiles are built in — **FluidNC (mm)**, **FluidNC (inches)**, **LowRider (mm)**,
+**Grbl (mm)**, **Grbl (inches)**, **grblHAL**, **LinuxCNC**, **Mach3**, **UCCNC** and a
+**Generic** one. FluidNC (mm) is the default; it and the Grbl profiles cover most hobby
+machines.
+
+**Clicking a profile in the list makes it the one in use.** The heading above its settings,
+**Using post-processor**, always says which one your G-code will be written with.
 
 The buttons across the top act on the profile selected in the list: **Duplicate** copies
 it, **Export** saves it as a `.fkset` file to share, and **Delete** removes it (the last
@@ -115,7 +119,7 @@ duplicate a profile and edit the copy.
 | **Comment style** | `; semicolon`, `( parenthesis )` or none |
 | **Start G-code** | Once at job start, after G20/G21 |
 | **End G-code** | Once at job end |
-| **Tool change G-code** | Before each new tool |
+| **Tool change G-code** | Before each new tool. `{tool}` is its number and name |
 | **Spindle on / off** | `{s}` is the speed |
 | **Rapid / Cut move** | `{x} {y} {z} {f}` |
 | **Arc CW / CCW** | `{i} {j}` centre offsets — and a switch to turn arcs off entirely |

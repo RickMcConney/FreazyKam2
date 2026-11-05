@@ -6,6 +6,7 @@ import StatusBar from './components/StatusBar'
 import ToolLibraryPanel from './panels/ToolLibraryPanel'
 import PostProcessorPanel from './panels/PostProcessorPanel'
 import { useUIStore, type WorkspaceTab } from './store/uiStore'
+import { usePostProcessorStore } from './store/postProcessorStore'
 import { usePathsStore } from './store/pathsStore'
 import { openProjectFile, requestNewProject, clearDocumentStock, reloadWouldLoseWork } from './io/projectLoad'
 import { triggerProjectSave } from './io/fileSystem'
@@ -300,6 +301,15 @@ function useLeaveGuard() {
   }, [])
 }
 
+// A preset the user never edited moves to the new version by itself (postProcessorStore), and
+// its next export can differ from the last, so it is said rather than done quietly.
+function useBuiltinUpdateNotice() {
+  useEffect(() => {
+    const names = usePostProcessorStore.getState().updatedBuiltins
+    if (names.length) useUIStore.getState().showStatus(`Post-processor updated: ${names.join(', ')}`)
+  }, [])
+}
+
 function useDarkMode() {
   const darkMode = useUIStore((s) => s.darkMode)
   useEffect(() => {
@@ -315,6 +325,7 @@ export default function App() {
   usePathClipboard()
   useAutosave()
   useLeaveGuard()
+  useBuiltinUpdateNotice()
   useDarkMode()
   const activeTool = useUIStore(s => s.activeTool)
   useEffect(() => {
