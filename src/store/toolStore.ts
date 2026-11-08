@@ -4,6 +4,9 @@ import { uid } from '../uid'
 
 export type ToolType = 'endmill' | 'ballnose' | 'bullnose' | 'vbit' | 'taper' | 'drill'
 export type CuttingDirection = 'climb' | 'conventional'
+/** A raster's or a 3D finish's hand: one of the two throughout, or 'mixed' — a zigzag, each
+ *  pass the other way from the last, which is what every 3D Profile cut before this existed. */
+export type PassDirection = 'mixed' | CuttingDirection
 
 export interface Tool {
   id: string

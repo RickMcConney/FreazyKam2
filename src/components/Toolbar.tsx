@@ -63,31 +63,57 @@ function Sep() {
   return <div className="w-px h-5 bg-gray-300 dark:bg-neutral-600 mx-1" />
 }
 
-function UnitToggle() {
-  const units = useWorkpieceStore((s) => s.units)
-  const setUnits = useWorkpieceStore((s) => s.setUnits)
-  const isIn = units === 'in'
+// A two-position pill: `right` says which half is lit.
+function PillToggle({ left, rightLabel, right, title, onClick, width }: {
+  left: string; rightLabel: string; right: boolean; title: string; onClick: () => void; width: string
+}) {
   return (
     <div
-      title={`Units: ${units} — click to switch`}
-      onClick={() => setUnits(isIn ? 'mm' : 'in')}
-      className="relative flex items-center cursor-pointer select-none rounded-full h-7 w-14 bg-gray-300 dark:bg-neutral-700 flex-shrink-0"
+      title={title}
+      onClick={onClick}
+      className={`relative flex items-center cursor-pointer select-none rounded-full h-7 ${width} bg-gray-300 dark:bg-neutral-700 flex-shrink-0`}
     >
       <div
         className="absolute top-0.5 bottom-0.5 rounded-full bg-blue-600 transition-transform duration-150 ease-in-out"
         style={{
           left: 2,
           width: 'calc(50% - 2px)',
-          transform: isIn ? 'translateX(100%)' : 'translateX(0)',
+          transform: right ? 'translateX(100%)' : 'translateX(0)',
         }}
       />
-      <span className={`relative z-10 flex-1 text-center text-xs font-semibold transition-colors ${!isIn ? 'text-white' : 'text-gray-600 dark:text-neutral-300'}`}>
-        mm
+      <span className={`relative z-10 flex-1 text-center text-xs font-semibold transition-colors ${!right ? 'text-white' : 'text-gray-600 dark:text-neutral-300'}`}>
+        {left}
       </span>
-      <span className={`relative z-10 flex-1 text-center text-xs font-semibold transition-colors ${isIn ? 'text-white' : 'text-gray-600 dark:text-neutral-300'}`}>
-        in
+      <span className={`relative z-10 flex-1 text-center text-xs font-semibold transition-colors ${right ? 'text-white' : 'text-gray-600 dark:text-neutral-300'}`}>
+        {rightLabel}
       </span>
     </div>
+  )
+}
+
+function UnitToggle() {
+  const units = useWorkpieceStore((s) => s.units)
+  const setUnits = useWorkpieceStore((s) => s.setUnits)
+  const isIn = units === 'in'
+  return (
+    <PillToggle left="mm" rightLabel="in" right={isIn} width="w-14"
+      title={`Units: ${units} — click to switch`}
+      onClick={() => setUnits(isIn ? 'mm' : 'in')} />
+  )
+}
+
+// Feeds per minute or per second. Display only: the G-code's F word is per minute
+// whichever this shows, since that is all FluidNC and Grbl accept.
+function FeedTimeToggle() {
+  const units = useWorkpieceStore((s) => s.units)
+  const ft = useWorkpieceStore((s) => s.feedTime)
+  const setFeedTime = useWorkpieceStore((s) => s.setFeedTime)
+  const perSec = ft === 's'
+  const u = units === 'in' ? 'in' : 'mm'
+  return (
+    <PillToggle left="/min" rightLabel="/s" right={perSec} width="w-16"
+      title={`Feeds shown in ${u}/${perSec ? 's' : 'min'} — click to switch. Display only: the G-code is always per minute.`}
+      onClick={() => setFeedTime(perSec ? 'min' : 's')} />
   )
 }
 
@@ -310,6 +336,7 @@ export default function Toolbar() {
       <div className="flex items-center gap-0.5">
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
           <UnitToggle />
+          <FeedTimeToggle />
           <Sep />
           {/* Snap */}
           <ToolbarButton

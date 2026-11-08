@@ -9,7 +9,7 @@ import ConfirmSettingsDialog from '../components/ConfirmSettingsDialog'
 import { useUIStore } from '../store/uiStore'
 import { ICON } from '../theme'
 import { useToolStore, folderNames, folderOf, MY_TOOLS, type Tool, type ToolType, type ToolSortKey } from '../store/toolStore'
-import { useWorkpieceStore, toMM, fromMM, type Units } from '../store/workpieceStore'
+import { useWorkpieceStore, toMM, fromMM, feedFromMM, feedToMM, feedStep, feedUnit as feedUnitOf, type Units } from '../store/workpieceStore'
 import { SPINDLE_INFO, spindleDialSetting, spindleHasDial, type SpindleType } from '../store/spindle'
 import { TOOL_TYPE_ICON, TYPE_ORDER } from './toolTypes'
 
@@ -34,8 +34,8 @@ const COLUMNS: { key: keyof Omit<Tool, 'id'>; label: string; title: string; w?: 
   { key: 'fluteCount',  label: 'Flutes',  title: 'Number of flutes',          w: '4rem', numeric: true },
   { key: 'chipLoadMM',  label: 'Chip',    title: 'Rated chip load per tooth — the maker\'s recommendation. Fixed: Auto Feeds never goes above it, and the chip check warns when your feed and RPM run the bit too hot or too cold against it. Clear it for no rating.', w: '5.5rem', numeric: true },
   { key: 'rpm',         label: 'RPM',     title: 'Spindle speed (RPM)',       w: '6rem', numeric: true },
-  { key: 'xyFeedMmMin', label: 'XY Feed', title: 'XY feed rate (mm/min)',     w: '6.5rem', numeric: true },
-  { key: 'zFeedMmMin',  label: 'Z Feed',  title: 'Plunge feed rate (mm/min)', w: '6rem', numeric: true },
+  { key: 'xyFeedMmMin', label: 'XY Feed', title: 'XY feed rate',     w: '6.5rem', numeric: true },
+  { key: 'zFeedMmMin',  label: 'Z Feed',  title: 'Plunge feed rate', w: '6rem', numeric: true },
   { key: 'maxDepthMM',  label: 'Max Z',   title: 'Maximum cut depth of this tool',    w: '5rem', numeric: true },
 ]
 // Picture 5 + the columns above 47 + Angle/R 5 + actions 5.5 = 62.5, and at least 9 for
@@ -74,13 +74,17 @@ function DimInput({ valueMM, onChangeMM, minMM, stepMM, kind, units, title }: {
   units: Units
   title?: string
 }) {
-  const step = units === 'in' ? (kind === 'feed' ? 1 : 0.001) : stepMM
+  // A feed follows the toolbar's /min–/s toggle as well as mm/in; stored mm/min either way.
+  const ft = useWorkpieceStore((s) => s.feedTime)
+  const feed = kind === 'feed'
+  const step = feed ? feedStep(stepMM, units, ft) : units === 'in' ? 0.001 : stepMM
+  const show = (mm: number) => (feed ? feedFromMM(mm, units, ft) : fromMM(mm, units))
   return (
     <NumericInput
-      value={fromMM(valueMM, units)}
-      min={fromMM(minMM, units)}
+      value={show(valueMM)}
+      min={show(minMM)}
       step={step}
-      onChange={(v) => onChangeMM(toMM(v, units))}
+      onChange={(v) => onChangeMM(feed ? feedToMM(v, units, ft) : toMM(v, units))}
       className={cellCls + ' text-right'}
       title={title ? `${title} — ${NUMERIC_HINT}` : NUMERIC_HINT}
     />
@@ -293,7 +297,8 @@ export default function ToolLibraryPanel() {
   const spindleType = useWorkpieceStore((s) => s.spindleType)
   const hasDial = spindleHasDial(spindleType)
   const lenUnit = units === 'in' ? 'in' : 'mm'
-  const feedUnit = units === 'in' ? 'in/min' : 'mm/min'
+  const feedTime = useWorkpieceStore((s) => s.feedTime)
+  const feedUnit = feedUnitOf(units, feedTime)
 
   // Display-only sort: `tools` keeps its own (creation) order, which is what
   // `addTool` appends to and what a third click returns the table to. The choice

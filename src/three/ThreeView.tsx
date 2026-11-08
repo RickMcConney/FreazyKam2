@@ -26,6 +26,7 @@ import { SPINDLE_VIS_RPS } from '../sim/spindleVis'
 import { otherSideKey, otherSideProgram } from '../sim/otherSide'
 import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
 import { decodeStlMesh, type StlMesh } from '../importers/stlImporter'
+import { placeStlModel } from '../cam/stlPlacement'
 import type { StlModelBounds } from '../importers/stlImporter'
 
 // Time constant of the Follow Tool camera low-pass, in ms — the time the target
@@ -876,6 +877,9 @@ function buildStlGeo(
 ): THREE.BufferGeometry | null {
   const bbox = getBBox(d)
   if (!bbox) return null
+  // Turned to stand as the outline does, as it is cut (cam/stlPlacement.ts).
+  const placed = placeStlModel(mesh.positions, bounds, d)
+  bounds = placed.bounds
 
   const modelW = bounds.maxX - bounds.minX
   const modelH = bounds.maxY - bounds.minY
@@ -888,7 +892,7 @@ function buildStlGeo(
   const modelCX = (bounds.minX + bounds.maxX) / 2
   const modelCY = (bounds.minY + bounds.maxY) / 2
 
-  const positions = mesh.positions
+  const positions = placed.positions
   const count = positions.length / 3
   const newPos = new Float32Array(count * 3)
 

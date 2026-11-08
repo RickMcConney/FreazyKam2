@@ -14,7 +14,7 @@ import {
 import { ICON } from '../theme'
 import { useMachineStore, ACTION_MARK } from '../machine/machineStore'
 import type { WifiStatus } from '../machine/fluidnc/esp800'
-import { useWorkpieceStore, lenValue, fromMM, toMM, zDatumOffsetMM } from '../store/workpieceStore'
+import { useWorkpieceStore, lenValue, zDatumOffsetMM, feedFromMM, feedToMM, feedUnit as feedUnitOf } from '../store/workpieceStore'
 import { NumericInput } from '../components/NumericInput'
 import { NUMERIC_HINT } from '../components/parseNumeric'
 import { JOG_STEPS_MM, JOG_STEPS_Z_MM, type JogMove, type Axis } from '../machine/fluidnc/jog'
@@ -90,6 +90,7 @@ const btnCls = 'px-3 py-1 rounded text-sm border border-gray-400 dark:border-neu
 export default function MachineControlPanel() {
   const m = useMachineStore()
   const units = useWorkpieceStore((s) => s.units)
+  const ft = useWorkpieceStore((s) => s.feedTime)
   const zOrigin = useWorkpieceStore((s) => s.zOrigin)
   const thicknessMM = useWorkpieceStore((s) => s.thicknessMM)
   const [cmd, setCmd] = useState('')
@@ -124,7 +125,7 @@ export default function MachineControlPanel() {
   const stepsZ = JOG_STEPS_Z_MM[units]
   const stepZIndex = Math.min(m.jogStepIndexZ, stepsZ.length - 1)
   const stepZMM = stepsZ[stepZIndex]
-  const feedUnit = units === 'in' ? 'in/min' : 'mm/min'
+  const feedUnit = feedUnitOf(units, ft)
   const jog = (move: JogMove) => { if (canJog) m.jog(move) }
   // The tool tip is in the stock: an XY jog now drags it through the material. Not
   // blocked — jogging at the surface is normal (checking zero, touching off) — only
@@ -355,11 +356,11 @@ export default function MachineControlPanel() {
             <div className="grid grid-cols-[auto_1fr_auto_1fr] items-center gap-x-1.5 text-xs text-gray-600 dark:text-neutral-400"
               title={`Jog feeds, ${feedUnit}`}>
               <span>XY</span>
-              <NumericInput value={fromMM(m.jogFeedXY, units)} min={0} unit={feedUnit} title={`XY jog feed (${feedUnit}). ${NUMERIC_HINT}`}
-                onChange={(v) => { if (v > 0) m.setJogFeedXY(toMM(v, units)) }} className={inputCls} />
+              <NumericInput value={feedFromMM(m.jogFeedXY, units, ft)} min={0} unit={feedUnit} title={`XY jog feed (${feedUnit}). ${NUMERIC_HINT}`}
+                onChange={(v) => { if (v > 0) m.setJogFeedXY(feedToMM(v, units, ft)) }} className={inputCls} />
               <span>Z</span>
-              <NumericInput value={fromMM(m.jogFeedZ, units)} min={0} unit={feedUnit} title={`Z jog feed (${feedUnit}). ${NUMERIC_HINT}`}
-                onChange={(v) => { if (v > 0) m.setJogFeedZ(toMM(v, units)) }} className={inputCls} />
+              <NumericInput value={feedFromMM(m.jogFeedZ, units, ft)} min={0} unit={feedUnit} title={`Z jog feed (${feedUnit}). ${NUMERIC_HINT}`}
+                onChange={(v) => { if (v > 0) m.setJogFeedZ(feedToMM(v, units, ft)) }} className={inputCls} />
             </div>
           </div>
         </section>

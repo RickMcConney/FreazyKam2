@@ -41,7 +41,46 @@ export function ballDropCutter(
   /** How far below the stock top the model's highest point sits. */
   zOffsetMM = 0,
 ): (x: number, y: number) => number | null {
+  return dropCutter(positions, indices, bounds, bbox, radiusMM, false, zOffsetMM)
+}
+
+/**
+ * The same drop for a FLAT END MILL: its bottom is level out to its rim, so f(d) = 0 and
+ * each contact is simply the highest point of the feature under the disc —
+ *
+ *   VERTEX  a corner under the disc:                    tip = vz
+ *   EDGE    the stretch of the edge under the disc, at its uphill end
+ *   FACET   the plane at the rim point furthest uphill, when that point is inside the
+ *           triangle (otherwise the highest point is on its edges or corners, tested above)
+ *
+ * The 3D profile's grid widens a flat tool by the half cell its nodes can be off the true
+ * surface and blends across the cliff the rim makes at every model edge: on a terraced
+ * part the tool rode up onto the step above for over a millimetre round the foot of every
+ * wall. Against the triangles the rim stops exactly at the wall.
+ */
+export function flatDropCutter(
+  positions: Float32Array,
+  indices: Uint32Array | null,
+  bounds: StlModelBounds,
+  bbox: BBox,
+  radiusMM: number,
+  zOffsetMM = 0,
+): (x: number, y: number) => number | null {
+  return dropCutter(positions, indices, bounds, bbox, radiusMM, true, zOffsetMM)
+}
+
+function dropCutter(
+  positions: Float32Array,
+  indices: Uint32Array | null,
+  bounds: StlModelBounds,
+  bbox: BBox,
+  radiusMM: number,
+  flat: boolean,
+  zOffsetMM: number,
+): (x: number, y: number) => number | null {
   const R = radiusMM, R2 = R * R
+  // How far above its tip the tool's surface stands at horizontal distance² d2 (≤ R²).
+  const lift = flat ? () => 0 : (d2: number) => R - Math.sqrt(R2 - d2)
   const map = stlToCnc(bounds, bbox, zOffsetMM)
 
   // ── Unique vertices ──
@@ -220,7 +259,7 @@ export function ballDropCutter(
         const bdy = Math.max(j === 0 ? 0 : bbox.minY + j * B - y, 0, j === bh - 1 ? 0 : y - (bbox.minY + (j + 1) * B))
         const bd2 = bdx * bdx + bdy * bdy
         if (bd2 > R2) continue
-        const rise = R - Math.sqrt(R2 - bd2)
+        const rise = lift(bd2)
         for (let q = counts[b]; q < counts[b + 1]; q++) {
           const f = ids[q]
           const bo = f * 5
@@ -233,11 +272,13 @@ export function ballDropCutter(
           // feature's nearest approach.
           const ddx = Math.max(BX[bo] - x, 0, x - BX[bo + 1]), ddy = Math.max(BX[bo + 2] - y, 0, y - BX[bo + 3])
           const dd2 = ddx * ddx + ddy * ddy
-          if (dd2 > R2 || BX[bo + 4] - (R - Math.sqrt(R2 - dd2)) <= best) continue
+          if (dd2 > R2 || BX[bo + 4] - lift(dd2) <= best) continue
           const o = f * STRIDE
           let h = -Infinity
           const k = K[f]
-          if (k === 0) {
+          if (flat) {
+            h = flatContact(k, D, o, x, y, R, R2)
+          } else if (k === 0) {
             // VERTEX: the ball's surface resting on a corner.
             const d2 = (D[o] - x) ** 2 + (D[o + 1] - y) ** 2
             if (d2 <= R2) h = D[o + 2] - (R - Math.sqrt(R2 - d2))
@@ -270,4 +311,31 @@ export function ballDropCutter(
     }
     return best === -Infinity ? null : best
   }
+}
+
+/** A flat end mill's contact with one feature (record at `o` of kind `k`), as tip Z. */
+function flatContact(k: number, D: Float64Array, o: number, x: number, y: number, R: number, R2: number): number {
+  if (k === 0) {
+    const d2 = (D[o] - x) ** 2 + (D[o + 1] - y) ** 2
+    return d2 <= R2 ? D[o + 2] : -Infinity
+  }
+  if (k === 1) {
+    // The edge's line crosses the disc for s0 ± r; clipped to the edge, its high end.
+    const ax = D[o], ay = D[o + 1], az = D[o + 2], ux = D[o + 3], uy = D[o + 4]
+    const L = D[o + 5], m = D[o + 6]
+    const s0 = (x - ax) * ux + (y - ay) * uy
+    const d = Math.abs((x - ax) * uy - (y - ay) * ux)
+    if (d > R) return -Infinity
+    const r = Math.sqrt(R2 - d * d)
+    const lo = Math.max(0, s0 - r), hi = Math.min(L, s0 + r)
+    if (lo > hi) return -Infinity
+    return az + m * (m > 0 ? hi : lo)
+  }
+  // FACET: plane z = A·x + B·y + C, highest on the disc at the rim point straight uphill.
+  const A = D[o + 3], B = D[o + 4], C = D[o + 5]
+  const g = Math.hypot(A, B)
+  const px = g > 1e-12 ? x + (R * A) / g : x, py = g > 1e-12 ? y + (R * B) / g : y
+  const l1 = D[o + 6] * px + D[o + 7] * py + D[o + 8]
+  const l2 = D[o + 9] * px + D[o + 10] * py + D[o + 11]
+  return l1 >= 0 && l2 >= 0 && 1 - l1 - l2 >= 0 ? A * px + B * py + C : -Infinity
 }

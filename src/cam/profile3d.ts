@@ -3,10 +3,10 @@ import { pushAll, maxCutRadiusMM, toolProfileHeightMM, ringsBBox, cornerRadiusMM
 import type { Pt2 } from './pathFlattener'
 import { inflatePathsD, unionD, FillRule, JoinType, EndType } from 'clipper2-ts'
 import { perfLog } from '../debug'
-import { ballDropCutter } from './dropCutter'
+import { ballDropCutter, flatDropCutter } from './dropCutter'
 import { generateWaterline } from './waterline'
 import { stlToCnc } from './stlMapping'
-import type { Tool } from '../store/toolStore'
+import type { Tool, PassDirection } from '../store/toolStore'
 import type { StlModelBounds } from '../importers/svgImporter'
 import type { BBox } from '../canvas/selectionUtils'
 
@@ -83,6 +83,24 @@ export interface Profile3dParams {
   /** The boundary is the stock's own edge: nothing stands beyond it, so the tool may run
    *  past it by its radius and clear right to it, leaving no wall. */
   boundaryOpen?: boolean
+  /** The hand of the finish and of the roughing (`passHand`). Unset: 'mixed', the zigzag. */
+  finishDirection?: PassDirection
+  roughingDirection?: PassDirection
+  /** The spindle turns anticlockwise seen from above (M4), which swaps climb and conventional. */
+  spindleReverse?: boolean
+}
+
+/**
+ * Which side of the feed a pass must keep the uncut stock on — the one rule the 2D profile
+ * and pocket already follow (`profile.ts`: climb inside is CCW, climb outside is CW). With a
+ * clockwise spindle (M3), CLIMB keeps the stock on the RIGHT of the feed and conventional on
+ * the left; M4 swaps them. Null for 'mixed', which keeps no hand: the raster zigzags.
+ *
+ * Returns whether the stock goes on the right.
+ */
+export function passHand(dir: PassDirection | undefined, spindleReverse = false): boolean | null {
+  if (!dir || dir === 'mixed') return null
+  return (dir === 'climb') !== spindleReverse
 }
 
 // ─── Height map ───────────────────────────────────────────────────────────────
@@ -273,6 +291,7 @@ export function flatKernel(radius: number): ToolKernel {
 
 function toolKernel(tool: Tool): ToolKernel {
   if (tool.type === 'ballnose') return ballKernel(tool.diameterMM / 2)
+  if (tool.type === 'endmill') return flatKernel(tool.diameterMM / 2)
   const reachMM = maxCutRadiusMM(tool)
   return { reachMM, termAtDistSq: (d2) => reachMM - toolProfileHeightMM(tool, Math.sqrt(d2)) }
 }
@@ -627,6 +646,8 @@ function generateStepDownPasses(
   motion: Omit<RasterMotion, 'stock' | 'enter'>,
   area: CutArea | undefined,
   wall: Pt2[][],
+  /** `passHand` of the roughing. */
+  hand: boolean | null = null,
 ): MotionSegment[] {
   const effectiveMaxDepth = Math.min(rawMaxDepthMM, maxDepthMM)
   // Floored like `zPasses`: a step of 0 made this Infinity and the loop below unbounded.
@@ -642,8 +663,9 @@ function generateStepDownPasses(
     const prevDepthMM = (n - 1) * stepDownMM   // skip areas already cut in previous pass
     const em = new PassEmitter(surf, bbox, passDepth, stockAllowanceMM, { ...motion, enter, stock }, undefined, area)
     if (roughKernel.flat) em.flatFloorDepthMM = maxDepthMM
-    rasterInto(em, stepoverMM, rasterAngleDeg, prevDepthMM)
-    wallInto(em, wall, prevDepthMM)
+    em.airAboveZ = 0
+    rasterInto(em, stepoverMM, rasterAngleDeg, prevDepthMM, hand)
+    wallInto(em, wall, prevDepthMM, false, hand)
     const level = em.done()
     // Carved after the level, never during it: an entry is judged against the stock
     // before its own level started, which can only read high.
@@ -767,6 +789,20 @@ class PassEmitter {
   /** The tip height a cut at (x, y) follows, read off the grid; null outside the boundary. */
   tipZ(x: number, y: number): number | null {
     return this.tip(x, y, this.surfaceZ(x, y))
+  }
+
+  /** Set for a ROUGHING level: the stock top (Z0). A tip at or above it is in the air and
+   *  takes nothing, so the raster and the wall lap treat it as a gap — as they treat ground
+   *  an earlier level cleared — and the link lifts and rapids over it when that is quicker.
+   *  An earlier level's check covers this for every level but the FIRST, which had none: on
+   *  a neck with a flat top at Z0 and a pocket at one end, every row of the first level fed
+   *  the whole flat at Z0 (an end mill's flat takes no allowance) or Z+0.3, 22 times over,
+   *  about ten minutes of cutting nothing. Not set on a finish, which is left as it was. */
+  airAboveZ: number | null = null
+
+  /** Whether a tip at `z` is in the air above the stock (`airAboveZ`). */
+  inAir(z: number): boolean {
+    return this.airAboveZ !== null && z >= this.airAboveZ - 1e-6
   }
 
   /** The model's final depth — set for a flat end mill's roughing, which then leaves no
@@ -928,6 +964,13 @@ class PassEmitter {
     return (2 * motion.safeZ - at.z - e + hop) / motion.rapidMmMin + (e - z) / motion.zFeedMmMin
   }
 
+  /** Get to (x, y, z) over the top — lift, rapid across, rapid down to just above the stock
+   *  and feed in — never along the surface. What a one-hand raster does at the start of each
+   *  row: riding back along it would be a feed the wrong way. */
+  enterOverTop(x: number, y: number, z: number): void {
+    this.enter(x, y, z)
+  }
+
   /** Get to (x, y, z) to start a run: along the surface if that pays, else over the top. */
   arrive(x: number, y: number, z: number, overCleared = false, maxClimbMM = Infinity): void {
     if (!this.link(x, y, z, overCleared, maxClimbMM)) this.enter(x, y, z)
@@ -972,6 +1015,9 @@ function rasterInto(
   em: PassEmitter,
   stepoverMM: number, rasterAngleDeg: number,
   prevPassDepthMM: number,   // skip points already cut at this depth in a prior pass
+  /** `passHand`: the stock on the right of every row (true), on the left (false), or null
+   *  for the zigzag. */
+  hand: boolean | null = null,
 ): void {
   const { scanBox: bbox, sampleStep } = em
   const θ  = (rasterAngleDeg * Math.PI) / 180
@@ -988,7 +1034,10 @@ function rasterInto(
   const rsMinY = Math.min(...raster.map((c) => c[1]))
   const rsMaxY = Math.max(...raster.map((c) => c[1]))
 
-  let forward = true
+  // Rows are laid in rising `ry`, so the stock not yet cut is always on the +ry side: the
+  // LEFT of a row run forward (+rx), the right of one run back. A one-hand raster runs every
+  // row the way that puts it where `hand` says, and starts each row over the top.
+  let forward = hand === null ? true : !hand
   for (const ry of scanlineOffsets(rsMinY, rsMaxY, stepoverMM)) {
     const rxRange: number[] = []
     for (let rx = rsMinX; rx <= rsMaxX + 1e-6; rx += sampleStep) rxRange.push(rx)
@@ -1011,15 +1060,17 @@ function rasterInto(
       if (prevPassDepthMM > 0 && h >= -prevPassDepthMM + 1e-6) { inRun = false; continue }
 
       const toolZ = em.exactTipZ(cncX, cncY) ?? em.tipZ(cncX, cncY)!
-      // Already finished by the roughing: cleared ground, ridden over like a cleared level.
-      if (!em.needsCut(cncX, cncY, toolZ)) { inRun = false; continue }
+      // Already finished by the roughing, or above the stock it is roughing: nothing to
+      // take, ridden over like a cleared level (or lifted over, if that is quicker).
+      if (em.inAir(toolZ) || !em.needsCut(cncX, cncY, toolZ)) { inRun = false; continue }
       if (inRun) { em.cut(cncX, cncY, toolZ); continue }
       // A gap within this line is cleared ground only if the boundary did not interrupt it.
-      em.arrive(cncX, cncY, toolZ, lineCut && gapCleared)
+      if (hand !== null && !lineCut) em.enterOverTop(cncX, cncY, toolZ)
+      else em.arrive(cncX, cncY, toolZ, lineCut && gapCleared)
       inRun = true; lineCut = true; gapCleared = true
     }
     // Alternate with the lines that cut, so the next one starts at the end this one left.
-    if (lineCut) forward = !forward
+    if (lineCut && hand === null) forward = !forward
   }
 }
 
@@ -1089,7 +1140,10 @@ const boxRing = (b: BBox): Pt2[] => [[b.minX, b.minY], [b.maxX, b.minY], [b.maxX
 function wallInto(em: PassEmitter, rings: Pt2[][], prevPassDepthMM = 0,
   /** Cut the whole ring, not only where the stock model says there is stock: the finish's
    *  lap of the boundary is what cleans the band `countWorkInside` leaves out. */
-  always = false): void {
+  always = false,
+  /** `passHand`. The rings run with the stock beyond the limit on their right (outers
+   *  anticlockwise, holes clockwise) — which is climb, and what null leaves them as. */
+  hand: boolean | null = null): void {
   for (const ring of rings) {
     // Dense along the ring, starting at the point nearest the tool.
     const pts: Pt2[] = []
@@ -1099,6 +1153,7 @@ function wallInto(em: PassEmitter, rings: Pt2[][], prevPassDepthMM = 0,
       for (let i = 0; i < n; i++) pts.push([a[0] + (b[0] - a[0]) * i / n, a[1] + (b[1] - a[1]) * i / n])
     }
     if (pts.length < 2) continue
+    if (hand === false) pts.reverse()
     let start = 0
     if (em.at) {
       let best = Infinity
@@ -1112,7 +1167,7 @@ function wallInto(em: PassEmitter, rings: Pt2[][], prevPassDepthMM = 0,
       if (z === null) { down = false; cleared = false; continue }   // no surface here: lift over it
       // An earlier roughing level already took this stretch, as the raster skips it — and,
       // as the raster does, the tool rides over it as travel when that beats lifting.
-      if ((prevPassDepthMM > 0 && z - em.allowanceMM >= -prevPassDepthMM + 1e-6) || (!always && !em.needsCut(x, y, z))) {
+      if ((prevPassDepthMM > 0 && z - em.allowanceMM >= -prevPassDepthMM + 1e-6) || em.inAir(z) || (!always && !em.needsCut(x, y, z))) {
         if (down) cleared = true
         down = false
         continue
@@ -1138,8 +1193,8 @@ export function generateProfile3d(
   tool: Tool,
   params: Profile3dParams,
 ): MotionSegment[] {
-  if (tool.type !== 'ballnose' && tool.type !== 'bullnose' && tool.type !== 'taper') {
-    throw new Error('3D Profile requires a ball nose, bull nose or taper tool')
+  if (tool.type !== 'ballnose' && tool.type !== 'bullnose' && tool.type !== 'taper' && tool.type !== 'endmill') {
+    throw new Error('3D Profile requires a ball nose, bull nose, taper or end mill tool')
   }
   if (bbox.width < 0.001 || bbox.height < 0.001) {
     throw new Error('STL path has zero dimensions')
@@ -1197,14 +1252,18 @@ export function generateProfile3d(
 
   // A ball nose is finished against the model's own triangles (`ballDropCutter`): exact,
   // where the grid reads high on steep walls by design. A taper still reads the grid.
+  // An end mill likewise (`flatDropCutter`): on the grid its rim stood off every wall.
   const drop = tool.type === 'ballnose'
     ? ballDropCutter(positions, indices, bounds, bbox, tool.diameterMM / 2, zOff)
-    : undefined
+    : tool.type === 'endmill'
+      ? flatDropCutter(positions, indices, bounds, bbox, tool.diameterMM / 2, zOff)
+      : undefined
   // Inside a boundary the floor is a plane under everything: the ball can rest on it.
   const exactFinish = drop
     ? (x: number, y: number) => Math.max(drop(x, y) ?? -Infinity, floorZ)
     : undefined
   const finish = (stock: StockModel | null): MotionSegment[] => {
+    const hand = passHand(params.finishDirection, params.spindleReverse)
     const em = new PassEmitter(finishSurface, G, params.maxDepthMM, 0, {
       safeZ, rapidMmMin, xyFeedMmMin: tool.xyFeedMmMin, zFeedMmMin: tool.zFeedMmMin,
       enter: finishKernel, stock,
@@ -1217,11 +1276,12 @@ export function generateProfile3d(
         inside: area ? em.inside : undefined,
         limit: area?.limit,
         needsCut: stock ? (x, y, z) => em.needsCut(x, y, z) : undefined,
+        hand,
       })
     } else {
-      rasterInto(em, stepoverMM, params.rasterAngleDeg, 0)
+      rasterInto(em, stepoverMM, params.rasterAngleDeg, 0, hand)
     }
-    wallInto(em, finishWall, 0, !!stock && !!area)
+    wallInto(em, finishWall, 0, !!stock && !!area, hand)
     return em.done()
   }
 
@@ -1241,6 +1301,8 @@ export function generateProfile3d(
 /** A roughing pass's settings, resolved once from the params: its tool's radius and shape
  *  (a ball, or a flat end mill), its stepover, step down, allowance, angle and feeds. */
 interface RoughPlan {
+  /** `passHand` of the roughing. */
+  hand: boolean | null
   radius: number
   kernel: ToolKernel
   stepMM: number
@@ -1256,6 +1318,7 @@ function roughPlan(params: Profile3dParams, tool: Tool): RoughPlan | null {
   const radius = params.roughingRadiusMM
   if (radius === undefined || !(radius > 0) || params.roughingStepoverPercent === undefined) return null
   return {
+    hand: passHand(params.roughingDirection, params.spindleReverse),
     radius,
     kernel: params.roughingFlat ? flatKernel(radius)
       : params.roughingCornerRadiusMM !== undefined && params.roughingCornerRadiusMM < radius
@@ -1286,7 +1349,7 @@ function roughPasses(
   return generateStepDownPasses(
     surface, G, rough.stepMM, rough.stepDownMM, maxDepthMM, rough.stockMM, rough.angleDeg,
     rawMaxDepth, rough.kernel, stock,
-    { ...motion, xyFeedMmMin: rough.xyFeedMmMin, zFeedMmMin: rough.zFeedMmMin }, area, wall,
+    { ...motion, xyFeedMmMin: rough.xyFeedMmMin, zFeedMmMin: rough.zFeedMmMin }, area, wall, rough.hand,
   )
 }
 

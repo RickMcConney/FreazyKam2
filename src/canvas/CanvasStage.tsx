@@ -103,6 +103,10 @@ export default function CanvasStage() {
     return s.paths.find((p) => p.id === id)?.clockId ?? null
   })
   const cornerPickPathId = useUIStore((s) => s.cornerPickPathId)
+  // While the Tabs form is open the tabs are what gets dragged: the resize handles sit at
+  // the middle of each side, exactly where four tabs on a rectangle land, so a grab meant
+  // for a tab moved a side of the part instead.
+  const tabsFormActive = useUIStore((s) => s.tabsFormActive)
 
   const activeTool = useUIStore((s) => s.activeTool)
 
@@ -240,6 +244,14 @@ export default function CanvasStage() {
           : [...currentIds, ...hitIds.filter((id) => !currentIds.includes(id))])
       } else if (!currentIds.includes(hit.id)) {
         usePathsStore.getState().setSelectedIds(hitIds)
+      }
+      // The Tabs form edits tabs, not shapes: a press on the part selects it but never
+      // moves it. Zoomed out, a press aimed at a tab lands on the outline as often as on
+      // the tab, and dragged the whole part off its place.
+      if (useUIStore.getState().tabsFormActive) {
+        didDragRef.current = false
+        setMode({ type: 'idle' })
+        return
       }
       const moveIds = usePathsStore.getState().selectedIds
       const session = beginMoveSession(moveIds)
@@ -622,7 +634,7 @@ useNudge(gesture)
             job's seams (dragged along the slide axis). */}
         <Layer>
           <TilingLayer viewport={viewport} />
-          {!nodeEditPathId && !cornerPickPathId && activeTool !== 'constrain' && selectionBBox && (
+          {!nodeEditPathId && !cornerPickPathId && !tabsFormActive && activeTool !== 'constrain' && selectionBBox && (
             <SelectionHandleLayer
               viewport={viewport}
               bbox={selectionBBox}

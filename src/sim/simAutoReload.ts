@@ -155,7 +155,7 @@ export function installSimAutoReload(): () => void {
     if (w.tiling !== p.tiling) schedule()
     if (w.accelXYMmS2 === p.accelXYMmS2 && w.accelZMmS2 === p.accelZMmS2 &&
         w.maxRateZMmMin === p.maxRateZMmMin && w.junctionDeviationMM === p.junctionDeviationMM &&
-        w.maxFeedMmMin === p.maxFeedMmMin) return
+        w.maxFeedMmMin === p.maxFeedMmMin && w.rapidRateXYMmMin === p.rapidRateXYMmMin) return
     if (retimer) clearTimeout(retimer)
     retimer = setTimeout(() => {
       retimer = null

@@ -4,7 +4,9 @@ import { runInWorkerFor } from '../workers/workerClient'
 import { useToolpathStore, withPending, type StepDownStamp } from '../store/toolpathStore'
 import { usePathsStore } from '../store/pathsStore'
 import { useToolStore, type Tool } from '../store/toolStore'
-import { useWorkpieceStore } from '../store/workpieceStore'
+import { useWorkpieceStore, rapidRateMmMin } from '../store/workpieceStore'
+import { usePostProcessorStore } from '../store/postProcessorStore'
+import { activeSpindleReversed, forSpindle } from './spindleHand'
 import { profile3dDepthMM, modelBelowCut, MODEL_BELOW_CUT_MSG, type Profile3dParams } from './profile3d'
 import { DEFAULT_RELIEF_MM } from './depthMapMesh'
 import { flattenPath, requireClosedSubpaths, type Pt2 } from './pathFlattener'
@@ -12,6 +14,7 @@ import { tabsForGeneration } from '../store/tabStore'
 import { getBBox, extractCircles, extractRectInfo } from '../canvas/selectionUtils'
 import { loadImageLuminance } from '../io/imageLuminance'
 import { decodeStlMesh } from '../importers/stlImporter'
+import { placeStlModel } from './stlPlacement'
 import { effectiveStepDownMM, trochoidalEngagementFraction } from './feeds'
 import { pocketEngagementFraction } from './pocket/strategyIds'
 import { cornerRadiusMM } from './geom'
@@ -53,9 +56,11 @@ export function inlayJobKey(op: { id: string; linkedOpId?: string }): string {
 /** The machine as a shared-line profile prices it: rapid rate, acceleration and junction
  *  deviation, with the simulator's fallbacks where the profile leaves them unset. */
 export function machineRates(): MachineRates {
-  const { maxFeedMmMin, accelXYMmS2, junctionDeviationMM } = useWorkpieceStore.getState()
+  const s = useWorkpieceStore.getState()
+  const { accelXYMmS2, junctionDeviationMM } = s
+  const rapid = rapidRateMmMin(s)
   return {
-    rapidMmMin: maxFeedMmMin > 0 ? maxFeedMmMin : FALLBACK_RAPID_MM_MIN,
+    rapidMmMin: rapid > 0 ? rapid : FALLBACK_RAPID_MM_MIN,
     accelMmS2: accelXYMmS2 > 0 ? accelXYMmS2 : 200,
     junctionDeviationMM: junctionDeviationMM > 0 ? junctionDeviationMM : 0.01,
   }
@@ -102,6 +107,8 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
   const { paths } = usePathsStore.getState()
   const { tools } = useToolStore.getState()
   const { safeHeightMM, widthMM: stockW, heightMM: stockH } = useWorkpieceStore.getState()
+  // An M4 post turns the spindle anticlockwise, and every climb the other way (spindleHand.ts).
+  const spindleReversed = activeSpindleReversed(usePostProcessorStore.getState())
   const notes: GenNote[] = []
 
   // Through the batch buffer, which is where a batch Generate puts the entry hint it has
@@ -151,7 +158,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       return { d: path.d, tabs: tabsForGeneration(id) }
     })
     const result = await runInWorkerFor(opId, 'generateSharedLineProfile', parts, tool, {
-      side: op.side, depthMM: op.depthMM, stepDownMM: stepDown(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual), direction: op.direction,
+      side: op.side, depthMM: op.depthMM, stepDownMM: stepDown(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual), direction: forSpindle(op.direction, spindleReversed),
       startNear: op.entryHint, rampIn: op.rampIn, safeHeightMM, allowanceMM: op.allowanceMM, startZMM, bridges,
     }, machineRates(), { bridgeMaxMM: op.bridgeMaxMM ?? 0 })
     setSegments(opId, result.segments, builtWith)
@@ -161,7 +168,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
     const path = paths.find((p) => p.id === op.pathId)
     if (!path) throw new Error('Source path not found')
     setSegments(opId, await runInWorkerFor(opId, 'generateProfile', path.d, tool, {
-      side: op.side, depthMM: op.depthMM, stepDownMM: stepDown(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual), direction: op.direction,
+      side: op.side, depthMM: op.depthMM, stepDownMM: stepDown(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual), direction: forSpindle(op.direction, spindleReversed),
       startNear: op.entryHint, rampIn: op.rampIn, safeHeightMM,
       allowanceMM: op.allowanceMM,
       cornerToleranceMM: op.cornerToleranceMM,
@@ -180,7 +187,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       strategy: op.strategy ?? 'raster',
       depthMM: op.depthMM,
       stepDownMM: stepDown(tool, op.stepDownMM, op.depthMM, pocketEngagementFraction(op.strategy, op.stepoverPercent), op.stepDownManual),
-      stepoverPercent: op.stepoverPercent, direction: op.direction,
+      stepoverPercent: op.stepoverPercent, direction: forSpindle(op.direction, spindleReversed),
       islandDs, angle: op.passAngleDeg, autoAngle: op.autoAngle, startNear: op.entryHint, rampIn: op.rampIn,
       finishAllowanceMM: op.allowanceMM,
       startZMM,
@@ -289,6 +296,10 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
     if (!stlPath.imageSrc && (!stlPath.stlSrc || !stlPath.stlModelBounds)) throw new Error('Path is not an STL or image import')
     const cncBbox = getBBox(stlPath.d)
     if (!cncBbox) throw new Error('Could not read the model outline — the model may be empty')
+    // Turned to stand as its outline does (cam/stlPlacement.ts); untouched when it is not turned.
+    const placedStl = stlPath.stlSrc && stlPath.stlModelBounds
+      ? placeStlModel(decodeStlMesh(stlPath.stlSrc).positions, stlPath.stlModelBounds, stlPath.d)
+      : null
     // Roughing runs with a ball nose, a bull nose or a flat end mill. A rough tool since deleted or retyped in the library is simply no roughing pass —
     // and then no roughing id either, so nothing downstream announces a tool that never
     // cuts. The G-code reads the handover from the segments anyway (initialToolId).
@@ -305,9 +316,9 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       if (!bPath) throw new Error('Boundary path not found')
       boundaryRings = flattenPath(bPath.d, 0.05).filter((r) => r.length >= 2)
       requireClosedSubpaths(boundaryRings, { cut: 'a 3D boundary', remedy: 'Close the path, or pick another boundary.', noun: 'Boundary' })
-    } else if (imageRect && Math.abs(Math.sin(2 * imageRect.rotationDeg * Math.PI / 180)) > 1e-6) {
-      // A turned picture's box holds four corners it does not cover; bounded by the box they
-      // would be cut down to the floor. The picture itself is the boundary instead.
+    } else if (imageRect ? Math.abs(Math.sin(2 * imageRect.rotationDeg * Math.PI / 180)) > 1e-6 : placedStl?.turned) {
+      // A turned picture's or model's box holds four corners it does not cover; bounded by
+      // the box they would be cut down to the floor. The outline itself is the boundary instead.
       boundaryRings = [flattenPath(stlPath.d, 0.05)[0]]
     }
     const p3dParams: Profile3dParams = {
@@ -327,6 +338,11 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
         : op.roughingStepDownMM,
       roughingStockAllowanceMM: op.roughingStockAllowanceMM,
       roughingRasterAngleDeg: op.roughingRasterAngleDeg,
+      finishDirection: op.finishDirection,
+      roughingDirection: op.roughingDirection,
+      // An M4 in the post's spindle-on line turns the spindle anticlockwise: climb and
+      // conventional swap sides (passHand, cam/spindleHand.ts).
+      spindleReverse: spindleReversed,
       roughingToolId: roughingTool?.id,
       finishingToolId: op.toolId,
       safeHeightMM,
@@ -344,8 +360,8 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
         op.reliefDepthMM ?? DEFAULT_RELIEF_MM, !!op.invertDepth, tool, p3dParams), builtWith)
     } else {
       // Decoded once per model and shared (see decodeStlMesh); the worker call clones them.
-      const { positions, indices } = decodeStlMesh(stlPath.stlSrc!)
-      setSegments(opId, await runInWorkerFor(opId, 'generateProfile3d', positions, indices, stlPath.stlModelBounds!, cncBbox, tool, p3dParams), builtWith)
+      const { indices } = decodeStlMesh(stlPath.stlSrc!)
+      setSegments(opId, await runInWorkerFor(opId, 'generateProfile3d', placedStl!.positions, indices, placedStl!.bounds, cncBbox, tool, p3dParams), builtWith)
     }
 
   } else if (op.type === 'trochoidal') {
@@ -354,7 +370,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
     setSegments(opId, await runInWorkerFor(opId, 'generateTrochoidal', path.d, tool, {
       side: op.side, depthMM: op.depthMM,
       stepDownMM: stepDown(tool, op.stepDownMM, op.depthMM, trochoidalEngagementFraction(tool, op.trochStepMM), op.stepDownManual),
-      direction: op.direction, trochStepMM: op.trochStepMM, trochRadiusMM: op.trochRadiusMM,
+      direction: forSpindle(op.direction, spindleReversed), trochStepMM: op.trochStepMM, trochRadiusMM: op.trochRadiusMM,
       finishingPass: op.finishingPass, rampIn: op.rampIn, startNear: op.entryHint, safeHeightMM, bridges,
     }, tabsForGeneration(op.pathId)), builtWith)
 

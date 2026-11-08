@@ -183,10 +183,11 @@ describe('the stock model that entries rapid down onto', () => {
 })
 
 describe('generateProfile3d refuses what it cannot cut', () => {
-  it('refuses a tool with no rounded tip', () => {
-    for (const type of ['endmill', 'vbit', 'drill'] as const) {
-      expect(() => run({ ...BALL, type })).toThrow('3D Profile requires a ball nose, bull nose or taper tool')
+  it('refuses a V-bit and a drill — but not an end mill, which finishes flats and walls', () => {
+    for (const type of ['vbit', 'drill'] as const) {
+      expect(() => run({ ...BALL, type })).toThrow('3D Profile requires a ball nose, bull nose, taper or end mill tool')
     }
+    expect(() => run({ ...BALL, type: 'endmill' })).not.toThrow()
   })
 
   it('refuses a path box of zero size', () => {
@@ -431,13 +432,13 @@ describe('roughing then rest-machining', () => {
     for (const s of dropped) expect(s.z).toBeGreaterThan(-0.01)
   })
 
-  it('leaves the stock allowance for the finish', () => {
-    // On the flat top the roughing tip rides the allowance above the surface; nowhere does
-    // it come closer to the surface than the finish will.
+  it('leaves the stock allowance for the finish — and does not cut the air over a top at the stock top', () => {
+    // The block's flat top IS the stock top, so the allowance over it (Z+0.3) is above the
+    // stock: the roughing takes nothing there and does not feed across it. Nowhere does it
+    // come closer to the surface than the finish will.
     const { roughing, finishing } = split(rough())
-    const top = cuts(roughing).filter((s) => s.x < 8 || s.x > 32)
-    expect(top.length).toBeGreaterThan(0)
-    for (const s of top) expect(s.z).toBeCloseTo(0.3, 6)
+    const top = cuts(roughing).filter((s) => !s.travel && (s.x < 8 || s.x > 32))
+    expect(top).toHaveLength(0)
     const finishFloor = Math.min(...cuts(finishing).map((s) => s.z))
     expect(Math.min(...cuts(roughing).map((s) => s.z))).toBeGreaterThanOrEqual(finishFloor + 0.3 - 1e-6)
   })
@@ -934,5 +935,260 @@ describe("the 3D view's model preview", () => {
     expect(modelPreviewTrim([], 'stl', 31)).toBeNull()
     expect(modelPreviewTrim([op({ visible: false })], 'stl', 31)).toBeNull()
     expect(modelPreviewTrim([op({ pathId: 'other' }), { type: 'pocket', pathId: 'stl' }], 'stl', 31)).toBeNull()
+  })
+})
+
+describe('finishing with a flat end mill', () => {
+  const END: Tool = { id: 'end', name: 'End 6', type: 'endmill', diameterMM: 6, fluteCount: 2, rpm: 18000, xyFeedMmMin: 1000, zFeedMmMin: 300, maxDepthMM: 20 }
+  const R = 3
+  // A terraced part — what an end mill finish is for: a top, a step, a floor, each a flat,
+  // with walls that drop within one fine mesh cell, at radii no grid node lines up with.
+  const TERRACE: Height = (x, y) => { const r = Math.hypot(x - 20, y - 20); return r < 5.3 ? 0 : r < 14.7 ? -3 : -7 }
+  const m = mesh(TERRACE, W, W, 200)
+  const worstGouge = (segs: MotionSegment[]) => {
+    let worst = 0
+    for (const s of cuts(segs)) {
+      for (let u = s.x - R; u <= s.x + R; u += 0.05) {
+        for (let v = s.y - R; v <= s.y + R; v += 0.05) {
+          if (u < 0 || v < 0 || u > W || v > W || Math.hypot(u - s.x, v - s.y) > R) continue
+          worst = Math.max(worst, m.at(u, v) - s.z)
+        }
+      }
+    }
+    return worst
+  }
+
+  for (const finishStrategy of ['raster', 'waterline'] as const) {
+    it(`never cuts into a wall with the rim of its flat bottom (${finishStrategy})`, { timeout: 30000 }, () => {
+      const segs = generateProfile3d(m.positions, null, m.bounds, box(0, 0, W, W), END, params({ finishStrategy }))
+      expect(cuts(segs).length).toBeGreaterThan(50)
+      expect(worstGouge(segs)).toBeLessThan(0.02)
+    })
+  }
+
+  it('never cuts into a wall after roughing either — the rest finish reads the triangles too', { timeout: 30000 }, () => {
+    const segs = generateProfile3d(m.positions, null, m.bounds, box(0, 0, W, W), END, params({
+      roughingRadiusMM: 4, roughingFlat: true, roughingStepoverPercent: 50, roughingStepDownMM: 3, roughingStockAllowanceMM: 0.3,
+    }))
+    const k = segs.findIndex((s) => s.toolChange)
+    expect(k).toBeGreaterThan(0)
+    expect(worstGouge(segs.slice(k + 1))).toBeLessThan(0.02)
+  })
+
+  it('never cuts into a curved surface with the rim of its flat bottom', { timeout: 30000 }, () => {
+    // Every contact a slope makes is the uphill point of the rim, on a face or along an edge.
+    const DOME: Height = (x, y) => { const r = Math.hypot(x - 20, y - 20); return r < 12 ? Math.sqrt(144 - r * r) - 12 : -12 }
+    const d = mesh(DOME, W, W, 80)
+    const segs = generateProfile3d(d.positions, null, d.bounds, box(0, 0, W, W), END, params())
+    let worst = 0
+    for (const s of cuts(segs)) {
+      for (let u = s.x - R; u <= s.x + R; u += 0.1) {
+        for (let v = s.y - R; v <= s.y + R; v += 0.1) {
+          if (u < 0 || v < 0 || u > W || v > W || Math.hypot(u - s.x, v - s.y) > R) continue
+          worst = Math.max(worst, d.at(u, v) - s.z)
+        }
+      }
+    }
+    expect(worst).toBeLessThan(0.02)
+  })
+
+  // Clear of the walls by 0.5 mm: on the grid the rim stood off every wall by over a
+  // millimetre, riding up onto the terrace above and leaving a ledge round its foot.
+  it('finishes every flat to its own depth — the bottom of the tool IS the finish there', { timeout: 30000 }, () => {
+    const segs = generateProfile3d(m.positions, null, m.bounds, box(0, 0, W, W), END, params())
+    // Points whose whole flat bottom lies on one terrace, clear of the walls by a grid cell.
+    const on = (lo: number, hi: number) => cuts(segs).filter((s) => {
+      const r = Math.hypot(s.x - 20, s.y - 20)
+      return r - R > lo + 0.5 && r + R < hi - 0.5
+    })
+    const step = on(5.3, 14.7), floor = on(14.7, 99).filter((s) => s.x > 1 && s.y > 1 && s.x < W - 1 && s.y < W - 1)
+    expect(step.length).toBeGreaterThan(10)
+    expect(floor.length).toBeGreaterThan(50)
+    for (const s of step) expect(s.z).toBeCloseTo(-3, 2)
+    for (const s of floor) expect(s.z).toBeCloseTo(-7, 2)
+  })
+})
+
+describe('roughing over ground already at the stock top', () => {
+  // A neck: a long flat top AT the stock top (Z0), with a 5 mm pocket only at one end —
+  // roughed with a 1/4" end mill, rows running the long way. On every row the tool finishes
+  // the pocket, and the rest of the row is the flat top, where the tip would sit at
+  // 0 + 0.3 allowance: above the stock, taking nothing.
+  const NL = 120, NW = 20
+  const NECK: Height = (_x, y) => (y < 25 ? -5 : 0)
+  const neck = mesh(NECK, NW, NL, 120)   // as long and as wide as its box, so 5 mm stays 5 mm
+  const END4: Tool = { id: 'e4', name: 'End 1/4', type: 'endmill', diameterMM: 6.35, fluteCount: 2, rpm: 18000, xyFeedMmMin: 1000, zFeedMmMin: 300, maxDepthMM: 20 }
+  const segs = generateProfile3d(neck.positions, null, neck.bounds, box(0, 0, NW, NL), BALL, params({
+    rasterAngleDeg: 90, roughingRadiusMM: END4.diameterMM / 2, roughingFlat: true, roughingStepoverPercent: 40,
+    roughingStepDownMM: 3.8, roughingStockAllowanceMM: 0.3, roughingXyFeedMmMin: 1000,
+  }))
+  const roughing = segs.slice(0, segs.findIndex((s) => s.toolChange))
+
+  it('never feeds through air above the stock — a cut is always below Z0', () => {
+    for (const s of roughing) if (!s.rapid && !s.travel) expect(s.z).toBeLessThan(0)
+  })
+
+  it('lifts and rapids over the long flat instead of feeding or riding along it', () => {
+    // Every row crosses ~95 mm of flat. A short hop between nearby cuts may still ride the
+    // surface as travel when that is quicker than lifting; a run along the flat never does.
+    let run = 0, longest = 0
+    for (let i = 1; i < roughing.length; i++) {
+      const a = roughing[i - 1], b = roughing[i]
+      if (!b.rapid && a.z >= -1e-6 && b.z >= -1e-6) longest = Math.max(longest, run += Math.hypot(b.x - a.x, b.y - a.y))
+      else run = 0
+    }
+    expect(longest).toBeLessThan(NW + 5)
+  })
+
+  it('still clears the pocket', () => {
+    const inPocket = roughing.filter((s) => !s.rapid && s.y < 25 - 3.2 - 0.5 && s.z < -4)
+    expect(inPocket.length).toBeGreaterThan(20)
+  })
+})
+
+describe('cut direction: mixed, climb or conventional', () => {
+  // A row runs along d = (cos θ, sin θ) and the rows step toward n = (−sin θ, cos θ), so the
+  // stock not yet cut is on the +n side: the LEFT of a move along +d. With an M3 spindle,
+  // climb keeps the stock on the RIGHT of the feed (as the 2D profile does: CW round an
+  // outside, CCW round a pocket), so every climb row runs along −d.
+  const along = (deg: number) => [Math.cos(deg * Math.PI / 180), Math.sin(deg * Math.PI / 180)]
+  /** Each cutting move's travel along the row direction (vertical and zero moves left out).
+   *  Moves along the box's edge are the lap round it (`wallInto`), a ring with a hand of its
+   *  own, and are left out — with the first and last rows, which lie on that edge too. */
+  const onEdge = (p: MotionSegment) => p.x < 1e-6 || p.y < 1e-6 || p.x > W - 1e-6 || p.y > W - 1e-6
+  const rowSteps = (segs: MotionSegment[], deg: number) => {
+    const [dx, dy] = along(deg), out: number[] = []
+    for (let i = 1; i < segs.length; i++) {
+      const a = segs[i - 1], b = segs[i]
+      if (b.rapid || (onEdge(a) && onEdge(b))) continue
+      const s = (b.x - a.x) * dx + (b.y - a.y) * dy
+      if (Math.abs(s) > 1e-6) out.push(s)
+    }
+    return out
+  }
+  const finishOf = (segs: MotionSegment[]) => { const k = segs.findIndex((s) => s.toolChange); return k < 0 ? segs : segs.slice(k + 1) }
+  const roughOf = (segs: MotionSegment[]) => segs.slice(0, segs.findIndex((s) => s.toolChange))
+  const ROUGH = { roughingRadiusMM: 3, roughingFlat: true, roughingStepoverPercent: 50, roughingStepDownMM: 3, roughingStockAllowanceMM: 0.3 }
+
+  it('mixed is the zigzag: rows both ways, and no lift between them', () => {
+    const segs = run(BALL)
+    const steps = rowSteps(segs, 0)
+    expect(steps.some((s) => s > 0)).toBe(true)
+    expect(steps.some((s) => s < 0)).toBe(true)
+    expect(run(BALL, { finishDirection: 'mixed' })).toEqual(segs)
+  })
+
+  for (const deg of [0, 90, 180, 270, 30]) {
+    it(`climb cuts every row with the stock on its right — never a move the other way (raster ${deg}°)`, () => {
+      const steps = rowSteps(run(BALL, { rasterAngleDeg: deg, finishDirection: 'climb' }), deg)
+      expect(steps.length).toBeGreaterThan(50)
+      for (const s of steps) expect(s).toBeLessThan(0)
+    })
+    it(`conventional is the mirror of climb (raster ${deg}°)`, () => {
+      const steps = rowSteps(run(BALL, { rasterAngleDeg: deg, finishDirection: 'conventional' }), deg)
+      expect(steps.length).toBeGreaterThan(50)
+      for (const s of steps) expect(s).toBeGreaterThan(0)
+    })
+  }
+
+  it('goes back over the top between rows: a lift to safe height before every row, and no feed on the way back', () => {
+    const segs = run(BALL, { finishDirection: 'climb' })
+    // Every row starts with the tool coming down from safe height at the row's climb end.
+    let rows = 0, lifted = 0
+    for (let i = 1; i < segs.length; i++) {
+      const a = segs[i - 1], b = segs[i]
+      if (!b.rapid && a.rapid && b.x === a.x && b.y === a.y) {
+        rows++
+        // walk back to the last move that was not a rapid: it must have gone up to safe height
+        let j = i - 1
+        while (j > 0 && segs[j].rapid && segs[j].z !== SAFE_Z) j--
+        if (segs[j].rapid && segs[j].z === SAFE_Z) lifted++
+      }
+    }
+    expect(rows).toBeGreaterThan(5)
+    expect(lifted).toBe(rows)
+  })
+
+  it('a spindle running M4 swaps climb and conventional', () => {
+    const climbM4 = run(BALL, { finishDirection: 'climb', spindleReverse: true })
+    expect(climbM4).toEqual(run(BALL, { finishDirection: 'conventional' }))
+  })
+
+  it('sets the roughing and the finish independently', () => {
+    const segs = run(BALL, { ...ROUGH, roughingRasterAngleDeg: 0, roughingDirection: 'climb', finishDirection: 'conventional' })
+    const r = rowSteps(roughOf(segs), 0), f = rowSteps(finishOf(segs), 0)
+    expect(r.length).toBeGreaterThan(20)
+    expect(f.length).toBeGreaterThan(20)
+    for (const s of r) expect(s).toBeLessThan(0)
+    for (const s of f) expect(s).toBeGreaterThan(0)
+    // …and leaving one unset leaves it the zigzag.
+    const mixedRough = rowSteps(roughOf(run(BALL, { ...ROUGH, roughingRasterAngleDeg: 0, finishDirection: 'climb' })), 0)
+    expect(mixedRough.some((s) => s > 0) && mixedRough.some((s) => s < 0)).toBe(true)
+  })
+
+  describe('waterline', () => {
+    // A dome: every ring above the floor goes round it with the dome — the material — inside.
+    // Climb on M3 keeps it on the right, which round a boss is clockwise.
+    const DOME: Height = (x, y) => { const r = Math.hypot(x - 20, y - 20); return r < 12 ? Math.sqrt(144 - r * r) - 12 : -12 }
+    const dome = mesh(DOME, W, W, 80)
+    const turns = (segs: MotionSegment[]) => {
+      const out: number[] = []
+      for (let i = 1; i < segs.length; i++) {
+        const a = segs[i - 1], b = segs[i]
+        if (b.rapid || b.travel || a.z < -11 || Math.abs(b.z - a.z) > 1e-9) continue   // on a ring round the dome
+        // …going ROUND it: the step from one ring down to the next runs outward, and has no hand.
+        const dr = Math.hypot(b.x - 20, b.y - 20) - Math.hypot(a.x - 20, a.y - 20)
+        if (Math.abs(dr) > 0.3 * Math.hypot(b.x - a.x, b.y - a.y)) continue
+        const c = (a.x - 20) * (b.y - a.y) - (a.y - 20) * (b.x - a.x)
+        if (Math.abs(c) > 1e-3) out.push(c)
+      }
+      return out
+    }
+    const wl = (over: Partial<Profile3dParams>) =>
+      generateProfile3d(dome.positions, null, dome.bounds, box(0, 0, W, W), BALL, params({ finishStrategy: 'waterline', ...over }))
+
+    it('climb runs every ring round a boss clockwise, conventional anticlockwise', { timeout: 60000 }, () => {
+      const climb = turns(wl({ finishDirection: 'climb' })), conv = turns(wl({ finishDirection: 'conventional' }))
+      expect(climb.length).toBeGreaterThan(50)
+      for (const c of climb) expect(c).toBeLessThan(0)
+      for (const c of conv) expect(c).toBeGreaterThan(0)
+    })
+
+    it('the lap round the box takes the hand too: along its bottom edge climb runs +x, conventional −x', { timeout: 60000 }, () => {
+      // The lap runs with the stock beyond the limit on its right (anticlockwise round the
+      // box) — climb. With a waterline finish nothing else runs along the box's edge.
+      const bottom = (segs: MotionSegment[]) => {
+        const out: number[] = []
+        for (let i = 1; i < segs.length; i++) {
+          const a = segs[i - 1], b = segs[i]
+          if (!b.rapid && !b.travel && a.y < 1e-6 && b.y < 1e-6 && Math.abs(b.x - a.x) > 1e-6) out.push(b.x - a.x)
+        }
+        return out
+      }
+      const climb = bottom(wl({ finishDirection: 'climb' })), conv = bottom(wl({ finishDirection: 'conventional' }))
+      expect(climb.length).toBeGreaterThan(20)
+      for (const d of climb) expect(d).toBeGreaterThan(0)
+      for (const d of conv) expect(d).toBeLessThan(0)
+    })
+
+    it('runs an open chain from its climb end too, not from whichever end is nearer', { timeout: 60000 }, () => {
+      // The groove's contours run edge to edge: open chains, one up each wall. The stock is
+      // beyond each wall, so with it on the right the −x wall runs −y and the +x wall +y.
+      const segs = run(BALL, { finishStrategy: 'waterline', finishDirection: 'climb' })
+      let n = 0
+      for (let i = 1; i < segs.length; i++) {
+        const a = segs[i - 1], b = segs[i]
+        const dy = b.y - a.y
+        if (b.rapid || b.travel || Math.abs(b.z - a.z) > 1e-9 || Math.abs(dy) < 1e-6 || Math.abs(b.x - a.x) > 0.1 * Math.abs(dy)) continue
+        if (a.x < 1e-6 || a.x > W - 1e-6 || Math.abs(a.x - 20) < 0.5) continue   // the box's lap; the groove's bottom
+        n++
+        expect(Math.sign(dy)).toBe(a.x < 20 ? -1 : 1)
+      }
+      expect(n).toBeGreaterThan(50)
+    })
+
+    it('mixed leaves the rings as traced', { timeout: 60000 }, () => {
+      expect(wl({ finishDirection: 'mixed' })).toEqual(wl({}))
+    })
   })
 })

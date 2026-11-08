@@ -39,6 +39,8 @@ export interface WaterlineEmitter {
   /** Get to (x, y, z) from wherever the tool is: along the surface or over the top — never
    *  along a surface that climbs more than `maxClimbMM` above both ends. */
   arrive(x: number, y: number, z: number, overCleared?: boolean, maxClimbMM?: number): void
+  /** Get to (x, y, z) over the top, never along the surface. */
+  enterOverTop(x: number, y: number, z: number): void
   cut(x: number, y: number, z: number): void
 }
 
@@ -58,6 +60,10 @@ export interface WaterlineParams {
   /** Where the tool centre may go, when a boundary sets it (rings, holes by even–odd).
    *  Unset: the box. Every flat's rings are cut inside it. */
   limit?: [number, number][][]
+  /** `passHand` (profile3d.ts): the material on the right of every ring (true), on the left
+   *  (false), or null to cut them as traced — closed rings with it on the right (climb on
+   *  M3), open chains from whichever end is nearer. */
+  hand?: boolean | null
 }
 
 /** Below this the two levels of an interval are the same height to the machine. */
@@ -821,12 +827,26 @@ function takesAnything(c: Chain, needsCut: (x: number, y: number, z: number) => 
  * and always starting at its climb end would add a link or a lift back to the far end for
  * every one of them; a light finishing pass takes the mixed hand.
  */
-function cutOpenChain(em: WaterlineEmitter, c: Chain, x: number, y: number, stepoverMM: number): void {
+function cutOpenChain(em: WaterlineEmitter, c: Chain, x: number, y: number, stepoverMM: number,
+  /** Hold the chain's own direction (already set to the hand asked for) and go over the top
+   *  to its start, rather than starting at the nearer end. */
+  handed = false): void {
   const p = c.pts, m = p.length / 3
   const dHead = Math.hypot(p[0] - x, p[1] - y), dTail = Math.hypot(p[(m - 1) * 3] - x, p[(m - 1) * 3 + 1] - y)
-  const at = (k: number) => (dTail < dHead ? m - 1 - k : k) * 3
-  em.arrive(p[at(0)], p[at(0) + 1], p[at(0) + 2], false, stepoverMM)
+  const at = (k: number) => (!handed && dTail < dHead ? m - 1 - k : k) * 3
+  if (handed) em.enterOverTop(p[0], p[1], p[2])
+  else em.arrive(p[at(0)], p[at(0) + 1], p[at(0) + 2], false, stepoverMM)
   for (let k = 1; k < m; k++) em.cut(p[at(k)], p[at(k) + 1], p[at(k) + 2])
+}
+
+/** x, y, z triples in the opposite order. */
+function reversedPts(p: number[]): number[] {
+  const out: number[] = new Array(p.length)
+  for (let k = 0, m = p.length / 3; k < m; k++) {
+    const q = (m - 1 - k) * 3
+    out[k * 3] = p[q]; out[k * 3 + 1] = p[q + 1]; out[k * 3 + 2] = p[q + 2]
+  }
+  return out
 }
 
 interface RingCut { reach: number; stepoverMM: number; toolDiameterMM: number; cl: (x: number, y: number) => number }
@@ -920,6 +940,11 @@ export function generateWaterline(em: WaterlineEmitter, bbox: BBox, params: Wate
   }
   const flatCount = addFlats(grid, rings, levels, flats, stepoverMM, reach, cl, params.limit)
   for (const r of rings) r.waiting = r.up.length
+  // Every ring is traced with the material on its right. A hand that wants it on the left
+  // turns them all round — after `linkUp`, which pairs rings by where they lie, not by
+  // which way they run.
+  const handed = params.hand === true || params.hand === false
+  if (params.hand === false) for (const r of rings) r.chain.pts = reversedPts(r.chain.pts)
   const t3 = performance.now()
 
   // Cut them: down the ring just finished when it is ready, else the nearest ring whose
@@ -934,7 +959,7 @@ export function generateWaterline(em: WaterlineEmitter, bbox: BBox, params: Wate
     for (const d of next.down) rings[d].waiting--
     if (params.needsCut && !takesAnything(next.chain, params.needsCut)) continue
     if (next.chain.closed) cutClosedRing(em, next, chainStep, x, y, cutOpts)
-    else cutOpenChain(em, next.chain, x, y, stepoverMM)
+    else cutOpenChain(em, next.chain, x, y, stepoverMM, handed)
     last = next
   }
   const t4 = performance.now()

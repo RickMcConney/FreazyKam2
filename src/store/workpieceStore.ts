@@ -119,8 +119,42 @@ export const lenValue = (mm: number, units: Units, mmDigits = 2): string =>
 export const fmtLen = (mm: number, units: Units, mmDigits = 2): string =>
   units === 'in' ? `${lenValue(mm, units)}"` : `${lenValue(mm, units, mmDigits)} mm`
 
-export const fmtFeed = (mmPerMin: number, units: Units): string =>
-  units === 'in' ? `${(mmPerMin / MM_PER_INCH).toFixed(1)} in/min` : `${Math.round(mmPerMin)} mm/min`
+// FEEDS: stored in mm/min (the F word's own unit, which FluidNC and Grbl only speak), shown
+// per minute or per SECOND by the toolbar's /min–/s toggle (`feedTime`). Display only, like
+// mm/in — the G-code is per minute whatever this says. Every feed on screen, typed or read,
+// goes through these four, so the two toggles combine in one place.
+export type FeedTime = 'min' | 's'
+
+export const feedUnit = (units: Units, ft: FeedTime): string =>
+  `${units === 'in' ? 'in' : 'mm'}/${ft === 's' ? 's' : 'min'}`
+
+/** A stored mm/min feed as a field value in the display units. */
+export const feedFromMM = (mmPerMin: number, units: Units, ft: FeedTime): number =>
+  fromMM(ft === 's' ? mmPerMin / 60 : mmPerMin, units)
+
+/** A typed feed in the display units, back to mm/min. */
+export const feedToMM = (value: number, units: Units, ft: FeedTime): number =>
+  toMM(value, units) * (ft === 's' ? 60 : 1)
+
+/** The number alone, at a precision that reads well for its unit (1000 mm/min = 16.7 mm/s = 0.66 in/s). */
+export const feedValue = (mmPerMin: number, units: Units, ft: FeedTime): string => {
+  const v = (ft === 's' ? mmPerMin / 60 : mmPerMin) / (units === 'in' ? MM_PER_INCH : 1)
+  if (ft === 'min') return units === 'in' ? v.toFixed(1) : String(Math.round(v))
+  return units === 'in' ? v.toFixed(2) : v.toFixed(1)
+}
+
+export const fmtFeed = (mmPerMin: number, units: Units, ft: FeedTime): string =>
+  `${feedValue(mmPerMin, units, ft)} ${feedUnit(units, ft)}`
+
+// Arrow-key step for a feed field: the per-minute step in mm, carried into the display
+// unit and snapped to a 1-2-5 number, so a per-second field nudges by 0.5 mm/s rather
+// than by 0.8333.
+export const feedStep = (stepMmMin: number, units: Units, ft: FeedTime): number => {
+  const target = (ft === 's' ? stepMmMin / 60 : stepMmMin) / (units === 'in' ? MM_PER_INCH : 1)
+  const decade = 10 ** Math.floor(Math.log10(target))
+  const m = target / decade
+  return +((m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * decade).toPrecision(1)
+}
 
 // Arrow-key step for a length field in inch mode. A converted mm step is an unusable
 // number to nudge by (0.5 mm = 0.0197"), so snap to the nearest 1-2-5 inch step instead —
@@ -154,6 +188,10 @@ export interface WorkpieceState {
   // acceleration of 0 turns that off: every move then runs at its programmed feed.
   accelXYMmS2: number
   accelZMmS2: number
+  // The controller's X/Y max rate — what a G0 runs at, since the program gives a rapid no F
+  // (FluidNC `max_rate_mm_per_min`, Grbl $110). 0 = not set: the same as maxFeedMmMin, as
+  // every estimate assumed before this existed. Read it through `rapidRateMmMin`.
+  rapidRateXYMmMin: number
   maxRateZMmMin: number
   junctionDeviationMM: number
   spindleType: SpindleType     // router/spindle model — drives the RPM→dial readout
@@ -162,6 +200,9 @@ export interface WorkpieceState {
   machineXDir: MachineXDir
   customDialRpm: number[]      // a 'custom' router's speed at dial 1..6, from its manual
   autoFeedEnabled: boolean     // when true, feeds/step-down are computed (cam/feeds.ts)
+  // Feeds shown per minute or per second (toolbar toggle). Display only and this
+  // browser's preference — not the project's, not the G-code's.
+  feedTime: FeedTime
   // A double-sided job's flip and dowel pins (cam/doubleSided.ts), or null for an ordinary
   // one. Part of the document, so it is on the timeline and in the .fkam.
   doubleSided: DoubleSided | null
@@ -190,8 +231,10 @@ export interface WorkpieceState {
   setAccelXY: (mmS2: number) => void
   setAccelZ: (mmS2: number) => void
   setMaxRateZ: (mmMin: number) => void
+  setRapidRateXY: (mmMin: number) => void
   setJunctionDeviation: (mm: number) => void
   setAutoFeedEnabled: (v: boolean) => void
+  setFeedTime: (ft: FeedTime) => void
   setDoubleSided: (ds: DoubleSided | null) => void
   setTiling: (t: Tiling | null) => void
   setBridges: (b: BridgeSet | null) => void
@@ -232,11 +275,13 @@ export const useWorkpieceStore = create<WorkpieceState>()(
       // Typical of a hobby machine on Grbl/FluidNC; the user's own config replaces them.
       accelXYMmS2: 200,
       accelZMmS2: 50,
+      rapidRateXYMmMin: 0,
       maxRateZMmMin: 600,
       junctionDeviationMM: 0.01,
       // On: the chip load, spindle speed and step-down then follow the tool, the material
       // and the machine, which is what the guide tells a new user to rely on.
       autoFeedEnabled: true,
+      feedTime: 'min',
       doubleSided: null,
       tiling: null,
       bridges: null,
@@ -272,8 +317,10 @@ export const useWorkpieceStore = create<WorkpieceState>()(
       setAccelXY: (v) => set({ accelXYMmS2: Math.max(0, v) }),
       setAccelZ: (v) => set({ accelZMmS2: Math.max(0, v) }),
       setMaxRateZ: (v) => set({ maxRateZMmMin: Math.max(0, v) }),
+      setRapidRateXY: (v) => set({ rapidRateXYMmMin: Math.max(0, v) }),
       setJunctionDeviation: (v) => set({ junctionDeviationMM: Math.max(0, v) }),
       setAutoFeedEnabled: (v) => set({ autoFeedEnabled: v }),
+      setFeedTime: (ft) => set({ feedTime: ft }),
       })
     },
     {
@@ -302,13 +349,21 @@ function dialRangeOf(t: SpindleType, customDialRpm: number[]): Partial<Workpiece
   return range ? { minSpindleRpm: range.min, maxSpindleRpm: range.max } : {}
 }
 
-/** The machine's motion limits as the planner (sim/motionPlanner.ts) takes them. */
+/** The speed a rapid runs at across X/Y — the controller's max rate, or Max Feed Rate when
+ *  that is not set. Max Feed Rate is a ceiling on the feeds this app WRITES; a G0 has no F
+ *  word and runs at whatever the controller allows, which may well be faster. */
+export function rapidRateMmMin(s: { rapidRateXYMmMin: number; maxFeedMmMin: number }): number {
+  return s.rapidRateXYMmMin > 0 ? s.rapidRateXYMmMin : s.maxFeedMmMin
+}
+
+/** The machine's motion limits as the planner (sim/motionPlanner.ts) takes them. Its X/Y
+ *  max rate is the controller's — what rapids run at and what any feed is held to. */
 export function machineMotionLimits(): MotionLimits {
   const s = useWorkpieceStore.getState()
   return {
     accelXYMmS2: s.accelXYMmS2,
     accelZMmS2: s.accelZMmS2,
-    maxRateXYMmMin: s.maxFeedMmMin,
+    maxRateXYMmMin: rapidRateMmMin(s),
     maxRateZMmMin: s.maxRateZMmMin,
     junctionDeviationMM: s.junctionDeviationMM,
   }

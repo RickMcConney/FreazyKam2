@@ -11,7 +11,7 @@ vi.hoisted(() => {
   }
 })
 
-import { usePostProcessorStore, BUILTIN_PROFILES, linksAsRapids, profilePrint, type PostProcessorProfile } from './postProcessorStore'
+import { usePostProcessorStore, BUILTIN_PROFILES, linksAsRapids, profilePrint, spindleIsReversed, type PostProcessorProfile } from './postProcessorStore'
 
 // The load-time merge of saved profiles with the shipped presets.
 const merge = (persisted: unknown) => {
@@ -194,5 +194,19 @@ describe('the FluidNC presets', () => {
       seededBuiltinIds: BUILTIN_PROFILES.map((p) => p.id),
     }
     expect(merge(saved).profiles.some((p) => p.id === 'fluidnc-in')).toBe(false)
+  })
+})
+
+describe('spindleIsReversed', () => {
+  it('reads an M4 (or M04) in the spindle-on line as anticlockwise, and anything else as M3', () => {
+    expect(spindleIsReversed('M3 S{s}')).toBe(false)
+    expect(spindleIsReversed('M03 S{s}')).toBe(false)
+    expect(spindleIsReversed('M4 S{s}')).toBe(true)
+    expect(spindleIsReversed('M04 S{s}')).toBe(true)
+    expect(spindleIsReversed('m4s{s}')).toBe(true)
+    // …not an M40-something, an M4 inside another word's number, or a comment's G4.
+    expect(spindleIsReversed('M42 P1 S{s}')).toBe(false)
+    expect(spindleIsReversed('M62 P4 (spindle on pin 4)')).toBe(false)
+    expect(spindleIsReversed('M3 S{s}\nG4 P1.4')).toBe(false)
   })
 })

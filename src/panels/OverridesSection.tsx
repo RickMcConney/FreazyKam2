@@ -8,7 +8,7 @@
 import { RotateCcw, ChevronLeft, ChevronRight } from 'lucide-react'
 import { ICON } from '../theme'
 import { useMachineStore } from '../machine/machineStore'
-import { useWorkpieceStore, fmtFeed } from '../store/workpieceStore'
+import { useWorkpieceStore, fmtFeed, feedValue } from '../store/workpieceStore'
 import { SPINDLE_INFO, spindleDialLabel, spindleHasDial } from '../store/spindle'
 
 interface Props { sectionCls: string; headCls: string }
@@ -22,6 +22,7 @@ const liveCls = 'text-[10px] tabular-nums text-gray-500 dark:text-neutral-500 wh
 export default function OverridesSection({ sectionCls, headCls }: Props) {
   const m = useMachineStore()
   const units = useWorkpieceStore((s) => s.units)
+  const ft = useWorkpieceStore((s) => s.feedTime)
   const spindleType = useWorkpieceStore((s) => s.spindleType)
   const customDialRpm = useWorkpieceStore((s) => s.customDialRpm)
   const connected = m.link === 'connected'
@@ -30,8 +31,8 @@ export default function OverridesSection({ sectionCls, headCls }: Props) {
   // The status report's feed is the ACTUAL one, override included; what the program
   // asked for is that divided back out, shown beside it while the two differ.
   const feedLive = ov.feed !== 100 && feed > 0
-    ? `${units === 'in' ? (feed / (ov.feed / 100) / 25.4).toFixed(1) : Math.round(feed / (ov.feed / 100))} → ${fmtFeed(feed, units)}`
-    : fmtFeed(feed, units)
+    ? `${feedValue(feed / (ov.feed / 100), units, ft)} → ${fmtFeed(feed, units, ft)}`
+    : fmtFeed(feed, units, ft)
 
   const row = (kind: 'feed' | 'spindle', label: string, pct: number, live: string) => (
     <div className="flex items-center gap-1">

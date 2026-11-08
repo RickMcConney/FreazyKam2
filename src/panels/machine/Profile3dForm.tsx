@@ -1,12 +1,12 @@
 // ─── 3D Profile form ──────────────────────────────────────────────────────────
-import { FormShell, StepDownField, GenerateBtn, useSessionOps, toolsOfType, pickToolId, LengthInput, FormError, useGenerateError, discardFailedOps } from './shared'
+import { FormShell, StepDownField, GenerateBtn, useSessionOps, toolsOfType, pickToolId, LengthInput, FormError, useGenerateError, discardFailedOps, ToggleRow } from './shared'
 import { ToolPicker } from './ToolPicker'
 import { useState, useEffect, useMemo } from 'react'
 import { NumericInput } from '../../components/NumericInput'
 import { NUMERIC_HINT } from '../../components/parseNumeric'
 import { ICON } from '../../theme'
 import { AlertCircle } from 'lucide-react'
-import { useToolStore } from '../../store/toolStore'
+import { useToolStore, type PassDirection } from '../../store/toolStore'
 import { useToolpathStore, type AnyOperation, type Profile3dOperation } from '../../store/toolpathStore'
 import { useFormDefaultsStore, mergeWithDefaults } from '../../store/formDefaultsStore'
 import { usePathsStore } from '../../store/pathsStore'
@@ -25,6 +25,9 @@ import { PROFILE3D_FINISH_TOOL_TYPES, PROFILE3D_ROUGH_TOOL_TYPES, profile3dFormD
 
 type Profile3dFormState = Profile3dSettings
 
+// Mixed is the zigzag every 3D Profile was cut with before the setting existed.
+const PASS_DIRECTIONS: readonly PassDirection[] = ['mixed', 'climb', 'conventional']
+
 export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp?: Profile3dOperation }) {
   // Individual selectors, not whole-store destructuring — see DrillForm.
   const tools = useToolStore((s) => s.tools)
@@ -37,9 +40,9 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
   const thicknessMM = useWorkpieceStore((s) => s.thicknessMM)
   const units = useWorkpieceStore((s) => s.units)
 
-  // Finishing: a ball nose or a taper — profile3d dilates the height map by the tool's
-  // own profile, and a taper is a tip ball blended into a cone, so both are gouge-free
-  // by the same construction. No fall-back to the whole library; `canGenerate` gates it.
+  // Finishing: a ball nose, bull nose, taper or end mill — profile3d dilates the height
+  // map by the tool's own profile, so all are gouge-free by the same construction (a ball
+  // nose and an end mill are finished against the triangles themselves: cam/dropCutter). No fall-back to the whole library; `canGenerate` gates it.
   // The ROUGHING bit is a ball nose or a flat end mill — the two shapes profile3d models
   // a rougher as. Any other type (a V-bit, a drill) would silently become no roughing pass
   // at all, so it is not offered.
@@ -175,7 +178,7 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
 
   const depthCutMM = profile3dDepthMM(form.maxDepthMM, thicknessMM)
   const nothingReached = modelBelowCut(form.modelTopMM, depthCutMM)
-  const canGenerate = !nothingReached && !!selectedTool && (selectedTool.type === 'ballnose' || selectedTool.type === 'bullnose' || selectedTool.type === 'taper') && hasModel && !generating && form.maxDepthMM > 0
+  const canGenerate = !nothingReached && !!selectedTool && PROFILE3D_FINISH_TOOL_TYPES.includes(selectedTool.type) && hasModel && !generating && form.maxDepthMM > 0
     && (!isDepthMap || form.reliefDepthMM > 0)
     && (form.boundary !== 'path' || boundaryPaths.some((p) => p.id === form.boundaryPathId))
 
@@ -332,6 +335,8 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
                 <span className="text-label text-gray-600 dark:text-neutral-400">°</span>
               </div>
             </div>
+            <ToggleRow label="Roughing Direction" options={PASS_DIRECTIONS} value={form.roughingDirection}
+              onChange={(v) => up('roughingDirection', v)} />
             <div>
               <label htmlFor="p3d-stock-allowance" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">
                 Stock Allowance
@@ -355,7 +360,7 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
           tools={finishTools}
           value={form.toolId}
           onChange={handleToolChange}
-          emptyText="No ball nose, bull nose or taper — add one in the Tool Library"
+          emptyText="No ball nose, bull nose, taper or end mill — add one in the Tool Library"
           label={(t) => `${t.name} (Ø${fmtLen(t.diameterMM, units)}${t.type === 'taper' ? ' tip' : ''})`} />
       </div>
       {selectedTool && selectedTool.type === 'taper' && (
@@ -364,9 +369,16 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
           Taper: passes are spaced off the Ø{fmtLen(selectedTool.diameterMM, units)} tip.
         </p>
       )}
-      {selectedTool && selectedTool.type !== 'ballnose' && selectedTool.type !== 'bullnose' && selectedTool.type !== 'taper' && (
+      {selectedTool && selectedTool.type === 'endmill' && (
+        // Flat-bottomed: right for flats, terraces and straight walls; on a curve every
+        // pass leaves a step a stepover wide.
+        <p className="text-label text-gray-600 dark:text-neutral-400">
+          End mill: flats and walls finish clean; curved surfaces are left stepped.
+        </p>
+      )}
+      {selectedTool && !PROFILE3D_FINISH_TOOL_TYPES.includes(selectedTool.type) && (
         <p className="text-label text-amber-600 dark:text-amber-400 flex items-center gap-1">
-          <AlertCircle size={ICON.xs} /> 3D Profile needs a ball nose, bull nose or taper tool
+          <AlertCircle size={ICON.xs} /> 3D Profile needs a ball nose, bull nose, taper or end mill
         </p>
       )}
 
@@ -410,6 +422,18 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
           </p>
         )}
       </div>
+
+      {/* Finishing direction */}
+      <ToggleRow label={hasRoughing ? 'Finishing Direction' : 'Direction'} options={PASS_DIRECTIONS} value={form.finishDirection}
+        onChange={(v) => up('finishDirection', v)} />
+      {(form.finishDirection !== 'mixed' || (hasRoughing && form.roughingDirection !== 'mixed')) && (
+        // The one-hand modes cost a lift and a rapid back per pass, on purpose.
+        <p className="text-label text-gray-600 dark:text-neutral-400 -mt-1">
+          {strategy === 'raster' || (hasRoughing && form.roughingDirection !== 'mixed')
+            ? 'Climb / Conventional: every pass cut the same way, lifting and rapiding back to start the next. Mixed zigzags with no lift.'
+            : 'Climb / Conventional: every waterline ring turned to cut that way.'}
+        </p>
+      )}
 
       {/* Raster angle */}
       {strategy === 'raster' && <div>

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { CopyPlus, Folder, FolderOpen, Search } from 'lucide-react'
 import { ICON } from '../../theme'
 import { useToolStore, folderOf, MY_TOOLS, type Tool } from '../../store/toolStore'
-import { useWorkpieceStore, fmtLen, fromMM } from '../../store/workpieceStore'
+import { useWorkpieceStore, fmtLen, feedValue, feedUnit } from '../../store/workpieceStore'
 import { TOOL_TYPE_ICON, TOOL_TYPE_LABEL, TYPE_ORDER } from '../toolTypes'
 
 // A form's tool picker, in two halves.
@@ -107,7 +107,8 @@ function ToolBrowserDialog({ tools, value, onPick, onClose }: {
 
   const choose = (id: string) => { onPick(id); onClose() }
   const len = (mm: number) => fmtLen(mm, units)
-  const feed = (mm: number) => `${Math.round(fromMM(mm, units) * (units === 'in' ? 10 : 1)) / (units === 'in' ? 10 : 1)}`
+  const ft = useWorkpieceStore((s) => s.feedTime)
+  const feed = (mm: number) => feedValue(mm, units, ft)
   const th = 'px-2 py-1.5 text-left text-label font-semibold uppercase tracking-wider text-gray-600 dark:text-neutral-400 whitespace-nowrap'
 
   return createPortal(
@@ -158,7 +159,7 @@ function ToolBrowserDialog({ tools, value, onPick, onClose }: {
                     <th className={th + ' text-right'}>Angle</th>
                     <th className={th + ' text-right'}>Flutes</th>
                     <th className={th + ' text-right'}>RPM</th>
-                    <th className={th + ' text-right'}>Feed {units === 'in' ? 'in' : 'mm'}/min</th>
+                    <th className={th + ' text-right'}>Feed {feedUnit(units, ft)}</th>
                     <th className={th} style={{ width: '2.5rem' }} />
                   </tr>
                 </thead>

@@ -959,6 +959,21 @@ describe('stay-down links', () => {
     expect(gen([makeOp(segs)], { ...POST, linksAsRapids: true })).not.toMatch(/travel/i)
   })
 
+  it('holds a G1 link to Max Feed Rate — it is a multiple of the cutting feed, and went past it', () => {
+    const feeds = (g: string) => linkLines(g).map((l) => Number(/F(\d+(\.\d+)?)/.exec(l)?.[1]))
+    const uncapped = feeds(gen([makeOp(segs)]))
+    expect(uncapped[0]).toBe(TOOL.xyFeedMmMin * 2.5)
+    const ceiling = uncapped[0] - 100        // just under what the link would otherwise ask for
+    useWorkpieceStore.setState({ maxFeedMmMin: ceiling })
+    try {
+      const g = gen([makeOp(segs)])
+      for (const f of g.split('\n').flatMap((l) => /F(\d+(\.\d+)?)/.exec(l)?.[1] ?? [])) expect(Number(f)).toBeLessThanOrEqual(ceiling)
+      expect(feeds(g)[0]).toBe(ceiling)
+    } finally {
+      useWorkpieceStore.setState({ maxFeedMmMin: 0 })
+    }
+  })
+
   it('round-trips: the simulator recognises the G1 links by their shape, and the G0 ones are rapids', () => {
     const g1 = parseGcode(gen([makeOp(segs)]))
     expect(g1.segments.filter((s) => s.travel && Math.abs(s.z + 0.5) < 1e-6 && s.prevZ === s.z).length).toBe(1)

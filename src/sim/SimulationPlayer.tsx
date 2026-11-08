@@ -5,7 +5,7 @@ import { Play, Pause, Rewind, FileText, X } from 'lucide-react'
 import { useSimStore, type SimSpeed } from '../store/simStore'
 import { closeSimulation } from './closeSimulation'
 import { useUIStore } from '../store/uiStore'
-import { useWorkpieceStore, MATERIAL_INFO, MM_PER_INCH as MM_PER_IN } from '../store/workpieceStore'
+import { useWorkpieceStore, MATERIAL_INFO, MM_PER_INCH as MM_PER_IN, feedValue, feedUnit } from '../store/workpieceStore'
 import { spindleDialLabel } from '../store/spindle'
 import type { ToolType } from '../store/toolStore'
 import { targetChipLoad, aimChipLoad } from '../cam/feeds'
@@ -46,7 +46,7 @@ function chipStatus(actual: number | null, target: number): keyof typeof CHIP_ST
 const W_Z = 8            // -999.999 (mm) / -39.3701 (in)
 const W_RPM = 5          // 99999
 const W_DIAL = 11        // ' · dial 5.5' (dial tables top out at 6, rounded to half-detents)
-const W_UNIT = 6         // 'mm/min' / 'in/min'
+const W_UNIT = 6         // 'mm/min' / 'in/min' / 'mm/s'
 const W_CHIP_LABEL = 17  // 'rubbing · too hot'
 
 // Read-outs follow the toolbar mm/in toggle, like every other length in the app — not
@@ -54,7 +54,6 @@ const W_CHIP_LABEL = 17  // 'rubbing · too hot'
 // inch program on the way in — the heightfield and cut trail depend on that), so the
 // conversion belongs here, at the last step.
 const progLen = (mm: number, inch: boolean) => (inch ? (mm / MM_PER_IN).toFixed(4) : mm.toFixed(3))
-const progFeed = (mmMin: number, inch: boolean) => (inch ? (mmMin / MM_PER_IN).toFixed(1) : String(Math.round(mmMin)))
 const progFz = (mm: number, inch: boolean) => (inch ? (mm / MM_PER_IN).toFixed(4) : mm.toFixed(3))
 // Surface speed is quoted in the idiom of the display units: SFM in inch mode,
 // m/min in metric. Same number, the name a machinist would reach for.
@@ -98,6 +97,9 @@ export default function SimulationPlayer() {
   const gcode = useSimStore((s) => s.gcode)
   const gcodeViewerOpen = useSimStore((s) => s.gcodeViewerOpen)
   const units = useWorkpieceStore((s) => s.units)
+  const ft = useWorkpieceStore((s) => s.feedTime)
+  const progFeed = (mmMin: number) => feedValue(mmMin, units, ft)
+  const fUnit = feedUnit(units, ft)
   const material = useWorkpieceStore((s) => s.material)
   const machineRigidity = useWorkpieceStore((s) => s.machineRigidity)
   const minSpindleRpm = useWorkpieceStore((s) => s.minSpindleRpm)
@@ -130,8 +132,9 @@ export default function SimulationPlayer() {
   if (!gcode) return null
 
   const inch = units === 'in'
-  // Feed values are one char wider in inch (3937.0 vs 99999); 'rapid' fits either way.
-  const wFeed = inch ? 6 : 5
+  // Feed values are one char wider in inch (3937.0 vs 99999) and per second (1666.7);
+  // 'rapid' fits either way.
+  const wFeed = inch || ft === 's' ? 6 : 5
   const wFz = inch ? 6 : 5
 
   const progress = totalTimeS > 0 ? elapsedTimeS / totalTimeS : 0
@@ -177,8 +180,8 @@ export default function SimulationPlayer() {
   const slowingDown = status === 'rubbing' && chipStatus(programmedFz, aimFz) !== 'rubbing'
   const suggestion =
     slowingDown ? '' :
-    status === 'rubbing' && sweetFeed > 0 ? `raise feed to ~${progFeed(sweetFeed, inch)} ${units}/min (or lower RPM / fewer flutes)` :
-    status === 'heavy'   && sweetFeed > 0 ? `lower feed to ~${progFeed(sweetFeed, inch)} ${units}/min (or raise RPM / more flutes)` : ''
+    status === 'rubbing' && sweetFeed > 0 ? `raise feed to ~${progFeed(sweetFeed)} ${fUnit} (or lower RPM / fewer flutes)` :
+    status === 'heavy'   && sweetFeed > 0 ? `lower feed to ~${progFeed(sweetFeed)} ${fUnit} (or raise RPM / more flutes)` : ''
 
   // Surface-speed (Vc) check: metals carry a safe cutting-speed ceiling. If the
   // programmed spindle drives the edge past it — typically because the machine's
@@ -286,14 +289,14 @@ export default function SimulationPlayer() {
           {/* The speed the machine actually reaches, then the programmed feed: they part
               company on every short move and every corner. */}
           F: <Slot ch={wFeed}>
-            {!curSeg ? '—' : curSeg.rapid ? 'rapid' : progFeed(actualFeed, inch)}
+            {!curSeg ? '—' : curSeg.rapid ? 'rapid' : progFeed(actualFeed)}
           </Slot>
           <Slot ch={wFeed + 1} align="left">
-            {curSeg && !curSeg.rapid ? `/${progFeed(curSeg.feedRateMmMin, inch)}` : ''}
+            {curSeg && !curSeg.rapid ? `/${progFeed(curSeg.feedRateMmMin)}` : ''}
           </Slot>
           {/* Held in a fixed slot rather than dropped on a rapid — vanishing would move
               the clock beside it, which is the flicker this bar is built to avoid. */}
-          <Slot ch={W_UNIT} align="left">{curSeg && !curSeg.rapid ? ` ${units}/min` : ''}</Slot>
+          <Slot ch={W_UNIT} align="left">{curSeg && !curSeg.rapid ? ` ${fUnit}` : ''}</Slot>
         </span>
         <span className="text-gray-500 dark:text-neutral-400">
           <Slot ch={totalTimeStr.length}>{formatSimTime(elapsedTimeS)}</Slot> / {totalTimeStr}

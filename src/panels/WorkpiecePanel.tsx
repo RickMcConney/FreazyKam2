@@ -12,6 +12,12 @@ import {
   type MaterialKind,
   fromMM,
   toMM,
+  feedFromMM,
+  feedToMM,
+  feedStep,
+  feedUnit,
+  type FeedTime,
+  rapidRateMmMin,
 } from '../store/workpieceStore'
 import { SPINDLE_INFO, customDialValid, spindleHasDial, type SpindleType } from '../store/spindle'
 import { NumericInput } from '../components/NumericInput'
@@ -60,27 +66,37 @@ function DimInput({
 }
 
 // A machine-motion number: stored in mm (mm/s², mm/min, mm), shown in the display units.
-function MotionInput({ label, valueMM, units, unit, stepMM, stepIn, onChange }: {
+// A FEED passes `feedTime` and is then shown per minute or per second as the toolbar says
+// (its unit and step follow; `stepMM` is then the per-minute step in mm and `stepIn` unused).
+// `blank`: the field may be emptied to mean "not set" — it then shows `blank.placeholder`,
+// and `valueMM` is what the arrows step from.
+function MotionInput({ label, valueMM, units, unit, stepMM, stepIn, onChange, feedTime, blank }: {
   label: string
   valueMM: number
   units: Units
-  unit: string
+  unit?: string
   stepMM: number
-  stepIn: number
+  stepIn?: number
   onChange: (mm: number) => void
+  feedTime?: FeedTime
+  blank?: { isEmpty: boolean; onEmpty: () => void; placeholder: string }
 }) {
+  const ft = feedTime
   const rowId = useId()
   return (
     <div className="flex items-center gap-2 mb-1.5">
       <label htmlFor={rowId} className="text-gray-500 dark:text-neutral-400 text-body w-24 shrink-0">{label}</label>
       <NumericInput
         id={rowId}
-        value={fromMM(valueMM, units)}
+        value={ft ? feedFromMM(valueMM, units, ft) : fromMM(valueMM, units)}
         min={0}
-        step={units === 'in' ? stepIn : stepMM}
+        step={ft ? feedStep(stepMM, units, ft) : units === 'in' ? stepIn : stepMM}
         title={NUMERIC_HINT}
-        unit={unit}
-        onChange={(v) => onChange(toMM(v, units))}
+        unit={ft ? feedUnit(units, ft) : unit}
+        onChange={(v) => onChange(ft ? feedToMM(v, units, ft) : toMM(v, units))}
+        isEmpty={blank?.isEmpty}
+        onEmpty={blank?.onEmpty}
+        placeholder={blank?.placeholder}
         className="w-full bg-gray-50 dark:bg-neutral-900 border border-gray-400 dark:border-neutral-600 rounded px-2 py-1 text-body text-gray-900 dark:text-neutral-100 focus:border-blue-500 focus:outline-none font-mono"
       />
     </div>
@@ -88,9 +104,9 @@ function MotionInput({ label, valueMM, units, unit, stepMM, stepIn, onChange }: 
 }
 
 const MOTION_HELP =
-  "How your controller accelerates and takes corners. Copy them from its settings — FluidNC: " +
-  "acceleration_mm_per_sec2 (X and Z), max_rate_mm_per_min (Z), junction_deviation_mm; " +
-  "Grbl: $120 / $122, $112, $11. The simulator uses them to move at the speed the machine " +
+  "How fast your controller moves, accelerates and takes corners. Copy them from its settings — FluidNC: " +
+  "max_rate_mm_per_min (X for Rapid Rate, Z for Z Max Rate), acceleration_mm_per_sec2 (X and Z), junction_deviation_mm; " +
+  "Grbl: $110, $112, $120 / $122, $11. The simulator uses them to move at the speed the machine " +
   "really reaches — slower on short moves and into corners — so its clock, its chip-load " +
   "gauge and every run-time estimate match the real job. Set an acceleration to 0 to ignore " +
   "acceleration and time every move at its programmed feed."
@@ -250,7 +266,8 @@ export default function WorkpiecePanel() {
     widthMM, heightMM, thicknessMM, units, origin, zOrigin, material,
     tableLimitWidthMM, tableLimitHeightMM, tableLimitDepthMM, safeHeightMM,
     machineRigidity, maxFeedMmMin, minSpindleRpm, maxSpindleRpm, spindleType, customDialRpm, autoFeedEnabled,
-    accelXYMmS2, accelZMmS2, maxRateZMmMin, junctionDeviationMM, machineXDir, setMachineXDir,
+    accelXYMmS2, accelZMmS2, maxRateZMmMin, junctionDeviationMM, machineXDir, setMachineXDir, feedTime,
+    rapidRateXYMmMin, setRapidRateXY,
     setAccelXY, setAccelZ, setMaxRateZ, setJunctionDeviation,
     setWidth, setHeight, setThickness, setOrigin, setZOrigin, setMaterial,
     setTableLimitWidth, setTableLimitHeight, setTableLimitDepth, setSafeHeight,
@@ -508,19 +525,25 @@ export default function WorkpiecePanel() {
           </p>
           <InfoPopover text={MOTION_HELP} />
         </div>
-        <MotionInput label="Max Feed Rate" valueMM={maxFeedMmMin} units={units} unit={`${units}/min`}
-          stepMM={50} stepIn={1} onChange={setMaxFeed} />
+        <MotionInput label="Max Feed Rate" valueMM={maxFeedMmMin} units={units} feedTime={feedTime}
+          stepMM={50} onChange={setMaxFeed} />
+        {/* Blank = not set: rapids are then assumed to run at Max Feed Rate, as before. */}
+        <MotionInput label="Rapid Rate" valueMM={rapidRateMmMin({ rapidRateXYMmMin, maxFeedMmMin })} units={units} feedTime={feedTime}
+          stepMM={50} onChange={setRapidRateXY}
+          blank={{ isEmpty: !(rapidRateXYMmMin > 0), onEmpty: () => setRapidRateXY(0), placeholder: 'same as Max Feed Rate' }} />
         <MotionInput label="Accel X/Y" valueMM={accelXYMmS2} units={units} unit={`${units}/s²`}
           stepMM={10} stepIn={0.5} onChange={setAccelXY} />
         <MotionInput label="Accel Z" valueMM={accelZMmS2} units={units} unit={`${units}/s²`}
           stepMM={5} stepIn={0.25} onChange={setAccelZ} />
-        <MotionInput label="Z Max Rate" valueMM={maxRateZMmMin} units={units} unit={`${units}/min`}
-          stepMM={50} stepIn={2} onChange={setMaxRateZ} />
+        <MotionInput label="Z Max Rate" valueMM={maxRateZMmMin} units={units} feedTime={feedTime}
+          stepMM={50} onChange={setMaxRateZ} />
         <MotionInput label="Junction Dev." valueMM={junctionDeviationMM} units={units} unit={units}
           stepMM={0.005} stepIn={0.0002} onChange={setJunctionDeviation} />
         <p className="text-body text-gray-600 dark:text-neutral-400 mt-1">
-          Max Feed Rate is the X/Y max rate: a hard ceiling generated feeds never exceed, even
-          with auto feeds off, and the speed rapids run at.
+          Max Feed Rate is a ceiling on every feed the program asks for, even with Auto Feeds
+          off. Rapids (G0) carry no feed — they run at your controller's own X/Y max rate.
+          Enter that as Rapid Rate so the run-time estimates and the simulator time them
+          right; left blank, rapids are assumed to run at Max Feed Rate.
         </p>
       </Section>
 

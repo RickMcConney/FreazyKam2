@@ -432,7 +432,7 @@ const profile3d: ToolpathKind = {
   summary: 'Carve a 3D model — an imported STL, or a picture read as a depth map (light = high) — with a finishing pass and an optional roughing pass.',
   paths: 'Imported STL models or pictures — one toolpath each.',
   settings: {
-    toolId: { ...TOOL_ID, description: 'Finishing tool: a ball nose, bull nose or taper' },
+    toolId: { ...TOOL_ID, description: 'Finishing tool: a ball nose, bull nose, taper or end mill (an end mill finishes flats and terraces; a curved surface comes out stepped)' },
     stepoverPercent: { type: 'number', exclusiveMinimum: 0, maximum: 100, description: 'Finishing stepover, % of the tool diameter' },
     finishStrategy: { type: 'string', enum: ['raster', 'waterline'], description: 'raster = parallel passes; waterline = contours at each height (STL only — a depth map is always rastered)' },
     boundary: { type: 'string', enum: ['model', 'stock', 'path'], description: 'What the carve is confined to; path = boundaryPathId' },
@@ -447,6 +447,8 @@ const profile3d: ToolpathKind = {
     roughingStepDownMM: { type: 'number', exclusiveMinimum: 0, description: 'Roughing depth per pass, mm', onlyWith: ROUGHING },
     roughingStockAllowanceMM: { type: 'number', minimum: 0, description: 'Stock the roughing pass leaves for the finish, mm', onlyWith: ROUGHING },
     roughingRasterAngleDeg: { type: 'number', description: 'Roughing pass direction, degrees; left out = finishing angle + 90', onlyWith: ROUGHING },
+    finishDirection: { type: 'string', enum: ['mixed', 'climb', 'conventional'], description: 'Hand of the finish. mixed = zigzag, both ways, no lift between passes (the default). climb / conventional = every pass the same hand, with a lift and a rapid back to the start of the next pass; a waterline turns its rings to match' },
+    roughingDirection: { type: 'string', enum: ['mixed', 'climb', 'conventional'], description: 'Hand of the roughing, as finishDirection', onlyWith: ROUGHING },
   },
   allowedTools: (tools) => toolsOfType(tools, PROFILE3D_FINISH_TOOL_TYPES),
   plan(paths, s, ctx) {

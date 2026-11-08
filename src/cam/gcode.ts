@@ -642,6 +642,10 @@ export function generateGcodeWithOps(
     let prevX = NaN, prevY = NaN, prevZ = NaN
     let currentTool = firstTool
     let currentFeeds = firstFeeds
+    // Max Feed Rate is a ceiling on every F this writes — a travel's too, which is a multiple
+    // of the cutting feed and went past it (2000 × 2.5 = 5000 against a 3000 ceiling).
+    const maxFeed = useWorkpieceStore.getState().maxFeedMmMin
+    const feedCeiling = maxFeed > 0 ? maxFeed : Infinity
     // What the controller holds, for leaving unchanged words out of each move. Forgotten at
     // the start of every op and after every tool change: a user's tool-change block or
     // spindle line may move the machine or say anything, so the first move after one is
@@ -800,7 +804,7 @@ export function generateGcodeWithOps(
         // normally write links. Elsewhere it stays a G1 at a travel feed: a G0 may dogleg
         // on those controllers, which half a millimetre above the floor could clip a wall.
         const feedMm = isPlunge ? currentFeeds.plungeMmMin
-          : seg.travel ? currentFeeds.xyFeedMmMin * TRAVEL_FEED_FACTOR
+          : seg.travel ? Math.min(currentFeeds.xyFeedMmMin * TRAVEL_FEED_FACTOR, feedCeiling)
           : currentFeeds.xyFeedMmMin
         if (seg.travel && rapidLinks) {
           // A link as a RAPID: what CAM programs normally emit, priced as one by the time

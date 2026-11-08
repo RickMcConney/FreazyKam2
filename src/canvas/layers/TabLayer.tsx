@@ -188,6 +188,9 @@ const TabBatch = memo(function TabBatch({ visuals }: { visuals: TabVisual[] }) {
   return <Shape sceneFunc={sceneFunc} listening={false} perfectDrawEnabled={false} />
 })
 
+// Radius, in screen px, a tab can be grabbed within while the Tabs form is open.
+const TAB_GRAB_PX = 12
+
 // Memoised for the same reason DesignLayer is: the stage re-renders on every
 // mouse move and this one walks every path in the document looking for tabs.
 export const TabLayer = memo(function TabLayer({ viewport }: Props) {
@@ -282,6 +285,15 @@ export const TabLayer = memo(function TabLayer({ viewport }: Props) {
               stage.on('mouseup', handleUp)
             }}
           >
+            {/* The grab area: at least TAB_GRAB_PX round the tab on screen whatever the
+                zoom. Drawn to scale a 5 mm tab is a few pixels wide zoomed out, and a press
+                that missed it landed on the part instead. Invisible — opacity does not
+                reach Konva's hit canvas. */}
+            <Circle
+              radius={Math.max(halfLen, halfW, TAB_GRAB_PX / scale)}
+              fill="#000"
+              opacity={0}
+            />
             <Rect
               x={-halfLen}
               y={-halfW}

@@ -3,7 +3,7 @@
 // bridge (mcp/commands.ts) creates an operation from exactly what the form would have
 // shown: the same seed values, and the same rules for which tools an op may use.
 
-import type { Tool, ToolType, CuttingDirection } from '../../store/toolStore'
+import type { Tool, ToolType, CuttingDirection, PassDirection } from '../../store/toolStore'
 import type { CutSide } from '../../store/toolpathStore'
 import type { StartFrom } from '../../cam/startHeight'
 import type { PocketStrategy } from '../../cam/pocket'
@@ -287,7 +287,8 @@ export function norm180(deg: number) {
 
 // ─── 3D Profile ──────────────────────────────────────────────────────────────────
 
-export const PROFILE3D_FINISH_TOOL_TYPES: readonly ToolType[] = ['ballnose', 'bullnose', 'taper']
+// The end mill last, so a new 3D Profile still picks a ball nose first when there is one.
+export const PROFILE3D_FINISH_TOOL_TYPES: readonly ToolType[] = ['ballnose', 'bullnose', 'taper', 'endmill']
 export const PROFILE3D_ROUGH_TOOL_TYPES: readonly ToolType[] = ['ballnose', 'bullnose', 'endmill']
 
 export interface Profile3dSettings {
@@ -310,6 +311,8 @@ export interface Profile3dSettings {
   stepDownManual: boolean
   roughingStockAllowanceMM: number
   roughingRasterAngleDeg: number | ''  // '' = auto (finishing angle + 90)
+  finishDirection: PassDirection
+  roughingDirection: PassDirection
 }
 
 export function profile3dFormDefaults(defaultTool: Tool | undefined, thicknessMM: number, firstModelId: string) {
@@ -332,6 +335,8 @@ export function profile3dFormDefaults(defaultTool: Tool | undefined, thicknessMM
     stepDownManual: false,
     roughingStockAllowanceMM: 0.3,
     roughingRasterAngleDeg: '' as number | '',
+    finishDirection: 'mixed' as PassDirection,
+    roughingDirection: 'mixed' as PassDirection,
   }
 }
 
@@ -359,6 +364,8 @@ export function profile3dSettingsOf(op: Profile3dOperation): Profile3dSettings {
     stepDownManual: op.stepDownManual ?? false,
     roughingStockAllowanceMM: op.roughingStockAllowanceMM ?? 0.3,
     roughingRasterAngleDeg: op.roughingRasterAngleDeg ?? '',
+    finishDirection: op.finishDirection ?? 'mixed',
+    roughingDirection: op.roughingDirection ?? 'mixed',
   }
 }
 
@@ -391,6 +398,10 @@ export function profile3dOpFields(form: Profile3dSettings, path: ImportedPath, f
     stepDownManual: hasRoughing && form.stepDownManual ? true : undefined,
     roughingStockAllowanceMM: hasRoughing ? form.roughingStockAllowanceMM : undefined,
     roughingRasterAngleDeg: hasRoughing && form.roughingRasterAngleDeg !== '' ? form.roughingRasterAngleDeg : undefined,
+    // Written as it is, mixed included. An op saved before the setting has none, which
+    // reads as mixed everywhere (here and in the generator).
+    finishDirection: form.finishDirection,
+    roughingDirection: hasRoughing ? form.roughingDirection : undefined,
   } satisfies Partial<Profile3dOperation>
 }
 

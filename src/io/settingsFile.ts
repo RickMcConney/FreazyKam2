@@ -33,7 +33,7 @@ export const SETTINGS_EXT = '.fkset'
 const MACHINE_KEYS = [
   'tableLimitWidthMM', 'tableLimitHeightMM', 'tableLimitDepthMM',
   'machineRigidity', 'maxFeedMmMin', 'minSpindleRpm', 'maxSpindleRpm', 'spindleType', 'customDialRpm', 'autoFeedEnabled',
-  'accelXYMmS2', 'accelZMmS2', 'maxRateZMmMin', 'junctionDeviationMM', 'machineXDir',
+  'accelXYMmS2', 'accelZMmS2', 'rapidRateXYMmMin', 'maxRateZMmMin', 'junctionDeviationMM', 'machineXDir',
 ] as const
 const STOCK_KEYS = ['widthMM', 'heightMM', 'thicknessMM', 'units', 'origin', 'zOrigin', 'material', 'safeHeightMM'] as const
 const MACHINE_TAB_KEYS = ['address', 'jogStepIndex', 'jogStepIndexZ', 'jogFeedXY', 'jogFeedZ', 'hasHoming', 'macros', 'mapRotation'] as const
@@ -307,7 +307,7 @@ const MACHINE_LABELS: Record<typeof MACHINE_KEYS[number], [string, string]> = {
   tableLimitWidthMM: ['Table width', 'mm'], tableLimitHeightMM: ['Table depth', 'mm'], tableLimitDepthMM: ['Z travel', 'mm'],
   machineRigidity: ['Rigidity', ''], maxFeedMmMin: ['Max feed', 'mm/min'], minSpindleRpm: ['Min spindle', 'rpm'],
   maxSpindleRpm: ['Max spindle', 'rpm'], spindleType: ['Spindle type', ''], customDialRpm: ['Custom dial', 'rpm'], autoFeedEnabled: ['Auto feeds', ''],
-  accelXYMmS2: ['Accel X/Y', 'mm/s²'], accelZMmS2: ['Accel Z', 'mm/s²'], maxRateZMmMin: ['Z max rate', 'mm/min'],
+  accelXYMmS2: ['Accel X/Y', 'mm/s²'], accelZMmS2: ['Accel Z', 'mm/s²'], rapidRateXYMmMin: ['Rapid rate X/Y', 'mm/min'], maxRateZMmMin: ['Z max rate', 'mm/min'],
   junctionDeviationMM: ['Junction deviation', 'mm'], machineXDir: ['Machine +X points', ''],
 }
 

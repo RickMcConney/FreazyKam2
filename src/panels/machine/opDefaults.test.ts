@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { savedProfileFor, profileSaveKeys, PROFILE_KEY, profileSideKey } from './opDefaults'
+import { savedProfileFor, profileSaveKeys, PROFILE_KEY, profileSideKey, profile3dSettingsOf, profile3dOpFields } from './opDefaults'
+import type { Profile3dOperation } from '../../store/toolpathStore'
+import type { ImportedPath } from '../../store/pathsStore'
+import type { Tool } from '../../store/toolStore'
 import { useFormDefaultsStore } from '../../store/formDefaultsStore'
 import type { CutSide } from '../../store/toolpathStore'
 
@@ -81,5 +84,32 @@ describe('a profile Generate saves its settings (profileSaveKeys)', () => {
       generate({ ...lettering, depthMM: 0.5 })
       expect(savedProfileFor(load, 'centerline')).toEqual({ ...lettering, depthMM: 0.5 })
     })
+  })
+})
+
+describe('a 3D Profile\'s cut direction', () => {
+  // An op saved before the setting existed carries no direction at all.
+  const OLD = {
+    id: 'op', name: 'old', type: 'profile3d', toolId: 'ball', pathId: 'stl', stepoverPercent: 20, rasterAngleDeg: 0,
+    maxDepthMM: 10, roughingToolId: 'rough', roughingStepoverPercent: 60, roughingStepDownMM: 2, roughingStockAllowanceMM: 0.3,
+  } as unknown as Profile3dOperation
+  const PATH = { id: 'stl', name: 'neck', d: 'M0,0 L1,0 L1,1 Z', color: '#000', visible: true, stlSrc: 'x' } as unknown as ImportedPath
+  const TOOL = { id: 'ball', name: 'Ball' } as unknown as Tool
+
+  it('reopens an op saved before the setting as mixed — the zigzag it was cut with', () => {
+    const settings = profile3dSettingsOf(OLD)
+    expect(settings.finishDirection).toBe('mixed')
+    expect(settings.roughingDirection).toBe('mixed')
+    const fields = profile3dOpFields(settings, PATH, TOOL, TOOL)
+    expect(fields.finishDirection).toBe('mixed')
+    expect(fields.roughingDirection).toBe('mixed')
+  })
+
+  it('keeps the finish and the roughing independent, and drops the roughing\'s with the roughing', () => {
+    const settings = { ...profile3dSettingsOf(OLD), finishDirection: 'conventional' as const, roughingDirection: 'climb' as const }
+    const fields = profile3dOpFields(settings, PATH, TOOL, TOOL)
+    expect(fields.finishDirection).toBe('conventional')
+    expect(fields.roughingDirection).toBe('climb')
+    expect(profile3dOpFields({ ...settings, roughingToolId: '' }, PATH, TOOL, undefined).roughingDirection).toBeUndefined()
   })
 })

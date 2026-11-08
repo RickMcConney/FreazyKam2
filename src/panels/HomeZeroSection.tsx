@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { ArrowDownToLine, ArrowUp, Check, ChevronDown, ChevronRight, Home, Power, PowerOff } from 'lucide-react'
 import { ICON } from '../theme'
 import { useMachineStore, safeWorkZ } from '../machine/machineStore'
-import { useWorkpieceStore, lenValue, fromMM, toMM } from '../store/workpieceStore'
+import { useWorkpieceStore, lenValue, fromMM, toMM, feedFromMM, feedToMM, feedStep, feedUnit as feedUnitOf } from '../store/workpieceStore'
 import { NumericInput } from '../components/NumericInput'
 import { NUMERIC_HINT } from '../components/parseNumeric'
 import type { Axis } from '../machine/fluidnc/jog'
@@ -23,6 +23,7 @@ const smallBtnCls = 'flex items-center justify-center gap-1 h-7 rounded text-xs 
 export default function HomeZeroSection() {
   const m = useMachineStore()
   const units = useWorkpieceStore((s) => s.units)
+  const ft = useWorkpieceStore((s) => s.feedTime)
   const origin = useWorkpieceStore((s) => s.origin)
   const zOrigin = useWorkpieceStore((s) => s.zOrigin)
   const connected = m.link === 'connected'
@@ -34,17 +35,22 @@ export default function HomeZeroSection() {
   const [probeOpen, setProbeOpen] = useState(false)
   const canProbe = idle && !p.sd && !m.probing && m.macroRunning === null && !p.probe
   const lenUnit = units === 'in' ? 'in' : 'mm'
-  const feedUnit = units === 'in' ? 'in/min' : 'mm/min'
-  // A probe setting, shown in the display units, stored in mm.
+  const feedUnit = feedUnitOf(units, ft)
+  // A probe setting, shown in the display units, stored in mm (a feed in mm/min, shown
+  // per minute or per second as the toolbar says).
   const probeField = (key: 'probePlateMM' | 'probeSearchMM' | 'probeFeedMmMin' | 'probeSlowMmMin', label: string, unit: string,
-    minMM: number, step: number, title?: string) => (
+    minMM: number, step: number, title?: string) => {
+    const feed = key === 'probeFeedMmMin' || key === 'probeSlowMmMin'
+    const show = (mm: number) => (feed ? feedFromMM(mm, units, ft) : fromMM(mm, units))
+    return (
     <label className="flex items-center gap-1 text-xs text-gray-600 dark:text-neutral-400" title={title}>
       <span className="w-20 flex-shrink-0">{label}</span>
-      <NumericInput value={fromMM(m[key], units)} min={fromMM(minMM, units)} step={step}
-        onChange={(v) => m.setProbe({ [key]: toMM(v, units) })} className={fieldCls} title={NUMERIC_HINT} />
+      <NumericInput value={show(m[key])} min={show(minMM)} step={step}
+        onChange={(v) => m.setProbe({ [key]: feed ? feedToMM(v, units, ft) : toMM(v, units) })} className={fieldCls} title={NUMERIC_HINT} />
       <span className="w-12 flex-shrink-0">{unit}</span>
     </label>
-  )
+    )
+  }
 
   // Probe Z's tooltip. When it is ready to go it names the plate thickness too: that is what
   // decides where Z0 lands, and it now lives behind Settings.
@@ -113,8 +119,8 @@ export default function HomeZeroSection() {
               {probeField('probePlateMM', 'Plate', lenUnit, 0, units === 'in' ? 0.001 : 0.1,
                 'Touch plate thickness — measure yours: Z0 is set this far below where the bit touches the plate')}
               {probeField('probeSearchMM', 'Search', lenUnit, 1, units === 'in' ? 0.1 : 1, 'How far down to look for the plate before giving up')}
-              {probeField('probeFeedMmMin', 'Fast feed', feedUnit, 5, units === 'in' ? 0.1 : 1, 'The first touch, to find the plate')}
-              {probeField('probeSlowMmMin', 'Slow feed', feedUnit, 1, units === 'in' ? 0.1 : 1, 'The second touch, for accuracy')}
+              {probeField('probeFeedMmMin', 'Fast feed', feedUnit, 5, feedStep(1, units, ft), 'The first touch, to find the plate')}
+              {probeField('probeSlowMmMin', 'Slow feed', feedUnit, 1, feedStep(1, units, ft), 'The second touch, for accuracy')}
             </div>
           )}
           {m.probeError && <p className="col-span-5 text-xs text-red-600 dark:text-red-400">{m.probeError}</p>}

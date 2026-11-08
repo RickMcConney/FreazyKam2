@@ -9,6 +9,7 @@ import type { LiveTransform } from '../types'
 import type { ImportedPath } from '../../store/pathsStore'
 import { getBBox, extractRectInfo } from '../selectionUtils'
 import { decodeStlMesh } from '../../importers/stlImporter'
+import { placeStlModel } from '../../cam/stlPlacement'
 import { buildHeightMap } from '../../cam/profile3d'
 import { makeBatch, groupInto, strokeBatches, type BatchItem, type StrokeBatch } from '../batchDraw'
 
@@ -175,8 +176,11 @@ function buildHeightMapCanvas(p: ImportedPath): HTMLCanvasElement | null {
 
   // Shared with the Profile 3D generate and the 3D view — decoded once per model.
   const { positions, indices } = decodeStlMesh(p.stlSrc)
+  // Turned to stand as the outline does, as it is cut (cam/stlPlacement.ts). The picture is
+  // the height map over the outline's axis-aligned box, so the turn is in its pixels.
+  const placed = placeStlModel(positions, p.stlModelBounds, p.d)
 
-  const grid = buildHeightMap(positions, indices, p.stlModelBounds, bbox, HM_SIZE, HM_SIZE)
+  const grid = buildHeightMap(placed.positions, indices, placed.bounds, bbox, HM_SIZE, HM_SIZE)
 
   let minZ = 0
   for (let i = 0; i < grid.length; i++) {

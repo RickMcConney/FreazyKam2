@@ -4,7 +4,7 @@ import { uid } from '../uid'
 import { useTimelineStore } from '../timeline/timelineStore'
 import { serializeOp, DERIVED_OP_KEYS, type SerializedOperation } from '../timeline/events'
 import { useWorkpieceStore } from './workpieceStore'
-import type { CuttingDirection } from './toolStore'
+import type { CuttingDirection, PassDirection } from './toolStore'
 import type { StartFrom } from '../cam/startHeight'
 import { resolveStartZForOp } from '../cam/startHeight'
 import { usePathsStore } from './pathsStore'
@@ -246,6 +246,11 @@ export interface Profile3dOperation extends BaseOperation {
   roughingStepDownMM?: number
   roughingStockAllowanceMM?: number
   roughingRasterAngleDeg?: number
+  /** The hand of the finish and of the roughing (cam/profile3d `passHand`). Unset: 'mixed',
+   *  the zigzag every 3D Profile was cut with before this existed — so an old project
+   *  regenerates exactly as it did. */
+  finishDirection?: PassDirection
+  roughingDirection?: PassDirection
 }
 
 export interface TrochoidalOperation extends BaseOperation {

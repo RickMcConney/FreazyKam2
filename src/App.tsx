@@ -7,6 +7,7 @@ import ToolLibraryPanel from './panels/ToolLibraryPanel'
 import PostProcessorPanel from './panels/PostProcessorPanel'
 import { useUIStore, type WorkspaceTab } from './store/uiStore'
 import { usePostProcessorStore } from './store/postProcessorStore'
+import { activeSpindleReversed, opsWithSpindleHand } from './cam/spindleHand'
 import { usePathsStore } from './store/pathsStore'
 import { openProjectFile, requestNewProject, clearDocumentStock, reloadWouldLoseWork } from './io/projectLoad'
 import { triggerProjectSave } from './io/fileSystem'
@@ -210,6 +211,21 @@ function useStockDependentSync() {
   }, [])
 }
 
+// …and the spindle's sense. Every profile, pocket and trochoidal (and a one-hand 3D Profile)
+// is generated for the way the spindle turns, read off the active post's spindle-on line
+// (cam/spindleHand.ts): switch to a post that says M4, or edit M3 to M4, and their climb is
+// the other way round. Nothing else regenerates on a post change, so this one has to.
+function useSpindleHandSync() {
+  useEffect(() => {
+    return usePostProcessorStore.subscribe((state, prev) => {
+      if (state.profiles === prev.profiles && state.activeId === prev.activeId) return
+      if (activeSpindleReversed(state) === activeSpindleReversed(prev)) return
+      const handed = opsWithSpindleHand(useToolpathStore.getState().operations)
+      if (handed.length > 0) regenerateMany(handed)
+    })
+  }, [])
+}
+
 // While the simulator is up, keep it in step with the program — see sim/simAutoReload.ts.
 function useSimAutoReload() {
   useEffect(() => installSimAutoReload(), [])
@@ -320,6 +336,7 @@ function useDarkMode() {
 export default function App() {
   useKeyboardShortcuts()
   useStockDependentSync()
+  useSpindleHandSync()
   useSimAutoReload()
   useRegistrationSync()
   usePathClipboard()

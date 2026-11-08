@@ -300,6 +300,12 @@ interface PostProcessorState {
   getActiveProfile: () => PostProcessorProfile
 }
 
+/** Whether a spindle-on template starts the spindle anticlockwise (M4, M04) rather than
+ *  clockwise (M3) — which swaps which side of the feed a climb cut keeps the stock on. */
+export function spindleIsReversed(spindleOnTemplate: string): boolean {
+  return /(^|[^A-Z0-9.])M0*4(?![0-9.])/i.test(spindleOnTemplate)
+}
+
 export const usePostProcessorStore = create<PostProcessorState>()(
   persist(
     (set, get) => ({

@@ -5,7 +5,7 @@ import { ICON } from '../theme'
 import { rigidityInfo } from '../rigidity'
 import { useProjectStore } from '../store/projectStore'
 import type { ExportPreflight } from '../cam/exportPreflight'
-import { fmtLen, fmtFeed } from '../store/workpieceStore'
+import { fmtLen, fmtFeed, useWorkpieceStore } from '../store/workpieceStore'
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
@@ -28,6 +28,7 @@ export default function ExportPreflightDialog({
   onCancel: () => void
 }) {
   const { machine, job, warnings, units, stock } = report
+  const ft = useWorkpieceStore((s) => s.feedTime)
   const ext = job.extents
   const rig = rigidityInfo(machine.rigidity)
   const RigIcon = rig.Icon
@@ -114,7 +115,7 @@ export default function ExportPreflightDialog({
                     : `Top of stock — set Z0 at the top surface`}
                 />
                 <Row label="Safe height" value={fmtLen(machine.safeHeightMM, units, 1)} />
-                <Row label="Max feed" value={fmtFeed(machine.maxFeedMmMin, units)} />
+                <Row label="Max feed" value={fmtFeed(machine.maxFeedMmMin, units, ft)} />
                 <Row label="Spindle range" value={`${machine.minSpindleRpm}–${machine.maxSpindleRpm} RPM`} />
                 <Row label="Auto feeds & speeds" value={machine.autoFeed ? 'On' : 'Off'} />
               </section>
