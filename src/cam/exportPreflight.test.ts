@@ -197,11 +197,25 @@ describe('operations that will not be in the file', () => {
 })
 
 describe('where the tool goes', () => {
-  it('warns when a toolpath leaves the stock, on any side', () => {
-    for (const segs of [square(-1, 10, 20, 20), square(10, -1, 20, 20), square(10, 10, 201, 20), square(10, 10, 20, 101)]) {
+  it('warns when a cut goes wholly off the stock — its 6 mm cutter clear of the edge — on any side', () => {
+    for (const segs of [square(-3.5, 10, 20, 20), square(10, -3.5, 20, 20), square(10, 10, 203.5, 20), square(10, 10, 20, 103.5)]) {
       setOps(op({ segments: segs }))
       expect(has(/^warn: Toolpath extends outside the stock \(200\.0 mm × 100\.0 mm\)/)).toBe(true)
     }
+  })
+
+  it('does not warn when the centre runs up to its radius past the edge: the cutter\'s edge reaches it', () => {
+    // An outside profile round a part on the edge, or a 3D Profile clearing beside a model
+    // that fills its stock.
+    for (const segs of [square(-3, 10, 20, 20), square(10, -3, 20, 20), square(10, 10, 203, 20), square(10, 10, 20, 103)]) {
+      setOps(op({ segments: segs }))
+      expect(has(/outside the stock/)).toBe(false)
+    }
+  })
+
+  it('does not warn about rapids off the stock, or moves above its top', () => {
+    setOps(op({ segments: [...square(10, 10, 20, 20), { x: -50, y: -50, z: 5, rapid: true }, ...square(-20, 10, -10, 20, 0.5)] }))
+    expect(has(/outside the stock/)).toBe(false)
   })
 
   it('allows a toolpath that runs exactly along the stock edge', () => {
@@ -230,7 +244,7 @@ describe('where the tool goes', () => {
 
   it('speaks inches when the display is in inches', () => {
     useWorkpieceStore.setState({ units: 'in', widthMM: 254, heightMM: 127 })
-    setOps(op({ segments: square(-1, 10, 20, 20) }))
+    setOps(op({ segments: square(-4, 10, 20, 20) }))
     expect(has(/outside the stock \(10\.000" × 5\.000"\)/)).toBe(true)
   })
 

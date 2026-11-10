@@ -135,8 +135,21 @@ export function buildExportPreflight(): ExportPreflight {
   // exported G-code). Span is origin-independent so it's used for table checks.
   const org = originWorldXY(origin, widthMM, heightMM)
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity
-  // Raw workpiece-coord extents (stock is [0,W] × [0,H]) for the out-of-stock check.
-  let wpMinX = Infinity, wpMaxX = -Infinity, wpMinY = Infinity, wpMaxY = -Infinity
+  // How far past the stock's edge a CUT goes, beyond what its own cutter needs: a centre up
+  // to the tool's radius past the edge is the cutter's edge reaching it — an outside profile
+  // round a part on the edge, or a 3D Profile clearing beside a model that fills its stock
+  // (boundary "model" runs each tool its radius past the model's box) — and a rapid off the
+  // stock, or any move above its top, touches nothing. Only a cut wholly off the stock says
+  // the geometry is somewhere it should not be.
+  let offStockMM = 0
+  for (const op of doneOps) {
+    const r = Math.max(toolsById[op.toolId]?.diameterMM ?? 0, toolsById[initialToolId(op)]?.diameterMM ?? 0) / 2
+    for (const s of op.segments) {
+      if (s.rapid || s.z >= 0) continue
+      const past = Math.max(-s.x, s.x - widthMM, -s.y, s.y - heightMM) - r
+      if (past > offStockMM) offStockMM = past
+    }
+  }
   for (const op of doneOps) {
     for (const s of op.segments) {
       const mx = s.x - org.x, my = s.y - org.y
@@ -147,10 +160,6 @@ export function buildExportPreflight(): ExportPreflight {
       if (s.z < minZ) minZ = s.z
       if (s.z > maxZ) maxZ = s.z
       if (!isRegistration(op) && s.z < partMinZ) partMinZ = s.z
-      if (s.x < wpMinX) wpMinX = s.x
-      if (s.x > wpMaxX) wpMaxX = s.x
-      if (s.y < wpMinY) wpMinY = s.y
-      if (s.y > wpMaxY) wpMaxY = s.y
     }
   }
   const hasExtents = doneOps.length > 0 && Number.isFinite(minX)
@@ -234,9 +243,9 @@ export function buildExportPreflight(): ExportPreflight {
     })
   }
 
-  // Toolpath crosses the stock edge — the bit will cut into the spoilboard or air.
+  // A cut wholly off the stock — the bit cuts air, or whatever lies beside it.
   const tol = 0.01
-  if (hasExtents && (wpMinX < -tol || wpMinY < -tol || wpMaxX > widthMM + tol || wpMaxY > heightMM + tol)) {
+  if (hasExtents && offStockMM > tol) {
     warnings.push({
       level: 'warn',
       text: `Toolpath extends outside the stock (${fmt(widthMM)} × ${fmt(heightMM)}). ` +

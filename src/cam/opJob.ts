@@ -340,6 +340,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       roughingRasterAngleDeg: op.roughingRasterAngleDeg,
       finishDirection: op.finishDirection,
       roughingDirection: op.roughingDirection,
+      skipFlatTolMM: op.skipFlatTolMM,
       // An M4 in the post's spindle-on line turns the spindle anticlockwise: climb and
       // conventional swap sides (passHand, cam/spindleHand.ts).
       spindleReverse: spindleReversed,
@@ -352,6 +353,8 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       modelTopMM: op.modelTopMM,
       boundaryRings,
       boundaryOpen: op.boundary === 'stock',
+      // A turned model's outline stands in for its box: the tools run their radius past it.
+      boundaryIsModel: op.boundary !== 'stock' && op.boundary !== 'path',
     }
     if (stlPath.imageSrc && imageRect) {
       // Decoded on the main thread (it needs a canvas), cached by data URL.

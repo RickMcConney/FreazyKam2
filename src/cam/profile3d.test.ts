@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest'
 import { findRapidGouges } from '../sim/rapidGouge'
 import type { SimSegment, ToolState } from '../sim/gcodeParser'
-import { buildHeightMap, generateProfile3d, StockModel, ballKernel, flatKernel, profile3dDepthMM, STOCK_SKIN_MM, modelBelowCut, modelPreviewTrim, type Profile3dParams } from './profile3d'
+import { buildHeightMap, generateProfile3d, StockModel, ballKernel, flatKernel, profile3dDepthMM, modelBelowCut, modelPreviewTrim, type Profile3dParams } from './profile3d'
 import { maxCutRadiusMM, toolProfileHeightMM } from './geom'
 import type { Tool } from '../store/toolStore'
 import type { MotionSegment } from '../store/toolpathStore'
@@ -62,6 +62,50 @@ const run = (tool = BALL, over: Partial<Profile3dParams> = {}) =>
   generateProfile3d(groove.positions, null, groove.bounds, box(0, 0, W, W), tool, params(over))
 
 const cuts = (segs: MotionSegment[]) => segs.filter((s) => !s.rapid)
+/** The groove sunk 1 mm, so its flats have stock above them. The flats of `groove` itself are
+ *  AT the stock top, where a finish has nothing to take and cuts nothing — a test of how the
+ *  raster cuts a flat needs one with something on it. */
+const SUNK = { modelTopMM: 1 }
+/** Over the model's own box. Boundary "model" lets each tool's centre run its radius past
+ *  the box, where the ground is a floor at the model's lowest point; a test about how the
+ *  MODEL is cut reads the moves over it. */
+const inBox = (s: MotionSegment, size = W) => s.x >= 0 && s.x <= size && s.y >= 0 && s.y <= size
+/** Every point the tool passes through on the cutting moves, every 0.05 mm — the machine
+ *  cuts all along a move, not only at its ends, and where a tool's profile is near vertical
+ *  the ends alone read high. Rapids and travel (a G0 with links as rapids) are left out. */
+function swept(segs: MotionSegment[]): { x: number; y: number; z: number }[] {
+  const out: { x: number; y: number; z: number }[] = []
+  for (let k = 1; k < segs.length; k++) {
+    const a = segs[k - 1], b = segs[k]
+    if (b.rapid || b.travel) continue
+    const m = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 0.05))
+    for (let i = 1; i <= m; i++) out.push({ x: a.x + (b.x - a.x) * i / m, y: a.y + (b.y - a.y) * i / m, z: a.z + (b.z - a.z) * i / m })
+  }
+  return out
+}
+
+/** The stock `pts` leave on an n × n grid of `c` mm from the origin, from Z0 down: at each
+ *  node the lowest the tool's own surface came. Carving several passes into one grid is
+ *  cutting them in turn. */
+function carveGrid(z: Float32Array, n: number, c: number, pts: { x: number; y: number; z: number }[], tool: Tool): Float32Array {
+  const r = maxCutRadiusMM(tool)
+  for (const p of pts) {
+    for (let j = Math.max(0, Math.ceil((p.y - r) / c)); j <= Math.min(n - 1, Math.floor((p.y + r) / c)); j++) {
+      for (let i = Math.max(0, Math.ceil((p.x - r) / c)); i <= Math.min(n - 1, Math.floor((p.x + r) / c)); i++) {
+        const d = Math.hypot(i * c - p.x, j * c - p.y)
+        if (d > r) continue
+        const top = p.z + toolProfileHeightMM(tool, d)
+        if (top < z[j * n + i]) z[j * n + i] = top
+      }
+    }
+  }
+  return z
+}
+
+/** The fed moves that run wholly at or above the stock top — through air. A climb from a cut
+ *  below it onto it is not one: it sweeps through the stock beside the cut, so it is fed. */
+const fedThroughAir = (segs: MotionSegment[]) =>
+  segs.filter((b, k) => k > 0 && !b.rapid && !b.travel && b.z >= 0 && segs[k - 1].z >= 0 && !segs[k - 1].rapid)
 
 describe('buildHeightMap', () => {
   it('puts the top of the model at Z = 0 and the rest below it', () => {
@@ -201,9 +245,11 @@ describe('the finishing raster', () => {
     // The pipeline is tip-referenced; adding the ball radius here would cut R above the
     // stock and leave the whole top uncut.
     for (const tool of [BALL, TAPER]) {
-      const flat = cuts(run(tool)).filter((s) => s.x < 20 - 8 - 4 || s.x > 20 + 8 + 4)
+      const flat = cuts(run(tool, SUNK)).filter((s) => inBox(s) && (s.x < 20 - 8 - 4 || s.x > 20 + 8 + 4))
       expect(flat.length, tool.type).toBeGreaterThan(100)
-      for (const s of flat) expect(s.z, tool.type).toBeCloseTo(0, 6)
+      // To half a micron: a taper reads the grid, and right at the box's edge the line from
+      // the last node on the top to the first one past it sags a fraction of a micron.
+      for (const s of flat) expect(s.z, tool.type).toBeCloseTo(-1, 3)
     }
   })
 
@@ -221,7 +267,7 @@ describe('the finishing raster', () => {
     // to one cell high. It must never read LOWER, which would put the ball into both walls.
     const cell = W / Math.ceil(W / (BALL.diameterMM * 0.3 / 3))   // height-map cell: stepover / 3
     const fits = -8 + 3 * (Math.SQRT2 - 1)
-    const bottom = Math.min(...cuts(run()).map((s) => s.z))
+    const bottom = Math.min(...cuts(run()).filter((s) => inBox(s)).map((s) => s.z))
     expect(bottom).toBeGreaterThanOrEqual(fits - 1e-3)
     expect(bottom).toBeLessThan(fits + cell)
   })
@@ -230,7 +276,7 @@ describe('the finishing raster', () => {
     // Lifting to safe height at the end of every line, rapiding one stepover across and
     // feeding back down was half the run time of a relief. The groove is one surface edge
     // to edge, so nothing on it needs a lift.
-    const segs = run()
+    const segs = run(BALL, SUNK)
     const lifts = segs.filter((s, i) => i > 0 && s.rapid && s.z === SAFE_Z && !segs[i - 1].rapid)
     const entries = segs.filter((s, i) => i > 0 && !s.rapid && segs[i - 1].rapid)
     expect(lifts).toHaveLength(1)
@@ -274,22 +320,23 @@ describe('the finishing raster', () => {
 
   it('rapids down to just above the stock instead of feeding from safe height', () => {
     // With nothing cut yet the stock top is Z = 0: the entry rapids to 1 mm above it, then
-    // feeds the last millimetre onto the surface.
-    const segs = run()
+    // feeds the rest of the way onto the surface — here the box's corner, from a radius past it.
+    const segs = run(BALL, SUNK)
     const k = segs.findIndex((s) => !s.rapid)
-    expect(segs.slice(k - 2, k + 1)).toMatchObject([
-      { z: SAFE_Z, rapid: true }, { z: 1, rapid: true }, { z: 0, rapid: false },
-    ])
+    expect(segs.slice(k - 2, k)).toMatchObject([{ z: SAFE_Z, rapid: true }, { z: 1, rapid: true }])
+    expect(segs[k].z).toBeLessThan(-1)
   })
 
   it('puts its last scanline ON the far edge, not up to a stepover short of it', () => {
-    // 40 mm is not a whole number of 1.8 mm stepovers: stepping and stopping left the last
-    // line 0.4 mm short; at a roughing stepover it was up to 3 mm, a strip of stock the
-    // finish then had to take in one go.
+    // 46 mm is not a whole number of 1.8 mm stepovers: stepping and stopping left the last
+    // line short; at a roughing stepover it was up to 3 mm, a strip of stock the finish then
+    // had to take in one go. The edge is where the centre may go: the box, and the 3 mm
+    // radius and 0.05 mm lead past it, less the limit's 0.01 mm arc tolerance.
+    const edge = 3 + 0.04
     for (const [angle, key] of [[0, 'y'], [90, 'x']] as const) {
-      const c = cuts(run(BALL, { rasterAngleDeg: angle }))
-      expect(Math.max(...c.map((s) => s[key])), `${angle}°`).toBeCloseTo(W, 6)
-      expect(Math.min(...c.map((s) => s[key])), `${angle}°`).toBeCloseTo(0, 6)
+      const c = cuts(run(BALL, { ...SUNK, rasterAngleDeg: angle }))
+      expect(Math.max(...c.map((s) => s[key])), `${angle}°`).toBeCloseTo(W + edge, 6)
+      expect(Math.min(...c.map((s) => s[key])), `${angle}°`).toBeCloseTo(-edge, 6)
     }
   })
 
@@ -301,10 +348,10 @@ describe('the finishing raster', () => {
       for (const s of cuts(segs)) { const v = Math.round(s[key] * 1e6) / 1e6; n.set(v, (n.get(v) ?? 0) + 1) }
       return [...n].filter(([, c]) => c > 20).map(([v]) => v).sort((a, b) => a - b)
     }
-    const ys = lines(run(BALL, { rasterAngleDeg: 0 }), 'y')
+    const ys = lines(run(BALL, { ...SUNK, rasterAngleDeg: 0 }), 'y')
     for (let i = 1; i < ys.length - 1; i++) expect(ys[i] - ys[i - 1]).toBeCloseTo(stepover, 6)
     // At 90° the scanlines run along Y, so it is X that steps.
-    const xs = lines(run(BALL, { rasterAngleDeg: 90 }), 'x')
+    const xs = lines(run(BALL, { ...SUNK, rasterAngleDeg: 90 }), 'x')
     expect(xs.length).toBe(ys.length)
   })
 
@@ -417,17 +464,20 @@ describe('roughing then rest-machining', () => {
     expect(roughing.length).toBeGreaterThan(0)
     // The finish is the raster a finishing-only run produces, less the cuts that would take
     // nothing off the stock the roughing left — here the block's top, which IS the stock top.
-    // Wherever both cut the same point they cut it at the same height (the links across the
-    // skipped ground are new points, so they are not compared).
-    const xy = (s: MotionSegment) => `${s.x},${s.y}`
+    // Its rows are the same rows; along them the samples need not be the same points (the
+    // grid spans the rougher's reach too, which moves them), so a cut counts as kept if the
+    // run after roughing cuts within a sample of it on its row.
     const alone = run(BALL).filter((s) => !s.rapid && !s.travel)
-    const zAlone = new Map(alone.map((s) => [xy(s), s.z]))
-    for (const s of finishing) {
-      if (s.rapid || s.travel || !zAlone.has(xy(s))) continue
-      expect(s.z).toBe(zAlone.get(xy(s)))
+    const rows = new Map<number, number[]>()
+    for (const s of finishing) if (!s.rapid && !s.travel) {
+      const k = Math.round(s.y * 1e6); (rows.get(k) ?? rows.set(k, []).get(k)!).push(s.x)
     }
-    const after = new Set(finishing.filter((s) => !s.rapid && !s.travel).map(xy))
-    const dropped = alone.filter((s) => !after.has(xy(s)))
+    const kept = (s: MotionSegment) => (rows.get(Math.round(s.y * 1e6)) ?? []).some((x) => Math.abs(x - s.x) < 0.25)
+    // (Points on the limit itself — the radius and 0.05 mm lead past the box, less the arc
+    // tolerance — are left out: the lap round it runs there in both, and where a row's last
+    // sample falls against it is a matter of sampling.)
+    const onLimit = (s: MotionSegment) => Math.hypot(Math.max(0, -s.x, s.x - W), Math.max(0, -s.y, s.y - W)) > 3 + 0.04 - 0.02
+    const dropped = alone.filter((s) => !kept(s) && !onLimit(s))
     expect(dropped.length).toBeGreaterThan(0)
     for (const s of dropped) expect(s.z).toBeGreaterThan(-0.01)
   })
@@ -437,7 +487,7 @@ describe('roughing then rest-machining', () => {
     // stock: the roughing takes nothing there and does not feed across it. Nowhere does it
     // come closer to the surface than the finish will.
     const { roughing, finishing } = split(rough())
-    const top = cuts(roughing).filter((s) => !s.travel && (s.x < 8 || s.x > 32))
+    const top = cuts(roughing).filter((s) => !s.travel && inBox(s) && (s.x < 8 || s.x > 32))
     expect(top).toHaveLength(0)
     const finishFloor = Math.min(...cuts(finishing).map((s) => s.z))
     expect(Math.min(...cuts(roughing).map((s) => s.z))).toBeGreaterThanOrEqual(finishFloor + 0.3 - 1e-6)
@@ -454,8 +504,14 @@ describe('roughing then rest-machining', () => {
 
   it('does not re-cut ground an earlier pass already took', () => {
     // The flat top is finished to its allowance by the first pass; later passes skip it,
-    // so it is visited as often in a three-pass rough as in a one-pass one.
-    const onTop = (segs: MotionSegment[]) => cuts(split(segs).roughing).filter((s) => Math.abs(s.z - 0.3) < 1e-6).length
+    // so it is fed along as often in a three-pass rough as in a one-pass one. (Moves along
+    // it, not points at its height: a climb out of a cut onto ground skipped as air is fed
+    // too, and ends there — and three levels make three times as many of those.)
+    const onTop = (segs: MotionSegment[]) => {
+      const r = split(segs).roughing
+      return r.filter((b, k) => k > 0 && !b.rapid && !b.travel && !r[k - 1].rapid
+        && Math.abs(b.z - 0.3) < 1e-6 && Math.abs(r[k - 1].z - 0.3) < 1e-6).length
+    }
     expect(onTop(rough({ roughingStepDownMM: 3 }))).toBe(onTop(rough({ roughingStepDownMM: 20 })))
   })
 
@@ -473,13 +529,14 @@ describe('roughing then rest-machining', () => {
     const travel = roughing.filter((s) => s.travel)
     expect(travel.length).toBeGreaterThan(100)
     // Over the flat top between the grooves, it rides exactly at the allowance.
-    for (const s of travel.filter((s) => s.x > 19 && s.x < 21)) expect(s.z).toBeCloseTo(0.3, 6)
+    for (const s of travel.filter((s) => inBox(s) && s.x > 19 && s.x < 21)) expect(s.z).toBeCloseTo(0.3, 6)
     // Three 2 mm levels in 6 mm grooves, one entry each for the raster — plus, on the two
-    // later levels, the pass round the model's box wall: it cuts the four groove ends on the
-    // box edge, and the 40 mm of cleared edge between two of them is quicker to lift over
-    // than to ride, so at most two more per level.
+    // later levels, the pass round the limit a radius outside the box: it cuts the floor
+    // past the box's two ends and runs in the air beside the top along its sides, so it is
+    // two stretches, and starting at the point nearest the tool can split one: at most
+    // three more per level.
     const entries = roughing.filter((s, i) => i > 0 && !s.rapid && roughing[i - 1].rapid)
-    expect(entries.length).toBeLessThanOrEqual(3 + 2 * 2)
+    expect(entries.length).toBeLessThanOrEqual(3 + 2 * 3)
   })
 
   it('never rapids into the stock any earlier move left', { timeout: 30000 }, () => {
@@ -507,7 +564,8 @@ describe('roughing then rest-machining', () => {
       ['strips', strips, { ...roughAt, roughingStepoverPercent: 90, roughingRasterAngleDeg: 0 }],
     ] as const) {
       const segs = generateProfile3d(m.positions, null, m.bounds, box(0, 0, W, W), BALL, params(over))
-      const R = 3, c = 0.1, o = -4, n = Math.round((W + 8) / c) + 1
+      // The grid spans the box and the 6 mm either tool's edge can reach past it.
+      const R = 3, c = 0.1, o = -8, n = Math.round((W + 16) / c) + 1
       const stock = new Float32Array(n * n)
       const f = (d: number) => R - Math.sqrt(R * R - d * d)
       const nodes = (x: number, y: number, fn: (k: number, d: number) => void) => {
@@ -556,12 +614,17 @@ describe('a 3D Profile never cuts through the stock', () => {
   // A model deeper than the stock, or a max depth set past it, was cut to that depth —
   // through the stock and into the table, over the whole floor once waterline finished
   // flats.
-  it('stops a cut deeper than the stock half a millimetre above its bottom', () => {
-    expect(profile3dDepthMM(15, 12)).toBe(12 - STOCK_SKIN_MM)
-    expect(STOCK_SKIN_MM).toBe(0.5)
+  it('stops a cut deeper than the stock at its bottom', () => {
+    expect(profile3dDepthMM(15, 12)).toBe(12)
   })
-  it('leaves a cut within the stock as deep as it was asked to be', () => {
+  it('cuts a model exactly as deep as its stock right to the bottom — no skin unless asked for', () => {
+    // A 20 mm shaft in 20 mm stock was left on a 0.5 mm skin, with a warning that called it
+    // deeper than the stock.
+    expect(profile3dDepthMM(20, 20)).toBe(20)
+  })
+  it('leaves a cut within the stock as deep as it was asked to be — a skin, when that is what is set', () => {
     expect(profile3dDepthMM(8, 12)).toBe(8)
+    expect(profile3dDepthMM(19.5, 20)).toBe(19.5)
   })
 })
 
@@ -576,6 +639,87 @@ describe('a model sunk below the cut is refused', () => {
     expect(modelBelowCut(9.5, 10)).toBe(false)
     expect(modelBelowCut(undefined, 10)).toBe(false)
   })
+})
+
+describe('boundary "model" cuts the stock down to the model, right up to its vertical sides', () => {
+  // A guitar neck fills its stock: 0.3 mm of wood beyond its outline, and its headstock runs
+  // out to its box in three places. With the tool centre kept INSIDE the box, beside each of
+  // them the tool could only stand on the model's top, and a full-height sliver was left.
+  // Here a solid block 40 × 60, 10 tall, whose four vertical sides ARE its box, in stock
+  // 0.3 mm bigger: every point of that 0.3 mm strip must be cut to the floor — for a ball, to
+  // the fillet a round tip leaves where a wall meets a floor, and no higher.
+  const BW = 40, BH = 60, B = -10, n = 40
+  const block = (() => {
+    const pos: number[] = [], tri = (...p: number[][]) => pos.push(...p.flat())
+    const cx = BW / n, cy = BH / n
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+      tri([i * cx, j * cy, 0], [(i + 1) * cx, j * cy, 0], [(i + 1) * cx, (j + 1) * cy, 0])
+      tri([i * cx, j * cy, 0], [(i + 1) * cx, (j + 1) * cy, 0], [i * cx, (j + 1) * cy, 0])
+    }
+    const side = (x0: number, y0: number, x1: number, y1: number) => { tri([x0, y0, B], [x1, y1, B], [x1, y1, 0]); tri([x0, y0, B], [x1, y1, 0], [x0, y0, 0]) }
+    side(0, 0, BW, 0); side(BW, 0, BW, BH); side(BW, BH, 0, BH); side(0, BH, 0, 0)
+    tri([0, 0, B], [BW, BH, B], [BW, 0, B]); tri([0, 0, B], [0, BH, B], [BW, BH, B])
+    return { positions: new Float32Array(pos), bounds: { minX: 0, maxX: BW, minY: 0, maxY: BH, minZ: B, maxZ: 0 } }
+  })()
+  const END: Tool = { ...BALL, id: 'end', name: 'End 6', type: 'endmill' }
+  /** The highest the finish leaves any point of the strip, above the floor and the fillet. */
+  const leftBeside = (tool: Tool, over: Partial<Profile3dParams>) => {
+    const segs = swept(generateProfile3d(block.positions, null, block.bounds, box(0, 0, BW, BH), tool, params({ maxDepthMM: 12, ...over })))
+    const R = tool.diameterMM / 2
+    // A ball runs past a side a radius and the limit's 0.04 mm off it (the 0.05 mm lead, less
+    // the arc tolerance): its fillet is measured from there. Near the wall it is all but
+    // vertical, and from a radius off it reads ~0.2 mm short.
+    const off = R + 0.04
+    const fillet = (d: number) => tool.type === 'ballnose' && off - d < R ? R - Math.sqrt(R * R - (off - d) ** 2) : 0
+    let worst = 0
+    const at = (x: number, y: number, d: number) => {
+      let low = Infinity
+      for (const s of segs) {
+        const r = Math.hypot(s.x - x, s.y - y)
+        if (r <= R) low = Math.min(low, s.z + toolProfileHeightMM(tool, r))
+      }
+      worst = Math.max(worst, low - B - fillet(d))
+    }
+    for (const d of [0.05, 0.15, 0.3]) {
+      for (let t = 0; t <= BW; t += 1) { at(t, -d, d); at(t, BH + d, d) }
+      for (let t = 0; t <= BH; t += 1) { at(-d, t, d); at(BW + d, t, d) }
+    }
+    return worst
+  }
+  // …and the roughing before it leaves its allowance on those sides, not just on top: added
+  // in Z alone it left none beside a vertical wall, so a rougher read exactly against the
+  // triangles cut the sides to their final size and the finish had nothing to clean up.
+  for (const roughingFlat of [true, false]) {
+    it(`${roughingFlat ? 'an end mill' : 'a ball nose'} roughing keeps its cutter the allowance off the sides`, { timeout: 30000 }, () => {
+      const ALLOW = 0.3, Rr = 3
+      const segs = generateProfile3d(block.positions, null, block.bounds, box(0, 0, BW, BH), BALL, params({
+        maxDepthMM: 12, roughingRadiusMM: Rr, roughingFlat, roughingStepoverPercent: 50, roughingStepDownMM: 3, roughingStockAllowanceMM: ALLOW,
+      }))
+      const roughing = segs.slice(0, segs.findIndex((s) => s.toolChange)).filter((s) => !s.rapid && s.z < -0.5)
+      expect(roughing.length).toBeGreaterThan(100)
+      // How far the cutter's own surface stands off the block (top 0, sides its box, 10 deep).
+      const out = (s: MotionSegment) => Math.hypot(Math.max(0, -s.x, s.x - BW), Math.max(0, -s.y, s.y - BH))
+      const clearance = (s: MotionSegment) => roughingFlat
+        ? (s.z >= 0 ? s.z : out(s) - Rr)                                   // a cylinder: its rim, below the top
+        : Math.hypot(out(s), Math.max(0, s.z + Rr)) - Rr                   // a ball: centre to the block
+      let least = Infinity, besideAtDepth = Infinity
+      for (const s of roughing) {
+        least = Math.min(least, clearance(s))
+        if (s.z < -5) besideAtDepth = Math.min(besideAtDepth, out(s))
+      }
+      expect(least).toBeGreaterThanOrEqual(ALLOW - 1e-3)
+      // …and at depth it comes down beside the side no further off than the lead past that.
+      expect(besideAtDepth).toBeLessThan(Rr + ALLOW + 0.06)
+    })
+  }
+
+  for (const tool of [END, BALL]) {
+    for (const finishStrategy of ['raster', 'waterline'] as const) {
+      it(`${tool.type === 'endmill' ? 'an end mill' : 'a ball nose'}, ${finishStrategy}: nothing stands beside the sides`, { timeout: 30000 }, () => {
+        expect(leftBeside(tool, { finishStrategy })).toBeLessThan(0.02)
+      })
+    }
+  }
 })
 
 describe('a machining boundary', () => {
@@ -677,15 +821,20 @@ describe('a machining boundary', () => {
         const d2 = (s.x + 8) ** 2 + (s.y - y) ** 2
         if (d2 < R * R) low = Math.min(low, s.z + R - Math.sqrt(R * R - d2))
       }
-      expect(low, `edge at y=${y}`).toBeLessThan(-15 + scallop + 1e-6)
+      // (To 0.1 µm: the roughing reads its grid leaned a cell diagonal beside steep ground,
+      // which moves which finishing points have anything left to take by that much.)
+      expect(low, `edge at y=${y}`).toBeLessThan(-15 + scallop + 1e-4)
     }
   })
 
-  it('finishes with one pass round the model\'s box, so line ends leave no cusps on its wall', () => {
-    // Without a boundary, a raster along X touches the box's left edge only where its lines
-    // end, a stepover apart; the pass round the box runs the whole edge.
-    const segs = run(BALL, { stepoverPercent: 30 })
-    const onLeft = cuts(segs).filter((s) => Math.abs(s.x) < 1e-6).map((s) => s.y).sort((a, b) => a - b)
+  it('finishes with one pass round its limit, so line ends leave no cusps on the wall beyond', () => {
+    // Without a boundary the limit is a radius and 0.05 mm outside the model's box (less the
+    // 0.01 mm arc tolerance), its corners rounded about the box's, so its left edge is straight from
+    // y = 0 to y = 40. A raster along X touches it only where its lines end, a stepover
+    // apart; the pass round the limit runs the whole edge.
+    const e = 3 + 0.04
+    const segs = run(BALL, { ...SUNK, stepoverPercent: 30 })
+    const onLeft = cuts(segs).filter((s) => Math.abs(s.x + e) < 1e-6).map((s) => s.y).sort((a, b) => a - b)
     let gap = onLeft[0]
     for (let k = 1; k < onLeft.length; k++) gap = Math.max(gap, onLeft[k] - onLeft[k - 1])
     gap = Math.max(gap, W - onLeft[onLeft.length - 1])
@@ -695,7 +844,8 @@ describe('a machining boundary', () => {
 
 describe('a model sunk below the stock top', () => {
   it('drops every height of the finish by the depth it is sunk', () => {
-    const at0 = cuts(run(BALL)), at2 = cuts(run(BALL, { modelTopMM: 2 }))
+    // Sunk 1 mm and 3 mm: at 0 the flats are at the stock top and are not cut at all.
+    const at0 = cuts(run(BALL, { modelTopMM: 1 })), at2 = cuts(run(BALL, { modelTopMM: 3 }))
     expect(at2.length).toBe(at0.length)
     for (let k = 0; k < at0.length; k++) {
       expect(at2[k].x).toBe(at0[k].x)
@@ -705,9 +855,10 @@ describe('a model sunk below the stock top', () => {
   })
 
   it('drops a taper\'s finish the same way — it reads the height map, not the triangles', { timeout: 30000 }, () => {
-    const at0 = cuts(run(TAPER)), at2 = cuts(run(TAPER, { modelTopMM: 2 }))
+    const at0 = cuts(run(TAPER, { modelTopMM: 1 })), at2 = cuts(run(TAPER, { modelTopMM: 3 }))
     expect(at2.length).toBe(at0.length)
-    for (let k = 0; k < at0.length; k += 7) expect(at2[k].z).toBeCloseTo(at0[k].z - 2, 6)
+    // To float32 rounding: the height map is a Float32Array, and both models are offset.
+    for (let k = 0; k < at0.length; k += 7) expect(at2[k].z).toBeCloseTo(at0[k].z - 2, 5)
   })
 
   it('finishes its flat top, which is no longer the stock top', { timeout: 30000 }, () => {
@@ -781,9 +932,10 @@ describe('roughing with a flat end mill', () => {
 
   it('cuts a flat to its final depth — its bottom IS the finish there, so no allowance', () => {
     // The last level over the floor (the earlier ones cross it at −3, −6, …).
-    // (Clear of the dome by the rim's reach and the half grid cell it is widened by, so a
+    // (Clear of the dome by the rim's reach and the grid cell diagonal it is widened by — half
+    // for where a node's high point is, half for where the tool is between nodes — so a
     // steep wall between nodes cannot meet it.)
-    const onFloor = raster.roughing.filter((s) => Math.hypot(s.x - 20, s.y - 20) > 8 + R + 2 && s.z < -7)
+    const onFloor = raster.roughing.filter((s) => Math.hypot(s.x - 20, s.y - 20) > 8 + R + 2.5 && s.z < -7)
     expect(onFloor.length).toBeGreaterThan(50)
     // Within the 0.01 mm a surface may vary under the bottom and still count as level —
     // not the 0.3 mm allowance.
@@ -812,24 +964,6 @@ describe('roughing with a flat end mill', () => {
   })
 
   describe('and the finish that follows it', () => {
-    /** The stock the roughing moves leave, carved here independently on a 0.2 mm grid. */
-    function roughStock(roughing: MotionSegment[]) {
-      const c = 0.2, n = Math.round(W / c) + 1
-      const z = new Float32Array(n * n).fill(0)
-      for (let k = 1; k < roughing.length; k++) {
-        const a = roughing[k - 1], b = roughing[k]
-        const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 0.05))
-        for (let t = 0; t <= steps; t++) {
-          const x = a.x + (b.x - a.x) * t / steps, y = a.y + (b.y - a.y) * t / steps, zz = a.z + (b.z - a.z) * t / steps
-          for (let j = Math.max(0, Math.ceil((y - R) / c)); j <= Math.min(n - 1, Math.floor((y + R) / c)); j++) {
-            for (let i = Math.max(0, Math.ceil((x - R) / c)); i <= Math.min(n - 1, Math.floor((x + R) / c)); i++) {
-              if (Math.hypot(i * c - x, j * c - y) <= R && zz < z[j * n + i]) z[j * n + i] = zz
-            }
-          }
-        }
-      }
-      return (x: number, y: number) => z[Math.round(y / c) * n + Math.round(x / c)]
-    }
 
     /** The floor clear of the dome — and of the box's edge, where the stock model is
      *  deliberately cautious (it reads every cut a little narrower than it was, and the
@@ -849,24 +983,25 @@ describe('roughing with a flat end mill', () => {
       expect(cuts(generateProfile3d(dome.positions, null, dome.bounds, box(0, 0, W, W), BALL, params())).filter(openFloor).length).toBeGreaterThan(200)
     })
 
-    it('skips nothing that still has stock on it — every cut it leaves out would take nothing', { timeout: 60000 }, () => {
-      const alone = cuts(generateProfile3d(dome.positions, null, dome.bounds, box(0, 0, W, W), BALL, params()))
-      const made = new Set(raster.finishing.map((s) => `${s.x},${s.y}`))
-      const left = roughStock(raster.roughing)
-      const Rb = BALL.diameterMM / 2
-      let worst = 0, skipped = 0
-      for (const s of alone) {
-        if (made.has(`${s.x},${s.y}`)) continue
-        skipped++
-        // What the ball at this point would take off the stock the roughing left.
-        for (let u = Math.max(0, s.x - Rb); u <= Math.min(W, s.x + Rb); u += 0.2) {
-          for (let v = Math.max(0, s.y - Rb); v <= Math.min(W, s.y + Rb); v += 0.2) {
-            const d = Math.hypot(u - s.x, v - s.y)
-            if (d <= Rb) worst = Math.max(worst, left(u, v) - (s.z + toolProfileHeightMM(BALL, d)))
-          }
-        }
-      }
-      expect(skipped).toBeGreaterThan(100)
+    it('skips nothing that still has stock on it — it leaves the part no higher than a finish alone would', { timeout: 60000 }, () => {
+      // Measured on what is LEFT, not by matching points: the run after roughing need not
+      // sample its rows at the same points as a finish on its own (the grid spans the
+      // rougher's reach too). Both are carved here, the roughing with the end mill and each
+      // finish with the ball; nowhere may roughing + its finish stand higher than the
+      // finish on its own leaves the stock.
+      const aloneSegs = generateProfile3d(dome.positions, null, dome.bounds, box(0, 0, W, W), BALL, params())
+      const alone = cuts(aloneSegs)
+      const c = 0.2, n = Math.round(W / c) + 1
+      const END: Tool = { ...BALL, id: 'end', type: 'endmill', diameterMM: 2 * R }
+      const solo = carveGrid(new Float32Array(n * n), n, c, swept(aloneSegs), BALL)
+      // The program itself, rapids and all: swept from the cuts alone, the end of one cut
+      // would run on to the start of the next as if it were fed there.
+      const prog = gen(), k = prog.findIndex((s) => s.toolChange)
+      const both = carveGrid(carveGrid(new Float32Array(n * n), n, c, swept(prog.slice(0, k)), END), n, c, swept(prog.slice(k + 1)), BALL)
+      let worst = 0
+      for (let k = 0; k < solo.length; k++) worst = Math.max(worst, both[k] - solo[k])
+      // …and it does skip: ground the end mill already finished.
+      expect(cuts(raster.finishing).length).toBeLessThan(alone.length - 100)
       expect(worst).toBeLessThan(0.02)
     })
 
@@ -919,6 +1054,75 @@ describe('a 3D Profile never moves into stock at rapid speed', () => {
   }
 })
 
+describe('a flat already at the stock top is not cut', () => {
+  // A guitar neck's fretboard is the stock's own top face: a pass over it takes nothing, yet
+  // every row of the finish fed its whole length at Z0. And a mesh is rarely flat to the
+  // micron — a vertex 0.014 mm proud of the face puts the rest of it 0.014 mm under Z0, so
+  // the whole face read as work. Here: a 40 mm flat with one such vertex, and a 3 mm step
+  // down past x = 28 standing for the sculpted part.
+  const NECK: Height = (x, y) => (x > 28 ? -3 : x === 10 && y === 10 ? 0.014 : 0)
+  const neck = mesh(NECK, W, W, 40)
+  const runNeck = (over: Partial<Profile3dParams> = {}) =>
+    generateProfile3d(neck.positions, null, neck.bounds, box(0, 0, W, W), BALL, params(over))
+  /** The cutting moves over the flat — beyond the ball's reach of the step, and over the
+   *  model's box: past its edge the tools clear the stock beside the flat, as they should. */
+  const onFlat = (segs: MotionSegment[]) => segs.filter((s) => !s.rapid && !s.travel && inBox(s) && s.x < 28 - 3 - 1)
+  const ROUGH = { roughingRadiusMM: 3, roughingStepoverPercent: 50, roughingStepDownMM: 3, roughingStockAllowanceMM: 0.3 }
+  const roughOf = (segs: MotionSegment[]) => segs.slice(0, segs.findIndex((s) => s.toolChange))
+  const finishOf = (segs: MotionSegment[]) => segs.slice(segs.findIndex((s) => s.toolChange) + 1)
+
+  it('a finish cuts nothing where its tip would be at or above the stock top', () => {
+    // The groove's flats sit exactly at Z0, the stock top: no move is fed across them.
+    const segs = run()
+    const c = cuts(segs).filter((s) => !s.travel)
+    expect(c.length).toBeGreaterThan(100)
+    expect(fedThroughAir(segs)).toHaveLength(0)
+    expect(c.filter((s) => inBox(s) && s.z < 0 && (s.x < 20 - 8 - 3 - 1 || s.x > 20 + 8 + 3 + 1))).toHaveLength(0)
+  })
+
+  it('without a tolerance, a flat a mesh vertex leaves 0.014 mm under the top is still cut', () => {
+    // The rule it pins is the default: only a tip AT the top is skipped, so nothing is left
+    // standing unless the user says how much may be.
+    const flat = onFlat(runNeck())
+    expect(flat.length).toBeGreaterThan(100)
+    for (const s of flat.filter((s) => Math.hypot(s.x - 10, s.y - 10) > 4)) expect(s.z).toBeCloseTo(-0.014, 3)
+  })
+
+  for (const finishStrategy of ['raster', 'waterline'] as const) {
+    it(`with skipFlatTolMM, a ${finishStrategy} finish leaves that flat alone and still cuts the step`, () => {
+      const segs = runNeck({ skipFlatTolMM: 0.05, finishStrategy })
+      expect(onFlat(segs)).toHaveLength(0)
+      // The step's floor, 3 mm down (and 0.014 more: the proud vertex is the model's top).
+      expect(cuts(segs).filter((s) => s.x > 28 && Math.abs(s.z + 3.014) < 1e-3).length).toBeGreaterThan(50)
+    })
+  }
+
+  for (const roughingFlat of [false, true]) {
+    it(`with skipFlatTolMM, ${roughingFlat ? 'an end mill' : 'a ball'} roughing and the finish after it leave the flat alone`, () => {
+      // A ball's tip on the flat is at +0.3, the allowance, and was already in the air; an end
+      // mill leaves no allowance on a flat, so its tip is the face itself, 0.014 mm under.
+      const without = runNeck({ ...ROUGH, roughingFlat })
+      if (roughingFlat) expect(onFlat(roughOf(without)).length).toBeGreaterThan(50)
+      const segs = runNeck({ ...ROUGH, roughingFlat, skipFlatTolMM: 0.05 })
+      expect(onFlat(roughOf(segs))).toHaveLength(0)
+      expect(onFlat(finishOf(segs))).toHaveLength(0)
+      expect(cuts(roughOf(segs)).filter((s) => s.x > 28).length).toBeGreaterThan(20)
+    })
+  }
+
+  it('a ride over the flat it skipped never runs under the stock top', () => {
+    // With no roughing there is no stock model: the stock is its top, and a travel ride over
+    // ground skipped as finished follows a tip up to the tolerance UNDER it — at G0. A ridge
+    // 4 mm wide between two 3 mm steps is narrow enough that riding across it beats lifting.
+    const RIDGE: Height = (x, y) => (x < 18 || x > 22 ? -3 : x === 20 && y === 10 ? 0.014 : 0)
+    const ridge = mesh(RIDGE, W, W, 40)
+    const segs = generateProfile3d(ridge.positions, null, ridge.bounds, box(0, 0, W, W), BALL, params({ skipFlatTolMM: 0.05 }))
+    const over = segs.filter((s) => s.travel && Math.abs(s.x - 20) < 2)
+    expect(over.length).toBeGreaterThan(20)
+    for (const s of over) expect(s.z).toBeGreaterThanOrEqual(0)
+  })
+})
+
 describe("the 3D view's model preview", () => {
   const op = (over: Record<string, unknown> = {}) => ({ type: 'profile3d', visible: true, pathId: 'stl', maxDepthMM: 15, modelTopMM: 0.2, ...over })
 
@@ -928,7 +1132,7 @@ describe("the 3D view's model preview", () => {
 
   it('stops where the cut stops, which is never through the stock', () => {
     expect(modelPreviewTrim([op({ maxDepthMM: 40 })], 'stl', 31)!.depthMM).toBe(profile3dDepthMM(40, 31))
-    expect(profile3dDepthMM(40, 31)).toBeLessThan(31)
+    expect(profile3dDepthMM(40, 31)).toBe(31)
   })
 
   it('is shown whole when nothing cuts the model — no 3D Profile, a hidden one, or one on another model', () => {
@@ -1024,20 +1228,22 @@ describe('roughing over ground already at the stock top', () => {
   }))
   const roughing = segs.slice(0, segs.findIndex((s) => s.toolChange))
 
-  it('never feeds through air above the stock — a cut is always below Z0', () => {
-    for (const s of roughing) if (!s.rapid && !s.travel) expect(s.z).toBeLessThan(0)
+  it('never feeds through air above the stock — no fed move runs wholly at or above Z0', () => {
+    expect(fedThroughAir(roughing)).toHaveLength(0)
   })
 
   it('lifts and rapids over the long flat instead of feeding or riding along it', () => {
     // Every row crosses ~95 mm of flat. A short hop between nearby cuts may still ride the
-    // surface as travel when that is quicker than lifting; a run along the flat never does.
+    // surface as travel when that is quicker than lifting — the longest is straight across
+    // the 20 mm width, between the cuts beside it, a radius past each side — but a run along
+    // the flat never does.
     let run = 0, longest = 0
     for (let i = 1; i < roughing.length; i++) {
       const a = roughing[i - 1], b = roughing[i]
       if (!b.rapid && a.z >= -1e-6 && b.z >= -1e-6) longest = Math.max(longest, run += Math.hypot(b.x - a.x, b.y - a.y))
       else run = 0
     }
-    expect(longest).toBeLessThan(NW + 5)
+    expect(longest).toBeLessThan(NW + END4.diameterMM + 1)
   })
 
   it('still clears the pocket', () => {
@@ -1053,14 +1259,22 @@ describe('cut direction: mixed, climb or conventional', () => {
   // outside, CCW round a pocket), so every climb row runs along −d.
   const along = (deg: number) => [Math.cos(deg * Math.PI / 180), Math.sin(deg * Math.PI / 180)]
   /** Each cutting move's travel along the row direction (vertical and zero moves left out).
-   *  Moves along the box's edge are the lap round it (`wallInto`), a ring with a hand of its
-   *  own, and are left out — with the first and last rows, which lie on that edge too. */
-  const onEdge = (p: MotionSegment) => p.x < 1e-6 || p.y < 1e-6 || p.x > W - 1e-6 || p.y > W - 1e-6
+   *  Moves along the limit — both tools' radius, 3 mm, and a 0.05 mm lead outside the box,
+   *  less the 0.01 mm arc tolerance, its corners rounded about the box's — are the lap round
+   *  it (`wallInto`), a ring with a hand of its own, and are left out, with the first and
+   *  last rows, which lie on that edge too. */
+  // (Round its corners the limit is chords, up to the 0.01 mm tolerance inside the arc.)
+  const EDGE = 3 + 0.04
+  const onEdge = (p: MotionSegment) =>
+    Math.hypot(Math.max(0, -p.x, p.x - W), Math.max(0, -p.y, p.y - W)) > EDGE - 0.02
+  // Only moves ALONG a row: a link from a row's end onto the lap (or to the next run) crosses
+  // rows, and goes whichever way the two ends lie.
   const rowSteps = (segs: MotionSegment[], deg: number) => {
     const [dx, dy] = along(deg), out: number[] = []
     for (let i = 1; i < segs.length; i++) {
       const a = segs[i - 1], b = segs[i]
       if (b.rapid || (onEdge(a) && onEdge(b))) continue
+      if (Math.abs((b.y - a.y) * dx - (b.x - a.x) * dy) > 1e-6) continue
       const s = (b.x - a.x) * dx + (b.y - a.y) * dy
       if (Math.abs(s) > 1e-6) out.push(s)
     }
@@ -1156,12 +1370,14 @@ describe('cut direction: mixed, climb or conventional', () => {
 
     it('the lap round the box takes the hand too: along its bottom edge climb runs +x, conventional −x', { timeout: 60000 }, () => {
       // The lap runs with the stock beyond the limit on its right (anticlockwise round the
-      // box) — climb. With a waterline finish nothing else runs along the box's edge.
+      // box) — climb. With a waterline finish nothing else runs along the limit's edge, a
+      // radius and 0.05 mm lead below the box, less the 0.01 mm arc tolerance.
+      const y0 = -(3 + 0.04)
       const bottom = (segs: MotionSegment[]) => {
         const out: number[] = []
         for (let i = 1; i < segs.length; i++) {
           const a = segs[i - 1], b = segs[i]
-          if (!b.rapid && !b.travel && a.y < 1e-6 && b.y < 1e-6 && Math.abs(b.x - a.x) > 1e-6) out.push(b.x - a.x)
+          if (!b.rapid && !b.travel && Math.abs(a.y - y0) < 1e-6 && Math.abs(b.y - y0) < 1e-6 && Math.abs(b.x - a.x) > 1e-6) out.push(b.x - a.x)
         }
         return out
       }

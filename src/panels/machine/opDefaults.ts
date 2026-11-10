@@ -313,7 +313,13 @@ export interface Profile3dSettings {
   roughingRasterAngleDeg: number | ''  // '' = auto (finishing angle + 90)
   finishDirection: PassDirection
   roughingDirection: PassDirection
+  /** 0 = off: only ground at the stock top is skipped. */
+  skipFlatTolMM: number
 }
+
+/** What "Skip finished top" turns on at: a mesh's flat face is often a few hundredths of a
+ *  millimetre off true, which this covers without leaving anything a finish would show. */
+export const DEFAULT_SKIP_FLAT_TOL_MM = 0.05
 
 export function profile3dFormDefaults(defaultTool: Tool | undefined, thicknessMM: number, firstModelId: string) {
   return {
@@ -337,6 +343,7 @@ export function profile3dFormDefaults(defaultTool: Tool | undefined, thicknessMM
     roughingRasterAngleDeg: '' as number | '',
     finishDirection: 'mixed' as PassDirection,
     roughingDirection: 'mixed' as PassDirection,
+    skipFlatTolMM: 0,
   }
 }
 
@@ -366,6 +373,7 @@ export function profile3dSettingsOf(op: Profile3dOperation): Profile3dSettings {
     roughingRasterAngleDeg: op.roughingRasterAngleDeg ?? '',
     finishDirection: op.finishDirection ?? 'mixed',
     roughingDirection: op.roughingDirection ?? 'mixed',
+    skipFlatTolMM: op.skipFlatTolMM ?? 0,
   }
 }
 
@@ -402,6 +410,7 @@ export function profile3dOpFields(form: Profile3dSettings, path: ImportedPath, f
     // reads as mixed everywhere (here and in the generator).
     finishDirection: form.finishDirection,
     roughingDirection: hasRoughing ? form.roughingDirection : undefined,
+    skipFlatTolMM: form.skipFlatTolMM > 0 ? form.skipFlatTolMM : undefined,
   } satisfies Partial<Profile3dOperation>
 }
 

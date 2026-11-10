@@ -333,7 +333,19 @@ export class Heightfield {
           const dt = tc - tc_raw
           const dist = Math.sqrt(dt * dt * lenSq + perp_sq)
           if (dist > rPad) continue
-          newH = Math.max(0, this.T + z_tc)
+          // The flat bottom covers this cell for every t within h of the closest approach,
+          // and Z is linear in t, so the lowest it gets there is at whichever end of that
+          // stretch is deeper. Read at the closest point alone, the cells BEHIND a
+          // descending move kept the higher Z it started at — the very next move's floor,
+          // and a straight-up G0 off its end then read as a rapid into stock (a 3D Profile's
+          // end-mill roughing, 0.11 mm at the end of every row that ended on a slope).
+          let zLow = z_tc
+          if (lenSq > 1e-12 && dz !== 0) {
+            const h = Math.sqrt(Math.max(0, rPad * rPad - perp_sq) / lenSq)
+            const t = dz < 0 ? Math.min(1, tc_raw + h) : Math.max(0, tc_raw - h)
+            zLow = Math.min(z_tc, prevZ + t * dz)
+          }
+          newH = Math.max(0, this.T + zLow)
         }
 
         if (cur > newH) {

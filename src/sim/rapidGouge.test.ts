@@ -41,6 +41,15 @@ describe('findRapidGouges — G0 moves that cut into the stock', () => {
     expect(gouges(...SLOT, 'G0 X60 Y52 Z5', 'G0 Z-3')).toEqual([{ line: 6, depth: 3 }])
   })
 
+  it('leaves alone a straight-up lift off the end of a cut that ramped DOWN', () => {
+    // An end mill finishing a row down a slope, as a 3D Profile roughing does: its last
+    // move drops 0.5 mm over 0.5 mm, so at the end the whole flat bottom is at Z-3.5. The
+    // carve used to read each cell at the closest point on the move, which for the cells
+    // behind it is the START, half a millimetre higher — and the lift then counted that
+    // half millimetre as a rapid into stock.
+    expect(gouges('G0 X20 Y50 Z5', 'G1 Z-3 F300', 'G1 X60 F1000', 'G1 X60.5 Z-3.5', 'G0 Z5')).toEqual([])
+  })
+
   it('judges a rapid against what the program cut BEFORE it, not after', () => {
     // The same rapid is clear once the slot exists, and flagged when it comes first.
     expect(gouges('G0 X50 Y50 Z5', 'G0 Z-2.5', 'G0 Z5', ...SLOT)).toEqual([{ line: 2, depth: 2.5 }])

@@ -17,11 +17,11 @@ import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 import { isWorkCancelled } from '../../workers/workerClient'
 import { generateOperation } from '../../cam/opJob'
 import { effectiveStepDownMM } from '../../cam/feeds'
-import { profile3dDepthMM, STOCK_SKIN_MM, modelBelowCut, MODEL_BELOW_CUT_MSG } from '../../cam/profile3d'
+import { profile3dDepthMM, modelBelowCut, MODEL_BELOW_CUT_MSG } from '../../cam/profile3d'
 import { enclosingBoundaries } from '../../cam/boundaryCandidates'
 import { depthMapFloorLevel } from '../../cam/depthMapMesh'
 import { loadImageLuminance } from '../../io/imageLuminance'
-import { PROFILE3D_FINISH_TOOL_TYPES, PROFILE3D_ROUGH_TOOL_TYPES, profile3dFormDefaults, profile3dOpFields, profile3dSettingsOf, type Profile3dSettings } from './opDefaults'
+import { PROFILE3D_FINISH_TOOL_TYPES, PROFILE3D_ROUGH_TOOL_TYPES, profile3dFormDefaults, profile3dOpFields, profile3dSettingsOf, DEFAULT_SKIP_FLAT_TOL_MM, type Profile3dSettings } from './opDefaults'
 
 type Profile3dFormState = Profile3dSettings
 
@@ -83,6 +83,8 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
       roughingToolId: base.roughingToolId === '' ? '' : pickToolId(base.roughingToolId, roughTools) }
   })
   const [generating, setGenerating] = useState(false)
+  // The tolerance the checkbox turns back on at — the last one typed, this session.
+  const [skipTolLast, setSkipTolLast] = useState(() => form.skipFlatTolMM > 0 ? form.skipFlatTolMM : DEFAULT_SKIP_FLAT_TOL_MM)
   const [errorMsg, reportError, clearError] = useGenerateError()
   const session = useSessionOps()
 
@@ -257,11 +259,13 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
             Draw a closed shape around the model to clear to it.
           </p>
         )}
-        {form.boundary !== 'model' && (
-          <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">
-            The tool stays inside; around the model it cuts down to the model's base.
-          </p>
-        )}
+        <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">
+          {form.boundary === 'model'
+            ? 'Cuts down to the model\'s base all round it, the tool running its radius past the model\'s box so the sides come out clean.'
+            : form.boundary === 'stock'
+              ? 'Cuts down to the model\'s base all round it, the tool running its radius past the stock\'s edge.'
+              : 'The tool stays inside; around the model it cuts down to the model\'s base.'}
+        </p>
         {form.boundary === 'path' && !boundaryPaths.some((p) => p.id === form.boundaryPathId) && (
           <p className="text-label text-amber-600 dark:text-amber-500 flex items-center gap-1 mt-0.5">
             <AlertCircle size={10} className="shrink-0" /> Pick a path
@@ -274,6 +278,27 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
         <label htmlFor="p3d-model-top" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">Model Top Below Stock</label>
         <LengthInput id="p3d-model-top" valueMM={form.modelTopMM} minMM={0} stepMM={0.5}
           onChangeMM={(v) => up('modelTopMM', v)} />
+      </div>
+
+      {/* Ground already at the stock top: a flush face, read through a mesh a hair off true */}
+      <div>
+        <label className="flex items-center gap-2 text-body text-gray-700 dark:text-neutral-300 cursor-pointer">
+          <input type="checkbox" checked={form.skipFlatTolMM > 0}
+            onChange={(e) => up('skipFlatTolMM', e.target.checked ? skipTolLast : 0)} />
+          Skip finished top
+        </label>
+        {form.skipFlatTolMM > 0 && (
+          <div className="mt-1">
+            <label htmlFor="p3d-skip-tol" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">Tolerance</label>
+            <LengthInput id="p3d-skip-tol" valueMM={form.skipFlatTolMM} minMM={0.001} maxMM={1} stepMM={0.01}
+              onChangeMM={(v) => { up('skipFlatTolMM', v); setSkipTolLast(v) }} />
+          </div>
+        )}
+        <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">
+          {form.skipFlatTolMM > 0
+            ? `Surface within ${fmtLen(form.skipFlatTolMM, units)} of the stock top counts as done and is not cut.`
+            : 'Surface at the stock top is never cut. Tick to also skip a face a mesh puts a hair below it.'}
+        </p>
       </div>
 
       {/* ── Roughing pass (optional) ─────────────────────────────────────────── */}
@@ -460,9 +485,9 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
           </p>
         )}
         {depthCutMM < form.maxDepthMM && (
-          <p className="text-label text-amber-600 dark:text-amber-500 flex items-center gap-1 mt-0.5">
-            <AlertCircle size={10} className="shrink-0" />
-            Deeper than the stock — cuts to {fmtLen(depthCutMM, units)}, leaving a {fmtLen(STOCK_SKIN_MM, units)} skin
+          // Not a problem, so not amber: the cut simply stops at the bottom of the stock.
+          <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">
+            Past the stock's {fmtLen(thicknessMM, units)} — cuts to its bottom. Set a smaller Max Depth to leave a skin under the part.
           </p>
         )}
         {selectedTool && form.maxDepthMM > selectedTool.maxDepthMM && (

@@ -251,6 +251,9 @@ export interface Profile3dOperation extends BaseOperation {
    *  regenerates exactly as it did. */
   finishDirection?: PassDirection
   roughingDirection?: PassDirection
+  /** Ground within this of the stock top is already finished and is not cut, by either pass
+   *  (cam/profile3d `skipFlatTolMM`). Unset: only ground AT the top is skipped. */
+  skipFlatTolMM?: number
 }
 
 export interface TrochoidalOperation extends BaseOperation {

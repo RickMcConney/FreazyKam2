@@ -187,9 +187,12 @@ describe('where the waterline puts its rings', () => {
   it('spaces neighbouring rings by the stepover measured ON THE PART, all the way up to the crown', () => {
     // Spacing the levels a stepover apart in Z left rings far apart across a gentle slope:
     // near the crown one Z step is several millimetres of surface. Measured here as the 3D
-    // distance between one ring and the next, from the dome's foot to its top.
-    const domeRings = rings(dome.cuts)
-      .filter((r) => r.z > -14.99 && Math.hypot(centroid(r.pts)[0] - 20, centroid(r.pts)[1] - 20) < 0.5)
+    // distance between one ring and the next, from the dome's foot to its top. (Sunk a
+    // millimetre, as above: a crown AT the stock top has nothing on it to cut, so the rings
+    // would start wherever the dome first drops below the top.)
+    const sunk = waterline(DOME, 80, BALL, { modelTopMM: 1 }).cuts
+    const domeRings = rings(sunk)
+      .filter((r) => r.z > -15.99 && Math.hypot(centroid(r.pts)[0] - 20, centroid(r.pts)[1] - 20) < 0.5)
       .map((r) => ({ z: r.z, r: meanRadius(r.pts, 20, 20) }))
       .sort((a, b) => b.z - a.z)
     expect(domeRings.length).toBeGreaterThan(10)
@@ -200,11 +203,18 @@ describe('where the waterline puts its rings', () => {
     expect(worst).toBeLessThan(STEP * 1.05)
   })
 
-  it('keeps the tool centre inside the model box, as the raster does', () => {
+  it('runs the tool centre no further than its radius past the model box, as the raster does', () => {
+    // Boundary "model" machines the stock down to the model: the edge reaches the box, and
+    // a side the model runs out to is cut — but the centre goes no further than that, and the
+    // 0.05 mm lead that lets it come down beside a vertical side.
+    const R = BALL.diameterMM / 2 + 0.05
+    let out = 0
     for (const s of dome.cuts) {
-      expect(s.x).toBeGreaterThanOrEqual(-1e-6); expect(s.x).toBeLessThanOrEqual(W + 1e-6)
-      expect(s.y).toBeGreaterThanOrEqual(-1e-6); expect(s.y).toBeLessThanOrEqual(W + 1e-6)
+      const d = Math.hypot(Math.max(0, -s.x, s.x - W), Math.max(0, -s.y, s.y - W))
+      expect(d).toBeLessThanOrEqual(R + 1e-6)
+      out = Math.max(out, d)
     }
+    expect(out).toBeGreaterThan(R - 0.04)
   })
 
   it('cuts climb: round a peak clockwise, round the inside of a pit anticlockwise', () => {
@@ -218,7 +228,10 @@ describe('where the waterline puts its rings', () => {
     for (const r of domeRings) expect(signedArea(r.pts)).toBeLessThan(0)
     // (Wall rings only: the pit's bottom is a small flat, whose rings run the other way —
     // a floor ring cut outside-in has the uncut middle on its right.)
-    const pitRings = rings(waterline(PIT, 40).cuts).filter((r) => r.z < -0.01 && r.z > -9.9 && closed(r))
+    // (Inside the box: the block the pit is cut in stands on the floor past it, and the rings
+    // round its outside run clockwise, as round any boss.)
+    const inside = (r: { pts: [number, number][] }) => r.pts.every(([x, y]) => x > 0 && x < W && y > 0 && y < W)
+    const pitRings = rings(waterline(PIT, 40).cuts).filter((r) => r.z < -0.01 && r.z > -9.9 && closed(r) && inside(r))
     expect(pitRings.length).toBeGreaterThan(5)
     for (const r of pitRings) expect(signedArea(r.pts)).toBeGreaterThan(0)
   })

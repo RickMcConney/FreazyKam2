@@ -435,7 +435,7 @@ const profile3d: ToolpathKind = {
     toolId: { ...TOOL_ID, description: 'Finishing tool: a ball nose, bull nose, taper or end mill (an end mill finishes flats and terraces; a curved surface comes out stepped)' },
     stepoverPercent: { type: 'number', exclusiveMinimum: 0, maximum: 100, description: 'Finishing stepover, % of the tool diameter' },
     finishStrategy: { type: 'string', enum: ['raster', 'waterline'], description: 'raster = parallel passes; waterline = contours at each height (STL only — a depth map is always rastered)' },
-    boundary: { type: 'string', enum: ['model', 'stock', 'path'], description: 'What the carve is confined to; path = boundaryPathId' },
+    boundary: { type: 'string', enum: ['model', 'stock', 'path'], description: 'What the carve is confined to. model = the model\'s box, each tool running its radius past it so the stock beside the model is cut down to its base and its sides come out clean; stock = the same past the stock\'s edge; path = inside boundaryPathId' },
     boundaryPathId: { type: 'string', description: 'A closed path around the model to confine the carve to', onlyWith: 'boundary "path"' },
     modelTopMM: { type: 'number', minimum: 0, description: 'Sink the model\'s top this far below the stock top, mm; 0 = flush' },
     rasterAngleDeg: { type: 'number', description: 'Direction of the finishing passes, degrees' },
@@ -449,6 +449,7 @@ const profile3d: ToolpathKind = {
     roughingRasterAngleDeg: { type: 'number', description: 'Roughing pass direction, degrees; left out = finishing angle + 90', onlyWith: ROUGHING },
     finishDirection: { type: 'string', enum: ['mixed', 'climb', 'conventional'], description: 'Hand of the finish. mixed = zigzag, both ways, no lift between passes (the default). climb / conventional = every pass the same hand, with a lift and a rapid back to the start of the next pass; a waterline turns its rings to match' },
     roughingDirection: { type: 'string', enum: ['mixed', 'climb', 'conventional'], description: 'Hand of the roughing, as finishDirection', onlyWith: ROUGHING },
+    skipFlatTolMM: { type: 'number', minimum: 0, description: 'Skip already-finished area: ground within this of the stock top is treated as done and not cut, by the roughing or the finish (0.05 suits a mesh whose flat top is a few hundredths off true). 0 = off — ground at the stock top itself is always skipped, mm' },
   },
   allowedTools: (tools) => toolsOfType(tools, PROFILE3D_FINISH_TOOL_TYPES),
   plan(paths, s, ctx) {

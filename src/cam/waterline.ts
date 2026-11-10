@@ -41,7 +41,9 @@ export interface WaterlineEmitter {
   arrive(x: number, y: number, z: number, overCleared?: boolean, maxClimbMM?: number): void
   /** Get to (x, y, z) over the top, never along the surface. */
   enterOverTop(x: number, y: number, z: number): void
-  cut(x: number, y: number, z: number): void
+  /** Cut to (x, y, z). `clear`: the move is known to stand clear of the surface all along
+   *  it (a sliced ring's), so the emitter need not check it. */
+  cut(x: number, y: number, z: number, clear?: boolean): void
 }
 
 export interface WaterlineParams {
@@ -64,6 +66,10 @@ export interface WaterlineParams {
    *  (false), or null to cut them as traced — closed rings with it on the right (climb on
    *  M3), open chains from whichever end is nearer. */
   hand?: boolean | null
+  /** The rings of level z read straight off the mesh (`flatWaterlineSlicer`): closed x/y
+   *  rings with the material on their right, exact, so they are cut as given — neither
+   *  smoothed nor tightened, and clipped to `inside` here. Unset: traced on the grid. */
+  slice?: (z: number) => { rings: number[][]; region: PathsD }
 }
 
 /** Below this the two levels of an interval are the same height to the machine. */
@@ -82,6 +88,10 @@ export interface Chain {
   pts: number[]
   closed: boolean
   minX: number; minY: number; maxX: number; maxY: number
+  /** Sliced off the mesh (`WaterlineParams.slice`): every move along it, at its level or
+   *  above, is clear of the surface — it runs along the grown outline, which the region the
+   *  tool must keep out of lies wholly inside. */
+  exact?: boolean
 }
 
 // ─── The tip surface on a grid ────────────────────────────────────────────────
@@ -661,6 +671,8 @@ function addFlats(
   grid: TipGrid, rings: Ring[], levels: number[], intervals: [number, number][],
   stepover: number, reach: number, cl: (x: number, y: number) => number,
   limit?: [number, number][][],
+  /** Regions already known exactly, by level (`WaterlineParams.slice`); the rest are traced. */
+  known?: Map<number, PathsD>,
 ): number {
   const box = grid.bbox
   // Where the tool may go: the boundary's limit when there is one — a flat's region built
@@ -678,7 +690,11 @@ function addFlats(
   // region back to the limit.
   // Whether the box's edge stands at or above level z (read where the grid meets it).
   const edgeAt = (z: number) => { const v0 = grid.all[0]; return v0 === v0 && v0 >= z }
-  const regionAt = (z: number) => regionOf(grid.trace(z, true, grid.all), box, edgeAt(z))
+  const boxRect: PathsD = [[{ x: box.minX, y: box.minY }, { x: box.maxX, y: box.minY }, { x: box.maxX, y: box.maxY }, { x: box.minX, y: box.maxY }]]
+  const regionAt = (z: number) => {
+    const k = known?.get(z)
+    return k ? intersectD(k, boxRect, FillRule.NonZero, 4) : regionOf(grid.trace(z, true, grid.all), box, edgeAt(z))
+  }
   const zTop = levels[0], zLowest = levels[levels.length - 1]
 
   // The regions to cut, each with the height it is cut at.
@@ -836,7 +852,7 @@ function cutOpenChain(em: WaterlineEmitter, c: Chain, x: number, y: number, step
   const at = (k: number) => (!handed && dTail < dHead ? m - 1 - k : k) * 3
   if (handed) em.enterOverTop(p[0], p[1], p[2])
   else em.arrive(p[at(0)], p[at(0) + 1], p[at(0) + 2], false, stepoverMM)
-  for (let k = 1; k < m; k++) em.cut(p[at(k)], p[at(k) + 1], p[at(k) + 2])
+  for (let k = 1; k < m; k++) em.cut(p[at(k)], p[at(k) + 1], p[at(k) + 2], c.exact)
 }
 
 /** x, y, z triples in the opposite order. */
@@ -888,13 +904,70 @@ function cutClosedRing(em: WaterlineEmitter, ring: Ring, chainStep: boolean, x: 
   for (let k = 1; k < m; k++) {
     const zk = loop[k * 3 + 2]
     const zr = ramp > 0 && cum[k] < ramp ? zk + (zFrom - zk) * (1 - cum[k] / ramp) : zk
-    em.cut(loop[k * 3], loop[k * 3 + 1], zr)
+    // A ramp stands above the ring, so it is as clear as the ring is.
+    em.cut(loop[k * 3], loop[k * 3 + 1], zr, c.exact)
   }
   // On past the start, over the stretch the ramp cut high — to the first ring point at or
   // past its end, not to a point part-way along a chord (see `rotateTo`).
   if (ramp > 0) {
-    for (let k = 1; k < m && cum[k - 1] < ramp; k++) em.cut(loop[k * 3], loop[k * 3 + 1], loop[k * 3 + 2])
+    for (let k = 1; k < m && cum[k - 1] < ramp; k++) em.cut(loop[k * 3], loop[k * 3 + 1], loop[k * 3 + 2], c.exact)
   }
+}
+
+/**
+ * Sliced rings (x/y, closed, material on the right) as the chains of level z: points no
+ * further apart than `step` — the grid's spacing, which is what `needsCut` and the ring
+ * linking sample — and clipped to where the tool centre may go. A ring wholly inside stays
+ * closed; one the limit crosses becomes the open runs inside it, each in the ring's own
+ * direction and ending on the limit (to the bisection's last point inside), as a grid
+ * contour ends where the grid stops.
+ */
+function slicedChains(rings: number[][], z: number, step: number, inside?: (x: number, y: number) => boolean): Chain[] {
+  const out: Chain[] = []
+  for (const r of rings) {
+    const n = r.length / 2
+    if (n < 3) continue
+    const pts: number[] = []
+    for (let k = 0; k < n; k++) {
+      const ax = r[k * 2], ay = r[k * 2 + 1], bx = r[((k + 1) % n) * 2], by = r[((k + 1) % n) * 2 + 1]
+      const m = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / step))
+      for (let i = 0; i < m; i++) pts.push(ax + (bx - ax) * i / m, ay + (by - ay) * i / m, z)
+    }
+    const m = pts.length / 3
+    if (!inside) { out.push({ ...withBounds(pts, true), exact: true }); continue }
+    const isIn: boolean[] = []
+    let first = -1
+    for (let k = 0; k < m; k++) {
+      isIn.push(inside(pts[k * 3], pts[k * 3 + 1]))
+      if (!isIn[k] && first < 0) first = k
+    }
+    if (first < 0) { out.push({ ...withBounds(pts, true), exact: true }); continue }
+    // Where the limit crosses between point a (in) and b (out): the last point found in.
+    const edge = (a: number, b: number): [number, number] => {
+      let lo = 0, hi = 1
+      for (let it = 0; it < 12; it++) {
+        const t = (lo + hi) / 2
+        if (inside(pts[a * 3] + (pts[b * 3] - pts[a * 3]) * t, pts[a * 3 + 1] + (pts[b * 3 + 1] - pts[a * 3 + 1]) * t)) lo = t
+        else hi = t
+      }
+      return [pts[a * 3] + (pts[b * 3] - pts[a * 3]) * lo, pts[a * 3 + 1] + (pts[b * 3 + 1] - pts[a * 3 + 1]) * lo]
+    }
+    // Walk once round from a point outside, so no run is split at the ring's seam.
+    let run: number[] | null = null
+    for (let s = 1; s <= m; s++) {
+      const k = (first + s) % m, prev = (first + s - 1) % m
+      if (isIn[k]) {
+        if (!run) { const [ex, ey] = edge(k, prev); run = [ex, ey, z] }
+        run.push(pts[k * 3], pts[k * 3 + 1], z)
+      } else if (run) {
+        const [ex, ey] = edge(prev, k)
+        run.push(ex, ey, z)
+        if (run.length >= 6) out.push({ ...withBounds(run, false), exact: true })
+        run = null
+      }
+    }
+  }
+  return out
 }
 
 export function generateWaterline(em: WaterlineEmitter, bbox: BBox, params: WaterlineParams): { levels: number; rings: number; flats: number } {
@@ -915,7 +988,11 @@ export function generateWaterline(em: WaterlineEmitter, bbox: BBox, params: Wate
   const zTop = grid.zMax - END_EPS_MM
   // The lowest level stands a little off the floor: right at it, the ball is rolling off the
   // wall onto the floor and the surface is so nearly level that the ring is ill-defined.
-  const zBot = grid.zMin + Math.max(END_EPS_MM, Math.min(BOTTOM_LIFT_MM, (grid.zMax - grid.zMin) / 4))
+  // A SLICED ring is exact at any height, and lifted it left an onion skin: where the
+  // roughing could not reach into a rounded corner of the model's foot, the lowest ring was
+  // the only cut beside the wall — 0.02 mm above the floor — and the floor's rings start a
+  // stepover out from it. Sliced, it stands only END_EPS_MM off.
+  const zBot = grid.zMin + (params.slice ? END_EPS_MM : Math.max(END_EPS_MM, Math.min(BOTTOM_LIFT_MM, (grid.zMax - grid.zMin) / 4)))
   // Levels within STOCK_TOP_MM of the stock top cut nothing worth a pass — the model's top
   // IS the stock's there — and they are the worst-conditioned of all: hugging the edge of a
   // flat top, the surface beside them is level, and they wander. The level search still
@@ -931,14 +1008,20 @@ export function generateWaterline(em: WaterlineEmitter, bbox: BBox, params: Wate
   const rings: Ring[] = []
   let prev: { index: SegIndex; first: number } | null = null
   const reach = stepoverMM * 1.5
+  // Each sliced level's region, which is exactly what `addFlats` would otherwise trace.
+  const slicedRegions = new Map<number, PathsD>()
   for (let li = 0; li < levels.length; li++) {
-    const chains = grid.trace(levels[li], true).map((c) => tighten(smoothRing(c, levels[li], cl), levels[li], cl, stepoverMM))
+    const sliced = params.slice?.(levels[li])
+    if (sliced) slicedRegions.set(levels[li], sliced.region)
+    const chains = sliced
+      ? slicedChains(sliced.rings, levels[li], Math.min(stepoverMM, 0.5), inside)
+      : grid.trace(levels[li], true).map((c) => tighten(smoothRing(c, levels[li], cl), levels[li], cl, stepoverMM))
     const first = rings.length
     for (const chain of chains) rings.push({ z: levels[li], chain, up: [], down: [], done: false, waiting: 0 })
     if (prev) linkUp(rings, first, prev.index, prev.first, reach)
     prev = { index: new SegIndex(chains, Math.max(stepoverMM, grid.cx * 2)), first }
   }
-  const flatCount = addFlats(grid, rings, levels, flats, stepoverMM, reach, cl, params.limit)
+  const flatCount = addFlats(grid, rings, levels, flats, stepoverMM, reach, cl, params.limit, slicedRegions)
   for (const r of rings) r.waiting = r.up.length
   // Every ring is traced with the material on its right. A hand that wants it on the left
   // turns them all round — after `linkUp`, which pairs rings by where they lie, not by
