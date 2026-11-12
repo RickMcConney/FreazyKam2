@@ -34,7 +34,7 @@
 
 import { flattenPath, isOpenSubpath, splitSelfIntersecting, ensureWinding, signedArea, type Pt2 } from './pathFlattener'
 import {
-  generateProfile, offsetClosedSubpaths, emitProfilePath, designPathAtT, nearestArcLen, tabClearRadiusMM, withBridges, fitPassCoarse,
+  generateProfile, offsetClosedSubpaths, emitProfilePath, designPathAtT, nearestArcLen, tabClearRadiusMM, withBridges, fitPassCoarse, holdTopZ,
   type ProfileParams, type PathEmitContext, type TabRange,
 } from './profile'
 import { planCommonLineCut, segmentLength, type CommonLineIssue } from './commonLine'
@@ -481,7 +481,8 @@ export function generateSharedLineProfile(
       const d = Math.hypot(q[0] - pos[0], q[1] - pos[1])
       if (d < bestD) { bestD = d; best = q }
     }
-    return [{ q: best, half: tab.lengthMM / 2 + tabClearRadiusMM(tool, tab), tabZ: Math.min(startZ, startZ - params.depthMM + tab.heightMM) }]
+    const tabZ = holdTopZ(startZ, params.depthMM, tab.heightMM, params.stockBottomZMM)
+    return [{ q: best, half: tab.lengthMM / 2 + tabClearRadiusMM(tool, tab, Math.max(0, tabZ - (startZ - params.depthMM))), tabZ }]
   }))
   const onPath = (q: Pt2, pts: Pt2[]) => {
     for (let i = 1; i < pts.length; i++) {

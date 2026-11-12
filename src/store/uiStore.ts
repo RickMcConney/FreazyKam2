@@ -97,6 +97,14 @@ interface UIState {
   darkMode: boolean
   machineFormActive: boolean
   tabsFormActive: boolean
+  // CLICK TO PLACE in the Tabs form: each click places the kind the form's Hold With toggle
+  // says — a strip ('bridges') or a tab — at the click. The form publishes the kind and the
+  // sizes; null = off. Ends with the form (setTabsFormActive(false)).
+  tabPlace: { kind: 'tabs' | 'bridges'; lengthMM: number; heightMM: number; widthMM: number } | null
+  // What a click would place right now, drawn as a ghost under the pointer (HoldPreviewLayer).
+  holdPreview: { kind: 'strip'; x1: number; y1: number; x2: number; y2: number; widthMM: number }
+    | { kind: 'tab'; x: number; y: number; tx: number; ty: number; lengthMM: number; heightMM: number }
+    | null
   shapesPanelOpen: boolean
   // The clock designer (panels/draw/ClockPanel). Its own flag rather than an
   // activeTool, because a clock is not one shape placed by a click — it works
@@ -135,6 +143,12 @@ interface UIState {
   // The edit form was opened from the Toolpaths list, so closing it goes back there
   // rather than leaving the user on the Draw tab. Any other edit request clears it.
   returnToToolpaths: boolean
+  // The operations whose source paths the canvas highlights — whatever row, tool run or
+  // sheet folder the pointer is over in the Toolpaths list, so a toolpath can be found on a
+  // crowded drawing before it is clicked to edit. Transient: never persisted.
+  hoverOpIds: string[]
+  // The same for PATHS: a row or folder of the Paths list, or a path chip of the strip.
+  hoverPathIds: string[]
   // Which sheet of stock (cam/sheets) the simulator plays and the machine panel runs, when
   // the parts are spread over several. The export writes every sheet. A CELL, not an index:
   // a sheet made or emptied elsewhere renumbers the ones after it, and the view must stay
@@ -184,6 +198,8 @@ interface UIState {
   setScreenCalibrationOpen: (open: boolean) => void
   setMachineFormActive: (active: boolean) => void
   setTabsFormActive: (active: boolean) => void
+  setTabPlace: (v: UIState['tabPlace']) => void
+  setHoldPreview: (v: UIState['holdPreview']) => void
   setShapesPanelOpen: (open: boolean) => void
   setClockPanelOpen: (open: boolean) => void
   setClockEdit: (clockId: string | null) => void
@@ -210,6 +226,8 @@ interface UIState {
   setPathsView: (v: 'paths' | 'toolpaths') => void
   setRequestEditOpId: (id: string | null) => void
   setReturnToToolpaths: (v: boolean) => void
+  setHoverOpIds: (ids: string[]) => void
+  setHoverPathIds: (ids: string[]) => void
   setActiveSheet: (c: Cell) => void
   setActiveTile: (k: number) => void
   setRequestEditPathId: (id: string | null) => void
@@ -277,6 +295,8 @@ export const useUIStore = create<UIState>()(
   darkMode: true,
   machineFormActive: false,
   tabsFormActive: false,
+  tabPlace: null,
+  holdPreview: null,
   shapesPanelOpen: false,
   clockPanelOpen: false,
   clockEditId: null,
@@ -293,6 +313,8 @@ export const useUIStore = create<UIState>()(
   pathsView: 'paths' as const,
   requestEditOpId: null,
   returnToToolpaths: false,
+  hoverOpIds: [],
+  hoverPathIds: [],
   activeSheet: STOCK_CELL,
   activeTile: 0,
   requestEditPathId: null,
@@ -313,7 +335,9 @@ export const useUIStore = create<UIState>()(
   screenCalibrationOpen: false,
   setScreenCalibrationOpen: (open) => set({ screenCalibrationOpen: open }),
   setMachineFormActive: (active) => set({ machineFormActive: active }),
-  setTabsFormActive: (active) => set({ tabsFormActive: active }),
+  setTabsFormActive: (active) => set(active ? { tabsFormActive: true } : { tabsFormActive: false, tabPlace: null, holdPreview: null }),
+  setTabPlace: (v) => set(v ? { tabPlace: v } : { tabPlace: null, holdPreview: null }),
+  setHoldPreview: (v) => set((s) => (v === null && s.holdPreview === null ? s : { holdPreview: v })),
   setShapesPanelOpen: (open) => set({ shapesPanelOpen: open }),
   // Closing the designer always drops the edit target, so the next time it is
   // opened from the shapes grid it starts a NEW clock rather than silently
@@ -330,7 +354,7 @@ export const useUIStore = create<UIState>()(
     // Panels and forms (closeDrawPanels' set, plus the two it leaves alone).
     setupPanelOpen: false, shapesPanelOpen: false, machineFormActive: false,
     clockPanelOpen: false, clockEditId: null, clockInfoOpen: false, clockDraft: null, tracePreview: null,
-    tabsFormActive: false, escapementInfoOpen: false,
+    tabsFormActive: false, tabPlace: null, holdPreview: null, escapementInfoOpen: false,
     // Canvas modes working on a path of the outgoing document. Node edit is ABANDONED, not
     // committed — useNodeEditSession checks projectStore.documentEpoch before writing back.
     activeTool: 'select', nodeEditPathId: null,
@@ -356,6 +380,8 @@ export const useUIStore = create<UIState>()(
   // consumer's clear (null) must leave the flag alone, or it is gone before the form opens.
   setRequestEditOpId: (id) => set(id ? { requestEditOpId: id, returnToToolpaths: false } : { requestEditOpId: null }),
   setReturnToToolpaths: (v) => set({ returnToToolpaths: v }),
+  setHoverOpIds: (ids) => set((s) => (ids.length === 0 && s.hoverOpIds.length === 0 ? s : { hoverOpIds: ids })),
+  setHoverPathIds: (ids) => set((s) => (ids.length === 0 && s.hoverPathIds.length === 0 ? s : { hoverPathIds: ids })),
   setActiveSheet: (c) => set({ activeSheet: c }),
   setActiveTile: (k) => set({ activeTile: k }),
   setRequestEditPathId: (id) => set({ requestEditPathId: id }),

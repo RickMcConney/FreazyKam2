@@ -61,3 +61,28 @@ export function reorderedFor(ops: AnyOperation[], ids: string[], to: number): An
   const at = clamped - removedBefore
   return [...rest.slice(0, at), ...moving, ...rest.slice(at)]
 }
+
+export interface SheetGroup<C> { cell: C; key: string; ops: AnyOperation[] }
+
+/**
+ * The program split by sheet, for the Toolpaths list's folders. Each sheet is its own
+ * file on the machine (`buildGcodeInputs`), so what runs on it is the SUBSEQUENCE of the
+ * program on that sheet — program order is kept inside each group, and tool runs and tool
+ * changes are counted per group, never across a sheet boundary.
+ *
+ * Groups come in `cells` order (the sheets' reading order, "Sheet k + 1" everywhere) and
+ * only for sheets with something on them. An op whose cell is not in `cells` gets a group
+ * after them rather than vanishing from the list.
+ */
+export function groupBySheet<C>(ops: AnyOperation[], cellOf: (op: AnyOperation) => C, cells: C[], keyOf: (c: C) => string): SheetGroup<C>[] {
+  const byKey = new Map<string, SheetGroup<C>>()
+  for (const op of ops) {
+    const cell = cellOf(op)
+    const key = keyOf(cell)
+    let g = byKey.get(key)
+    if (!g) { g = { cell, key, ops: [] }; byKey.set(key, g) }
+    g.ops.push(op)
+  }
+  const order = new Map(cells.map((c, i) => [keyOf(c), i]))
+  return [...byKey.values()].sort((a, b) => (order.get(a.key) ?? Infinity) - (order.get(b.key) ?? Infinity))
+}

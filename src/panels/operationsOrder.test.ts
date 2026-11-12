@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { toolRuns, toolChangeCount, groupedByTool, sameOrder, reorderedFor } from './operationsOrder'
+import { toolRuns, toolChangeCount, groupedByTool, sameOrder, reorderedFor, groupBySheet } from './operationsOrder'
 import type { AnyOperation } from '../store/toolpathStore'
 
 // Only id + toolId matter to the ordering maths; the rest satisfies PocketOperation.
@@ -93,5 +93,29 @@ describe('reorderedFor', () => {
     const split = [op('a1', 'A'), op('b1', 'B'), op('a2', 'A')]
     expect(toolChangeCount(split)).toBe(2)
     expect(toolChangeCount(reorderedFor(split, ['a2'], 1))).toBe(1)
+  })
+})
+
+describe('groupBySheet', () => {
+  // The sheet is read off each op by the caller; here it is the op id's first letter.
+  const sheetOf = (o: AnyOperation) => o.id[0]
+  const key = (c: string) => c
+
+  it('lists sheets in layout order, not in the order their first op appears', () => {
+    const ops = [op('y1', 'A'), op('x1', 'A'), op('y2', 'B')]
+    expect(groupBySheet(ops, sheetOf, ['x', 'y'], key).map((g) => g.key)).toEqual(['x', 'y'])
+  })
+
+  it('keeps program order inside each sheet — the subsequence that sheet\'s file runs', () => {
+    const ops = [op('x1', 'A'), op('y1', 'A'), op('x2', 'B'), op('y2', 'B'), op('x3', 'A')]
+    const groups = groupBySheet(ops, sheetOf, ['x', 'y'], key)
+    expect(groups.map((g) => ids(g.ops))).toEqual(['x1 x2 x3', 'y1 y2'])
+    // Tool changes are per sheet: x is A,B,A (2), y is A,B (1) — not the 4 of the flat list.
+    expect(groups.map((g) => toolChangeCount(g.ops))).toEqual([2, 1])
+  })
+
+  it('omits empty sheets and keeps an op whose sheet is not in the layout, last', () => {
+    const ops = [op('z1', 'A'), op('y1', 'A')]
+    expect(groupBySheet(ops, sheetOf, ['x', 'y'], key).map((g) => g.key)).toEqual(['y', 'z'])
   })
 })

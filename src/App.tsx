@@ -17,7 +17,8 @@ import ClockInfoPanel from './panels/ClockInfoPanel'
 import MachineControlPanel from './panels/MachineControlPanel'
 import { useMachineStore } from './machine/machineStore'
 import { useWorkpieceStore } from './store/workpieceStore'
-import { useToolpathStore } from './store/toolpathStore'
+import { useToolpathStore, pathIdsOf, type AnyOperation } from './store/toolpathStore'
+import { useTabStore } from './store/tabStore'
 import { useToolStore } from './store/toolStore'
 import { useTimelineStore } from './timeline/timelineStore'
 import { regenerateOperation, regenerateMany } from './cam/regenerate'
@@ -193,7 +194,11 @@ function useStockDependentSync() {
         state.thicknessMM === prev.thicknessMM &&
         state.origin === prev.origin
       ) return
-      for (const op of opsAffectedByStockChange(useToolpathStore.getState().operations, prev, state)) {
+      // Held cuts: tabs on their paths, or the sheet's strips — which any profile may cross.
+      const tabbed = new Set(useTabStore.getState().tabs.map((t) => t.pathId))
+      const isHeld = (op: AnyOperation) => pathIdsOf(op).some((id) => tabbed.has(id))
+        || !!state.bridges
+      for (const op of opsAffectedByStockChange(useToolpathStore.getState().operations, prev, state, isHeld)) {
         regenerateOperation(op.id)
       }
     })

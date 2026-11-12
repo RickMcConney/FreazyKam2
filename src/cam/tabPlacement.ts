@@ -85,3 +85,31 @@ function offCorners(s: number, m: Measured, clear: number): number {
   const placed = hi - lo < 2 * clear ? (lo + hi) / 2 : Math.min(Math.max(ss, lo + clear), hi - clear)
   return closed ? ((placed % len) + len) % len : placed
 }
+
+/**
+ * One tab where the user clicked, as `t`: the nearest point on the outline to (x, y), moved
+ * off a corner the way `tabPositions` moves the evenly spaced ones. Null for an outline with
+ * no length.
+ */
+export function tabTAt(subpaths: Pt2[][], x: number, y: number, lengthMM: number): number | null {
+  const runs = subpaths.map(measure)
+  const totalLen = runs.reduce((a, r) => a + r.len, 0)
+  if (totalLen < 1e-6) return null
+  let best = Infinity, bestK = 0, bestS = 0
+  subpaths.forEach((pts, k) => {
+    let cum = 0
+    for (let i = 1; i < pts.length; i++) {
+      const [ax, ay] = pts[i - 1], [bx, by] = pts[i]
+      const dx = bx - ax, dy = by - ay, l = Math.hypot(dx, dy)
+      if (l < 1e-12) continue
+      const u = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (l * l)))
+      const d = Math.hypot(x - ax - u * dx, y - ay - u * dy)
+      if (d < best) { best = d; bestK = k; bestS = cum + u * l }
+      cum += l
+    }
+  })
+  let start = 0
+  for (let k = 0; k < bestK; k++) start += runs[k].len
+  const local = offCorners(bestS, runs[bestK], lengthMM / 2 + CORNER_CLEARANCE_MM)
+  return (start + local) / totalLen
+}

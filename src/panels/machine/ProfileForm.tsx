@@ -143,14 +143,21 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
     : null
   // What the allowance does to the number the calipers read. The wall moves by the
   // allowance, so the MEASURED size moves by twice it — that factor of two is the whole
-  // reason this line is here, and it is what the finishing pass at 0 gives back.
+  // reason this line is here.
+  //
+  // The allowance is where the FINISHED wall lands. This op's own Finishing Pass cuts TO
+  // it (cam/profile: the depth passes stand `finish` further off, the finish sweeps at the
+  // allowance), so it never takes the allowance off — only a separate profile at 0 does.
+  // The hint said "stock left for a finishing pass", which read as the opposite.
   const a = form.allowanceMM
   const opening = form.side === 'inside'
+  const thing = opening ? 'opening' : 'part'
+  const finishNote = finishing ? ' The Finishing Pass below cuts to this wall too, so it leaves the stock on.' : ''
   const allowanceHint = a === 0
-    ? 'Stock left on the wall for a finishing pass; negative cuts past the line.'
+    ? 'Leaves stock on the wall, for a second profile at 0 to finish later; negative cuts past the line for a looser fit.'
     : a > 0
-      ? `${fmtLen(a, units)} on the wall — the ${opening ? 'opening' : 'part'} cuts ${fmtLen(2 * a, units)} ${opening ? 'under' : 'over'}size until a second pass at 0 cleans it.`
-      : `Cuts ${fmtLen(-a, units)} past the line — the ${opening ? 'opening' : 'part'} comes out ${fmtLen(-2 * a, units)} ${opening ? 'over' : 'under'}size.`
+      ? `${fmtLen(a, units)} left on the wall — the ${thing} comes out ${fmtLen(2 * a, units)} ${opening ? 'under' : 'over'}size until a second profile at 0 takes it off.${finishNote}`
+      : `Cuts ${fmtLen(-a, units)} past the line — the ${thing} comes out ${fmtLen(-2 * a, units)} ${opening ? 'over' : 'under'}size.`
   const updating = !editOp && selectedPaths.length > 0 && selectedPaths.every((p) => session.liveOpId(p.id))
   // Optimize Path routes the outside cuts of several parts as one network. Corner rounding
   // is off and hidden while it is on: it moves a corner of one part's cut path off the line

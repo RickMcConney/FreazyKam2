@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { planBridges, clampToBridges, normalizeBridges, type BridgeSet, type BridgeLine, type Join } from './bridges'
-import { generateProfile, polylinePassWithTabs } from './profile'
+import { generateProfile, polylinePassWithTabs, holdTopZ } from './profile'
 import { generateTrochoidal } from './trochoidal'
 import { arcLengths, pointInPolygon } from './geom'
 import { flattenPath } from './pathFlattener'
@@ -87,10 +87,12 @@ describe('a cut that crosses a bridge leaves the bridge standing', () => {
     expect(intrusions(profile(rect(10, 10, 40, 30), B, 'centerline'), B, 3)).toEqual([])
   })
 
-  it('an INSIDE cut does not lift — a hole cannot part a strip its part carries', () => {
+  // A strip into a hole's slug holds it to the part (planSlugStrips), so the hole's inside
+  // cut lifts over it like any other. (It used to be exempt, and a slug had only tabs.)
+  it('an inside cut lifts too — the strip into a hole\'s slug stands', () => {
     const hole = rect(20, 15, 20, 20)
-    expect(profile(hole, B)).not.toEqual(profile(hole, undefined))
-    expect(profile(hole, B, 'inside')).toEqual(profile(hole, undefined, 'inside'))
+    expect(intrusions(profile(hole, undefined, 'inside'), B, 3).length).toBeGreaterThan(0)
+    expect(intrusions(profile(hole, B, 'inside'), B, 3)).toEqual([])
   })
 
   // Its loops swing a whole 2l off their guide — toward the strip, where the guide crosses it
@@ -327,5 +329,53 @@ describe('normalizeBridges', () => {
     expect(normalizeBridges({ lines: [{ axis: 'y', at: 5, from: 9, to: 1 }] })!.lines).toEqual([{ x1: 9, y1: 5, x2: 1, y2: 5 }])
     expect(normalizeBridges({ lines: [{ axis: 'z' }] })).toBeNull()
     expect(normalizeBridges(null)).toBeNull()
+  })
+})
+
+describe('a tab or strip stands its height above the STOCK\'s bottom, whatever the cut\'s depth', () => {
+  const STOCK_BOTTOM = -18
+  const box = 'M 0 0 L 100 0 L 100 50 L 0 50 Z'
+  const tab = { id: 'x', pathId: 'p', t: 0.125, lengthMM: 6, heightMM: 2 }
+  // Every Z level a cut reaches below -10.
+  const levels = (segs: MotionSegment[]) => [...new Set(segs.filter((g) => !g.rapid && g.z < -10).map((g) => +g.z.toFixed(3)))].sort((a, b) => a - b)
+  const profile = (depthMM: number) => generateProfile(box, EM6,
+    { side: 'outside', depthMM, stepDownMM: 3, direction: 'climb', stockBottomZMM: STOCK_BOTTOM }, [tab])
+
+  it('a cut taken past the stock leaves the whole tab — it used to leave none', () => {
+    // 2 mm into the spoilboard: the tab top stays 2 mm off the stock's underside, at -16.
+    expect(levels(profile(20))).toContain(-16)
+  })
+
+  it('an onion skin keeps its tabs, in case the bed lets the cut break through', () => {
+    // 0.5 mm of skin: the tab still tops out at -16, 1.5 mm above the floor.
+    expect(levels(profile(17.5))).toEqual([-17.5, -16, -15, -12])
+  })
+
+  it('a cut that never reaches the tab\'s top does not lift for it', () => {
+    expect(levels(profile(15))).toEqual([-15, -12])
+  })
+
+  it('a trochoidal cut past the stock leaves the whole tab too', () => {
+    const segs = generateTrochoidal(box, EM6,
+      { side: 'outside', depthMM: 20, stepDownMM: 3, direction: 'climb', trochStepMM: 1, trochRadiusMM: 2, finishingPass: false, stockBottomZMM: STOCK_BOTTOM }, [tab])
+    expect(levels(segs)).toContain(-16)
+  })
+
+  it('a strip holds an onion-skin cut, and lets a shallow engraving across it pass untouched', () => {
+    const bridges: BridgeSet = { lines: [{ x1: 70, y1: 1, x2: 70, y2: -20 }], widthMM: 5, heightMM: 2, pathIds: [] }
+    const cut = (depthMM: number) => generateProfile(box, EM6,
+      { side: 'outside', depthMM, stepDownMM: 3, direction: 'climb', stockBottomZMM: STOCK_BOTTOM, bridges })
+    // 0.1 mm of skin: the strip's top, 2 mm off the underside, is still left standing.
+    expect(levels(cut(17.9))).toEqual([-17.9, -16, -15, -12])
+    // A 1 mm engraving never gets down to the strip, so nothing about it changes.
+    const plain = generateProfile(box, EM6, { side: 'outside', depthMM: 1, stepDownMM: 3, direction: 'climb', stockBottomZMM: STOCK_BOTTOM })
+    expect(cut(1)).toEqual(plain)
+  })
+
+  it('a strip stands on the stock\'s bottom, never above the surface the cut starts from', () => {
+    expect(holdTopZ(0, 20, 2, STOCK_BOTTOM)).toBe(-16)
+    expect(holdTopZ(0, 17.5, 2, STOCK_BOTTOM)).toBe(-16)
+    // A strip taller than the stock is held at the surface.
+    expect(holdTopZ(0, 20, 25, STOCK_BOTTOM)).toBe(0)
   })
 })

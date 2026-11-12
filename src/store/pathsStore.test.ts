@@ -17,6 +17,7 @@ import type { Constraint } from './constraints'
 import { useTimelineStore } from '../timeline/timelineStore'
 import { shapeParamsFromConfig, DEFAULT_SHAPE_CONFIG, generateShapeD, generateShapeParts, type ShapeParams } from '../shapes/shapeGenerators'
 import { getBBox } from '../canvas/selectionUtils'
+import { useWorkpieceStore } from './workpieceStore'
 
 vi.mock('../cam/regenerate', () => ({
   regenerateAffectedMany: vi.fn(), regenerateAffected: vi.fn(), regenerateMany: vi.fn(),
@@ -708,5 +709,53 @@ describe('raw rewrites and loads', () => {
     expect(ids()).toEqual(['x'])
     expect(S().selectedIds).toEqual([])
     expect(useConstraintsStore.getState().constraints.map((c) => c.id)).toEqual(['st'])
+  })
+})
+
+describe('strips follow the parts they hold', () => {
+  const STRIP_Y = 70
+  // Two parts profiled through 18 mm stock, 6 mm apart, joined by one strip at y = 70.
+  async function joined() {
+    useWorkpieceStore.setState({
+      widthMM: 300, heightMM: 200, thicknessMM: 18,
+      bridges: { lines: [{ x1: 69, y1: STRIP_Y, x2: 77, y2: STRIP_Y }], widthMM: 5, heightMM: 2, pathIds: ['a', 'b'] },
+    })
+    const through = { type: 'profile', side: 'outside', depthMM: 18 }
+    await load({
+      paths: [path('a', { d: rectD(10, 50, 60, 40) }), path('b', { d: rectD(76, 50, 60, 40) })],
+      ops: [op('pa', 'a', through), op('pb', 'b', through)],
+    })
+  }
+  afterEach(() => { useWorkpieceStore.setState({ bridges: null }) })
+  const strip = () => useWorkpieceStore.getState().bridges!.lines[0]
+
+  it('a moved part carries its strips with it, in the same undo step as the move', async () => {
+    await joined()
+    S().applyPathEdit({ updates: [{ id: 'a', d: rectD(10, 60, 60, 40) }, { id: 'b', d: rectD(76, 60, 60, 40) }] })
+    await step()
+    expect(events()).toBe(1)
+    expect(strip().y1).toBeCloseTo(STRIP_Y + 10, 6)
+    expect(strip().y2).toBeCloseTo(STRIP_Y + 10, 6)
+    await undo()
+    expect(strip().y1).toBe(STRIP_Y)
+    await redo()
+    expect(strip().y1).toBeCloseTo(STRIP_Y + 10, 6)
+  })
+
+  it('regenerates the cuts of both parts a re-fitted strip joins, not only the one that moved', async () => {
+    await joined()
+    vi.mocked(regenerateAffectedMany).mockClear()
+    S().applyPathEdit({ updates: [{ id: 'b', d: rectD(80, 50, 60, 40) }] })
+    await step()
+    const asked = vi.mocked(regenerateAffectedMany).mock.calls.flatMap((c) => c[0])
+    expect(asked).toEqual(expect.arrayContaining(['a', 'b']))
+  })
+
+  it('leaves the strips alone when an edit moves no part they hold', async () => {
+    await joined()
+    const before = useWorkpieceStore.getState().bridges
+    S().applyPathEdit({ add: [path('c', { d: rectD(200, 150, 10, 10) })] })
+    await step()
+    expect(useWorkpieceStore.getState().bridges).toBe(before)
   })
 })

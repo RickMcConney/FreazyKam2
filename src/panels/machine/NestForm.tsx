@@ -1,5 +1,5 @@
 // ─── Nest form ────────────────────────────────────────────────────────────────
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AlertCircle, Loader2, Square } from 'lucide-react'
 import { useGenProgressStore } from '../../store/genProgressStore'
 import { FormShell, PathChip, PathListSection, ToggleRow, LengthInput, FormNotice, GenerateBtn, ToolSelector, toolsOfType, pickToolId, CheckRow, FIELD_CLS } from './shared'
@@ -50,8 +50,18 @@ export function NestForm({ onClose, editCtx }: { onClose: () => void; editCtx?: 
   const doubleSided = useWorkpieceStore((s) => s.doubleSided)
   const tiled = useWorkpieceStore((s) => !!s.tiling)
 
+  // A NEST CHIP reopens this form on the SELECTION it has just made — every part of one
+  // earlier nest — and the settings come back off those parts (ImportedPath.nest).
+  const stamp = !editCtx && selection.length > 0 && selection[0].nest
+    && selection.every((p) => p.nest?.id === selection[0].nest!.id) ? selection[0].nest : undefined
+  const fromStamp = (base: NestFormState, n: NonNullable<typeof stamp>): NestFormState => ({
+    ...base, fillStock: false, spacingMM: n.spacingMM, marginMM: n.marginMM, rotation: rotOptionOf(n.rotationStepDeg),
+    packFrom: n.packFrom, useHoles: n.useHoles, avoidOthers: n.avoidOthers, multiSheet: n.multiSheet,
+    sharedLines: !!n.sharedToolId, sharedToolId: n.sharedToolId ?? base.sharedToolId,
+  })
   const [form, setForm] = useState<NestFormState>(() => {
     const base = { ...NEST_DEFAULTS, ...(load('nest') as Partial<NestFormState> | null) }
+    if (stamp) return fromStamp(base, stamp)
     if (!fillParams) return base
     const p = fillParams.params
     return {
@@ -61,6 +71,11 @@ export function NestForm({ onClose, editCtx }: { onClose: () => void; editCtx?: 
       copyToolpaths: p.copyToolpaths,
     }
   })
+  // The form may already be open when another nest's chip is clicked: take that one's settings.
+  const stampId = stamp?.id
+  useEffect(() => {
+    if (stamp) setForm((f) => fromStamp(f, stamp))
+  }, [stampId]) // eslint-disable-line react-hooks/exhaustive-deps
   // SHARED LINES: the gap IS the cutter. Two parts exactly one diameter apart have outside
   // cut paths that coincide along facing edges, which is what lets a shared-line profile
   // cut that line once. End mills only — a V-bit's or ball nose's cut width depends on depth.

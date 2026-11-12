@@ -1,6 +1,8 @@
-// Renders tab markers on paths. When the Tabs form is open, tabs are draggable along the path.
+// Renders tab markers on paths. When the Tabs form is open, tabs are draggable along the path,
+// and Alt-click deletes one.
 
 import { memo, useMemo, useState } from 'react'
+import { useCutHiddenKey, partsOut } from '../holdVisibility'
 import { Group, Rect, Circle, Shape } from 'react-konva'
 import type Konva from 'konva'
 import type { Viewport } from '../viewport'
@@ -198,6 +200,7 @@ export const TabLayer = memo(function TabLayer({ viewport }: Props) {
   const allTabs = useTabStore((s) => s.tabs)
   const updateTabT = useTabStore((s) => s.updateTabT)
   const tabsFormActive = useUIStore((s) => s.tabsFormActive)
+  const cutHiddenKey = useCutHiddenKey()
   const { scale } = viewport
 
   const [hoveredTabId, setHoveredTabId] = useState<string | null>(null)
@@ -214,8 +217,10 @@ export const TabLayer = memo(function TabLayer({ viewport }: Props) {
     }
     const out: TabVisual[] = []
     if (byPath.size === 0) return out
+    // Not the tabs of a part that is hidden, or whose every profile is (canvas/holdVisibility).
+    const gone = partsOut(paths, cutHiddenKey)
     for (const path of paths) {
-      if (!path.visible || path.hidden) continue
+      if (gone.has(path.id)) continue
       for (const tab of byPath.get(path.id) ?? []) {
         const pos = evalPathAtT(path.d, tab.t)
         if (!pos) continue
@@ -223,7 +228,7 @@ export const TabLayer = memo(function TabLayer({ viewport }: Props) {
       }
     }
     return out
-  }, [paths, allTabs])
+  }, [paths, allTabs, cutHiddenKey])
 
   if (visuals.length === 0) return null
   if (!tabsFormActive) return <Group name="tabs" listening={false}><TabBatch visuals={visuals} /></Group>
@@ -255,6 +260,13 @@ export const TabLayer = memo(function TabLayer({ viewport }: Props) {
             }}
             onMouseDown={(e) => {
               e.cancelBubble = true
+              // Alt-click takes the tab away — the same gesture as a strip's.
+              if (e.evt.altKey) {
+                useTabStore.getState().deleteTab(v.id)
+                regenerateAffected(v.pathId)
+                document.body.style.cursor = ''
+                return
+              }
               const stage = e.target.getStage()
               if (!stage) return
               setDraggingTabId(v.id)

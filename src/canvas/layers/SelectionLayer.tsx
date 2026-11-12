@@ -47,7 +47,10 @@ function handlePositions(viewport: Viewport, bbox: BBox, liveTransform: LiveTran
 }
 
 // Decorative layer: bounding box outline + rotation handle line (non-interactive)
-export function SelectionLayer({ viewport, bbox, liveTransform }: SharedProps) {
+// `noRotate`: the stem goes with the handle it leads to — the Tabs form draws no handles
+// (it edits tabs, not shapes), and a stem left standing with nothing on the end of it reads
+// as a rotate handle that will not grab.
+export function SelectionLayer({ viewport, bbox, liveTransform, noRotate = false }: SharedProps & { noRotate?: boolean }) {
   const { corners: c, rotHandle, rotBase } = handlePositions(viewport, bbox, liveTransform)
 
   const outline = [c.tl.x, c.tl.y, c.tr.x, c.tr.y, c.br.x, c.br.y, c.bl.x, c.bl.y, c.tl.x, c.tl.y]
@@ -55,7 +58,7 @@ export function SelectionLayer({ viewport, bbox, liveTransform }: SharedProps) {
   return (
     <Group listening={false}>
       <Line points={outline} stroke="#60a5fa" strokeWidth={1} dash={[4, 3]} />
-      <Line points={[rotBase.x, rotBase.y, rotHandle.x, rotHandle.y]} stroke="#60a5fa" strokeWidth={1} />
+      {!noRotate && <Line points={[rotBase.x, rotBase.y, rotHandle.x, rotHandle.y]} stroke="#60a5fa" strokeWidth={1} />}
     </Group>
   )
 }

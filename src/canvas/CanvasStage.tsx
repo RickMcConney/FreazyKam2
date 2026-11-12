@@ -20,6 +20,8 @@ import { DoubleSidedGuideLayer } from './layers/DoubleSidedGuideLayer'
 import { EscapementAnimLayer } from './layers/EscapementAnimLayer'
 import { GearAnimLayer } from './layers/GearAnimLayer'
 import { GridLayer } from './layers/GridLayer'
+import { HoverHighlightLayer } from './layers/HoverHighlightLayer'
+import { HoldPreviewLayer } from './layers/HoldPreviewLayer'
 import { MeasureLayer } from './layers/MeasureLayer'
 import { NodeEditLayer } from './layers/NodeEditLayer'
 import { OriginLayer } from './layers/OriginLayer'
@@ -41,6 +43,7 @@ import { useCanvasView } from './useCanvasView'
 import { useClockLinkage } from './useClockLinkage'
 import { useConstrainTool } from './useConstrainTool'
 import { useDrillTool } from './useDrillTool'
+import { useTabPlaceTool } from './useTabPlaceTool'
 import { beginMoveSession, EMPTY_BBOX, MOVE_THRESHOLD_PX, useGesture } from './useGesture'
 import { useMeasureTool } from './useMeasureTool'
 import { useNodeEditGestures } from './useNodeEditGestures'
@@ -136,6 +139,7 @@ export default function CanvasStage() {
     onMoveMeasureHover, updateAltMeasure, onMeasurePress, clearMeasure,
   } = useMeasureTool(gesture, view, getFlat, activeTool, allCandidatesRef, selection.selectionBBoxRef)
   const { pendingDrillPoints, placeDrillPoint } = useDrillTool(gesture, view, getFlat, activeTool)
+  const { placeHoldAt } = useTabPlaceTool(view, getFlat)
   const {
     handleResizeHandleDown, handleRotateHandleDown,
     onMoveTranslate, onMoveResize, onMoveRotate,
@@ -202,6 +206,18 @@ export default function CanvasStage() {
 
     // The tool owns the click while it is on: never a selection change or a drag box.
     if (activeTool === 'constrain') { onConstrainPress(); return }
+
+    // The Tabs form's click-to-place owns the click the same way: a strip or a tab where it
+    // lands, never a selection change or a drag box. (A press on a strip or tab marker never
+    // gets here — those take their own presses, to drag or Alt-delete.)
+    {
+      const sp = stageRef.current?.getPointerPosition()
+      if (sp && placeHoldAt(sp.x, sp.y)) {
+        didDragRef.current = false
+        setMode({ type: 'idle' })
+        return
+      }
+    }
 
     // Drill tool: capture click for placement in mouseup, don't deselect or start dragbox
     if (activeTool === 'drill') {
@@ -270,7 +286,7 @@ export default function CanvasStage() {
       setDragBox({ sx: stagePointer.x, sy: stagePointer.y, ex: stagePointer.x, ey: stagePointer.y, op })
     }
   }, [selectPath, setMode, beginGesture, startDrawShape, startPenDraw, exitNodeEdit, getFlat,
-      onMeasurePress, onConstrainPress])
+      onMeasurePress, onConstrainPress, placeHoldAt])
 
   // ─── per-mode mousemove handlers ──────────────────────────────────────────
   // handleMouseMove was a ~275-line chain of `if (m.type === …)` guards. Each
@@ -527,7 +543,7 @@ useNudge(gesture)
             />
           )}
           <ToolpathLayer viewport={viewport} />
-          <BridgeLayer />
+          <BridgeLayer viewport={viewport} />
           <TabLayer viewport={viewport} />
           <ShapePreviewLayer viewport={viewport} d={liveShapeD} />
           <TracePreviewLayer viewport={viewport} />
@@ -590,6 +606,11 @@ useNudge(gesture)
             that sat after it there (shape, trace, pen, drill points) now sit under it. */}
         <Layer x={viewport.x} y={viewport.y} scaleX={viewport.scale} scaleY={-viewport.scale} listening={false}>
           <SimulationLayer viewport={viewport} />
+          {/* Over the sim, for the same reason it has this layer: it changes as fast as
+              the pointer runs down the Toolpaths list, and on layer 1 every change would
+              repaint the whole drawing. */}
+          <HoverHighlightLayer viewport={viewport} />
+          <HoldPreviewLayer />
         </Layer>
 
         {/* Layer 3: Screen-space overlay — origin indicator, selection outline, rulers. */}
@@ -617,6 +638,7 @@ useNudge(gesture)
               viewport={viewport}
               bbox={selectionBBox}
               liveTransform={liveTransform}
+              noRotate={tabsFormActive}
             />
           )}
           {altMeasure && altDown && !snapGuides && (

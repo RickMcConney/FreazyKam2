@@ -1,7 +1,7 @@
 import { flattenPath, ensureWinding, signedArea, rotatePolylineNear, arcFitPolyline, splitSelfIntersecting, requireClosedSubpaths, isOpenSubpath, type Pt2 } from './pathFlattener'
 import { inflatePathsD, JoinType, EndType } from 'clipper2-ts'
 import { zPasses, arcLengths, interpPt, stripClosingDuplicate, pushAll } from './geom'
-import { designPathAtT, nearestArcLen, polylinePassWithTabs, withBridges } from './profile'
+import { designPathAtT, nearestArcLen, polylinePassWithTabs, withBridges, holdTopZ } from './profile'
 import type { BridgeSet } from './bridges'
 import type { MotionSegment } from '../store/toolpathStore'
 import type { Tool } from '../store/toolStore'
@@ -25,8 +25,10 @@ export interface TrochoidalParams {
   rampIn?: boolean
   startNear?: { x: number; y: number }
   safeHeightMM?: number
-  /** The sheet's bridges (cam/bridges); an inside cut does not lift for them. */
+  /** The sheet's bridges (cam/bridges); every cut that gets down to one lifts over it. */
   bridges?: BridgeSet
+  /** Z of the stock's underside — a tab stands on it when the cut goes deeper (`holdTopZ`). */
+  stockBottomZMM?: number
 }
 
 // Build a smooth (G1-continuous) unit-tangent sampler for a closed polyline.
@@ -278,7 +280,7 @@ export function generateTrochoidal(
       for (const tab of tabs) {
         const pos = designPathAtT(designSubs, tab.t)
         if (!pos) continue
-        const tabZ = Math.min(0, -params.depthMM + tab.heightMM)
+        const tabZ = holdTopZ(0, params.depthMM, tab.heightMM, params.stockBottomZMM)
         const half = tab.lengthMM / 2 + tool.diameterMM / 2
         const center = nearestArcLen(closed, lens, pos[0], pos[1])
         tabRanges.push({ start: center - half - l, end: center + half + l, tabZ })

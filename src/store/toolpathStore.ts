@@ -48,6 +48,9 @@ interface DrillPoint {
 interface BaseOperation {
   id: string
   name: string
+  /** The user typed this name (the Toolpaths list's rename): a form's re-Generate, which
+   *  otherwise writes the automatic name back, leaves it alone. */
+  nameIsCustom?: boolean
   toolId: string
   status: OperationStatus
   segments: MotionSegment[]

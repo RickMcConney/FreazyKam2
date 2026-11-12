@@ -127,7 +127,9 @@ export async function runBatchGenerate(a: BatchGenerateArgs): Promise<void> {
       let next = 0
       jobs = a.items.map((it, i) => {
         const had = existing[i]
-        if (had) return { opId: had, write: { name: it.name, ...a.settings, ...it.fields } }
+        // The automatic name follows the settings — but never over one the user typed.
+        const custom = store().operations.find((o) => o.id === had)?.nameIsCustom
+        if (had) return { opId: had, write: { ...(custom ? {} : { name: it.name }), ...a.settings, ...it.fields } }
         const opId = newIds[next++]
         a.session.remember(it.key, opId)
         createdIds.push(opId)

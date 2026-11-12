@@ -65,8 +65,9 @@ export function useMeasureTool(
   const updateAltMeasure = useCallback((cnc: { x: number; y: number } | null, vp: Viewport) => {
     const ui = useUIStore.getState()
     const sb = selectionBBoxRef.current
+    // Not while the Tabs form is open: Alt there is the key that deletes a tab or strip.
     if (!cnc || !altDownRef.current || ui.activeTool !== 'select' || ui.nodeEditPathId
-      || modeRef.current.type !== 'idle' || !sb) {
+      || ui.tabsFormActive || modeRef.current.type !== 'idle' || !sb) {
       setAltMeasure(null)
       return
     }

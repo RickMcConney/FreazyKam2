@@ -263,3 +263,52 @@ describe("a double-sided or tiled job's chip", () => {
     expect(chips.map((c) => c.key)).toEqual(['job:doublesided', 'part'])
   })
 })
+
+// A plain nest only moves parts, so nothing it made could carry a chip — and with no chip
+// its settings could never be reopened. They ride on the parts (ImportedPath.nest) instead.
+describe('the strip gives a nest a chip to reopen it from', () => {
+  const stamp = (id: string) => ({ id, spacingMM: 3, marginMM: 3, rotationStepDeg: 90, packFrom: 'left' as const, useHoles: false, avoidOthers: true, multiSheet: true })
+
+  // At the head of the strip, as the holding strips' chip is: between two parts it read as
+  // something done to the part before it.
+  it('draws ONE Nest chip for every part one nest arranged, ahead of all the parts', () => {
+    const chips = buildChips([path({ id: 'c' }), path({ id: 'a', nest: stamp('n1') }), path({ id: 'b', nest: stamp('n1') })], [])
+    expect(chips.map((c) => c.key)).toEqual(['nest:n1', 'c', 'a', 'b'])
+    const nest = chips[0]
+    expect(nest).toMatchObject({ label: 'Nest ×2', family: 'attached', form: 'nest', nestId: 'n1', pathIds: ['a', 'b'] })
+  })
+
+  it('draws a chip per nest when two sets of parts were nested separately', () => {
+    const chips = buildChips([path({ id: 'a', nest: stamp('n1') }), path({ id: 'b', nest: stamp('n2') })], [])
+    expect(chips.filter((c) => c.form === 'nest').map((c) => [c.nestId, c.pathIds])).toEqual([['n1', ['a']], ['n2', ['b']]])
+  })
+})
+
+// The strip labels a path by WHAT it is — "Rectangle", "Offset" — which is right until the
+// user has said what it is CALLED (the Paths list's rename).
+describe('the strip uses a name the user typed', () => {
+  const rectParams = { type: 'rect' } as unknown as ImportedPath['shapeParams']
+
+  it('shows a renamed shape by its name, and one never renamed by its kind', () => {
+    const chips = buildChips([
+      path({ id: 'a', name: 'Side panel', nameIsCustom: true, shapeParams: rectParams }),
+      path({ id: 'b', name: 'Rectangle 2', shapeParams: rectParams }),
+    ], [])
+    expect(chips[0].label).toBe('Side panel')
+    expect(chips[1].label).not.toBe('Rectangle 2')
+  })
+
+  it('shows a renamed generated path by its name', () => {
+    const definition = { id: 'd1', kind: 'offset', sourceId: 'x', distanceMM: 2, cornerStyle: 'round' } as ImportedPath['definition']
+    const chips = buildChips([path({ id: 'a', name: 'Inner lip', nameIsCustom: true, definition })], [])
+    expect(chips[0].label).toBe('Inner lip')
+  })
+
+  it('shows a renamed user group by its name, and an unnamed one as Group ×N', () => {
+    const chips = buildChips([
+      path({ id: 'a', userGroups: ['g'], groupLabels: { g: 'Legs' } }), path({ id: 'b', userGroups: ['g'], groupLabels: { g: 'Legs' } }),
+      path({ id: 'c', userGroups: ['h'] }), path({ id: 'd', userGroups: ['h'] }),
+    ], [])
+    expect(chips.map((c) => c.label)).toEqual(['Legs', 'Group \u00d72'])
+  })
+})

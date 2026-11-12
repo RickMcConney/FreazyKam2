@@ -63,6 +63,20 @@ export interface ImportedPath {
   // one selection ever asks about — it is the outermost thing the path belongs
   // to, which is what a click on the canvas selects.
   userGroups?: string[]
+  // The user typed `name` (the Paths list's rename). The strip otherwise labels a path by
+  // WHAT it is — "Rectangle", "Offset" — and shows this name in its place when set.
+  nameIsCustom?: boolean
+  // THE NEST THIS PART WAS LAST ARRANGED BY (tools/nestRun): its settings, shared by id
+  // with every part of the same run. A plain nest only MOVES parts — it generates nothing a
+  // `definition` could ride on — so without this the settings were gone the moment it ran
+  // and there was no chip to reopen them from. The Nest chip is found through it and the
+  // form reopens on it; running again re-arranges the same parts. Not a fill: that makes
+  // copies, which carry a `fill` definition instead.
+  nest?: NestStamp
+  // Names the user gave to user groups this path is in, by group id (the Paths list's
+  // rename). A user group has no record of its own, so its name rides on its members; an
+  // entry for a group since ungrouped is simply never looked up.
+  groupLabels?: Record<string, string>
   // Which clock this shape was emitted as part of, and which wheel of it (see
   // shapes/clockTrain.ts). Purely a LINK: the shapes are ordinary, independent
   // and separately editable, and nothing regenerates through this. It exists so
@@ -161,6 +175,21 @@ export type PathDefinition = { id: string } & (
   // (tools/alongPath). The Along Path form reopens on it and Apply re-lays them.
   | { kind: 'along'; sourceId: string; guideId: string; params: AlongPathOptions }
 )
+
+/** The settings a plain nest was run with — what its chip reopens the form on. */
+export interface NestStamp {
+  id: string
+  spacingMM: number
+  marginMM: number
+  /** 0 = parts keep their orientation; otherwise the angle grid step. */
+  rotationStepDeg: number
+  packFrom: 'left' | 'bottom'
+  useHoles: boolean
+  avoidOthers: boolean
+  multiSheet: boolean
+  /** The end mill whose diameter is the gap, when parts share cut lines. */
+  sharedToolId?: string
+}
 
 /** The Nest settings a fill was made with — what its chip reopens the form on. */
 export interface FillParams {

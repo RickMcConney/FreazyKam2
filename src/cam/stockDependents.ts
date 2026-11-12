@@ -14,9 +14,17 @@ export interface StockDims { widthMM: number; heightMM: number; thicknessMM: num
  * it moves that clamp: a 3D Profile is the slowest generation in the app, and one well
  * inside the stock is not rebuilt for nothing.
  */
-export function opsAffectedByStockChange(ops: AnyOperation[], prev: StockDims, next: StockDims): AnyOperation[] {
+export function opsAffectedByStockChange(
+  ops: AnyOperation[], prev: StockDims, next: StockDims,
+  /** Whether a profile or trochoidal is HELD — tabs on its path, or the sheet's strips
+   *  across it. Their tops stand on the stock's bottom (`holdTopZ`), so a thickness change
+   *  moves them; and whether a cut goes through at all decides if strips apply. */
+  isHeld: (op: AnyOperation) => boolean = () => false,
+): AnyOperation[] {
   const outline = next.widthMM !== prev.widthMM || next.heightMM !== prev.heightMM
+  const thickness = next.thicknessMM !== prev.thicknessMM
   return ops.filter((op) => {
+    if (op.type === 'profile' || op.type === 'trochoidal') return thickness && isHeld(op)
     if (op.type === 'surface') return outline || next.origin !== prev.origin
     if (op.type === 'profile3d') {
       if (outline && op.boundary === 'stock') return true

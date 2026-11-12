@@ -25,6 +25,7 @@ import type { DoubleSided } from '../cam/doubleSided'
 import type { Tiling } from '../cam/tiling'
 import { removeTiling } from '../tools/tilingRun'
 import { removeBridges } from '../tools/bridgesRun'
+import { forgetNest } from '../tools/nestRun'
 import type { BridgeSet } from '../cam/bridges'
 import { makeSingleSided } from '../tools/doubleSidedRun'
 
@@ -94,7 +95,9 @@ interface ObjectChip {
    * Which machine form this chip reopens: Tabs or Corners for the ones attached to a
    * path, or the Double-Sided / Tiling form for a job's chip.
    */
-  form?: 'tabs' | 'nodeedit' | 'doublesided' | 'tiling'
+  form?: 'tabs' | 'nodeedit' | 'doublesided' | 'tiling' | 'nest'
+  /** The nest this chip stands for (ImportedPath.nest) — what its × forgets. */
+  nestId?: string
   /** The constraints this chip stands for — a whole CHAIN of them. */
   constraintIds?: string[]
   /** The generated path whose form this chip reopens, if it has one. */
@@ -176,6 +179,24 @@ export function buildChips(
     })
   }
 
+  // A NEST (ImportedPath.nest) is a setting over the SHEET, as the strips are — it arranged
+  // a whole set of parts — so its chip stands with them at the head of the strip, not among
+  // the parts it moved: after the first of them it read as something done to that one part.
+  // One per nest, in the order their first parts come; it reopens the Nest form on those
+  // parts with the settings it was run with, and its × forgets the nest.
+  const nests = new Map<string, string[]>()
+  for (const p of paths) {
+    if (!p.nest) continue
+    const m = nests.get(p.nest.id)
+    if (m) m.push(p.id); else nests.set(p.nest.id, [p.id])
+  }
+  for (const [nest, ids] of nests) {
+    out.push({
+      key: `nest:${nest}`, label: `Nest \u00d7${ids.length}`, Icon: Blocks,
+      color: OP_TYPE_COLORS.nest, family: 'attached', pathIds: ids, form: 'nest', nestId: nest,
+    })
+  }
+
   const seenGroup = new Set<string>()
   const seenClock = new Set<string>()
   const seenDef = new Set<string>()
@@ -242,7 +263,8 @@ export function buildChips(
       // the outer is ungrouped, at which point its chip appears.
       const members = paths.filter((q) => outerGroupOf(q) === ugroup)
       out.push({
-        key: `ugroup:${ugroup}`, label: `Group \u00d7${members.length}`, Icon: Group,
+        // The name the user gave the group (ImportedPath.groupLabels), else what it is.
+        key: `ugroup:${ugroup}`, label: p.groupLabels?.[ugroup] ?? `Group \u00d7${members.length}`, Icon: Group,
         family: 'path', pathIds: members.map((m) => m.id),
       })
       for (const m of members) out.push(...attachedChips(m, tabChips))
@@ -270,13 +292,14 @@ export function buildChips(
       const vis = pathVisual(p)
       out.push({
         key: `def:${defId}`, ...vis,
-        label: members.length === 1 ? vis.label : `${vis.label} \u00d7${members.length}`,
+        // One path the user named goes by that name; a set keeps its kind and count.
+        label: members.length === 1 ? (p.nameIsCustom ? p.name : vis.label) : `${vis.label} \u00d7${members.length}`,
         family: 'path', pathIds: members.map((m) => m.id), editPathId: p.id,
       })
       for (const m of members) out.push(...attachedChips(m, tabChips))
     } else {
       out.push({
-        key: p.id, ...pathVisual(p), family: 'path', pathIds: [p.id],
+        key: p.id, ...pathVisual(p), ...(p.nameIsCustom ? { label: p.name } : {}), family: 'path', pathIds: [p.id],
         editPathId: undefined,
       })
       out.push(...attachedChips(p, tabChips))
@@ -403,10 +426,30 @@ function Chip({ chip, selected, compact, onDelete }: {
   onDelete: (() => void) | null
 }) {
   const { Icon, color } = chip
+  // A toolpath chip lights its source paths up on the canvas while hovered, as a row of
+  // the Toolpaths list does (`uiStore.hoverOpIds`, HoverHighlightLayer). The ref clears it
+  // if the chip goes while the pointer is on it — a deleted op, a folded strip — since no
+  // mouseleave comes then.
+  const hovered = useRef(false)
+  // A path chip lights its own paths the same way (`hoverPathIds`).
+  const hover = (on: boolean) => {
+    const ui = useUIStore.getState()
+    if (chip.opIds) ui.setHoverOpIds(on ? chip.opIds : [])
+    else if (chip.pathIds.length > 0) ui.setHoverPathIds(on ? chip.pathIds : [])
+    else return
+    hovered.current = on
+  }
+  useEffect(() => () => {
+    if (!hovered.current) return
+    useUIStore.getState().setHoverOpIds([])
+    useUIStore.getState().setHoverPathIds([])
+  }, [])
   return (
     <div
       data-key={chip.key}
       title={chip.label}
+      onMouseEnter={() => hover(true)}
+      onMouseLeave={() => hover(false)}
       className={[
         'group relative flex items-center gap-1 px-1.5 h-6 rounded border text-[13px] whitespace-nowrap flex-shrink-0',
         FAMILY_STYLE[chip.family],
@@ -577,6 +620,8 @@ export default function TimelinePanel() {
       regenerateAffectedMany(chip.pathIds)
     }
     if (chip.form === 'nodeedit') return () => clearCorners(chip.pathIds[0])
+    // A nest's chip forgets the nest: the parts stay exactly where it put them.
+    if (chip.nestId) return () => forgetNest(chip.nestId!)
     // A job's chip ENDS the job: its holes and their drilling go with it, the parts stay.
     if (chip.form === 'doublesided') return () => {
       const ds = useWorkpieceStore.getState().doubleSided

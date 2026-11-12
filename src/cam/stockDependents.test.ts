@@ -35,4 +35,13 @@ describe('opsAffectedByStockChange', () => {
     const ops = [op({ id: 'p', type: 'pocket' }), op({ id: 'v', type: 'vcarve' })]
     expect(ids(opsAffectedByStockChange(ops, stock, { widthMM: 1, heightMM: 1, thicknessMM: 1, origin: 'center' }))).toEqual([])
   })
+
+  it('a thickness change rebuilds the profiles and trochoidals that are HELD, and no others', () => {
+    // Their tab and strip tops stand on the stock's bottom (holdTopZ), so a thicker stock moves them.
+    const ops = [op({ id: 'held', type: 'profile' }), op({ id: 'free', type: 'profile' }), op({ id: 'troch', type: 'trochoidal' })]
+    const held = (o: AnyOperation) => o.id !== 'free'
+    expect(ids(opsAffectedByStockChange(ops, stock, { ...stock, thicknessMM: 19 }, held))).toEqual(['held', 'troch'])
+    // The outline alone never moves a tab.
+    expect(ids(opsAffectedByStockChange(ops, stock, { ...stock, widthMM: 400 }, held))).toEqual([])
+  })
 })

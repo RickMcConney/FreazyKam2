@@ -37,9 +37,34 @@ export interface ProfileParams {
   // Surface the cut starts from (0 = stock top, negative = the floor an earlier op left).
   // depthMM and tab heights are both measured from here.
   startZMM?: number
-  /** The sheet's bridges (cam/bridges): an outside or centerline cut lifts wherever it
-   *  crosses one. An inside cut does not — a hole cannot part a strip its part carries. */
+  /** The sheet's bridges (cam/bridges): a cut lifts wherever it gets down to one — an
+   *  inside cut too, for the strips into a hole's slug (`withBridges`). */
   bridges?: BridgeSet
+  /** Z of the stock's underside (−thickness). A tab or strip stands on whichever is higher,
+   *  this or the cut's bottom — see `holdTopZ`. */
+  stockBottomZMM?: number
+}
+
+/**
+ * Where a tab or strip `heightMM` high tops out: ALWAYS that far above the bottom of the
+ * STOCK, never of the cut (and never above the surface the cut starts from).
+ *
+ * It was measured from the cut, which agrees only when the cut is exactly the stock's
+ * thickness. A through-cut taken 2 mm into the spoilboard — the everyday way to be sure a
+ * part comes free — stood a 2 mm tab's top on the stock's underside: no tab at all, every
+ * part cut loose, and a toolpath that lifted where it should and looked right.
+ *
+ * An ONION SKIN keeps its tabs: cut 17.5 mm into 18 mm stock and a 2 mm tab still stands
+ * 2 mm off the underside, 1.5 mm above the floor — the safety a user who added tabs to a
+ * skin wants, for a bed that is not perfectly trammed and lets the cut break through. A cut
+ * that stops above the tab's top never reaches it, so it lifts for nothing: the emitters
+ * only rise for a tab ABOVE the pass, and the bridge clamp only raises moves below its top.
+ *
+ * Without `stockBottomZMM` (a caller that does not know the stock) it falls back to the cut.
+ */
+export function holdTopZ(startZ: number, depthMM: number, heightMM: number, stockBottomZMM?: number): number {
+  const base = stockBottomZMM ?? startZ - depthMM
+  return Math.min(startZ, base + heightMM)
 }
 
 /** How far the tool CENTRE must keep from a bridge's strip: its radius at the bridge's
@@ -48,11 +73,17 @@ export function bridgeClearRadiusMM(tool: Tool, heightMM: number): number {
   return Math.max(tool.diameterMM / 2, toolRadiusAtHeight(tool, heightMM))
 }
 
-/** A finished cut held off the sheet's bridges (cam/bridges), unless it is an inside one.
- *  The bridge stands `heightMM` above the bottom of THIS cut, as a tab does. */
-export function withBridges(segs: MotionSegment[], tool: Tool, params: { side: CutSide; depthMM: number; bridges?: BridgeSet }, startZ: number): MotionSegment[] {
-  const b = params.side !== 'inside' && params.bridges?.lines.length ? params.bridges : undefined
-  return b ? clampToBridges(segs, b, bridgeClearRadiusMM(tool, b.heightMM), Math.min(startZ, startZ - params.depthMM + b.heightMM)) : segs
+/** A finished cut held off the sheet's bridges (cam/bridges) — outside, centerline or
+ *  inside. The bridge's top stands `heightMM` above the STOCK's bottom (`holdTopZ`). */
+export function withBridges(segs: MotionSegment[], tool: Tool, params: { depthMM: number; bridges?: BridgeSet; stockBottomZMM?: number }, startZ: number): MotionSegment[] {
+  // Inside cuts too: a strip into a hole's slug (planSlugStrips) holds it to the part. A
+  // strip the network laid between parts never reaches a hole — it reaches OVERLAP_MM into
+  // its part, and a hole's cut stands a cutter radius and more inside the outline.
+  const b = params.bridges?.lines.length ? params.bridges : undefined
+  if (!b) return segs
+  const top = holdTopZ(startZ, params.depthMM, b.heightMM, params.stockBottomZMM)
+  // The cutter's reach at the strip's top, measured up from the TIP — the bottom of the cut.
+  return clampToBridges(segs, b, bridgeClearRadiusMM(tool, Math.max(0, top - (startZ - params.depthMM))), top)
 }
 
 function fitCircle(pts: Pt2[]): { cx: number; cy: number; r: number } | null {
@@ -192,8 +223,8 @@ export function polylinePassWithTabs(
 // reaches on the deepest pass. A taper's stored diameter is its tip, so that one is wider;
 // every other tool is kept at its full radius (a V-bit or ball nose narrows below it,
 // but the tabs they leave have always been sized by the full radius).
-export function tabClearRadiusMM(tool: Tool, tab: Tab): number {
-  return Math.max(tool.diameterMM / 2, toolRadiusAtHeight(tool, tab.heightMM))
+export function tabClearRadiusMM(tool: Tool, tab: Tab, aboveTipMM = tab.heightMM): number {
+  return Math.max(tool.diameterMM / 2, toolRadiusAtHeight(tool, aboveTipMM))
 }
 
 /** One constant-Z pass along `pts` at the G-code writer's own 0.1 mm, circular runs as G2/G3. */
@@ -390,8 +421,9 @@ export function generateProfile(
     const pos = designPathAtT(designSubs, tab.t)
     if (!pos) return []
     const center = nearestArcLen(pts, lens, pos[0], pos[1])
-    const half = tab.lengthMM / 2 + tabClearRadiusMM(tool, tab)
-    return [{ start: center - half, end: center + half, tabZ: Math.min(startZ, startZ - params.depthMM + tab.heightMM) }]
+    const tabZ = holdTopZ(startZ, params.depthMM, tab.heightMM, params.stockBottomZMM)
+    const half = tab.lengthMM / 2 + tabClearRadiusMM(tool, tab, Math.max(0, tabZ - (startZ - params.depthMM)))
+    return [{ start: center - half, end: center + half, tabZ }]
   })
   const ctx: PathEmitContext = {
     tool, params, passes, safeZ, startZ, fineFit, fitPass, wantCCW,

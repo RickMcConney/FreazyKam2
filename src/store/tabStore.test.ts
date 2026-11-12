@@ -103,3 +103,36 @@ describe('tabbing several paths at once', () => {
     expect(Tb().tabs).toHaveLength(12)
   })
 })
+
+describe('applying tabs again over hand-placed ones', () => {
+  it('keeps a tab placed by a click exactly where it was put', async () => {
+    Tb().addTab('a', 0.1, 3, 1); await step()
+    const placed = tabsOf('a')[0]
+    Tb().applyTabs('a', 4, PARTS[0].d, 5, 2); await step()
+    const after = tabsOf('a').find((t) => t.id === placed.id)
+    expect(after?.t).toBe(0.1)
+    // The size is the form's; only the place is the user's.
+    expect(after).toMatchObject({ lengthMM: 5, heightMM: 2, manual: true })
+  })
+
+  it('keeps a tab the user dragged, and replaces the ones it was applied with', async () => {
+    Tb().applyTabs('a', 4, PARTS[0].d, 3, 1); await step()
+    const [dragged, ...rest] = tabsOf('a')
+    Tb().updateTabT(dragged.id, 0.31); await step()
+    Tb().applyTabs('a', 2, PARTS[0].d, 3, 1); await step()
+    const now = tabsOf('a')
+    expect(now.find((t) => t.id === dragged.id)?.t).toBe(0.31)
+    for (const t of rest) expect(now.some((x) => x.id === t.id)).toBe(false)
+  })
+
+  it('leaves out an evenly spaced tab that would overlap a hand-placed one', async () => {
+    Tb().applyTabs('a', 4, PARTS[0].d, 3, 1); await step()
+    const even = tabsOf('a').map((t) => t.t)
+    useTabStore.setState({ tabs: [] })
+    // 0.2 mm along a 40 mm outline from where an even one goes: the same tab twice.
+    Tb().addTab('a', even[1] + 0.005, 3, 1); await step()
+    Tb().applyTabs('a', 4, PARTS[0].d, 3, 1); await step()
+    expect(tabsOf('a')).toHaveLength(4)
+    expect(tabsOf('a').some((t) => t.t === even[1])).toBe(false)
+  })
+})

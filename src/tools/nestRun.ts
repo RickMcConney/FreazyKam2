@@ -17,7 +17,7 @@ import { useTabStore } from '../store/tabStore'
 import { rebatchTabs } from '../store/copyPaths'
 import { uid } from '../uid'
 import { runInWorkerFor } from '../workers/workerClient'
-import type { FillParams, PathDefinition } from '../importers/svgImporter'
+import type { FillParams, PathDefinition, NestStamp } from '../importers/svgImporter'
 
 /** The worker key a nest runs under — what its Stop button cancels (see cancelWork). */
 export const NEST_JOB = 'nest'
@@ -106,6 +106,22 @@ export interface NestReport {
  */
 export function placedAngleOf(path: { placement?: TransformStep[] } | undefined): number {
   return placedAngleDeg(path?.placement)
+}
+
+/** The id of the nest whose parts are EXACTLY `ids` — every one of them and no others. */
+export function nestIdFor(paths: readonly ImportedPath[], ids: readonly string[]): string | undefined {
+  const want = new Set(ids)
+  const id = paths.find((p) => want.has(p.id))?.nest?.id
+  if (!id) return undefined
+  const members = paths.filter((p) => p.nest?.id === id)
+  return members.length === want.size && members.every((p) => want.has(p.id)) ? id : undefined
+}
+
+/** Take a nest's settings off its parts (its chip's ×): the parts stay where they are. */
+export function forgetNest(nestId: string): void {
+  const ps = usePathsStore.getState()
+  const updates = ps.paths.filter((p) => p.nest?.id === nestId).map((p) => ({ id: p.id, d: p.d, nest: null }))
+  if (updates.length > 0) ps.applyPathEdit({ updates, label: 'Remove nest', regenerate: false })
 }
 
 /** What a nest is run with: the form's settings, and what it has worked out from them. */
@@ -238,6 +254,17 @@ export async function runNest(input: NestRunInput): Promise<NestOutcome> {
   const definition: PathDefinition | undefined = filling
     ? { id: editCtx?.defId ?? uid('def'), kind: 'fill', sourceIds: groups[0].ids, params: fillParamsNow }
     : undefined
+  // A PLAIN NEST LEAVES ITS SETTINGS ON THE PARTS (ImportedPath.nest), which is all there is
+  // for its chip to be found through — it moves parts and makes nothing. The id is kept when
+  // these are exactly the parts of one earlier nest (its chip then stays where it was and
+  // shows the new settings); any other set is a nest of its own.
+  const nestedIds = groups.flatMap((g) => g.ids)
+  const stamp: NestStamp | undefined = filling ? undefined : {
+    id: nestIdFor(paths, nestedIds) ?? uid('nest'),
+    spacingMM: form.spacingMM, marginMM: form.marginMM, rotationStepDeg: ROT_STEP[rotation],
+    packFrom: form.packFrom, useHoles: form.useHoles, avoidOthers: form.avoidOthers, multiSheet: form.multiSheet,
+    ...(sharing ? { sharedToolId: sharedTool!.id } : {}),
+  }
   let rotated = false
   for (const pl of result.placements) {
     // `g3` in a plain nest, `g3#7` when filling — the part, and which copy of
@@ -284,7 +311,7 @@ export async function runNest(input: NestRunInput): Promise<NestOutcome> {
         d = r.d
         shapeParams = r.shapeParams ?? undefined
       }
-      updates.push({ id, d, shapeParams: spilled ? null : shapeParams, transforms: steps })
+      updates.push({ id, d, shapeParams: spilled ? null : shapeParams, transforms: steps, ...(stamp ? { nest: stamp } : {}) })
     }
   }
   if (updates.length === 0 && add.length === 0 && replacedIds.length === 0) return { none: true }
@@ -298,6 +325,14 @@ export async function runNest(input: NestRunInput): Promise<NestOutcome> {
   const unchanged = add.length === 0 && replacedIds.length === 0 && result.placements.every(
     (pl) => Math.abs(pl.angleDeg) < 1e-6 && Math.abs(pl.dx) < 1e-4 && Math.abs(pl.dy) < 1e-4,
   )
+  if (unchanged && stamp) {
+    // Nothing moved, but the settings asked for may be new: the parts say so, or the chip
+    // would reopen on the old ones. (Identical settings restate every path and record nothing.)
+    usePathsStore.getState().applyPathEdit({
+      updates: nestedIds.flatMap((id) => { const q = byId.get(id); return q ? [{ id, d: q.d, nest: stamp }] : [] }),
+      label: 'Nest settings', regenerate: false,
+    })
+  }
   if (!unchanged) {
     // Moves and copies in ONE edit, so one undo takes the fill back off the
     // stock whole. The copies join the selection, which is what makes a second

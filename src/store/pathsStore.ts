@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { create } from 'zustand'
-import type { ImportedPath, PathDefinition } from '../importers/svgImporter'
+import type { ImportedPath, PathDefinition, NestStamp } from '../importers/svgImporter'
 import type { ClockSpec } from '../shapes/clockTrain'
 import { applyPlacementD, placementMat, foldPlacement, isPlacementOnly, getBBox, applyTransformStep, applyTransformSteps, isIdentityStep, type TransformStep } from '../canvas/selectionUtils'
 import { generateShapeD, generateShapeParts, shapeDisplayName, ANNOTATION_SWITCH, type ShapeParams } from '../shapes/shapeGenerators'
@@ -17,6 +17,7 @@ import { solveConstraints, solveInnerConstraints, type ConstraintSolution } from
 import { useWorkpieceStore } from './workpieceStore'
 import { useUIStore } from './uiStore'
 import { uid } from '../uid'
+import { refitBridges } from '../tools/bridgeRefit'
 
 export type { ImportedPath }
 // User-group helpers live in their own module (pure, no store), and are
@@ -49,6 +50,13 @@ export type PathUpdate = {
   // array clears it; `undefined` (omitted) leaves it alone, the same convention
   // shapeParams uses.
   userGroups?: string[]
+  // Renames from the Paths list: an import folder's name, and the names given to user
+  // groups (ImportedPath.groupLabels). Omitted leaves them alone.
+  groupName?: string
+  groupLabels?: Record<string, string>
+  nameIsCustom?: boolean
+  // The nest this part was arranged by (ImportedPath.nest); null takes it off.
+  nest?: NestStamp | null
 }
 
 export type PathsAddMeta = { source?: PathsAddSource; label?: string }
@@ -377,6 +385,10 @@ function applyUpdateToPath(p: ImportedPath, upd: PathUpdate): ImportedPath {
   if (upd.name !== undefined) {
     newPath.name = upd.name
   }
+  if (upd.groupName !== undefined) newPath.groupName = upd.groupName
+  if (upd.nameIsCustom !== undefined) newPath.nameIsCustom = upd.nameIsCustom
+  if (upd.nest !== undefined) newPath.nest = upd.nest ?? undefined
+  if (upd.groupLabels !== undefined) newPath.groupLabels = upd.groupLabels
   if (upd.hidden !== undefined) {
     newPath.hidden = upd.hidden
   }
@@ -715,13 +727,16 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
     const solved = enforceConstraints(
       add.length > 0 ? [...paths, ...add] : paths, deleteIds,
       [...updates.map((u) => u.id), ...add.map((a) => a.id)])
+    // Strips follow the parts they hold (tools/bridgeRefit), in the same write.
+    const refit = refitBridges(s.paths, solved.paths)
+    if (refit) useWorkpieceStore.setState({ bridges: refit.set })
     set({
       paths: solved.paths,
       ...(deleteIds.length > 0
         ? { selectedIds: s.selectedIds.filter((sid) => !deleteIds.includes(sid)) }
         : {}),
     })
-    regenerateEdited(solved.movedIds, reshaped)
+    regenerateEdited(refit ? [...new Set([...solved.movedIds, ...refit.touched])] : solved.movedIds, reshaped)
   },
 
   applyPathEdit: ({ updates = [], add = [], deleteIds = [], label, gesture, selectAfter, regenerate = true }) => {
@@ -763,6 +778,10 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
     const solved = enforceConstraints(
       paths, deleteIds, [...updates.map((u) => u.id), ...add.map((a) => a.id)])
     paths = solved.paths
+    // STRIPS FOLLOW THE PARTS THEY HOLD (tools/bridgeRefit): re-fitted here and written
+    // before the step is recorded, so the snapshot holds both and one undo takes back both.
+    const refit = refitBridges(s.paths, paths)
+    if (refit) useWorkpieceStore.setState({ bridges: refit.set })
     set({
       paths,
       // Only touch selection when the caller asks (selectAfter) or something
@@ -788,7 +807,9 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
     // added ones have none yet, so what is owed is the updates, whatever the
     // constraints carried along, and any pocket that has just lost an island.
     const own = regenerate ? changedIds(s.paths, updates) : []
-    regenerateEdited(own.length > 0 ? [...new Set([...own, ...solved.movedIds])] : solved.movedIds, reshaped)
+    // The cuts of every part a re-fitted strip leaves or reaches, as well as the edit's own.
+    const owed = [...new Set([...own, ...solved.movedIds, ...(refit?.touched ?? [])])]
+    regenerateEdited(owed, reshaped)
   },
 
   updateShapeParams: (id, params) => {
