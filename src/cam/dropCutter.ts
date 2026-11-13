@@ -40,8 +40,11 @@ export function ballDropCutter(
   radiusMM: number,
   /** How far below the stock top the model's highest point sits. */
   zOffsetMM = 0,
+  /** The box the triangles lie in when it is NOT the model's — holding tabs added to the
+   *  mesh run out past it (cam/profile3dTabs). Unset: the model's box. */
+  indexBox?: BBox,
 ): (x: number, y: number) => number | null {
-  return dropCutter(positions, indices, bounds, bbox, radiusMM, false, zOffsetMM)
+  return dropCutter(positions, indices, bounds, bbox, radiusMM, false, zOffsetMM, indexBox)
 }
 
 /**
@@ -65,8 +68,9 @@ export function flatDropCutter(
   bbox: BBox,
   radiusMM: number,
   zOffsetMM = 0,
+  indexBox?: BBox,
 ): (x: number, y: number) => number | null {
-  return dropCutter(positions, indices, bounds, bbox, radiusMM, true, zOffsetMM)
+  return dropCutter(positions, indices, bounds, bbox, radiusMM, true, zOffsetMM, indexBox)
 }
 
 function dropCutter(
@@ -77,6 +81,7 @@ function dropCutter(
   radiusMM: number,
   flat: boolean,
   zOffsetMM: number,
+  indexBox?: BBox,
 ): (x: number, y: number) => number | null {
   const R = radiusMM, R2 = R * R
   // How far above its tip the tool's surface stands at horizontal distance² d2 (≤ R²).
@@ -182,6 +187,8 @@ function dropCutter(
   const D = Float64Array.from(data)
   const BX = Float64Array.from(box)
 
+  // The box the features lie in: the model's, unless one was given.
+  const IB = indexBox ?? bbox
   // Bucket the features by their XY footprint, in CSR form, each bucket highest first.
   //
   // A bucket no smaller than the typical facet: a facet is listed in every bucket it
@@ -198,14 +205,14 @@ function dropCutter(
   const medianFacet = facetExtents.length ? facetExtents[facetExtents.length >> 1] : 0
   // And never so many buckets that building them dominates: a 600 mm relief at R/2 = 0.25
   // was 5.8 M of them, each sorted.
-  const B = Math.max(0.25, R / 2, medianFacet, Math.sqrt((bbox.width * bbox.height) / MAX_BUCKETS))
-  const bw = Math.max(1, Math.ceil(bbox.width / B) + 1)
-  const bh = Math.max(1, Math.ceil(bbox.height / B) + 1)
+  const B = Math.max(0.25, R / 2, medianFacet, Math.sqrt((IB.width * IB.height) / MAX_BUCKETS))
+  const bw = Math.max(1, Math.ceil(IB.width / B) + 1)
+  const bh = Math.max(1, Math.ceil(IB.height / B) + 1)
   const span = (f: number) => {
     const o = f * 5
     return [
-      Math.max(0, Math.floor((BX[o] - bbox.minX) / B)), Math.min(bw - 1, Math.floor((BX[o + 1] - bbox.minX) / B)),
-      Math.max(0, Math.floor((BX[o + 2] - bbox.minY) / B)), Math.min(bh - 1, Math.floor((BX[o + 3] - bbox.minY) / B)),
+      Math.max(0, Math.floor((BX[o] - IB.minX) / B)), Math.min(bw - 1, Math.floor((BX[o + 1] - IB.minX) / B)),
+      Math.max(0, Math.floor((BX[o + 2] - IB.minY) / B)), Math.min(bh - 1, Math.floor((BX[o + 3] - IB.minY) / B)),
     ]
   }
   const counts = new Int32Array(bw * bh + 1)
@@ -230,21 +237,21 @@ function dropCutter(
   const seen = new Int32Array(F)
   let stamp = 0
 
-  // Every feature lies in the model's box (to rounding): a ball that cannot reach the box
+  // Every feature lies in the index box — the model's (to rounding), or one given: a ball that cannot reach the box
   // rests on nothing — the floor of a boundary drawn round the model, most of it.
-  const reachMinX = bbox.minX - R - 1e-6, reachMaxX = bbox.maxX + R + 1e-6
-  const reachMinY = bbox.minY - R - 1e-6, reachMaxY = bbox.maxY + R + 1e-6
+  const reachMinX = IB.minX - R - 1e-6, reachMaxX = IB.maxX + R + 1e-6
+  const reachMinY = IB.minY - R - 1e-6, reachMaxY = IB.maxY + R + 1e-6
   return (x, y) => {
     if (x < reachMinX || x > reachMaxX || y < reachMinY || y > reachMaxY) return null
     stamp++
     if (stamp === 0x7fffffff) { seen.fill(0); stamp = 1 }
-    const i0 = Math.max(0, Math.floor((x - R - bbox.minX) / B)), i1 = Math.min(bw - 1, Math.floor((x + R - bbox.minX) / B))
-    const j0 = Math.max(0, Math.floor((y - R - bbox.minY) / B)), j1 = Math.min(bh - 1, Math.floor((y + R - bbox.minY) / B))
+    const i0 = Math.max(0, Math.floor((x - R - IB.minX) / B)), i1 = Math.min(bw - 1, Math.floor((x + R - IB.minX) / B))
+    const j0 = Math.max(0, Math.floor((y - R - IB.minY) / B)), j1 = Math.min(bh - 1, Math.floor((y + R - IB.minY) / B))
     let best = -Infinity
     // The bucket under the tool first: it holds what the tool most likely rests on, and a
     // high best from it lets every other bucket stop early.
-    const ic = Math.min(bw - 1, Math.max(0, Math.floor((x - bbox.minX) / B)))
-    const jc = Math.min(bh - 1, Math.max(0, Math.floor((y - bbox.minY) / B)))
+    const ic = Math.min(bw - 1, Math.max(0, Math.floor((x - IB.minX) / B)))
+    const jc = Math.min(bh - 1, Math.max(0, Math.floor((y - IB.minY) / B)))
     for (let pass = 0; pass < 2; pass++) for (let j = pass ? j0 : jc; j <= (pass ? j1 : jc); j++) {
       for (let i = pass ? i0 : ic; i <= (pass ? i1 : ic); i++) {
         if (pass && i === ic && j === jc) continue
@@ -255,8 +262,8 @@ function dropCutter(
         // THAT bucket it is no nearer than the bucket. Pruned elsewhere, it is still tested
         // there, so the answer is the same — only the visits are fewer. (The edge buckets
         // also hold whatever rounds off the box, so they reach outward without limit.)
-        const bdx = Math.max(i === 0 ? 0 : bbox.minX + i * B - x, 0, i === bw - 1 ? 0 : x - (bbox.minX + (i + 1) * B))
-        const bdy = Math.max(j === 0 ? 0 : bbox.minY + j * B - y, 0, j === bh - 1 ? 0 : y - (bbox.minY + (j + 1) * B))
+        const bdx = Math.max(i === 0 ? 0 : IB.minX + i * B - x, 0, i === bw - 1 ? 0 : x - (IB.minX + (i + 1) * B))
+        const bdy = Math.max(j === 0 ? 0 : IB.minY + j * B - y, 0, j === bh - 1 ? 0 : y - (IB.minY + (j + 1) * B))
         const bd2 = bdx * bdx + bdy * bdy
         if (bd2 > R2) continue
         const rise = lift(bd2)

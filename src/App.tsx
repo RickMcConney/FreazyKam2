@@ -196,8 +196,9 @@ function useStockDependentSync() {
       ) return
       // Held cuts: tabs on their paths, or the sheet's strips — which any profile may cross.
       const tabbed = new Set(useTabStore.getState().tabs.map((t) => t.pathId))
+      // (A 3D Profile is held by its model's tabs only: the strips are for 2D cuts.)
       const isHeld = (op: AnyOperation) => pathIdsOf(op).some((id) => tabbed.has(id))
-        || !!state.bridges
+        || (op.type !== 'profile3d' && !!state.bridges)
       for (const op of opsAffectedByStockChange(useToolpathStore.getState().operations, prev, state, isHeld)) {
         regenerateOperation(op.id)
       }

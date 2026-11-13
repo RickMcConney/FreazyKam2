@@ -11,6 +11,9 @@ import { profile3dDepthMM, modelBelowCut, MODEL_BELOW_CUT_MSG, type Profile3dPar
 import { DEFAULT_RELIEF_MM } from './depthMapMesh'
 import { flattenPath, requireClosedSubpaths, type Pt2 } from './pathFlattener'
 import { tabsForGeneration } from '../store/tabStore'
+import { tabPointAt } from './tabPlacement'
+import { holdTopZ } from './profile'
+import { pointInPolygon } from './geom'
 import { getBBox, extractCircles, extractRectInfo } from '../canvas/selectionUtils'
 import { loadImageLuminance } from '../io/imageLuminance'
 import { decodeStlMesh } from '../importers/stlImporter'
@@ -359,6 +362,20 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       boundaryOpen: op.boundary === 'stock',
       // A turned model's outline stands in for its box: the tools run their radius past it.
       boundaryIsModel: op.boundary !== 'stock' && op.boundary !== 'path',
+      // HOLDING TABS on the model's outline (cam/profile3dTabs): where each sits, which way
+      // is IN to the model, and its top — its height off the STOCK's bottom, as every tab's
+      // (`holdTopZ`), so a cut that stops short of the bottom has none.
+      tabs: (() => {
+        const outline = flattenPath(stlPath.d, 0.05).filter((r) => r.length >= 3)
+        return (tabsForGeneration(op.pathId) ?? []).flatMap((tab) => {
+          const at = tabPointAt(outline, tab.t)
+          if (!at) return []
+          // In is the side of the outline its inside is on: try the left of travel.
+          const left = outline.some((r) => pointInPolygon(at.x - at.ty * 0.01, at.y + at.tx * 0.01, r))
+          const [nx, ny] = left ? [-at.ty, at.tx] : [at.ty, -at.tx]
+          return [{ x: at.x, y: at.y, nx, ny, lengthMM: tab.lengthMM, topZ: holdTopZ(0, depthMM, tab.heightMM, -useWorkpieceStore.getState().thicknessMM) }]
+        })
+      })(),
     }
     if (stlPath.imageSrc && imageRect) {
       // Decoded on the main thread (it needs a canvas), cached by data URL.

@@ -7,6 +7,7 @@ import { ballDropCutter, flatDropCutter } from './dropCutter'
 import { generateWaterline } from './waterline'
 import { flatWaterlineSlicer } from './waterlineSlice'
 import { stlToCnc } from './stlMapping'
+import { tabStrips, raiseGridForTabs, meshWithTabs, type Profile3dTab } from './profile3dTabs'
 import type { Tool, PassDirection } from '../store/toolStore'
 import type { StlModelBounds } from '../importers/svgImporter'
 import type { BBox } from '../canvas/selectionUtils'
@@ -94,6 +95,9 @@ export interface Profile3dParams {
    *  not cut, by either pass — a mesh's flat top is rarely flat to the micron. Unset or 0:
    *  only a tip at or above the stock top is skipped. */
   skipFlatTolMM?: number
+  /** Holding tabs on the model's outline (cam/profile3dTabs): added to the model, so every
+   *  pass leaves them. */
+  tabs?: Profile3dTab[]
 }
 
 /**
@@ -1301,8 +1305,8 @@ const grow = (b: BBox, d: number): BBox => ({
 // ─── Public entry point ───────────────────────────────────────────────────────
 
 export function generateProfile3d(
-  positions: Float32Array,
-  indices: Uint32Array | null,
+  modelPositions: Float32Array,
+  modelIndices: Uint32Array | null,
   bounds: StlModelBounds,
   bbox: BBox,
   tool: Tool,
@@ -1378,18 +1382,28 @@ export function generateProfile3d(
   const nx = Math.min(1500, Math.max(2, Math.ceil(G.width  / cellSize) + 1))
   const ny = Math.min(1500, Math.max(2, Math.ceil(G.height / cellSize) + 1))
 
-  const grid = buildHeightMap(positions, indices, bounds, bbox, nx, ny,
+  const grid = buildHeightMap(modelPositions, modelIndices, bounds, bbox, nx, ny,
     // Ground the model does not cover is a floor at its lowest point — a round relief in its
     // square box has nothing in the corners, and was left standing there, lifted over as if
     // it were a hole. A hole THROUGH the model is floor too, and is cut down to it.
     { gridBox: G, zOffsetMM: zOff, fill: floorZ })
+
+  // HOLDING TABS are added to the model itself (cam/profile3dTabs): the height map is raised
+  // and the mesh gains their top faces, so the grid surfaces, the exact drop cutters and the
+  // waterline slicer all read them and no pass has a way round them. With none, the mesh and
+  // the map are the model's own and nothing below changes.
+  const strips = params.tabs?.length ? tabStrips(params.tabs, grid, nx, ny, G, floorZ) : []
+  if (strips.length > 0) raiseGridForTabs(grid, nx, ny, G, strips)
+  const { positions, indices } = meshWithTabs(modelPositions, modelIndices, bounds, bbox, zOff, strips)
+  // The tabs run out past the model's box, which is all the drop cutters otherwise look in.
+  const dropBox = strips.length > 0 ? unionBox(G, bbox) : undefined
 
   // How each pass reads the model: its gouge-free grid surface, and the exact surface where
   // it has one — a ball or an end mill dropped on the triangles (`ballDropCutter` /
   // `flatDropCutter`), which the grid reads high beside every steep wall by a cell or two.
   // A taper is read at the higher of its grid surface and an exact ball of its TIP's radius,
   // which lies wholly inside it. Every exact surface rests on the floor.
-  const drop = (ball: boolean, r: number) => (ball ? ballDropCutter : flatDropCutter)(positions, indices, bounds, bbox, r, zOff)
+  const drop = (ball: boolean, r: number) => (ball ? ballDropCutter : flatDropCutter)(positions, indices, bounds, bbox, r, zOff, dropBox)
   const onFloor = (d: (x: number, y: number) => number | null) => (x: number, y: number) => Math.max(d(x, y) ?? -Infinity, floorZ)
   const finishSurface = computeToolSurface(grid, nx, ny, G, finishKernel)
   const finishPass: PassSetup = {

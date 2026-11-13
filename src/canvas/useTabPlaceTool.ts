@@ -6,7 +6,7 @@ import { useWorkpieceStore } from '../store/workpieceStore'
 import { regenerateAffected } from '../cam/regenerate'
 import { stripAt, type StripPick } from '../cam/bridgePick'
 import { cornerClearMM } from '../cam/bridges'
-import { tabTAt } from '../cam/tabPlacement'
+import { tabTAt, tabPointAt } from '../cam/tabPlacement'
 import { holdIndexNow, cutterRadiusFor, addStrip } from '../tools/bridgesRun'
 import { closestVisiblePath, onCanvas, type FlatOf } from './pathHit'
 import type { CanvasView } from './useCanvasView'
@@ -66,13 +66,14 @@ function planAt(x: number, y: number, scale: number, getFlat: FlatOf): HoldPlan 
     }
     return null
   }
-  const paths = usePathsStore.getState().paths.filter((p) => onCanvas(p) && !p.imageSrc && !p.stlSrc)
+  // A model or a picture takes tabs too: a 3D Profile round it leaves them (cam/profile3dTabs).
+  const paths = usePathsStore.getState().paths.filter(onCanvas)
   const hit = closestVisiblePath(x, y, paths, GRAB_PX / scale, (p) => getFlat(p, 0.05))
   if (!hit) return null
   const polys = getFlat(hit, 0.05)
   const t = tabTAt(polys, x, y, place.lengthMM)
   if (t === null) return null
-  const at = pointAtT(polys, t)
+  const at = tabPointAt(polys, t)
   return at ? { kind: 'tab', pathId: hit.id, d: hit.d, t, ...at } : null
 }
 
@@ -80,24 +81,6 @@ function distToSeg(x: number, y: number, l: { x1: number; y1: number; x2: number
   const dx = l.x2 - l.x1, dy = l.y2 - l.y1, l2 = dx * dx + dy * dy
   const u = l2 > 0 ? Math.max(0, Math.min(1, ((x - l.x1) * dx + (y - l.y1) * dy) / l2)) : 0
   return Math.hypot(x - l.x1 - u * dx, y - l.y1 - u * dy)
-}
-
-// Where `t` (arc-length fraction over every subpath) lands, and the direction there — for
-// drawing the ghost tab the way TabLayer draws a real one.
-function pointAtT(polys: [number, number][][], t: number): { x: number; y: number; tx: number; ty: number } | null {
-  let total = 0
-  for (const p of polys) for (let i = 1; i < p.length; i++) total += Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1])
-  if (total < 1e-9) return null
-  let left = t * total
-  for (const p of polys) {
-    for (let i = 1; i < p.length; i++) {
-      const dx = p[i][0] - p[i - 1][0], dy = p[i][1] - p[i - 1][1], l = Math.hypot(dx, dy)
-      if (l < 1e-12) continue
-      if (left <= l) { const u = left / l; return { x: p[i - 1][0] + u * dx, y: p[i - 1][1] + u * dy, tx: dx / l, ty: dy / l } }
-      left -= l
-    }
-  }
-  return null
 }
 
 export function useTabPlaceTool({ stageRef, viewportRef }: CanvasView, getFlat: FlatOf) {

@@ -56,13 +56,18 @@ export function TabsForm({ onClose }: { onClose: () => void }) {
     }
   })
 
-  // Every selected path with an outline to put tabs on — a picture or an STL model has
-  // none. A sheet of parts is tabbed in one click, as one undo step (applyTabsMany).
+  // Every selected path. A sheet of parts is tabbed in one click, as one undo step
+  // (applyTabsMany). An STL model or a depth-map picture takes tabs on its OUTLINE — its box
+  // — and a 3D Profile cut round it leaves each one as a bar of stock from the box in to the
+  // model (cam/profile3dTabs).
   const byId = new Map(paths.map((p) => [p.id, p]))
   const targets = selectedIds.flatMap((id) => {
     const p = byId.get(id)
-    return p && !p.imageSrc && !p.stlSrc ? [p] : []
+    return p ? [p] : []
   })
+  const modelTargets = targets.filter((p) => p.stlSrc || p.imageSrc).length
+  // Strips join drawn parts; a model's box is not one.
+  const stripTargets = targets.filter((p) => !p.stlSrc && !p.imageSrc)
   const targetIds = new Set(targets.map((p) => p.id))
   const singlePath = targets.length === 1 ? targets[0] : null
   // Click to Place places whichever the toggle says, whatever is selected; otherwise one
@@ -92,7 +97,7 @@ export function TabsForm({ onClose }: { onClose: () => void }) {
 
   function handleApply() {
     if (targets.length === 0) return
-    if (mode === 'bridges') applyBridges(targets, form.bridgeWidthMM, form.heightMM, form.count)
+    if (mode === 'bridges') applyBridges(stripTargets, form.bridgeWidthMM, form.heightMM, form.count)
     else {
       applyTabsMany(targets, form.count, form.lengthMM, form.heightMM)
       regenerateAffectedMany(targets.map((p) => p.id))
@@ -119,11 +124,11 @@ export function TabsForm({ onClose }: { onClose: () => void }) {
   // catches with them (holdableParts) — read off the outlines, so profiling can come later.
   const operations = useToolpathStore((s) => s.operations)
   const thicknessMM = useWorkpieceStore((s) => s.thicknessMM)
-  const joinParts = mode === 'bridges' ? holdableParts(targets, operations, thicknessMM, form.heightMM) : []
+  const joinParts = mode === 'bridges' ? holdableParts(stripTargets, operations, thicknessMM, form.heightMM) : []
   const joinable = joinParts.length
   // Holes whose slug strips hold — big enough to matter (planSlugStrips skips the rest).
   const slugHoles = mode === 'bridges' && joinable > 0
-    ? holdableHoles(targets, joinParts, operations, thicknessMM, form.heightMM).filter((h) => {
+    ? holdableHoles(stripTargets, joinParts, operations, thicknessMM, form.heightMM).filter((h) => {
       const b = getBBox(h.d)
       return !!b && Math.min(b.maxX - b.minX, b.maxY - b.minY) >= MIN_SLUG_MM
     }).length
@@ -208,6 +213,11 @@ export function TabsForm({ onClose }: { onClose: () => void }) {
           <LengthInput id="tabs-length" valueMM={form.lengthMM} minMM={0.5} stepMM={1}
             onChangeMM={(v) => up('lengthMM', v)} className={inputCls} />
           <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">Tab width along the path edge</p>
+          {modelTargets > 0 && (
+            <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">
+              On a 3D model the tabs go on its box. A 3D Profile that cuts through the stock leaves each one as a bar from the box in to the model.
+            </p>
+          )}
         </div>
       )}
       {mode === 'bridges' && (

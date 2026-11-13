@@ -28,6 +28,8 @@ export function opsAffectedByStockChange(
     if (op.type === 'surface') return outline || next.origin !== prev.origin
     if (op.type === 'profile3d') {
       if (outline && op.boundary === 'stock') return true
+      // Tabs on its model stand on the stock's bottom too (cam/profile3dTabs).
+      if (thickness && isHeld(op)) return true
       return profile3dDepthMM(op.maxDepthMM, prev.thicknessMM) !== profile3dDepthMM(op.maxDepthMM, next.thicknessMM)
     }
     return false

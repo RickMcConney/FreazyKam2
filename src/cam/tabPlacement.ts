@@ -113,3 +113,25 @@ export function tabTAt(subpaths: Pt2[][], x: number, y: number, lengthMM: number
   const local = offCorners(bestS, runs[bestK], lengthMM / 2 + CORNER_CLEARANCE_MM)
   return (start + local) / totalLen
 }
+
+/**
+ * Where `t` (the arc-length fraction over every subpath, as a tab stores it) lands on an
+ * outline, and the direction of travel there. Null for an outline with no length.
+ */
+export function tabPointAt(subpaths: Pt2[][], t: number): { x: number; y: number; tx: number; ty: number } | null {
+  let total = 0
+  for (const p of subpaths) for (let i = 1; i < p.length; i++) total += Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1])
+  if (total < 1e-9) return null
+  let left = Math.max(0, Math.min(1, t)) * total
+  let last: { x: number; y: number; tx: number; ty: number } | null = null
+  for (const p of subpaths) {
+    for (let i = 1; i < p.length; i++) {
+      const dx = p[i][0] - p[i - 1][0], dy = p[i][1] - p[i - 1][1], l = Math.hypot(dx, dy)
+      if (l < 1e-12) continue
+      if (left <= l) { const u = left / l; return { x: p[i - 1][0] + u * dx, y: p[i - 1][1] + u * dy, tx: dx / l, ty: dy / l } }
+      left -= l
+      last = { x: p[i][0], y: p[i][1], tx: dx / l, ty: dy / l }
+    }
+  }
+  return last
+}
