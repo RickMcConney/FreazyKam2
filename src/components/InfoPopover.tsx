@@ -47,7 +47,7 @@ export default function InfoPopover({ text }: { text: string }) {
             className="fixed z-50 bg-white dark:bg-neutral-800 border border-gray-200 dark:border-neutral-700 rounded-lg shadow-2xl p-4 overflow-y-auto cursor-pointer"
             style={{ top: pos.top, left: pos.left, width: POPOVER_WIDTH, maxHeight: pos.maxHeight }}
           >
-            <p className="text-base leading-relaxed text-gray-700 dark:text-neutral-200">
+            <p className="text-base leading-relaxed text-gray-700 dark:text-neutral-200 whitespace-pre-line">
               {text}
             </p>
           </div>

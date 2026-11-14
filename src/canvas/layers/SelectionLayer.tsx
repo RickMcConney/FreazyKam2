@@ -5,6 +5,8 @@ import type { Viewport } from '../viewport'
 import type { HandleType, LiveTransform } from '../types'
 import { transformPoint } from '../selectionUtils'
 import type { BBox } from '../selectionUtils'
+import { useUIStore } from '../../store/uiStore'
+import { canvasTheme } from '../../theme'
 
 const HANDLE_R = 8
 const ROT_OFFSET_PX = 22
@@ -76,6 +78,8 @@ interface HandleLayerProps extends SharedProps {
 
 export function SelectionHandleLayer({ viewport, bbox, liveTransform, onResizeHandleDown, onRotateHandleDown, scaleLocked }: HandleLayerProps) {
   const [hoveredId, setHoveredId] = useState<HandleType | 'rot' | null>(null)
+  // Hollow at rest, like the point-edit handles: canvas-coloured fill inside the ring.
+  const rest = canvasTheme(useUIStore((st) => st.darkMode)).bg
   const { corners: c, rotHandle } = handlePositions(viewport, bbox, liveTransform)
 
   const handles: { id: HandleType; pos: { x: number; y: number } }[] = scaleLocked ? [] : [
@@ -92,7 +96,7 @@ export function SelectionHandleLayer({ viewport, bbox, liveTransform, onResizeHa
           key={id}
           x={p.x} y={p.y}
           radius={HANDLE_R}
-          fill={hoveredId === id ? '#60a5fa' : '#1e293b'}
+          fill={hoveredId === id ? '#60a5fa' : rest}
           stroke="#60a5fa" strokeWidth={1.5}
           onMouseEnter={() => setHoveredId(id)}
           onMouseLeave={() => setHoveredId(null)}
@@ -102,7 +106,7 @@ export function SelectionHandleLayer({ viewport, bbox, liveTransform, onResizeHa
       <Circle
         x={rotHandle.x} y={rotHandle.y}
         radius={HANDLE_R}
-        fill={hoveredId === 'rot' ? '#a78bfa' : '#1e293b'}
+        fill={hoveredId === 'rot' ? '#a78bfa' : rest}
         stroke="#a78bfa" strokeWidth={1.5}
         onMouseEnter={() => setHoveredId('rot')}
         onMouseLeave={() => setHoveredId(null)}

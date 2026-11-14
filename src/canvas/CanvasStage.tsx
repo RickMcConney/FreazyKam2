@@ -258,13 +258,18 @@ export default function CanvasStage() {
         && hitIds.length > 1 && currentIds.length === hitIds.length
         && hitIds.every((id) => currentIds.includes(id))
         ? hit.id : undefined
+      // Shift-drag MOVES (it is the drag lock's override), so a Shift press on a part that
+      // is already selected must not take it out of the selection on the way: the rest
+      // would be dragged without it. Taking it out waits for a release that never became
+      // a drag (`toggleOutOnClick`). Adding an unselected part still happens on the press,
+      // so the drag carries it.
+      let toggleOutOnClick: string[] | undefined
       if (e.evt.shiftKey) {
         // Toggle the whole group's membership, not one path's: half a group in
         // the selection is a state no click could get back out of.
         const allIn = hitIds.every((id) => currentIds.includes(id))
-        usePathsStore.getState().setSelectedIds(allIn
-          ? currentIds.filter((id) => !hitIds.includes(id))
-          : [...currentIds, ...hitIds.filter((id) => !currentIds.includes(id))])
+        if (allIn) toggleOutOnClick = hitIds
+        else usePathsStore.getState().setSelectedIds([...currentIds, ...hitIds.filter((id) => !currentIds.includes(id))])
       } else if (!currentIds.includes(hit.id)) {
         usePathsStore.getState().setSelectedIds(hitIds)
       }
@@ -276,10 +281,22 @@ export default function CanvasStage() {
         setMode({ type: 'idle' })
         return
       }
+      // DRAGGING LOCKED (toolbar lock, L): the press has selected, but the outline does not
+      // move — handles, arrow keys and typed values still do, and Shift-drag overrides.
+      // The drag draws a selection box instead, which is otherwise impossible to start on
+      // a crowded nest, where every press lands on a part.
+      if (useUIStore.getState().moveLocked && !e.evt.shiftKey) {
+        // Always an ADDING box: Shift is the override, and Alt on a part already means
+        // "just this member", so neither can ask for a removing one here.
+        const op = activeTool === 'region' ? 'replace' : 'add'
+        beginGesture({ type: 'dragbox', startScreen: { x: stagePointer.x, y: stagePointer.y }, onPath: { narrowTo } })
+        setDragBox({ sx: stagePointer.x, sy: stagePointer.y, ex: stagePointer.x, ey: stagePointer.y, op })
+        return
+      }
       const moveIds = usePathsStore.getState().selectedIds
       const session = beginMoveSession(moveIds)
       constraintPlanRef.current = session.plan
-      beginGesture({ type: 'move', pathIds: moveIds, startCNC: cnc, initBbox: session.bbox ?? EMPTY_BBOX, snapTargets: session.snapTargets, narrowTo })
+      beginGesture({ type: 'move', pathIds: moveIds, startCNC: cnc, initBbox: session.bbox ?? EMPTY_BBOX, snapTargets: session.snapTargets, narrowTo, toggleOutOnClick })
     } else {
       if (neid) { exitNodeEdit(); return }
       // Region picking (on while the Pocket form is open) decides on mouseup: a
@@ -408,6 +425,13 @@ export default function CanvasStage() {
       if (m.pick) onConstrainClick()
       // The second click on a group: down to the one path under it.
       else if (m.narrowTo) usePathsStore.getState().setSelectedIds([m.narrowTo])
+      // A Shift click on a part already selected: out of the selection, now that it is
+      // known not to have been a drag.
+      else if (m.toggleOutOnClick) {
+        const out = new Set(m.toggleOutOnClick)
+        const ps = usePathsStore.getState()
+        ps.setSelectedIds(ps.selectedIds.filter((id) => !out.has(id)))
+      }
       return
     }
 
@@ -417,6 +441,9 @@ export default function CanvasStage() {
         const { sx, sy, ex, ey } = box
         if (Math.hypot(ex - sx, ey - sy) > MOVE_THRESHOLD_PX) {
           applyDragBox(box, vp)
+        } else if (m.onPath) {
+          // A click on a part with dragging locked: the press already selected it.
+          if (m.onPath.narrowTo) usePathsStore.getState().setSelectedIds([m.onPath.narrowTo])
         } else if (box.op === 'add') {
           // A plain click on empty canvas: deselect.
           usePathsStore.getState().selectPath(null)

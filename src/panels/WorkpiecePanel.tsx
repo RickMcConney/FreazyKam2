@@ -25,7 +25,9 @@ import { NUMERIC_HINT } from '../components/parseNumeric'
 import { rigidityInfo } from '../rigidity'
 import { exportSettings, pickSettingsFile } from '../io/settingsFile'
 import type { SettingsFile } from '../io/settingsMerge'
-import { MACHINE_X_DIRS, fromMachine, type MachineXDir } from '../cam/machineFrame'
+import { fromMachine, nextMachineXDir, type MachineXDir } from '../cam/machineFrame'
+import { usePathsStore } from '../store/pathsStore'
+import { useUIStore } from '../store/uiStore'
 import { useMachineStore } from '../machine/machineStore'
 import { AXIS_COLORS } from '../colors'
 import { mapRotationFor } from '../machine/mapRotation'
@@ -258,7 +260,13 @@ function MachineAxes({ dir }: { dir: MachineXDir }) {
 const X_DIR_HELP =
   "Which way your machine's +X axis runs on the drawing, with the stock laid out as it sits " +
   "on the table. The G-code is turned to match, and the simulator turns it back, so the " +
-  "toolpaths stay on the shapes."
+  "toolpaths stay on the shapes. Parts come out exactly as drawn — turned on the table, " +
+  "never mirrored.\n\n" +
+  "On an empty drawing, Rotate turns the whole setup: the stock's width and height, the " +
+  "table size and the origin corner turn with the axes, so the machine sees the same table " +
+  "and only the screen changes. Use it to lay a long-Y machine's sheet sideways on a wide " +
+  "monitor. \"+X up\" draws the table as seen from the machine's left end, \"+X down\" from " +
+  "its right end — pick the end you stand at. With parts already drawn, only the axes turn."
 
 
 export default function WorkpiecePanel() {
@@ -503,8 +511,22 @@ export default function WorkpiecePanel() {
               type="button"
               title="Turn the machine's axes a quarter turn"
               onClick={() => {
-                const next = MACHINE_X_DIRS[(MACHINE_X_DIRS.indexOf(machineXDir) + 1) % MACHINE_X_DIRS.length]
-                setMachineXDir(next)
+                const next = nextMachineXDir(machineXDir)
+                // On an EMPTY sheet the whole setup turns — stock, origin and table limits
+                // with the axes — so the machine sees the same table and only the screen
+                // changes (a long-Y machine's sheet then lies down on a wide monitor). With
+                // anything on the stock it is the axes alone: the parts would not turn with
+                // it, and the strips, tiling or flip would be left lying across the old one.
+                const wp = useWorkpieceStore.getState()
+                const empty = usePathsStore.getState().paths.length === 0
+                  && !wp.doubleSided && !wp.tiling && !wp.bridges
+                if (empty) wp.turnSetup()
+                else {
+                  setMachineXDir(next)
+                  useUIStore.getState().showStatus(
+                    'Machine axes turned. The stock, origin and table size were left as they are because the drawing is not empty — on an empty one they turn too.',
+                    'info')
+                }
                 // The machine panel's map turns with it, so it lies like the drawing.
                 useMachineStore.setState({ mapRotation: mapRotationFor(next) })
               }}

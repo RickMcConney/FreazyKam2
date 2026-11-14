@@ -2,6 +2,7 @@ import { memo } from 'react'
 import { Group, Arrow, Circle, Text } from 'react-konva'
 import type { Viewport } from '../viewport'
 import { useWorkpieceStore } from '../../store/workpieceStore'
+import { useUIStore } from '../../store/uiStore'
 import { originWorldXY } from './WorkpieceLayer'
 import { Z_DATUM_COLOR, AXIS_COLORS } from '../../colors'
 import { fromMachine } from '../../cam/machineFrame'
@@ -16,14 +17,17 @@ interface Props {
   viewport: Viewport
 }
 
-const LEN = 28   // arrow length in pixels
+const LEN = 32   // arrow length in pixels
 const SW = 1.5   // stroke width in pixels
-const PTR = 6    // arrowhead size in pixels
-const FS = 10    // font size in pixels
+const PTR = 9    // arrowhead size in pixels — larger than the Z label's scale, since the
+                 // heads and X/Y letters sit right on the axis lines and were lost there
+const AXIS_FS = 14 // X / Y label font size in pixels
+const FS = 10    // Z label font size in pixels (it sits off the axes, and reads fine)
 
 export const OriginLayer = memo(function OriginLayer({ viewport }: Props) {
   const { widthMM, heightMM, origin, zOrigin, machineXDir } = useWorkpieceStore()
   const org = originWorldXY(origin, widthMM, heightMM)
+  const darkMode = useUIStore((s) => s.darkMode)
 
   // Convert world → screen (Y flipped: higher world Y = lower screen Y)
   const sx = viewport.x + org.x * viewport.scale
@@ -37,8 +41,8 @@ export const OriginLayer = memo(function OriginLayer({ viewport }: Props) {
   const ax = axis(1, 0), ay = axis(0, 1)
   // A label sits past its arrow's tip, centred on the line it continues.
   const label = (u: { dx: number; dy: number }) => ({
-    x: sx + u.dx * (LEN + FS * 0.7) - FS * 0.3,
-    y: sy + u.dy * (LEN + FS * 0.7) - FS / 2,
+    x: sx + u.dx * (LEN + AXIS_FS * 0.7) - AXIS_FS * 0.3,
+    y: sy + u.dy * (LEN + AXIS_FS * 0.7) - AXIS_FS / 2,
   })
 
   return (
@@ -49,9 +53,9 @@ export const OriginLayer = memo(function OriginLayer({ viewport }: Props) {
         points={[0, 0, ax.dx * LEN, ax.dy * LEN]}
         stroke={AXIS_COLORS.x} fill={AXIS_COLORS.x}
         strokeWidth={SW}
-        pointerLength={PTR} pointerWidth={PTR * 0.7}
+        pointerLength={PTR} pointerWidth={PTR * 0.75}
       />
-      <Text {...label(ax)} text="X" fill={AXIS_COLORS.x} fontSize={FS} />
+      <Text {...label(ax)} text="X" fill={AXIS_COLORS.x} fontSize={AXIS_FS} fontStyle="bold" />
 
       {/* Y axis – green, a quarter turn anticlockwise from X (up, for an X that points right) */}
       <Arrow
@@ -59,12 +63,13 @@ export const OriginLayer = memo(function OriginLayer({ viewport }: Props) {
         points={[0, 0, ay.dx * LEN, ay.dy * LEN]}
         stroke={AXIS_COLORS.y} fill={AXIS_COLORS.y}
         strokeWidth={SW}
-        pointerLength={PTR} pointerWidth={PTR * 0.7}
+        pointerLength={PTR} pointerWidth={PTR * 0.75}
       />
-      <Text {...label(ay)} text="Y" fill={AXIS_COLORS.y} fontSize={FS} />
+      <Text {...label(ay)} text="Y" fill={AXIS_COLORS.y} fontSize={AXIS_FS} fontStyle="bold" />
 
       {/* Origin dot */}
-      <Circle x={sx} y={sy} radius={3} fill="white" />
+      {/* White on the dark canvas, near-black on the light one, where white vanished */}
+      <Circle x={sx} y={sy} radius={3} fill={darkMode ? '#ffffff' : '#111827'} />
 
       {/* Z origin label — which stock face Z0 sits on (top surface vs. bottom) */}
       <Text

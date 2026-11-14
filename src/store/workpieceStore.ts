@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { MotionLimits } from '../sim/motionPlanner'
-import type { MachineXDir } from '../cam/machineFrame'
+import { nextMachineXDir, turnedOrigin, type MachineXDir } from '../cam/machineFrame'
 import { useTimelineStore } from '../timeline/timelineStore'
 import type { WorkpieceEventChanges } from '../timeline/events'
 import { DEFAULT_CUSTOM_DIAL_RPM, normalizeCustomDial, spindleDialRange, clampToChartedRange, type SpindleType } from './spindle'
@@ -227,6 +227,10 @@ export interface WorkpieceState {
   setMaxSpindleRpm: (rpm: number) => void
   setSpindleType: (t: SpindleType) => void
   setMachineXDir: (d: MachineXDir) => void
+  /** Turn the machine's axes a quarter turn AND the stock, its origin and the table
+   *  limits with them (`turnedOrigin`), so the machine sees the same table. For an empty
+   *  drawing only — the caller checks; parts on the stock would not turn with it. */
+  turnSetup: () => void
   setCustomDialRpm: (rpm: number[]) => void
   setAccelXY: (mmS2: number) => void
   setAccelZ: (mmS2: number) => void
@@ -310,6 +314,19 @@ export const useWorkpieceStore = create<WorkpieceState>()(
       // its top speed. A VFD or manual spindle leaves the range as it was.
       setSpindleType: (t) => set({ spindleType: t, ...dialRangeOf(t, get().customDialRpm) }),
       setMachineXDir: (d) => set({ machineXDir: d }),
+      turnSetup: () => {
+        const st = get()
+        const changes = { widthMM: st.heightMM, heightMM: st.widthMM, origin: turnedOrigin(st.origin) }
+        set({
+          ...changes,
+          machineXDir: nextMachineXDir(st.machineXDir),
+          tableLimitWidthMM: st.tableLimitHeightMM,
+          tableLimitHeightMM: st.tableLimitWidthMM,
+        })
+        // ONE undo step for the stock half (the axes and table limits are machine settings,
+        // never on the timeline).
+        useTimelineStore.getState().record({ kind: 'workpiece.set', changes })
+      },
       setCustomDialRpm: (rpm) => set({
         customDialRpm: [...rpm],
         ...(get().spindleType === 'custom' ? dialRangeOf('custom', rpm) : {}),

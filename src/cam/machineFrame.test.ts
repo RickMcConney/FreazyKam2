@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { toMachine, fromMachine, movesToDrawing, MACHINE_X_DIRS, type MachineXDir } from './machineFrame'
+import { toMachine, fromMachine, movesToDrawing, MACHINE_X_DIRS, nextMachineXDir, turnedOrigin, type MachineXDir } from './machineFrame'
 import { generateGcode } from './gcode'
 import { parseGcode } from '../sim/gcodeParser'
 import { useWorkpieceStore, type OriginPosition } from '../store/workpieceStore'
@@ -125,5 +125,48 @@ describe('the simulator lays a loaded program over the drawing', () => {
     useSimStore.getState().loadGcode(program(), { autoReload: false })
     expect(moves(useSimStore.getState().segments)).toEqual(plain)
     useSimStore.getState().clearSim()
+  })
+})
+
+describe('turning the whole setup (Rotate on an empty drawing)', () => {
+  const ORIGINS: OriginPosition[] = [
+    'top-left', 'top-center', 'top-right', 'mid-left', 'center', 'mid-right',
+    'bottom-left', 'bottom-center', 'bottom-right',
+  ]
+  // The stock's four corners as the MACHINE sees them: relative to the work origin, turned.
+  const machineCorners = (w: number, h: number, o: OriginPosition, dir: MachineXDir) => {
+    const ox = o.endsWith('left') ? 0 : o.endsWith('right') ? w : w / 2
+    const oy = o.startsWith('bottom') ? 0 : o.startsWith('top') ? h : h / 2
+    return [[0, 0], [w, 0], [w, h], [0, h]]
+      .map(([x, y]) => toMachine(x - ox, y - oy, dir).map((v) => +v.toFixed(9)).join(','))
+      .sort()
+  }
+
+  it('leaves every stock corner at the same machine coordinates, for every axis setting and origin', () => {
+    for (const dir of MACHINE_X_DIRS) {
+      for (const o of ORIGINS) {
+        expect(machineCorners(1220, 2440, turnedOrigin(o), nextMachineXDir(dir)))
+          .toEqual(machineCorners(2440, 1220, o, dir))
+      }
+    }
+  })
+
+  it('turns the axes anticlockwise: right → up → left → down → right', () => {
+    expect(MACHINE_X_DIRS.map(nextMachineXDir)).toEqual(['up', 'left', 'down', 'right'])
+  })
+
+  it('carries a long-Y machine\'s front-left origin to the bottom-right corner of the sideways sheet', () => {
+    expect(turnedOrigin('bottom-left')).toBe('bottom-right')
+    expect(turnedOrigin('center')).toBe('center')
+  })
+
+  it('swaps the stock and table width/height and moves the origin in one turnSetup', () => {
+    const wp = useWorkpieceStore.getState()
+    useWorkpieceStore.setState({ widthMM: 1220, heightMM: 2440, origin: 'bottom-left', machineXDir: 'right',
+      tableLimitWidthMM: 1300, tableLimitHeightMM: 2500 })
+    wp.turnSetup()
+    const s = useWorkpieceStore.getState()
+    expect([s.widthMM, s.heightMM, s.origin, s.machineXDir, s.tableLimitWidthMM, s.tableLimitHeightMM])
+      .toEqual([2440, 1220, 'bottom-right', 'up', 2500, 1300])
   })
 })

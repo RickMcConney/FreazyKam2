@@ -4,6 +4,8 @@ import type { Viewport } from '../viewport'
 import { useUIStore } from '../../store/uiStore'
 import { usePathsStore, type ImportedPath } from '../../store/pathsStore'
 import { useToolpathStore, pathIdsOf, type MotionSegment } from '../../store/toolpathStore'
+import { useToolStore } from '../../store/toolStore'
+import { maxCutRadiusMM } from '../../cam/geom'
 
 // Amber for a TOOLPATH's source paths: it reads against both the blue selection and the
 // toolpath colours, in either theme. A hovered PATH glows the selection's own blue — it is
@@ -20,10 +22,53 @@ function path2dOf(p: ImportedPath): Path2D {
   return p2
 }
 
+// The same per OBJECT for a toolpath's moves: segments arrays are replaced on every
+// regenerate, never mutated, so a hover over a big pocket builds its Path2D once. Split
+// into one run per TOOL, at each tool change, so each run can be drawn at its bit's width;
+// `toolId: null` is the op's own tool, until the first change.
+interface MoveRun { toolId: string | null; path: Path2D }
+const moveRuns = new WeakMap<MotionSegment[], MoveRun[]>()
+function movesOf(segs: MotionSegment[]): MoveRun[] {
+  let runs = moveRuns.get(segs)
+  if (runs) return runs
+  runs = [{ toolId: null, path: new Path2D() }]
+  let p2 = runs[0].path
+  // Cutting moves only — a rapid lifts the pen — with arcs drawn as arcs, so what lights
+  // up is the path the tool's centre actually takes.
+  let down = false
+  let px = 0, py = 0
+  for (const g of segs) {
+    if (g.toolChange) {
+      down = false
+      p2 = new Path2D()
+      runs.push({ toolId: g.toolChange, path: p2 })
+      continue
+    }
+    if (g.rapid || !down) { p2.moveTo(g.x, g.y); down = !g.rapid; px = g.x; py = g.y; continue }
+    if (g.arc) {
+      const { cx, cy, cw } = g.arc
+      const r = Math.hypot(px - cx, py - cy)
+      if (r < 0.001) p2.lineTo(g.x, g.y)
+      else {
+        const a0 = Math.atan2(py - cy, px - cx)
+        const full = Math.abs(px - g.x) < 0.001 && Math.abs(py - g.y) < 0.001
+        // Canvas angles run +x towards +y, which in CNC Y-up is CCW — so CW is `anticlockwise`.
+        const a1 = full ? a0 + (cw ? -2 * Math.PI : 2 * Math.PI) : Math.atan2(g.y - cy, g.x - cx)
+        p2.arc(cx, cy, r, a0, a1, cw)
+      }
+    } else p2.lineTo(g.x, g.y)
+    px = g.x; py = g.y
+  }
+  moveRuns.set(segs, runs)
+  return runs
+}
+
 /**
- * The paths behind whatever the pointer is over in the Toolpaths list (`uiStore.hoverOpIds`)
+ * The TOOLPATH of whatever the pointer is over in the Toolpaths list (`uiStore.hoverOpIds`)
  * — a row, a tool run or a whole sheet folder — so a toolpath can be found on a crowded
- * drawing before it is clicked to edit. And the paths themselves, for a row or folder of
+ * drawing before it is clicked to edit. Its own cutting moves, not its source paths: the
+ * shape is already on screen, and what the row is asking about is where THIS op cuts —
+ * an outside profile and an inside one of the same path lit up identically. And the paths themselves, for a row or folder of
  * the Paths list or a path chip of the strip (`uiStore.hoverPathIds`).
  *
  * In the simulation's layer (CNC space, its own canvas, listening off), not the drawing's:
@@ -31,19 +76,20 @@ function path2dOf(p: ImportedPath): Path2D {
  * change would repaint the whole drawing. ONE Shape whatever the count (see the canvas
  * CLAUDE.md on N shapes) — a sheet folder can light up hundreds of parts.
  *
- * An operation with no live source path — surfacing, imported G-code, a part since deleted
- * — has its own cutting moves traced instead, so every row lights SOMETHING up.
+ * An operation with no toolpath yet (not generated, or failed) lights its source paths
+ * instead, so every row lights SOMETHING up.
  */
 export const HoverHighlightLayer = memo(function HoverHighlightLayer({ viewport }: { viewport: Viewport }) {
   const hoverOpIds = useUIStore((s) => s.hoverOpIds)
   const hoverPathIds = useUIStore((s) => s.hoverPathIds)
   const operations = useToolpathStore((s) => s.operations)
   const paths = usePathsStore((s) => s.paths)
+  const tools = useToolStore((s) => s.tools)
 
   const { hitPaths, ownPaths, segRuns } = useMemo(() => {
     const hitPaths: ImportedPath[] = []
     const ownPaths: ImportedPath[] = []
-    const segRuns: MotionSegment[][] = []
+    const segRuns: { segs: MotionSegment[]; toolId: string }[] = []
     if (hoverOpIds.length === 0 && hoverPathIds.length === 0) return { hitPaths, ownPaths, segRuns }
     const byId = new Map(paths.map((p) => [p.id, p]))
     const want = new Set(hoverOpIds)
@@ -51,9 +97,11 @@ export const HoverHighlightLayer = memo(function HoverHighlightLayer({ viewport 
     for (const id of new Set(hoverPathIds)) { const p = byId.get(id); if (p) ownPaths.push(p) }
     for (const op of operations) {
       if (!want.has(op.id)) continue
-      const live = pathIdsOf(op).map((id) => byId.get(id)).filter((p): p is ImportedPath => !!p)
-      if (live.length === 0) { if (op.segments.length > 0) segRuns.push(op.segments); continue }
-      for (const p of live) if (!seen.has(p.id)) { seen.add(p.id); hitPaths.push(p) }
+      if (op.segments.length > 0) { segRuns.push({ segs: op.segments, toolId: op.toolId }); continue }
+      for (const id of pathIdsOf(op)) {
+        const p = byId.get(id)
+        if (p && !seen.has(p.id)) { seen.add(p.id); hitPaths.push(p) }
+      }
     }
     return { hitPaths, ownPaths, segRuns }
   }, [hoverOpIds, hoverPathIds, operations, paths])
@@ -65,20 +113,6 @@ export const HoverHighlightLayer = memo(function HoverHighlightLayer({ viewport 
       sceneFunc={(kctx) => {
         const c = kctx._context as CanvasRenderingContext2D
         const ps = hitPaths.map(path2dOf)
-        let moves: Path2D | null = null
-        if (segRuns.length > 0) {
-          // Cutting moves only, straight between endpoints — a pointer to WHERE the
-          // toolpath is, not a preview of the cut.
-          moves = new Path2D()
-          for (const segs of segRuns) {
-            let down = false
-            for (const g of segs) {
-              if (g.toolChange) { down = false; continue }
-              if (g.rapid || !down) { moves.moveTo(g.x, g.y); down = !g.rapid; continue }
-              moves.lineTo(g.x, g.y)
-            }
-          }
-        }
         c.save()
         c.lineCap = 'round'
         c.lineJoin = 'round'
@@ -87,7 +121,7 @@ export const HoverHighlightLayer = memo(function HoverHighlightLayer({ viewport 
           if (list.length === 0) return
           c.strokeStyle = colour
           c.globalAlpha = 0.35
-          c.lineWidth = 9 * px
+          c.lineWidth = 11 * px   // one pixel more each side than it was
           for (const p of list) c.stroke(p)
           c.globalAlpha = 1
           c.lineWidth = 2 * px
@@ -95,7 +129,23 @@ export const HoverHighlightLayer = memo(function HoverHighlightLayer({ viewport 
         }
         glow(ownPaths.map(path2dOf), PATH_GLOW)
         glow(ps, GLOW)
-        if (moves) { c.strokeStyle = GLOW; c.lineWidth = 2 * px; c.globalAlpha = 0.85; c.stroke(moves) }
+        // A toolpath's glow is THE WIDTH OF ITS BIT (`maxCutRadiusMM`: a taper's widest cut,
+        // not its tip), so what lights up is the swath the tool sweeps. Never thinner than
+        // the plain glow's centreline, or a fine engraving bit vanishes at low zoom.
+        const toolById = new Map(tools.map((t) => [t.id, t]))
+        for (const { segs, toolId } of segRuns) {
+          for (const run of movesOf(segs)) {
+            const tool = toolById.get(run.toolId ?? toolId)
+            const width = tool ? 2 * maxCutRadiusMM(tool) : 9 * px
+            c.strokeStyle = GLOW
+            c.globalAlpha = 0.35
+            c.lineWidth = Math.max(width, 3 * px)
+            c.stroke(run.path)
+            c.globalAlpha = 1
+            c.lineWidth = 2 * px
+            c.stroke(run.path)
+          }
+        }
         c.restore()
       }} />
   )

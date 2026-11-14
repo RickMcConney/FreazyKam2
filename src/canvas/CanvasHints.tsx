@@ -20,6 +20,7 @@ export function CanvasHints({ connecting, hoveredEditNode, hoverSegIdx, penClosi
   const penNodes = useUIStore((s) => s.penNodes)
   const penCurveType = useUIStore((s) => s.penCurveType)
   const shapeFromCenterPref = useUIStore((s) => s.shapeFromCenter)
+  const moveLocked = useUIStore((s) => s.moveLocked)
   const selectedIds = usePathsStore((s) => s.selectedIds)
 
   return (
@@ -97,7 +98,7 @@ export function CanvasHints({ connecting, hoveredEditNode, hoverSegIdx, penClosi
       )}
       {activeTool === 'select' && selectedIds.length > 0 && !nodeEditPathId && !cornerPickPathId && (
         <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-gray-700/80 text-white text-body px-3 py-1 rounded-full pointer-events-none">
-          Drag to move · corner handles to scale (Shift keeps proportions){centreResize ? ' about the centre' : ''} · rotate handle to rotate{skewLocked ? '' : ' · Shift+middle handle to skew'}
+          {moveLocked ? 'Dragging locked (L): Shift-drag to move' : 'Drag to move'} · corner handles to scale (Shift keeps proportions){centreResize ? ' about the centre' : ''} · rotate handle to rotate{skewLocked ? '' : ' · Shift+middle handle to skew'}
         </div>
       )}
     </>

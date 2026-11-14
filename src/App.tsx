@@ -74,7 +74,7 @@ function MainWorkspace() {
       </div>
 
       {/* Content area (flex-col: canvas takes remaining space, viewer is fixed-height below) */}
-      <div className="flex-1 flex flex-col overflow-hidden bg-gray-50 dark:bg-neutral-900">
+      <div className="flex-1 flex flex-col overflow-hidden bg-[#eceef1] dark:bg-neutral-900">
         {/* Canvas + overlays */}
         <div className="flex-1 relative overflow-hidden">
           {workspaceTab === '2d' && (
@@ -162,6 +162,7 @@ function useKeyboardShortcuts() {
         if (sim.gcode) { e.preventDefault(); sim.playing ? sim.pause() : sim.play(); return }
       }
       if (e.key === 's' || e.key === 'S') { useUIStore.getState().toggleSnap(); return }
+      if (e.key === 'l' || e.key === 'L') { useUIStore.getState().toggleMoveLock(); return }
       // C enters (and leaves) the Constrain tool. Escape also leaves it, so this
       // is the shortcut for turning it ON without the toolbar.
       if (e.key === 'c' || e.key === 'C') {

@@ -78,6 +78,84 @@ export function recordCrash(source: CrashEntry['source'], err: unknown, componen
 export function installCrashLog() {
   if (typeof window === 'undefined') return
   trackVisibility()
+  installWakeLog()
   window.addEventListener('error', (ev) => recordCrash('error', ev.error ?? ev.message))
   window.addEventListener('unhandledrejection', (ev) => recordCrash('rejection', ev.reason))
+}
+
+// ─── Wake log ────────────────────────────────────────────────────────────────
+//
+// The white page after sleep came back with an EMPTY crash log, and the bridge kept
+// logging its reconnect attempts throughout — so no error escaped, and the main thread
+// was alive. That leaves two explanations, and this log separates them: the DOM was
+// emptied (root has no children) or the DOM is intact and the browser is not PAINTING
+// it (frames stop arriving, or the GPU took a WebGL context away). Each wake after a
+// hide of 30 s or more writes one entry, plus the page-lifecycle events around it.
+//
+// Read it with `JSON.parse(localStorage['fkam.wakeLog'])`.
+
+const WAKE_KEY = 'fkam.wakeLog'
+const WAKE_KEEP = 40
+const WAKE_MIN_HIDDEN_S = 30
+
+function pushWake(entry: Record<string, unknown>) {
+  try {
+    const raw = globalThis.localStorage?.getItem(WAKE_KEY)
+    const log = raw ? JSON.parse(raw) : []
+    const next = [...(Array.isArray(log) ? log : []), { at: new Date().toISOString(), ...entry }].slice(-WAKE_KEEP)
+    globalThis.localStorage?.setItem(WAKE_KEY, JSON.stringify(next))
+  } catch { /* storage full or unavailable */ }
+  console.info('[wake]', entry)
+}
+
+export function readWakeLog(): unknown[] {
+  try { const v = JSON.parse(globalThis.localStorage?.getItem(WAKE_KEY) ?? '[]'); return Array.isArray(v) ? v : [] }
+  catch { return [] }
+}
+
+/** Count frames for `ms` — zero means the page is not being composited at all. */
+function countFrames(ms: number): Promise<number> {
+  return new Promise((resolve) => {
+    let n = 0
+    const end = performance.now() + ms
+    const tick = () => { n++; if (performance.now() < end) requestAnimationFrame(tick) }
+    requestAnimationFrame(tick)
+    setTimeout(() => resolve(n), ms + 50)
+  })
+}
+
+function snapshotPage() {
+  const root = document.getElementById('root')
+  const canvases = [...document.querySelectorAll('canvas')]
+  const hit = document.elementFromPoint(innerWidth / 2, innerHeight / 2)
+  return {
+    rootChildren: root?.childElementCount ?? -1,
+    bodyRect: `${document.body.clientWidth}x${document.body.clientHeight}`,
+    window: `${innerWidth}x${innerHeight}@${devicePixelRatio}`,
+    canvases: canvases.map((c) => `${c.width}x${c.height}${c.isConnected ? '' : '(detached)'}`).join(' '),
+    centerElement: hit ? `${hit.tagName.toLowerCase()}${hit.id ? '#' + hit.id : ''}.${String(hit.className).slice(0, 40)}` : null,
+  }
+}
+
+function installWakeLog() {
+  let hiddenAt: number | null = null
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return }
+    const hiddenForS = hiddenAt !== null ? Math.round((Date.now() - hiddenAt) / 1000) : null
+    hiddenAt = null
+    if (hiddenForS === null || hiddenForS < WAKE_MIN_HIDDEN_S) return
+    const page = snapshotPage()
+    void countFrames(1000).then((framesIn1s) => {
+      // A second look after the first frames: did the page come back by itself?
+      pushWake({ event: 'wake', hiddenForS, framesIn1s, ...page, after1s: snapshotPage().rootChildren })
+    })
+  })
+  // Page-lifecycle events (Chrome): a frozen-then-resumed or bfcache-restored page
+  // is a different path back from sleep than a plain visibility change.
+  document.addEventListener('freeze', () => pushWake({ event: 'freeze' }))
+  document.addEventListener('resume', () => pushWake({ event: 'resume' }))
+  window.addEventListener('pageshow', (e) => { if (e.persisted) pushWake({ event: 'pageshow-bfcache' }) })
+  // webglcontextlost does not bubble, but a capture listener on the document sees it.
+  document.addEventListener('webglcontextlost', () => pushWake({ event: 'webglcontextlost' }), true)
+  document.addEventListener('webglcontextrestored', () => pushWake({ event: 'webglcontextrestored' }), true)
 }

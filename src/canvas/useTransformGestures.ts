@@ -115,7 +115,9 @@ export function useTransformGestures(
     }
     if (didDragRef.current) {
       let finalDx = dx, finalDy = dy
-      if (shiftDownRef.current) {
+      // Shift-drag is the drag lock's override on the select tool, so the axis lock it
+      // used to give is kept only for the Constrain tool's point drag.
+      if (m.pick && shiftDownRef.current) {
         if (Math.abs(dx) > Math.abs(dy)) finalDy = 0
         else finalDx = 0
       }

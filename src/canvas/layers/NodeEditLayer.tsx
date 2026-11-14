@@ -3,6 +3,8 @@ import { Group, Path, Line, Circle, Shape } from 'react-konva'
 import type Konva from 'konva'
 import type { Viewport } from '../viewport'
 import type { PathNode } from '../nodeUtils'
+import { useUIStore } from '../../store/uiStore'
+import { canvasTheme } from '../../theme'
 import { nodesToD, nearestSegmentOnPath, nearestPointOnSegment, segmentMidpoint } from '../nodeUtils'
 
 export type CrossPathEntry = {
@@ -37,6 +39,10 @@ const ANCHOR_R = 7
 const HANDLE_R = 5
 const STROKE_COLOR = '#38bdf8'
 const HANDLE_COLOR = '#94a3b8'
+// A handle under the pointer (and so the one being dragged) lights up: white on the dark
+// canvas, near-black on the light one, where white vanished into the background.
+const HANDLE_ACTIVE_DARK = '#ffffff'
+const HANDLE_ACTIVE_LIGHT = '#0f172a'
 const HOVERED_COLOR = '#ef4444'
 const WELD_COLOR = '#22c55e'
 const CONNECT_COLOR = '#f59e0b'
@@ -76,6 +82,9 @@ export function NodeEditLayer({
 }: Props) {
   const { scale: s } = viewport
   const [hoverInsert, setHoverInsert] = useState<HoverInsert | null>(null)
+  const darkMode = useUIStore((st) => st.darkMode)
+  const restFill = canvasTheme(darkMode).bg
+  const firstStroke = darkMode ? '#ffffff' : '#0f172a'
 
   const updateHoverInsert = (h: HoverInsert | null) => {
     setHoverInsert(h)
@@ -193,14 +202,16 @@ export function NodeEditLayer({
         />
       )}
 
-      {/* Anchor circles (rendered last = on top) */}
+      {/* Anchor circles (rendered last = on top). At rest a point is HOLLOW — filled with
+          the canvas background, so it reads the same in both themes; the first point is told
+          apart by its outline, white on the dark canvas and near-black on the light. */}
       {nodes.map((node, i) => {
         const isWeldTarget = weldTargetIdx === i
         const isConnectSrc = connectSourceIdx === i
         const isConnectSnap = connectSnapTargetIdx === i
         const isHovered = hoveredNodeIdx === i
-        const fill = isWeldTarget ? WELD_COLOR : isConnectSrc ? CONNECT_COLOR : isConnectSnap ? CONNECT_COLOR : isHovered ? HOVERED_COLOR : i === 0 ? '#0f172a' : '#1e293b'
-        const stroke = isWeldTarget ? WELD_COLOR : isConnectSrc ? CONNECT_COLOR : isConnectSnap ? CONNECT_COLOR : isHovered ? HOVERED_COLOR : i === 0 ? '#ffffff' : STROKE_COLOR
+        const fill = isWeldTarget ? WELD_COLOR : isConnectSrc ? CONNECT_COLOR : isConnectSnap ? CONNECT_COLOR : isHovered ? HOVERED_COLOR : restFill
+        const stroke = isWeldTarget ? WELD_COLOR : isConnectSrc ? CONNECT_COLOR : isConnectSnap ? CONNECT_COLOR : isHovered ? HOVERED_COLOR : i === 0 ? firstStroke : STROKE_COLOR
         const r = (isWeldTarget || isConnectSrc || isConnectSnap) ? (ANCHOR_R + 3) / s : ANCHOR_R / s
         return (
           <Circle
@@ -344,6 +355,10 @@ function NodeHandles({
 }) {
   const [hoveredIn, setHoveredIn] = useState(false)
   const [hoveredOut, setHoveredOut] = useState(false)
+  const darkMode = useUIStore((st) => st.darkMode)
+  const active = darkMode ? HANDLE_ACTIVE_DARK : HANDLE_ACTIVE_LIGHT
+  // Hollow at rest, like the points: canvas-coloured fill inside the handle's grey ring.
+  const rest = canvasTheme(darkMode).bg
 
   return (
     <>
@@ -359,7 +374,9 @@ function NodeHandles({
             x={node.handleIn.x}
             y={node.handleIn.y}
             radius={HANDLE_R / s}
-            fill={hoveredIn ? '#ffffff' : HANDLE_COLOR}
+            fill={hoveredIn ? active : rest}
+            stroke={hoveredIn ? active : HANDLE_COLOR}
+            strokeWidth={1.5 / s}
             listening
             onMouseEnter={() => setHoveredIn(true)}
             onMouseLeave={() => setHoveredIn(false)}
@@ -383,7 +400,9 @@ function NodeHandles({
             x={node.handleOut.x}
             y={node.handleOut.y}
             radius={HANDLE_R / s}
-            fill={hoveredOut ? '#ffffff' : HANDLE_COLOR}
+            fill={hoveredOut ? active : rest}
+            stroke={hoveredOut ? active : HANDLE_COLOR}
+            strokeWidth={1.5 / s}
             listening
             onMouseEnter={() => setHoveredOut(true)}
             onMouseLeave={() => setHoveredOut(false)}

@@ -38,6 +38,10 @@ interface UIState {
   sidebarTab: SidebarTab
   workspaceTab: WorkspaceTab
   snapEnabled: boolean
+  /** Parts cannot be dragged by their outline — only by the selection handles, the arrow
+   *  keys and typed values. Shift-drag overrides it. A press-and-drag on a part draws a
+   *  selection box instead. Persisted: someone who turns it on wants it to stay on. */
+  moveLocked: boolean
   activeTool: ActiveTool
   /** How the Constrain tool states a new constraint. Remembered across uses,
    *  like `shapeToolConfig` — the mode is a working preference, not a per-
@@ -237,6 +241,7 @@ interface UIState {
   setWorkspaceTab: (tab: WorkspaceTab) => void
   toggleSnap: () => void
   setSnap: (enabled: boolean) => void
+  toggleMoveLock: () => void
   setActiveTool: (tool: ActiveTool) => void
   setConstrainMode: (mode: 'polar' | 'xy') => void
   setFocusConstraint: (id: string | null) => void
@@ -278,6 +283,7 @@ export const useUIStore = create<UIState>()(
   sidebarTab: 'draw',
   workspaceTab: '2d',
   snapEnabled: true,
+  moveLocked: false,
   activeTool: 'select',
   constrainMode: 'xy',
   focusConstraintId: null,
@@ -391,6 +397,7 @@ export const useUIStore = create<UIState>()(
   setWorkspaceTab: (tab) => set({ workspaceTab: tab }),
   toggleSnap: () => set((s) => ({ snapEnabled: !s.snapEnabled })),
   setSnap: (enabled) => set({ snapEnabled: enabled }),
+  toggleMoveLock: () => set((s) => ({ moveLocked: !s.moveLocked })),
   setActiveTool: (tool) => set({ activeTool: tool, nodeEditPathId: null }),
   setConstrainMode: (mode) => set({ constrainMode: mode }),
   setFocusConstraint: (id) => set({ focusConstraintId: id }),
@@ -430,7 +437,7 @@ export const useUIStore = create<UIState>()(
       // functions (the node-edit undo/redo callbacks) that must not be serialised.
       // A preference the user sets explicitly belongs here; darkMode was missing, so
       // every reload snapped back to the `darkMode: true` default.
-      partialize: (s) => ({ penCurveType: s.penCurveType, lastShapeType: s.lastShapeType, timelineOpen: s.timelineOpen, pathsView: s.pathsView, darkMode: s.darkMode, shapeFromCenter: s.shapeFromCenter }),
+      partialize: (s) => ({ penCurveType: s.penCurveType, lastShapeType: s.lastShapeType, timelineOpen: s.timelineOpen, pathsView: s.pathsView, darkMode: s.darkMode, shapeFromCenter: s.shapeFromCenter, moveLocked: s.moveLocked }),
     }
   )
 )

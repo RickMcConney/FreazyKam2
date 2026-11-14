@@ -15,6 +15,7 @@ export const ICON = {
 // Call canvasTheme(darkMode) to get the correct set for the active theme.
 
 const CANVAS_LIGHT = {
+  bg: '#eceef1',   // the canvas container's background (App.tsx) — keep the two in step
   ruler: {
     bg:     '#f3f4f6',
     border: '#d1d5db',
@@ -27,16 +28,17 @@ const CANVAS_LIGHT = {
     originLine: '#ef4444',
     axisMj:     '#9ca3af',
     axisNorm:   '#d1d5db',
-    axisMn:     '#e5e7eb',
+    axisMn:     '#d4d7dd',   // must stay visible against the canvas bg above
     mmLabel:    '#9ca3af',
   },
   workpiece: {},
   path: {
-    selected: '#1e40af',
+    selected: '#000000',   // black, the light-theme mirror of dark mode's white
   },
 }
 
 const CANVAS_DARK = {
+  bg: '#171717',   // neutral-900
   ruler: {
     bg:     '#262626',
     border: '#404040',

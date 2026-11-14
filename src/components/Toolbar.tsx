@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import { ICON } from '../theme'
 import {
   FilePlus, FolderOpen, Save, Import, FileCog, Share,
-  Undo2, Redo2, Magnet, HelpCircle, CircleStop, Sun, Moon, Ruler,
+  Undo2, Redo2, Magnet, Lock, LockOpen, HelpCircle, CircleStop, Sun, Moon, Ruler,
 } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -171,6 +171,8 @@ export default function Toolbar() {
   // uiStore write and on every status/segments write of a Generate.
   const snapEnabled = useUIStore((s) => s.snapEnabled)
   const toggleSnap = useUIStore((s) => s.toggleSnap)
+  const moveLocked = useUIStore((s) => s.moveLocked)
+  const toggleMoveLock = useUIStore((s) => s.toggleMoveLock)
   const measuring = useUIStore((s) => s.activeTool === 'measure')
   const setWorkspaceTab = useUIStore((s) => s.setWorkspaceTab)
   const darkMode = useUIStore((s) => s.darkMode)
@@ -344,6 +346,15 @@ export default function Toolbar() {
             label={`Snap to Grid (S) — ${snapEnabled ? 'On' : 'Off'}`}
             onClick={toggleSnap}
             active={snapEnabled}
+          />
+          {/* Lock dragging: a part moves only by handles, arrows, typed values or Shift-drag. */}
+          <ToolbarButton
+            icon={moveLocked ? <Lock size={ICON.md} /> : <LockOpen size={ICON.md} />}
+            label={moveLocked
+              ? 'Dragging Locked (L) — parts move only by Shift-drag, handles, arrow keys or typed values'
+              : 'Lock Dragging (L) — stop parts being dragged by mistake'}
+            onClick={toggleMoveLock}
+            active={moveLocked}
           />
           {/* Measure (canvas/measure). */}
           <ToolbarButton

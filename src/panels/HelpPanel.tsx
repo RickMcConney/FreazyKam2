@@ -37,6 +37,8 @@ const SHORTCUTS: Section[] = [
       { keys: ['Scroll'], desc: 'Zoom in / out' },
       { keys: ['Middle mouse', 'Space+drag'], desc: 'Pan' },
       { keys: ['S'], desc: 'Toggle snap to grid' },
+      { keys: ['L'], desc: 'Lock dragging — parts move only by Shift-drag, handles, arrow keys or typed values; a drag on a part draws a selection box' },
+      { keys: ['Shift+drag part'], desc: 'Move a part (works while dragging is locked)' },
       { keys: ['C'], desc: 'Constrain tool — hold one part relative to another' },
     ],
   },
@@ -54,7 +56,7 @@ const SHORTCUTS: Section[] = [
 const FEATURES = [
   {
     title: 'Select tool',
-    desc: 'Click to select, drag empty area to box-select, which ADDS to the selection (hold Shift to remove from it; click empty canvas to clear) — drag RIGHT and the box takes everything it touches (dashed), drag back LEFT and it takes only what lies wholly inside (solid). Shift-click to toggle membership in a multi-selection. Drag handles to move, scale, or rotate. Hold Shift while dragging a middle (edge) handle to skew (shear) instead of scale; Shift on a corner handle scales uniformly.',
+    desc: 'Click to select, drag empty area to box-select, which ADDS to the selection (hold Shift to remove from it; click empty canvas to clear) — drag RIGHT and the box takes everything it touches (dashed), drag back LEFT and it takes only what lies wholly inside (solid). Shift-click to toggle membership in a multi-selection. Drag a part to move it, or drag handles to scale or rotate. Turn on Lock Dragging (the lock in the top bar, or L) if parts get moved by mistake: a part then moves only by Shift-drag, the handles, the arrow keys or typed values, and a drag that starts on a part draws a selection box instead. Hold Shift while dragging a middle (edge) handle to skew (shear) instead of scale; Shift on a corner handle scales uniformly.',
   },
   {
     title: 'Export SVG',

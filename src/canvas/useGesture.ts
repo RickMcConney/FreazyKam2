@@ -23,13 +23,17 @@ export type CanvasMode =
   // `pick` is the Constrain tool borrowing this mode: the second point of a
   // half-made constraint is being DRAGGED, and mouseup creates the constraint
   // holding wherever it landed. Borrowed rather than given a mode of its own so
-  // the drag gets object snap, grid snap, Shift axis-lock and the live preview
+  // the drag gets object snap, grid snap, Shift axis-lock (kept for this drag only — on
+  // the select tool Shift is the drag lock's override) and the live preview
   // of the part's OWN constraints for nothing — and so the two kinds of drag
   // cannot bake differently.
-  | { type: 'move'; pathIds: string[]; startCNC: { x: number; y: number }; initBbox: BBox; snapTargets: SnapTargets; pick?: { held: AnchorCandidate; hot: AnchorCandidate }; narrowTo?: string }
+  | { type: 'move'; pathIds: string[]; startCNC: { x: number; y: number }; initBbox: BBox; snapTargets: SnapTargets; pick?: { held: AnchorCandidate; hot: AnchorCandidate }; narrowTo?: string; toggleOutOnClick?: string[] }
   | { type: 'resize'; pathIds: string[]; handle: HandleType; anchor: { x: number; y: number }; initHandle: { x: number; y: number }; startCNC: { x: number; y: number }; initBbox: BBox; shiftHeld: boolean; snapTargets: SnapTargets }
   | { type: 'rotate'; pathIds: string[]; center: { x: number; y: number }; initAngle: number }
-  | { type: 'dragbox'; startScreen: { x: number; y: number } }
+  // `onPath`: the box began on a part while dragging was locked. A click that never
+  // became a drag then keeps the selection the press made (and narrows a group on a
+  // second click, as the move gesture would) instead of clearing it.
+  | { type: 'dragbox'; startScreen: { x: number; y: number }; onPath?: { narrowTo?: string } }
   | { type: 'drawshape'; startCNC: { x: number; y: number }; currentCNC: { x: number; y: number } }
   | { type: 'pendraw'; anchorCNC: { x: number; y: number }; closing: boolean }
   | { type: 'nodedit-drag'; nodeIdx: number; kind: 'anchor' | 'handle-in' | 'handle-out' }
