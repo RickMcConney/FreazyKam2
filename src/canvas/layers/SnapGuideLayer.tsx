@@ -1,7 +1,7 @@
 import { memo } from 'react'
-import { Group, Line, Text, Rect } from 'react-konva'
+import { Group, Line, Text } from 'react-konva'
 import type { Viewport } from '../viewport'
-import type { Box, GapMark } from '../objectSnap'
+import type { GapMark } from '../objectSnap'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 
 // Dashed alignment guides shown while a dragged selection is object-snapped.
@@ -10,24 +10,20 @@ import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 //
 // `gaps`: the equal-spacing snap's matched gaps (objectSnap equalSpacingSnap), each drawn
 // as a solid measured span with end ticks and its length, so it reads as "these are equal".
-// The Alt-hover measurement (canvas/measure) draws its gaps the same way, in its own colour,
-// with `boxes` outlining what it is measuring against.
 
-export interface SnapGuides { x?: number; y?: number; gaps?: GapMark[]; boxes?: Box[] }
+export interface SnapGuides { x?: number; y?: number; gaps?: GapMark[] }
 
 interface Props {
   viewport: Viewport
   guides: SnapGuides
   width: number
   height: number
-  color?: string
 }
 
-const SNAP_COLOR = '#FF00C8'
+const GUIDE_COLOR = '#FF00C8'
 const TICK_PX = 4
 
-export const SnapGuideLayer = memo(function SnapGuideLayer({ viewport, guides, width, height, color }: Props) {
-  const GUIDE_COLOR = color ?? SNAP_COLOR
+export const SnapGuideLayer = memo(function SnapGuideLayer({ viewport, guides, width, height }: Props) {
   const units = useWorkpieceStore((s) => s.units)
   const sx = (x: number) => viewport.x + x * viewport.scale
   const sy = (y: number) => viewport.y - y * viewport.scale
@@ -49,10 +45,6 @@ export const SnapGuideLayer = memo(function SnapGuideLayer({ viewport, guides, w
           dash={[4, 4]}
         />
       )}
-      {guides.boxes?.map((b, i) => (
-        <Rect key={`box${i}`} x={sx(b.minX)} y={sy(b.maxY)} width={(b.maxX - b.minX) * viewport.scale}
-          height={(b.maxY - b.minY) * viewport.scale} stroke={GUIDE_COLOR} strokeWidth={1} dash={[3, 3]} />
-      ))}
       {guides.gaps?.map((g, i) => {
         const label = fmtLen(g.to - g.from, units, 1)
         if (g.axis === 'x') {

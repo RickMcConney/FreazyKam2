@@ -40,7 +40,7 @@ export function CanvasHints({ connecting, hoveredEditNode, hoverSegIdx, penClosi
               ? 'Delete key to remove point'
               : hoverSegIdx !== null
                 ? 'Click to insert point · Delete key to delete segment'
-              : 'Drag points or handles · Alt-click point to toggle curve · Click segment to insert · Esc to finish'}
+              : 'Drag points or handles · Shift-click point to toggle curve · Click segment to insert · Esc to finish'}
         </div>
       )}
 
@@ -59,8 +59,8 @@ export function CanvasHints({ connecting, hoveredEditNode, hoverSegIdx, penClosi
                 ? 'Pen Tool — click for corner, drag to curve'
                 : 'Pen Tool — click to place points'
               : penCurveType === 'bezier'
-                ? 'Click to add point, drag to curve, Alt for straight segment, click first point to close, Esc to finish'
-                : 'Click to add point, Alt for straight segment, click first point to close, Esc to finish'}
+                ? 'Click to add point, drag to curve, Shift for straight segment, click first point to close, Esc to finish'
+                : 'Click to add point, Shift for straight segment, click first point to close, Esc to finish'}
         </div>
       )}
       {/* The Constrain tool is not a shape, and the catch-all below read as one:
@@ -97,7 +97,7 @@ export function CanvasHints({ connecting, hoveredEditNode, hoverSegIdx, penClosi
       )}
       {activeTool === 'select' && selectedIds.length > 0 && !nodeEditPathId && !cornerPickPathId && (
         <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-gray-700/80 text-white text-body px-3 py-1 rounded-full pointer-events-none">
-          Drag to move · corner handles to scale{centreResize ? ' about the centre' : ''} · rotate handle to rotate{skewLocked ? '' : ' · Alt+corner to skew'}
+          Drag to move · corner handles to scale (Shift keeps proportions){centreResize ? ' about the centre' : ''} · rotate handle to rotate{skewLocked ? '' : ' · Shift+middle handle to skew'}
         </div>
       )}
     </>

@@ -26,8 +26,8 @@ export type CanvasMode =
   // the drag gets object snap, grid snap, Shift axis-lock and the live preview
   // of the part's OWN constraints for nothing — and so the two kinds of drag
   // cannot bake differently.
-  | { type: 'move'; pathIds: string[]; startCNC: { x: number; y: number }; initBbox: BBox; snapTargets: SnapTargets; pick?: { held: AnchorCandidate; hot: AnchorCandidate } }
-  | { type: 'resize'; pathIds: string[]; handle: HandleType; anchor: { x: number; y: number }; initHandle: { x: number; y: number }; initBbox: BBox; shiftHeld: boolean; snapTargets: SnapTargets }
+  | { type: 'move'; pathIds: string[]; startCNC: { x: number; y: number }; initBbox: BBox; snapTargets: SnapTargets; pick?: { held: AnchorCandidate; hot: AnchorCandidate }; narrowTo?: string }
+  | { type: 'resize'; pathIds: string[]; handle: HandleType; anchor: { x: number; y: number }; initHandle: { x: number; y: number }; startCNC: { x: number; y: number }; initBbox: BBox; shiftHeld: boolean; snapTargets: SnapTargets }
   | { type: 'rotate'; pathIds: string[]; center: { x: number; y: number }; initAngle: number }
   | { type: 'dragbox'; startScreen: { x: number; y: number } }
   | { type: 'drawshape'; startCNC: { x: number; y: number }; currentCNC: { x: number; y: number } }
@@ -87,7 +87,6 @@ export function beginMoveSession(ids: string[]): { bbox: BBox | null; snapTarget
  */
 export function useGesture(viewportRef: MutableRefObject<Viewport>) {
   const spaceHeldRef = useRef(false)
-  const shiftHeldRef = useRef(false)
 
   const modeRef = useRef<CanvasMode>({ type: 'idle' })
   // Ref pair, not plain state: mouseup bakes from liveTransformRef so a mouseup
@@ -116,12 +115,15 @@ export function useGesture(viewportRef: MutableRefObject<Viewport>) {
   const [pickDrag, setPickDrag] = useState<{ dx: number; dy: number } | null>(null)
   // Ref-backed like liveTransform: mouseup reads the ref, so a release that lands before
   // React commits the last mousemove's box selects with THAT box, not the frame before.
-  // `op`: Shift held at the press ADDS what the box catches to the selection, Alt
-  // REMOVES it; neither replaces it.
+  // `op`: a plain drag ADDS what the box catches to the selection, Shift (or Alt) at the
+  // press REMOVES it. Only the region tool's box REPLACES.
   const [dragBox, dragBoxRef, setDragBox] = useRefState<{ sx: number; sy: number; ex: number; ey: number; op: 'replace' | 'add' | 'remove' } | null>(null)
   const [snapGuides, setSnapGuides] = useState<SnapGuides | null>(null)
   const [liveShapeD, setLiveShapeD] = useState<string | null>(null)
   const [altDown, altDownRef, setAltDown] = useRefState(false)
+  // Shift held: state for the pen preview, ref for the move axis lock and the gestures that
+  // read a key held before the press.
+  const [shiftDown, shiftDownRef, setShiftDown] = useRefState(false)
   const didDragRef = useRef(false)
 
   const setLiveRotationAngle = useCanvasStore((s) => s.setLiveRotationAngle)
@@ -165,8 +167,9 @@ export function useGesture(viewportRef: MutableRefObject<Viewport>) {
   }, [])
 
   return {
-    modeRef, didDragRef, spaceHeldRef, shiftHeldRef,
+    modeRef, didDragRef, spaceHeldRef,
     altDown, altDownRef, setAltDown,
+    shiftDown, shiftDownRef, setShiftDown,
     setMode, beginGesture, endGesture, snapCNC,
     liveTransform, liveTransformRef, setLiveTransform,
     constraintPlanRef, followTransforms, setFollowTransforms,

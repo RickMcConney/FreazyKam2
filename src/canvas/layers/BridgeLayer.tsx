@@ -5,7 +5,7 @@
 // While the Tabs form is open they can be DRAGGED: a strip slides along the outline it
 // leaves from and stays a join between the same two parts (or the part and the frame),
 // square off the outline and off both parts' corners (cam/bridgePick). Where no such join
-// exists under the pointer it stays at the last place that had one. Alt-click deletes.
+// exists under the pointer it stays at the last place that had one. Shift-click (or Alt-click) deletes.
 // One undo step and one regeneration per drag, on release — the moves in between are local.
 
 import { memo, useMemo, useState } from 'react'
@@ -54,7 +54,7 @@ export const BridgeLayer = memo(function BridgeLayer({ viewport }: { viewport: V
     if (e.evt.button !== 0) return
     e.cancelBubble = true
     // No mouseleave comes from a node that has just gone: clear what it set.
-    if (e.evt.altKey) { setHover(null); document.body.style.cursor = ''; removeStrip(i); return }
+    if (e.evt.shiftKey || e.evt.altKey) { setHover(null); document.body.style.cursor = ''; removeStrip(i); return }
     const stage = e.target.getStage()
     const start = bridges.lines[i]
     if (!stage || !start) return

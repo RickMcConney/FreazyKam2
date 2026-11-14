@@ -74,7 +74,7 @@ export default function CanvasStage() {
   } = view
   const gesture = useGesture(viewportRef)
   const {
-    modeRef, didDragRef, spaceHeldRef, altDown, altDownRef, setMode, beginGesture, endGesture,
+    modeRef, didDragRef, spaceHeldRef, altDown, shiftDown, setMode, beginGesture, endGesture,
     liveTransform, constraintPlanRef, followTransforms, pickDrag,
     dragBox, dragBoxRef, setDragBox, snapGuides, setSnapGuides, liveShapeD, setLiveShapeD,
   } = gesture
@@ -135,9 +135,9 @@ export default function CanvasStage() {
     onMoveConstrainHover, onConstrainClick, onConstrainPress, landDraggedPoint, escapeConstrain, dropPicks,
   } = useConstrainTool(gesture, view, getFlat, activeTool)
   const {
-    measureA, measureB, measureHot, altMeasure, setAltMeasure,
-    onMoveMeasureHover, updateAltMeasure, onMeasurePress, clearMeasure,
-  } = useMeasureTool(gesture, view, getFlat, activeTool, allCandidatesRef, selection.selectionBBoxRef)
+    measureA, measureB, measureHot,
+    onMoveMeasureHover, onMeasurePress, clearMeasure,
+  } = useMeasureTool(view, activeTool, allCandidatesRef)
   const { pendingDrillPoints, placeDrillPoint } = useDrillTool(gesture, view, getFlat, activeTool)
   const { placeHoldAt } = useTabPlaceTool(view, getFlat)
   const {
@@ -248,9 +248,16 @@ export default function CanvasStage() {
       if (neid && neid !== hit.id) exitNodeEdit()
       const { selectedIds: currentIds, paths: allNow } = usePathsStore.getState()
       // A user group is ONE thing to click: hitting any member takes the whole
-      // group. Alt is the way back to a single path inside one — double-click is
-      // already point-edit/split, and the paths list reaches a member directly.
+      // group. The way back to a single path inside one is a SECOND click: a click on a
+      // member of a group that is already the whole selection, which never became a drag,
+      // narrows to that member on release (`narrowTo`) — so dragging the group still
+      // moves the group. Alt-click does it at once, and the paths list reaches a member
+      // directly; double-click is already point-edit/split.
       const hitIds = e.evt.altKey ? [hit.id] : expandUserGroups([hit.id], allNow)
+      const narrowTo = activeTool === 'select' && !e.evt.shiftKey && !e.evt.altKey
+        && hitIds.length > 1 && currentIds.length === hitIds.length
+        && hitIds.every((id) => currentIds.includes(id))
+        ? hit.id : undefined
       if (e.evt.shiftKey) {
         // Toggle the whole group's membership, not one path's: half a group in
         // the selection is a state no click could get back out of.
@@ -272,16 +279,17 @@ export default function CanvasStage() {
       const moveIds = usePathsStore.getState().selectedIds
       const session = beginMoveSession(moveIds)
       constraintPlanRef.current = session.plan
-      beginGesture({ type: 'move', pathIds: moveIds, startCNC: cnc, initBbox: session.bbox ?? EMPTY_BBOX, snapTargets: session.snapTargets })
+      beginGesture({ type: 'move', pathIds: moveIds, startCNC: cnc, initBbox: session.bbox ?? EMPTY_BBOX, snapTargets: session.snapTargets, narrowTo })
     } else {
       if (neid) { exitNodeEdit(); return }
       // Region picking (on while the Pocket form is open) decides on mouseup: a
       // press that never moves picks the enclosed area under it, so the selection
       // has to survive until then — a drag is still a drag box.
-      // Shift or Alt edits the selection the box starts from, so it has to survive
-      // the press — a Shift/Alt click on empty canvas deselects nothing.
-      const op = activeTool === 'region' ? 'replace' : e.evt.shiftKey ? 'add' : e.evt.altKey ? 'remove' : 'replace'
-      if (activeTool !== 'region' && op === 'replace') selectPath(null)
+      // A box always EDITS the selection it starts from — a plain drag ADDS, Shift (or Alt)
+      // REMOVES — so the selection has to survive the press. A plain CLICK that never becomes
+      // a drag is what clears it, on release (below); a Shift click on empty canvas does
+      // nothing. The region tool keeps its own rule: replace, decided on release.
+      const op = activeTool === 'region' ? 'replace' : e.evt.shiftKey || e.evt.altKey ? 'remove' : 'add'
       beginGesture({ type: 'dragbox', startScreen: { x: stagePointer.x, y: stagePointer.y } })
       setDragBox({ sx: stagePointer.x, sy: stagePointer.y, ex: stagePointer.x, ey: stagePointer.y, op })
     }
@@ -330,8 +338,6 @@ export default function CanvasStage() {
 
     if (!pointer) return
     const cncMouse = screenToCNC(pointer.x, pointer.y, vp)
-    // An Alt-hover measurement belongs to hovering; any gesture ends it.
-    if (m.type !== 'idle' && altMeasure) setAltMeasure(null)
 
     // Modes that fully consume the move.
     if (m.type === 'move')   return onMoveTranslate(m, cncMouse, pointer, vp)
@@ -347,7 +353,6 @@ export default function CanvasStage() {
     if (m.type === 'idle' && connectSourceRef.current !== null) onMoveConnectPreview(cncMouse, vp)
     if (useUIStore.getState().activeTool === 'constrain') { onMoveConstrainHover(cncMouse, vp); return }
     if (useUIStore.getState().activeTool === 'measure') { onMoveMeasureHover(cncMouse, vp, e.evt.shiftKey); return }
-    if (m.type === 'idle' && (altDownRef.current || altMeasure)) updateAltMeasure(cncMouse, vp)
     if (useUIStore.getState().activeTool === 'region') {
       if (m.type === 'idle') onMoveRegionHover(cncMouse, vp)
       else setRegionPreviewD(null)
@@ -357,7 +362,7 @@ export default function CanvasStage() {
     if (m.type === 'nodedit-drag' && editDragInitRef.current) onMoveNodeEditDrag(m, cncMouse, e)
   }, [setCursorMM, onMovePan, onMoveTranslate, onMoveResize, onMoveRotate, onMoveDragbox,
       onMoveDrawShape, onMovePenHover, onMoveConnectPreview, onMovePenDraw, onMoveNodeEditDrag,
-      onMoveConstrainHover, onMoveRegionHover, onMoveMeasureHover, updateAltMeasure, altMeasure])
+      onMoveConstrainHover, onMoveRegionHover, onMoveMeasureHover])
 
   const handleMouseMove = moveBody
 
@@ -401,6 +406,8 @@ export default function CanvasStage() {
       // moved is the ordinary second click, and takes the point where it is.
       endGesture()
       if (m.pick) onConstrainClick()
+      // The second click on a group: down to the one path under it.
+      else if (m.narrowTo) usePathsStore.getState().setSelectedIds([m.narrowTo])
       return
     }
 
@@ -410,6 +417,9 @@ export default function CanvasStage() {
         const { sx, sy, ex, ey } = box
         if (Math.hypot(ex - sx, ey - sy) > MOVE_THRESHOLD_PX) {
           applyDragBox(box, vp)
+        } else if (box.op === 'add') {
+          // A plain click on empty canvas: deselect.
+          usePathsStore.getState().selectPath(null)
         } else if (useUIStore.getState().activeTool === 'region') {
           // A click off every line: pick the enclosed area there, or deselect
           // when nothing encloses it, as a click on empty canvas always does.
@@ -572,7 +582,7 @@ useNudge(gesture)
           {activeTool === 'pen' && (
             <PenLayer
               viewport={viewport}
-              penNodes={penClosing && altDown && penNodes.length >= 1
+              penNodes={penClosing && (altDown || shiftDown) && penNodes.length >= 1
                 ? [{ ...penNodes[0], corner: true }, ...penNodes.slice(1)]
                 : penNodes}
               livePen={livePen}
@@ -640,9 +650,6 @@ useNudge(gesture)
               liveTransform={liveTransform}
               noRotate={tabsFormActive}
             />
-          )}
-          {altMeasure && altDown && !snapGuides && (
-            <SnapGuideLayer viewport={viewport} guides={altMeasure} width={size.width} height={size.height} color="#F97316" />
           )}
           {activeTool === 'measure' && (
             <MeasureLayer viewport={viewport} a={measureA} b={measureB} hot={measureHot} />

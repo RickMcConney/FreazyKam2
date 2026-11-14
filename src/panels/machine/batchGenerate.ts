@@ -55,7 +55,7 @@ export interface BatchGenerateArgs {
    * by the new ones in one step rather than left behind as a second set.
    */
   replace?: { opId: string; key: string }[]
-  /** Generate one op. Defaults to `generateOperation`; Pocket passes its Alt-click override. */
+  /** Generate one op. Defaults to `generateOperation`; Pocket passes its Shift-click override. */
   run?: (opId: string) => Promise<void>
   /** Reports a failed op; `useGenerateError`'s `report`. */
   onError: (opId: string, err: unknown) => void

@@ -10,7 +10,8 @@ import type { HandleType } from './types'
 import type { CanvasView } from './useCanvasView'
 import { MOVE_THRESHOLD_PX, OBJECT_SNAP_PX, snapOptions, type CanvasMode, type Gesture } from './useGesture'
 import type { useSelectionInfo } from './useSelectionInfo'
-import { screenToCNC, type Viewport } from './viewport'
+import { edgeSkew } from './edgeSkew'
+import { screenToCNC, snapPoint, type Viewport } from './viewport'
 
 /** Moving, resizing, skewing and rotating the selection: press, live preview, bake. */
 export function useTransformGestures(
@@ -19,7 +20,7 @@ export function useTransformGestures(
   { selectionBBoxRef, selectionScaleLockedRef, selectionSkewLockedRef, centreResizeRef }: ReturnType<typeof useSelectionInfo>,
 ) {
   const {
-    didDragRef, shiftHeldRef, altDownRef, constraintPlanRef, liveTransformRef,
+    didDragRef, altDownRef, shiftDownRef, constraintPlanRef, liveTransformRef,
     beginGesture, snapCNC, setLiveTransform, setFollowTransforms, setSnapGuides, setPickDrag,
     setLiveBBox, setLiveRotationAngle,
   } = g
@@ -58,6 +59,8 @@ export function useTransformGestures(
     const allPaths = usePathsStore.getState().paths
     const { widthMM, heightMM } = useWorkpieceStore.getState()
     const snapTargets = collectSnapTargets(allPaths.filter(p => onCanvas(p) && !ids.includes(p.id)), { widthMM, heightMM }, snapOptions())
+    const pointer = e.target.getStage()?.getPointerPosition()
+    const pressCNC = pointer ? screenToCNC(pointer.x, pointer.y, viewportRef.current) : handlePosMap[handle]
 
     beginGesture({
       type: 'resize',
@@ -65,7 +68,7 @@ export function useTransformGestures(
       handle,
       // The whole scale is measured from the anchor (see onMoveResize), so
       // "from centre" is just a different anchor — corner handles, edge handles
-      // and Alt-skew all follow with no other change. Off, the opposite corner
+      // and Shift-skew all follow with no other change. Off, the opposite corner
       // stays put; on, the shape grows both ways about its middle, which keeps a
       // resized ring concentric with what it was cut around.
       //
@@ -76,6 +79,8 @@ export function useTransformGestures(
       // reading of "centred" that a mixed selection has.
       anchor: centreResizeRef.current ? { x: cx, y: cy } : anchorMap[handle],
       initHandle: handlePosMap[handle],
+      // Where the press landed, which a shear is measured from (see edgeSkew).
+      startCNC: pressCNC,
       initBbox: bbox,
       shiftHeld: e.evt.shiftKey,
       snapTargets,
@@ -110,7 +115,7 @@ export function useTransformGestures(
     }
     if (didDragRef.current) {
       let finalDx = dx, finalDy = dy
-      if (shiftHeldRef.current) {
+      if (shiftDownRef.current) {
         if (Math.abs(dx) > Math.abs(dy)) finalDy = 0
         else finalDx = 0
       }
@@ -167,17 +172,32 @@ export function useTransformGestures(
     didDragRef.current = true
     const { anchor, initHandle, pathIds, handle, shiftHeld } = m
     const isCorner = handle === 'tl' || handle === 'tr' || handle === 'bl' || handle === 'br'
-    // An image refuses skew (see selectionSkewLocked); Alt then just scales.
-    const skewing = (altDownRef.current || e.evt.altKey) && isCorner && !selectionSkewLockedRef.current
+    // Shift on an EDGE handle shears along that edge; Shift on a corner is the uniform scale
+    // below, so the two never compete. Alt is kept as an alias for the edge shear only —
+    // some Linux window managers never pass Alt+drag to the page. An image refuses skew
+    // (see selectionSkewLocked); the edge handle then just scales.
+    const skewKey = shiftDownRef.current || e.evt.shiftKey || altDownRef.current || e.evt.altKey
+    const skewing = skewKey && !isCorner && !selectionSkewLockedRef.current
 
     // The dragged handle IS the moving edge/corner of the bbox (the anchor is the
     // opposite one and stays put), so object-snapping the handle position aligns
     // those edges to other shapes' edges/centers — same targets and guides as a
     // drag. Grid snap then applies only on the axes that didn't object-snap.
-    // Uniform (Shift) scaling and Alt-skew derive both axes from one combined
+    // Uniform (Shift) scaling and Shift-skew derive both axes from one combined
     // gesture, so a per-axis snap would draw a guide the shape never lands on:
     // those keep plain grid snap and no guides.
-    const snapOn = useUIStore.getState().snapEnabled && !skewing && !(shiftHeld && isCorner)
+    // A shear takes the whole branch below: it snaps its MOVEMENT (see edgeSkew), not the pointer.
+    if (skewing) {
+      const { units } = useWorkpieceStore.getState()
+      const snap = useUIStore.getState().snapEnabled
+      const { kx, ky } = edgeSkew(handle, anchor, initHandle, m.startCNC, cncMouse,
+        (d) => snap ? snapPoint({ x: d, y: d }, vp, units, { x: 0, y: 0 }).x : d)
+      setSnapGuides(null)
+      setLiveTransform({ kind: 'skew', pathIds: new Set(pathIds), kx, ky, ax: anchor.x, ay: anchor.y })
+      return
+    }
+
+    const snapOn = useUIStore.getState().snapEnabled && !(shiftHeld && isCorner)
     const tolMM = OBJECT_SNAP_PX / vp.scale
     // Edge handles only move one axis; the other is the bbox mid-line and must not snap.
     const ox = snapOn && handle !== 't' && handle !== 'b' ? snapAxisDelta([cncMouse.x], m.snapTargets.xs, tolMM) : null
@@ -193,16 +213,6 @@ export function useTransformGestures(
     const dhy = initHandle.y - anchor.y
     const newHx = snappedMouse.x - anchor.x
     const newHy = snappedMouse.y - anchor.y
-
-    // Alt + corner handle = skew (shear) instead of scale
-    if (skewing) {
-      const dx = newHx - dhx
-      const dy = newHy - dhy
-      const kx = Math.abs(dx) >= Math.abs(dy) && dhy !== 0 ? dx / dhy : 0
-      const ky = Math.abs(dy) >  Math.abs(dx) && dhx !== 0 ? dy / dhx : 0
-      setLiveTransform({ kind: 'skew', pathIds: new Set(pathIds), kx, ky, ax: anchor.x, ay: anchor.y })
-      return
-    }
 
     let sx = dhx !== 0 ? newHx / dhx : 1
     let sy = dhy !== 0 ? newHy / dhy : 1

@@ -22,7 +22,7 @@ export function useSelectionInfo() {
   )
   const selectionScaleLockedRef = useRef(false)
   selectionScaleLockedRef.current = selectionScaleLocked
-  // A selection holding an IMAGE cannot be skewed — Alt + corner scales it instead. The
+  // A selection holding an IMAGE cannot be skewed — Shift + middle handle scales it instead. The
   // picture and the photo V-carve are both pinned to the path's rectangle
   // (extractRectInfo), so a skew turned the outline into a parallelogram while the picture
   // stayed a rectangle and the carve followed the picture: what was drawn and what was cut

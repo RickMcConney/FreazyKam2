@@ -19,7 +19,7 @@ import { screenToCNC, type Viewport } from './viewport'
 // that place points, and the pen-local undo/redo stacks (registered as the toolbar/Ctrl+Z
 // handler while the pen is active).
 export function usePenTool(g: Gesture, { viewportRef }: CanvasView, getFlat: FlatOf) {
-  const { didDragRef, altDown, altDownRef, setMode, beginGesture, snapCNC, setSnapGuides } = g
+  const { didDragRef, altDown, altDownRef, shiftDown, shiftDownRef, setMode, beginGesture, snapCNC, setSnapGuides } = g
   const [livePen, setLivePen] = useState<{ anchor: { x: number; y: number }; handle: { x: number; y: number } | null } | null>(null)
   const [penClosing, penClosingRef, setPenClosing] = useRefState(false)
   // Object-snapped cursor while the pen tool is active — feeds the pen live
@@ -29,7 +29,9 @@ export function usePenTool(g: Gesture, { viewportRef }: CanvasView, getFlat: Fla
   const penFuture = useRef<PenNode[][]>([])
   const penNodes = useUIStore((s) => s.penNodes)
   const penCurveType = useUIStore((s) => s.penCurveType)
-  const effectiveCurveType: PenCurveType = altDown
+  // Shift (or Alt) held flips the incoming segment between straight and curved.
+  const straightHeld = altDown || shiftDown
+  const effectiveCurveType: PenCurveType = straightHeld
     ? (penCurveType === 'linear' ? 'catmull-rom' : 'linear')
     : penCurveType
 
@@ -217,7 +219,7 @@ export function usePenTool(g: Gesture, { viewportRef }: CanvasView, getFlat: Fla
     if (m.closing) {
       const { penNodes: nodes, clearPenNodes, penCurveType: ct } = useUIStore.getState()
       if (nodes.length >= 2) {
-        const closeNodes = altDownRef.current
+        const closeNodes = altDownRef.current || shiftDownRef.current
           ? [{ ...nodes[0], corner: true }, ...nodes.slice(1)]
           : nodes
         const d = penNodesToPathD(closeNodes, true, ct)
@@ -242,8 +244,8 @@ export function usePenTool(g: Gesture, { viewportRef }: CanvasView, getFlat: Fla
       const dy = livePen.handle.y - m.anchorCNC.y
       newNode.outHandle = livePen.handle
       newNode.inHandle = { x: m.anchorCNC.x - dx, y: m.anchorCNC.y - dy }
-    } else if (ct !== 'linear' && altDownRef.current) {
-      // Alt held: mark incoming segment as linear (corner). Only affects the segment
+    } else if (ct !== 'linear' && (altDownRef.current || shiftDownRef.current)) {
+      // Shift (or Alt) held: mark incoming segment as linear (corner). Only affects the segment
       // ending at this node — the outgoing segment uses normal curve logic.
       newNode.corner = true
     }
@@ -253,7 +255,7 @@ export function usePenTool(g: Gesture, { viewportRef }: CanvasView, getFlat: Fla
     useUIStore.getState().setNodeEditHistoryFlags(true, false)
     setLivePen(null)
     return
-  }, [livePen, didDragRef, altDownRef, setMode, setPenClosing])
+  }, [livePen, didDragRef, altDownRef, shiftDownRef, setMode, setPenClosing])
 
   /** Escape: what has been drawn stays, as an open path. */
   const finishPenOnEscape = useCallback(() => {

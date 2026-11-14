@@ -151,7 +151,7 @@ export function TabsForm({ onClose }: { onClose: () => void }) {
       {/* Hand placement, beside the automatic one: one strip or tab per click. */}
       <div>
         <button onClick={togglePlacing}
-          title="Each click on the canvas places one strip or one tab — whichever Hold With is set to. Alt-click a strip or tab to delete it; drag one to move it. Ones placed or moved by hand are kept when you Apply again."
+          title="Each click on the canvas places one strip or one tab — whichever Hold With is set to. Shift-click a strip or tab to delete it; drag one to move it. Ones placed or moved by hand are kept when you Apply again."
           className={[
             'w-full flex items-center justify-center gap-1.5 py-1 text-body rounded border transition-colors',
             placing
@@ -165,7 +165,7 @@ export function TabsForm({ onClose }: { onClose: () => void }) {
             {form.mode === 'bridges'
               ? 'Click between two parts for a strip joining them, or on an outline facing open stock for a strip into it. Strips hold wherever the profile cuts through the stock.'
               : 'Click on an outline for a tab there.'}
-            {' '}Drag a strip or tab to move it, Alt-click to delete. Switch Hold With below to place the other kind.
+            {' '}Drag a strip or tab to move it, Shift-click to delete. Switch Hold With below to place the other kind.
           </p>
         )}
       </div>

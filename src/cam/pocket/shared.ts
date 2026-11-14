@@ -26,7 +26,7 @@ export type PocketStrategy = 'raster' | 'contour' | 'morph' | 'adaptive' | 'hybr
 
 export interface PocketParams {
   /** Run the chosen strategy even where it would normally decline the shape as a poor fit
-   *  (see REDUNDANCY_LIMIT in fieldSpiral). Set by an explicit user gesture — alt-clicking
+   *  (see REDUNDANCY_LIMIT in fieldSpiral). Set by an explicit user gesture — shift-clicking
    *  Generate — never by default: the whole point of declining is that the path it would
    *  have produced is one nobody would run. */
   forceStrategy?: boolean

@@ -612,7 +612,7 @@ export function useGenerateError(): [string | null, (opId: string, err: unknown)
 }
 
 // `onClick` receives the mouse event so a form can read modifiers — PocketForm uses
-// alt-click to force a strategy the shape would otherwise decline. Handlers that take no
+// shift-click to force a strategy the shape would otherwise decline. Handlers that take no
 // argument stay assignable, so the other forms are unaffected.
 /**
  * The form's Generate button, which IS its progress bar while it runs — and, beside it, a

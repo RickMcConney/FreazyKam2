@@ -85,7 +85,7 @@ function sameHoles(a: HoleSpec[], b: HoleSpec[] | undefined): boolean {
 }
 
 export interface GenerateOverrides {
-  /** Alt-click on PocketForm: run the chosen strategy on a shape it would decline. Not a
+  /** Shift-click on PocketForm: run the chosen strategy on a shape it would decline. Not a
    *  setting — an override of a measured verdict for this one Generate. */
   forceStrategy?: boolean
 }

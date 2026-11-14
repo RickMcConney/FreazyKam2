@@ -1,5 +1,5 @@
 // Renders tab markers on paths. When the Tabs form is open, tabs are draggable along the path,
-// and Alt-click deletes one.
+// and Shift-click (or Alt-click) deletes one.
 
 import { memo, useMemo, useState } from 'react'
 import { useCutHiddenKey, partsOut } from '../holdVisibility'
@@ -260,8 +260,10 @@ export const TabLayer = memo(function TabLayer({ viewport }: Props) {
             }}
             onMouseDown={(e) => {
               e.cancelBubble = true
-              // Alt-click takes the tab away — the same gesture as a strip's.
-              if (e.evt.altKey) {
+              // Shift-click takes the tab away — the same gesture as a strip's. Alt still
+              // works, but some Linux window managers keep Alt+click for moving windows, so
+              // it never reaches the page there.
+              if (e.evt.shiftKey || e.evt.altKey) {
                 useTabStore.getState().deleteTab(v.id)
                 regenerateAffected(v.pathId)
                 document.body.style.cursor = ''

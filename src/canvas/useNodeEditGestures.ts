@@ -23,7 +23,7 @@ export function useNodeEditGestures(
   session: ReturnType<typeof useNodeEditSession>,
   getFlat: FlatOf,
 ) {
-  const { didDragRef, altDownRef, setMode, beginGesture, snapCNC } = g
+  const { didDragRef, altDownRef, shiftDownRef, setMode, beginGesture, snapCNC } = g
   const {
     editNodesRef, setEditNodes,
     editClosedRef, setEditClosed,
@@ -81,7 +81,7 @@ export function useNodeEditGestures(
   }, [pushLocalUndo, commitNodeEditGlobal])
 
   const handleNodeMouseDown = useCallback((nodeIdx: number, kind: 'anchor' | 'handle-in' | 'handle-out', e: Konva.KonvaEventObject<MouseEvent>) => {
-    if (kind === 'anchor' && (e.evt.altKey || altDownRef.current)) {
+    if (kind === 'anchor' && (e.evt.shiftKey || shiftDownRef.current || e.evt.altKey || altDownRef.current)) {
       e.cancelBubble = true
       e.evt.preventDefault()
       const old = editNodesRef.current
@@ -217,6 +217,8 @@ export function useNodeEditGestures(
     const WELD_THRESHOLD_MM = 16 / viewportRef.current.scale
     let newWeldTarget: number | null = null
     let newCrossTarget: CrossPathEntry | null = null
+    // Shift (or Alt) while dragging a handle keeps the opposite handle mirrored.
+    const mirror = shiftDownRef.current || e.evt.shiftKey || altDownRef.current || e.evt.altKey
     const updatedNodes = init.initialNodes.map((n, i) => {
       if (i !== m.nodeIdx) return n
       if (m.kind === 'anchor') {
@@ -264,13 +266,13 @@ export function useNodeEditGestures(
       }
       if (m.kind === 'handle-in') {
         const handleIn = { x: (n.handleIn?.x ?? n.x) + dx, y: (n.handleIn?.y ?? n.y) + dy }
-        const handleOut = (altDownRef.current || e.evt.altKey) && n.handleOut
+        const handleOut = mirror && n.handleOut
           ? { x: 2 * n.x - handleIn.x, y: 2 * n.y - handleIn.y }
           : n.handleOut
         return { ...n, handleIn, handleOut }
       }
       const handleOut = { x: (n.handleOut?.x ?? n.x) + dx, y: (n.handleOut?.y ?? n.y) + dy }
-      const handleIn = (altDownRef.current || e.evt.altKey) && n.handleIn
+      const handleIn = mirror && n.handleIn
         ? { x: 2 * n.x - handleOut.x, y: 2 * n.y - handleOut.y }
         : n.handleIn
       return { ...n, handleIn, handleOut }

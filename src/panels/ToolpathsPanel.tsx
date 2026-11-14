@@ -143,7 +143,7 @@ function opTitle(op: AnyOperation, noCut: boolean, timeS: number | undefined, sh
     // Timed like the export dialog's total it adds up to — by the machine's planner
     // (Machine Motion settings) — with no time for tool changes.
     timeS !== undefined && timeS > 0 ? `${fmtDuration(timeS)} to run — ${Math.round(share * 100)}% of the program` : null,
-    'Click to edit · Drag to reorder · Alt-click to hide · ✎ to rename',
+    'Click to edit · Drag to reorder · Shift-click to hide · ✎ to rename',
   ].filter(Boolean).join('\n')
 }
 
@@ -387,9 +387,9 @@ export default function ToolpathsPanel() {
   const beginDrag = (ids: string[], sheet: string) => (e: React.MouseEvent) => {
     if (e.button !== 0) return
     e.preventDefault()
-    // Alt-click is the fast path for hiding — one event for the whole grabbed set, so
-    // alt-clicking a run header toggles that tool's work in a single step.
-    if (e.altKey) {
+    // Shift-click (or Alt-click) is the fast path for hiding — one event for the whole
+    // grabbed set, so shift-clicking a run header toggles that tool's work in a single step.
+    if (e.shiftKey || e.altKey) {
       const ops = useToolpathStore.getState().operations.filter((o) => ids.includes(o.id))
       if (ops.length > 0) useToolpathStore.getState().setOperationsVisible(ids, !ops.every((o) => o.visible))
       return

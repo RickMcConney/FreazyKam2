@@ -54,7 +54,7 @@ const SHORTCUTS: Section[] = [
 const FEATURES = [
   {
     title: 'Select tool',
-    desc: 'Click to select, drag empty area to box-select — drag RIGHT and the box takes everything it touches (dashed), drag back LEFT and it takes only what lies wholly inside (solid). Shift-click to toggle membership in a multi-selection. Drag handles to move, scale, or rotate. Hold Alt while dragging a corner handle to skew (shear) instead of scale.',
+    desc: 'Click to select, drag empty area to box-select, which ADDS to the selection (hold Shift to remove from it; click empty canvas to clear) — drag RIGHT and the box takes everything it touches (dashed), drag back LEFT and it takes only what lies wholly inside (solid). Shift-click to toggle membership in a multi-selection. Drag handles to move, scale, or rotate. Hold Shift while dragging a middle (edge) handle to skew (shear) instead of scale; Shift on a corner handle scales uniformly.',
   },
   {
     title: 'Export SVG',
@@ -66,7 +66,7 @@ const FEATURES = [
   },
   {
     title: 'Groups',
-    desc: 'Select several paths and press Ctrl+G (or Group in the Properties panel) to tie them together: clicking any member then selects the whole group, so they move, scale, rotate and delete as one thing, and the Objects strip shows them as one chip. Ctrl+Shift+G ungroups. To get at a single path inside a group, Alt-click it on the canvas or click it in the Paths list. Groups nest: group a group with a shape and ungrouping gives back that group and that shape, one level at a time.',
+    desc: 'Select several paths and press Ctrl+G (or Group in the Properties panel) to tie them together: clicking any member then selects the whole group, so they move, scale, rotate and delete as one thing, and the Objects strip shows them as one chip. Ctrl+Shift+G ungroups. To get at a single path inside a group, click it a second time on the canvas (once the group is selected) or click it in the Paths list. Groups nest: group a group with a shape and ungrouping gives back that group and that shape, one level at a time.',
   },
   {
     title: 'Constraints',
@@ -78,7 +78,7 @@ const FEATURES = [
   },
   {
     title: 'Pen tool',
-    desc: 'Click to place points. In Bezier mode, drag to pull out curve handles. In all other modes curves are computed automatically from point positions. Hold Alt while clicking to make the incoming segment a straight line. Click near the first point to close the path, or press Escape to finish an open path (2+ points required). Ctrl+Z to undo the last placed point.',
+    desc: 'Click to place points. In Bezier mode, drag to pull out curve handles. In all other modes curves are computed automatically from point positions. Hold Shift while clicking to make the incoming segment a straight line. Click near the first point to close the path, or press Escape to finish an open path (2+ points required). Ctrl+Z to undo the last placed point.',
   },
   {
     title: 'Pocket regions',

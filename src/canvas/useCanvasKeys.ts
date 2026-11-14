@@ -25,7 +25,7 @@ interface KeyActions {
  * too, and Delete in point edit stops it with stopImmediatePropagation — which only works
  * from a listener registered first, so this one must not come and go with a re-render.
  */
-export function useCanvasKeys({ spaceHeldRef, shiftHeldRef, setAltDown }: Gesture, actions: KeyActions) {
+export function useCanvasKeys({ spaceHeldRef, setAltDown, setShiftDown }: Gesture, actions: KeyActions) {
   const latest = useRef(actions)
   latest.current = actions
 
@@ -34,7 +34,7 @@ export function useCanvasKeys({ spaceHeldRef, shiftHeldRef, setAltDown }: Gestur
       const t = e.target as HTMLElement
       if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT') return
       if (e.code === 'Space' && !useSimStore.getState().gcode) { e.preventDefault(); spaceHeldRef.current = true }
-      if (e.shiftKey) shiftHeldRef.current = true
+      if (e.shiftKey) setShiftDown(true)
       if (e.key === 'Alt') {
         if (useUIStore.getState().activeTool === 'pen') e.preventDefault()
         setAltDown(true)
@@ -68,14 +68,14 @@ export function useCanvasKeys({ spaceHeldRef, shiftHeldRef, setAltDown }: Gestur
     }
     const onUp = (e: KeyboardEvent) => {
       if (e.code === 'Space') spaceHeldRef.current = false
-      if (!e.shiftKey) shiftHeldRef.current = false
+      if (!e.shiftKey) setShiftDown(false)
       if (e.key === 'Alt') setAltDown(false)
     }
     // Alt+Tab / Cmd+Tab / dialogs swallow the keyup, so a held modifier would
     // stick until tapped again — clear them all when the window loses focus.
     const onBlur = () => {
       spaceHeldRef.current = false
-      shiftHeldRef.current = false
+      setShiftDown(false)
       setAltDown(false)
     }
     window.addEventListener('keydown', onDown)
@@ -86,5 +86,5 @@ export function useCanvasKeys({ spaceHeldRef, shiftHeldRef, setAltDown }: Gestur
       window.removeEventListener('keyup', onUp)
       window.removeEventListener('blur', onBlur)
     }
-  }, [spaceHeldRef, shiftHeldRef, setAltDown])
+  }, [spaceHeldRef, setAltDown, setShiftDown])
 }

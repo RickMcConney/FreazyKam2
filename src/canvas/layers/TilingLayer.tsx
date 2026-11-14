@@ -24,7 +24,7 @@ const FONT_PX = 12
  * A dragged seam SNAPS — to whole mm (whole inches in inch mode) of tile length, for
  * marking the spoilboard by hand, and, when the cursor is inside a stretch the toolpaths
  * cut, out to the nearest edge of it, where the seam crosses no cut and so leaves no
- * seam mark. Alt drags freely. It is held to `seamLimits`: no tile longer than the machine
+ * seam mark. Shift (or Alt) drags freely. It is held to `seamLimits`: no tile longer than the machine
  * can reach with its pins, none too short for them.
  */
 export const TilingLayer = memo(function TilingLayer({ viewport }: { viewport: Viewport }) {
@@ -133,7 +133,7 @@ export const TilingLayer = memo(function TilingLayer({ viewport }: { viewport: V
                 const rawU = t.axis === 'y'
                   ? (vy - (node.y() + HIT_PX / 2)) / scale
                   : (node.x() + HIT_PX / 2 - vx) / scale
-                const s = snap(i, rawU, e.evt.altKey)
+                const s = snap(i, rawU, e.evt.shiftKey || e.evt.altKey)
                 // Hold the strip on the snapped seam.
                 if (t.axis === 'y') node.y(sy(s.u, 0) - HIT_PX / 2)
                 else node.x(sx(s.u, 0) - HIT_PX / 2)

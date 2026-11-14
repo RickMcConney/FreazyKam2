@@ -1295,8 +1295,8 @@ export default function PropertiesPanel() {
       </div>
 
       {/* Group / Ungroup — tie the selection together so it clicks, drags and
-          deletes as one thing, or dissolve the groups it touches. Alt-click on
-          the canvas (or the paths list) still reaches a single member. */}
+          deletes as one thing, or dissolve the groups it touches. Click a member of
+          the selected group again on the canvas (or use the paths list) to reach a single member. */}
       {(() => {
         const gid0 = outerGroupOf(selectedPaths[0])
         const isWholeGroup = !!gid0 && selectedPaths.every((p) => outerGroupOf(p) === gid0)

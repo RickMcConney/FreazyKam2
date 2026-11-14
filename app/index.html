@@ -34,6 +34,40 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- BOOT WATCHDOG. If the module graph fails to load (a request lost while the machine
+         wakes — the dev server's own reload after sleep is the case that was seen), main.tsx
+         never runs, so nothing in the app can report it and the page just stays white. This
+         plain script runs first: it records the failure in the same crash log the app keeps
+         (src/util/crashLog.ts) and, if the app has still not drawn anything ten seconds after
+         the page loaded, says so and offers a reload. React clears #root when it mounts, so a
+         slow boot that does finish removes the notice by itself. -->
+    <script>
+      (function () {
+        var failed = [];
+        window.addEventListener('error', function (e) {
+          var t = e.target;
+          if (t && t !== window && (t.src || t.href)) failed.push(t.src || t.href);
+        }, true);
+        window.addEventListener('load', function () {
+          setTimeout(function () {
+            var root = document.getElementById('root');
+            if (!root || root.childElementCount > 0) return;
+            try {
+              var log = JSON.parse(localStorage.getItem('fkam.crashLog') || '[]');
+              log.push({ at: new Date().toISOString(), source: 'boot',
+                message: 'The app did not start' + (failed.length ? ' — failed to load: ' + failed.join(', ') : ''),
+                visibility: document.visibilityState, hiddenForS: null, sinceVisibleS: null });
+              localStorage.setItem('fkam.crashLog', JSON.stringify(log.slice(-20)));
+            } catch (_) {}
+            root.innerHTML = '<div style="font:14px system-ui;padding:24px;max-width:40em">' +
+              '<p><b>FreazyKam did not finish starting.</b> Part of it failed to load — often a ' +
+              'connection that was not back yet after the computer slept. Reloading usually fixes it; ' +
+              'your last autosave is offered back.</p>' +
+              '<button onclick="location.reload()" style="padding:4px 12px">Reload</button></div>';
+          }, 10000);
+        });
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

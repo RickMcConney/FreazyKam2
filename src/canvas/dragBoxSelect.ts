@@ -57,7 +57,7 @@ export function applyDragBox(dragBox: DragBox, vp: Viewport) {
   if (dragBox.op === 'replace') {
     ps.setLocationSelection(order(boxed))
   } else {
-    // Shift adds, Alt removes. A selection that was itself a box's (or is
+    // A plain drag adds, Shift (or Alt) removes. A selection that was itself a box's (or is
     // empty) stays in location order, re-ordered over what it now holds; one
     // made by picking keeps its picks, with what a box adds after them.
     const base = ps.selectedIds

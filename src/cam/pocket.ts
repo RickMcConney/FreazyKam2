@@ -168,12 +168,12 @@ export function generatePocket(
     const declined = takeUnsuitableRatio()
     if (!plan && declined > 0 && strategy !== DECLINE_FALLBACK) {
       // Kept short on purpose: StatusBar is one truncating line, so anything past ~55
-      // characters is invisible and the alt-click hint is the part that must survive.
+      // characters is invisible and the shift-click hint is the part that must survive.
       // ">" because the march stops the moment the verdict is settled, so the figure is the
       // threshold it crossed, not the total it would have reached (5.0x on the dog against
       // the 2.0x quoted); finishing the march for an exact number would cost the user the
       // wait this gate exists to save.
-      addNote({ kind: 'strategy-fallback', short: 'Reverted to Auto, Alt click to force' })
+      addNote({ kind: 'strategy-fallback', short: 'Reverted to Auto, Shift click to force' })
       plan = _timed('plan', () => PLANNERS[DECLINE_FALLBACK](boundary, localIslands, tool, params,
         subProgress(bLo, bLo + bSpan * PLAN_SHARE, 'Planning')))
     }

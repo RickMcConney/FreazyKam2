@@ -187,14 +187,14 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
     setForm((f) => ({ ...f, [k]: v }))
   }
 
-  // Alt-click forces the chosen strategy onto a shape it would otherwise decline as a poor
+  // Shift-click (or Alt-click) forces the chosen strategy onto a shape it would otherwise decline as a poor
   // fit (see REDUNDANCY_LIMIT in cam/pocket/fieldSpiral). Deliberately a modifier and not a
   // setting: it is an override of a measured verdict, and the path it produces is the one
   // the verdict called not worth cutting. The status warning names the gesture, so it is
   // discoverable exactly when it is relevant.
   async function handleGenerate(e?: React.MouseEvent) {
     setNoticeMsg(null)
-    const forceStrategy = e?.altKey === true
+    const forceStrategy = e?.shiftKey === true || e?.altKey === true
     // The strategies are named for the user here, not in cam/pocket.ts: the toggle shows
     // hybrid as "auto", and a message naming a word that is not on the button is no help.
     const noteFallback = (note: PocketNote) => {
@@ -205,12 +205,12 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
       const chosen = name(form.strategy)
       setNoticeMsg(
         `${chosen} declined this shape, so ${name('hybrid')} generated it instead. ` +
-        // Not "alt-click to force" when they just did: a strategy can decline for a reason
+        // Not "shift-click to force" when they just did: a strategy can decline for a reason
         // the override does not cover (too few rings to nest, a region that collapses), and
         // telling someone to repeat the gesture that did not work is the worst of the two.
         (forceStrategy
-          ? `It declined even with Alt held, so the shape is one ${chosen} cannot cut.`
-          : `Alt-click Generate to force ${chosen}.`),
+          ? `It declined even with Shift held, so the shape is one ${chosen} cannot cut.`
+          : `Shift-click Generate to force ${chosen}.`),
       )
       useUIStore.getState().showStatus(note.short, 'warn')
     }
@@ -230,7 +230,7 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
       // Invert Pocket turns every boundary into an island and vice versa, so the whole set
       // is replaced, as a revision of the Generate that made them.
       replace: staleOps.map((e) => ({ opId: e.opId, key: e.key })),
-      // Generated from the settings just written, like every other op — Alt-click is the
+      // Generated from the settings just written, like every other op — Shift-click is the
       // one input that is not a setting. A strategy that declined the shape and fell back
       // is reported: the user chose it.
       run: async (opId) => {
@@ -323,7 +323,7 @@ export function PocketForm({ onClose, editOp }: { onClose: () => void; editOp?: 
         generating={generating}
         onClick={handleGenerate}
         label={generateLabel(!!editOp, updating)}
-        title="Alt-click to force the selected strategy on shapes it would otherwise decline"
+        title="Shift-click to force the selected strategy on shapes it would otherwise decline"
       />
       <BatchPathList groups={groups} addedIds={rev.addedIds} removed={rev.removed} editing={!!editOp} />
     </FormShell>
