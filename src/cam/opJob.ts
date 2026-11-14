@@ -12,6 +12,7 @@ import { DEFAULT_RELIEF_MM } from './depthMapMesh'
 import { flattenPath, requireClosedSubpaths, type Pt2 } from './pathFlattener'
 import { tabsForGeneration } from '../store/tabStore'
 import { tabPointAt } from './tabPlacement'
+import { tabOutline } from './stlOutline'
 import { holdTopZ } from './profile'
 import { pointInPolygon } from './geom'
 import { getBBox, extractCircles, extractRectInfo } from '../canvas/selectionUtils'
@@ -323,6 +324,10 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       if (!bPath) throw new Error('Boundary path not found')
       boundaryRings = flattenPath(bPath.d, 0.05).filter((r) => r.length >= 2)
       requireClosedSubpaths(boundaryRings, { cut: 'a 3D boundary', remedy: 'Close the path, or pick another boundary.', noun: 'Boundary' })
+    } else if (op.boundary === 'outline' && stlPath.stlSrc) {
+      // The model's own outline seen from above (cam/stlOutline): cut round a round model,
+      // not square. It is the model's, so each tool runs its radius past it (boundaryIsModel).
+      boundaryRings = tabOutline(stlPath).filter((r) => r.length >= 3)
     } else if (imageRect ? Math.abs(Math.sin(2 * imageRect.rotationDeg * Math.PI / 180)) > 1e-6 : placedStl?.turned) {
       // A turned picture's or model's box holds four corners it does not cover; bounded by
       // the box they would be cut down to the floor. The outline itself is the boundary instead.
@@ -366,7 +371,8 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       // is IN to the model, and its top — its height off the STOCK's bottom, as every tab's
       // (`holdTopZ`), so a cut that stops short of the bottom has none.
       tabs: (() => {
-        const outline = flattenPath(stlPath.d, 0.05).filter((r) => r.length >= 3)
+        // The model's silhouette (cam/stlOutline), as the tabs were placed on.
+        const outline = tabOutline(stlPath).filter((r) => r.length >= 3)
         return (tabsForGeneration(op.pathId) ?? []).flatMap((tab) => {
           const at = tabPointAt(outline, tab.t)
           if (!at) return []

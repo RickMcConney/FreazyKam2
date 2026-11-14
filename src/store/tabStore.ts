@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { flattenPath } from '../cam/pathFlattener'
+import { tabOutline } from '../cam/stlOutline'
+import type { StlModelBounds } from '../importers/svgImporter'
 import { tabPositions } from '../cam/tabPlacement'
 import { useTimelineStore } from '../timeline/timelineStore'
 import { uid } from '../uid'
@@ -18,6 +19,9 @@ export interface Tab {
   manual?: true
 }
 
+/** A path tabs are applied to: its outline, and the model when it is an STL. */
+export interface TabTarget { id: string; d: string; stlSrc?: string; stlModelBounds?: StlModelBounds }
+
 interface TabState {
   tabs: Tab[]
   // Replace all tabs for a path with evenly-spaced new ones, snapped to segment midpoints
@@ -26,7 +30,8 @@ interface TabState {
   // sheet of parts is tabbed in one click and taken back in one undo.
   // (On a tight nest a neighbour's cut sweeps per-path tabs away: see the sheet's bridges,
   // cam/bridges.ts.)
-  applyTabsMany: (paths: { id: string; d: string }[], count: number, lengthMM: number, heightMM: number) => void
+  // A model's tabs go on its silhouette, not its box (cam/stlOutline `tabOutline`).
+  applyTabsMany: (paths: TabTarget[], count: number, lengthMM: number, heightMM: number) => void
   // One tab, where the Tabs form's click-to-place put it. Its own undo step (or the paths'
   // Tabs step while that is the latest, as every tab edit).
   addTab: (pathId: string, t: number, lengthMM: number, heightMM: number) => void
@@ -54,11 +59,11 @@ export const useTabStore = create<TabState>()((set, get) => ({
     // one of them is left out: it would be the same tab twice.
     const newTabs = paths.flatMap((p) => {
       const kept = get().tabs.filter((t) => t.pathId === p.id && t.manual).map((t) => ({ ...t, lengthMM, heightMM }))
-      const polys = flattenPath(p.d, 0.05)
+      const polys = tabOutline(p)
       let len = 0
       for (const r of polys) for (let i = 1; i < r.length; i++) len += Math.hypot(r[i][0] - r[i - 1][0], r[i][1] - r[i - 1][1])
       const near = (a: number, b: number) => { const dt = Math.abs(a - b); return Math.min(dt, 1 - dt) * len < lengthMM }
-      const even = tabsAlong(p.id, count, p.d, lengthMM, heightMM).filter((t) => !kept.some((k) => near(k.t, t.t)))
+      const even = tabsAlong(p.id, count, polys, lengthMM, heightMM).filter((t) => !kept.some((k) => near(k.t, t.t)))
       return [...kept, ...even].map((t) => (batchId ? { ...t, batchId } : t))
     })
     set({ tabs: [...existing, ...newTabs] })
@@ -118,9 +123,9 @@ export const useTabStore = create<TabState>()((set, get) => ({
   replaceTabs: (tabs) => set({ tabs }),
 }))
 
-// `count` tabs evenly spaced along `d` by arc length, kept off its corners (cam/tabPlacement.ts).
-function tabsAlong(pathId: string, count: number, d: string, lengthMM: number, heightMM: number): Tab[] {
-  return tabPositions(flattenPath(d, 0.05), count, lengthMM).map((t) => ({
+// `count` tabs evenly spaced along the outline by arc length, kept off its corners (cam/tabPlacement.ts).
+function tabsAlong(pathId: string, count: number, polys: [number, number][][], lengthMM: number, heightMM: number): Tab[] {
+  return tabPositions(polys, count, lengthMM).map((t) => ({
     id: uid('tab'), pathId, t, lengthMM, heightMM,
   }))
 }

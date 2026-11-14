@@ -57,9 +57,9 @@ export function TabsForm({ onClose }: { onClose: () => void }) {
   })
 
   // Every selected path. A sheet of parts is tabbed in one click, as one undo step
-  // (applyTabsMany). An STL model or a depth-map picture takes tabs on its OUTLINE — its box
-  // — and a 3D Profile cut round it leaves each one as a bar of stock from the box in to the
-  // model (cam/profile3dTabs).
+  // (applyTabsMany). An STL model takes tabs on its silhouette seen from above
+  // (cam/stlOutline), a depth-map picture on its box — and a 3D Profile cut round it leaves
+  // each one as a bar of stock from the cut in to the model (cam/profile3dTabs).
   const byId = new Map(paths.map((p) => [p.id, p]))
   const targets = selectedIds.flatMap((id) => {
     const p = byId.get(id)
@@ -215,7 +215,7 @@ export function TabsForm({ onClose }: { onClose: () => void }) {
           <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">Tab width along the path edge</p>
           {modelTargets > 0 && (
             <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">
-              On a 3D model the tabs go on its box. A 3D Profile that cuts through the stock leaves each one as a bar from the box in to the model.
+              On a 3D model the tabs go on its outline as seen from above. A 3D Profile that cuts through the stock leaves each one as a bar from the cut in to the model.
             </p>
           )}
         </div>

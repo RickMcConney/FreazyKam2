@@ -51,3 +51,32 @@ describe('the boundaries offered for a 3D Profile', () => {
     expect(ids([p('stl2', rect(0, 0, 60, 60), { stlSrc: 'y' }), p('img', rect(0, 0, 60, 60), { imageSrc: 'z' })])).toEqual([])
   })
 })
+
+// A real STL: a disc 40 across, 10 tall, as a binary file in base64 (what `stlSrc` holds).
+function discStl(R: number, depth: number, n = 96): string {
+  const tris: number[][][] = []
+  const at = (k: number, z: number) => [R * Math.cos(2 * Math.PI * k / n), R * Math.sin(2 * Math.PI * k / n), z]
+  for (let k = 0; k < n; k++) {
+    tris.push([[0, 0, 0], at(k, 0), at(k + 1, 0)])
+    tris.push([at(k, -depth), at(k + 1, -depth), at(k + 1, 0)], [at(k, -depth), at(k + 1, 0), at(k, 0)])
+  }
+  const buf = Buffer.alloc(84 + 50 * tris.length)
+  buf.writeUInt32LE(tris.length, 80)
+  tris.forEach((t, i) => t.flat().forEach((v, j) => buf.writeFloatLE(v, 84 + 50 * i + 12 + 4 * j)))
+  return buf.toString('base64')
+}
+const circle = (cx: number, cy: number, r: number) => `M${cx + r},${cy} A${r},${r} 0 1 1 ${cx - r},${cy} A${r},${r} 0 1 1 ${cx + r},${cy} Z`
+
+describe('the boundaries offered round a round STL', () => {
+  // The disc's box is 10..50 × 10..50; its corners stand 28.3 from the centre.
+  const disc = p('disc', rect(10, 10, 50, 50), { stlSrc: discStl(20, 10), stlModelBounds: { minX: -20, maxX: 20, minY: -20, maxY: 20, minZ: -10, maxZ: 0 } })
+  const offered = (paths: ImportedPath[]) => enclosingBoundaries([disc, ...paths], disc).map((q) => q.id)
+
+  it('offers a circle round the disc, though the corners of the disc\'s box lie outside it', () => {
+    expect(offered([p('round', circle(30, 30, 24))])).toEqual(['round'])
+  })
+
+  it('does not offer a circle that cuts into the disc', () => {
+    expect(offered([p('tight', circle(30, 30, 18))])).toEqual([])
+  })
+})

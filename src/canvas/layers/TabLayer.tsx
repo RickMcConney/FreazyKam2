@@ -9,7 +9,7 @@ import type { Viewport } from '../viewport'
 import { usePathsStore } from '../../store/pathsStore'
 import { useTabStore } from '../../store/tabStore'
 import { useUIStore } from '../../store/uiStore'
-import { flattenPath } from '../../cam/pathFlattener'
+import { tabOutline } from '../../cam/stlOutline'
 import { regenerateAffected } from '../../cam/regenerate'
 import type { Pt2 } from '../../cam/pathFlattener'
 import { drawFrame, nativeCtx, overlaps } from '../batchDraw'
@@ -17,7 +17,7 @@ import { drawFrame, nativeCtx, overlaps } from '../batchDraw'
 interface TabVisual {
   id: string
   pathId: string
-  pathD: string
+  outline: Pt2[][]
   x: number
   y: number
   tx: number
@@ -26,33 +26,10 @@ interface TabVisual {
   heightMM: number
 }
 
-// FLATTENING AT 0.05 mm IS NOT SOMETHING TO DO IN A RENDER. A tab is placed by
-// arc length, so both helpers below need the path as polylines — and at that
-// tolerance a gear outline is thousands of points. Both ran in the component
-// body on EVERY render, once per tab, and the stage re-renders on every mouse
-// move (the cursor readout alone is enough), so a clock with holding tabs on
-// its wheels paid for the whole flatten to move the mouse one pixel. Cached on
-// the `d` string, which is what actually decides the answer: an edit gives a
-// new string and a new entry, and the map is bounded by how many distinct
-// outlines carry tabs.
-//
-// Two generations rather than a cap-and-clear: a nest has HUNDREDS of tabbed parts, and a
-// 64-entry map cleared when full re-flattened every one of them on every render. An outline
-// still drawn is carried over from the old generation; one edited away ages out.
-const FLAT_GEN_MAX = 4096
-let flatCur = new Map<string, Pt2[][]>()
-let flatOld = new Map<string, Pt2[][]>()
-function flatFor(d: string): Pt2[][] {
-  let polys = flatCur.get(d)
-  if (polys) return polys
-  polys = flatOld.get(d) ?? flattenPath(d, 0.05)
-  if (flatCur.size >= FLAT_GEN_MAX) { flatOld = flatCur; flatCur = new Map() }
-  flatCur.set(d, polys)
-  return polys
-}
-
-function evalPathAtT(d: string, t: number): { x: number; y: number; tx: number; ty: number } | null {
-  const subpaths = flatFor(d)
+// FLATTENING AT 0.05 mm IS NOT SOMETHING TO DO IN A RENDER — the stage re-renders on every
+// mouse move. `tabOutline` (cam/stlOutline) caches the flattened outline per `d` string, and
+// an STL model's silhouette per model and box.
+function evalPathAtT(subpaths: Pt2[][], t: number): { x: number; y: number; tx: number; ty: number } | null {
   if (subpaths.length === 0) return null
 
   let totalLen = 0
@@ -91,8 +68,7 @@ function evalPathAtT(d: string, t: number): { x: number; y: number; tx: number; 
 }
 
 // Given a CNC-space point, return the arc-length t (0..1) of the nearest point on the path.
-function nearestTOnPath(d: string, cx: number, cy: number): number {
-  const subpaths = flatFor(d)
+function nearestTOnPath(subpaths: Pt2[][], cx: number, cy: number): number {
 
   let totalLen = 0
   const edges: { x0: number; y0: number; x1: number; y1: number; startLen: number; edgeLen: number }[] = []
@@ -222,9 +198,11 @@ export const TabLayer = memo(function TabLayer({ viewport }: Props) {
     for (const path of paths) {
       if (gone.has(path.id)) continue
       for (const tab of byPath.get(path.id) ?? []) {
-        const pos = evalPathAtT(path.d, tab.t)
+        // A model's tabs sit on its silhouette, every other path's on its own outline.
+        const outline = tabOutline(path)
+        const pos = evalPathAtT(outline, tab.t)
         if (!pos) continue
-        out.push({ id: tab.id, pathId: path.id, pathD: path.d, x: pos.x, y: pos.y, tx: pos.tx, ty: pos.ty, lengthMM: tab.lengthMM, heightMM: tab.heightMM })
+        out.push({ id: tab.id, pathId: path.id, outline, x: pos.x, y: pos.y, tx: pos.tx, ty: pos.ty, lengthMM: tab.lengthMM, heightMM: tab.heightMM })
       }
     }
     return out
@@ -274,7 +252,7 @@ export const TabLayer = memo(function TabLayer({ viewport }: Props) {
               setDraggingTabId(v.id)
               document.body.style.cursor = 'grabbing'
 
-              const pathD = v.pathD
+              const outline = v.outline
               const pathId = v.pathId
               const vp = viewport
 
@@ -283,7 +261,7 @@ export const TabLayer = memo(function TabLayer({ viewport }: Props) {
                 if (!pos) return
                 const cncX = (pos.x - vp.x) / vp.scale
                 const cncY = (vp.y - pos.y) / vp.scale
-                updateTabT(v.id, nearestTOnPath(pathD, cncX, cncY))
+                updateTabT(v.id, nearestTOnPath(outline, cncX, cncY))
               }
 
               const handleUp = () => {

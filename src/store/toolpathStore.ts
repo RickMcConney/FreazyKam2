@@ -237,8 +237,10 @@ export interface Profile3dOperation extends BaseOperation {
   /** Unset: raster (every op saved before waterline existed). */
   finishStrategy?: 'raster' | 'waterline'
   /** Where the cut may go — the tool's edge stays inside. Unset or 'model': the model's own
-   *  box, as before boundaries existed. 'path': the closed path `boundaryPathId`. */
-  boundary?: 'model' | 'stock' | 'path'
+   *  box, as before boundaries existed. 'outline': an STL's silhouette seen from above
+   *  (cam/stlOutline), each tool running its radius past it. 'path': the closed path
+   *  `boundaryPathId`. */
+  boundary?: 'model' | 'outline' | 'stock' | 'path'
   boundaryPathId?: string
   /** How far below the stock top the model's highest point sits. Unset: at the top. */
   modelTopMM?: number

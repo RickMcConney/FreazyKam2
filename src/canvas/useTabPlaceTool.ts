@@ -7,6 +7,8 @@ import { regenerateAffected } from '../cam/regenerate'
 import { stripAt, type StripPick } from '../cam/bridgePick'
 import { cornerClearMM } from '../cam/bridges'
 import { tabTAt, tabPointAt } from '../cam/tabPlacement'
+import { tabOutline } from '../cam/stlOutline'
+import type { ImportedPath } from '../store/pathsStore'
 import { holdIndexNow, cutterRadiusFor, addStrip } from '../tools/bridgesRun'
 import { closestVisiblePath, onCanvas, type FlatOf } from './pathHit'
 import type { CanvasView } from './useCanvasView'
@@ -68,9 +70,11 @@ function planAt(x: number, y: number, scale: number, getFlat: FlatOf): HoldPlan 
   }
   // A model or a picture takes tabs too: a 3D Profile round it leaves them (cam/profile3dTabs).
   const paths = usePathsStore.getState().paths.filter(onCanvas)
-  const hit = closestVisiblePath(x, y, paths, GRAB_PX / scale, (p) => getFlat(p, 0.05))
+  // A model is picked by, and tabbed on, its silhouette (cam/stlOutline), not its box.
+  const outlineOf = (p: ImportedPath) => (p.stlSrc && p.stlModelBounds ? tabOutline(p) : getFlat(p, 0.05))
+  const hit = closestVisiblePath(x, y, paths, GRAB_PX / scale, outlineOf)
   if (!hit) return null
-  const polys = getFlat(hit, 0.05)
+  const polys = outlineOf(hit)
   const t = tabTAt(polys, x, y, place.lengthMM)
   if (t === null) return null
   const at = tabPointAt(polys, t)

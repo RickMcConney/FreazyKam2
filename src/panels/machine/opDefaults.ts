@@ -295,7 +295,7 @@ export interface Profile3dSettings {
   toolId: string
   stepoverPercent: number
   finishStrategy: 'raster' | 'waterline'
-  boundary: 'model' | 'stock' | 'path'
+  boundary: 'model' | 'outline' | 'stock' | 'path'
   boundaryPathId: string
   modelTopMM: number
   rasterAngleDeg: number
@@ -326,7 +326,7 @@ export function profile3dFormDefaults(defaultTool: Tool | undefined, thicknessMM
     toolId: defaultTool?.id ?? '',
     stepoverPercent: 20,
     finishStrategy: 'raster' as 'raster' | 'waterline',
-    boundary: 'model' as 'model' | 'stock' | 'path',
+    boundary: 'model' as 'model' | 'outline' | 'stock' | 'path',
     boundaryPathId: '',
     modelTopMM: 0,
     rasterAngleDeg: 0,

@@ -435,7 +435,7 @@ const profile3d: ToolpathKind = {
     toolId: { ...TOOL_ID, description: 'Finishing tool: a ball nose, bull nose, taper or end mill (an end mill finishes flats and terraces; a curved surface comes out stepped)' },
     stepoverPercent: { type: 'number', exclusiveMinimum: 0, maximum: 100, description: 'Finishing stepover, % of the tool diameter' },
     finishStrategy: { type: 'string', enum: ['raster', 'waterline'], description: 'raster = parallel passes; waterline = contours at each height (STL only — a depth map is always rastered)' },
-    boundary: { type: 'string', enum: ['model', 'stock', 'path'], description: 'What the carve is confined to. model = the model\'s box, each tool running its radius past it so the stock beside the model is cut down to its base and its sides come out clean; stock = the same past the stock\'s edge; path = inside boundaryPathId' },
+    boundary: { type: 'string', enum: ['model', 'outline', 'stock', 'path'], description: 'What the carve is confined to. model = the model\'s box, each tool running its radius past it so the stock beside the model is cut down to its base and its sides come out clean; outline = the same round the STL\'s own outline seen from above (a round model is cut round, not square; STL only); stock = the same past the stock\'s edge; path = inside boundaryPathId' },
     boundaryPathId: { type: 'string', description: 'A closed path around the model to confine the carve to', onlyWith: 'boundary "path"' },
     modelTopMM: { type: 'number', minimum: 0, description: 'Sink the model\'s top this far below the stock top, mm; 0 = flush' },
     rasterAngleDeg: { type: 'number', description: 'Direction of the finishing passes, degrees' },

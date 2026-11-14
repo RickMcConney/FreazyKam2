@@ -244,11 +244,13 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
           onChange={(e) => {
             const v = e.target.value
             if (v.startsWith('path:')) setForm((f) => ({ ...f, boundary: 'path', boundaryPathId: v.slice(5) }))
-            else setForm((f) => ({ ...f, boundary: v as 'model' | 'stock' }))
+            else setForm((f) => ({ ...f, boundary: v as 'model' | 'outline' | 'stock' }))
           }}
           className="w-full bg-gray-50 dark:bg-neutral-900 border border-gray-400 dark:border-neutral-700 rounded px-2 py-1 text-body text-gray-900 dark:text-neutral-100 focus:outline-none focus:border-blue-500"
         >
           <option value="model">Model box</option>
+          {/* A depth map's outline is its box: only an STL has one of its own. */}
+          {(!isDepthMap || form.boundary === 'outline') && <option value="outline">Model outline</option>}
           <option value="stock">Stock</option>
           {boundaryPaths.map((p) => (
             <option key={p.id} value={`path:${p.id}`}>{p.name}</option>
@@ -262,6 +264,8 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
         <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">
           {form.boundary === 'model'
             ? 'Cuts down to the model\'s base all round it, the tool running its radius past the model\'s box so the sides come out clean.'
+            : form.boundary === 'outline'
+              ? 'Cuts down to the model\'s base all round it, the tool running its radius past the model\'s own outline seen from above — a round model is cut round, not square.'
             : form.boundary === 'stock'
               ? 'Cuts down to the model\'s base all round it, the tool running its radius past the stock\'s edge.'
               : 'The tool stays inside; around the model it cuts down to the model\'s base.'}
