@@ -1,6 +1,6 @@
 // ─── Tabs form ────────────────────────────────────────────────────────────────
 import { FormShell, PathChip, PathListSection, GenerateBtn, LengthInput } from './shared'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { NumericInput } from '../../components/NumericInput'
 import { ICON } from '../../theme'
 import { AlertCircle, MousePointerClick, Trash2 } from 'lucide-react'
@@ -9,7 +9,7 @@ import { usePathsStore } from '../../store/pathsStore'
 import { useTabStore } from '../../store/tabStore'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 import { regenerateAffected, regenerateAffectedMany } from '../../cam/regenerate'
-import { applyBridges, removeBridges, holdableParts, holdableHoles } from '../../tools/bridgesRun'
+import { applyBridges, removeStripsOf, stripsOf, holdableParts, holdableHoles } from '../../tools/bridgesRun'
 import { MIN_SLUG_MM } from '../../cam/bridges'
 import { getBBox } from '../../canvas/selectionUtils'
 import { useToolpathStore } from '../../store/toolpathStore'
@@ -32,6 +32,13 @@ interface TabsFormState {
   mode: HoldMode
 }
 
+function removeLabel(strips: number, tabs: number): string {
+  const parts: string[] = []
+  if (strips > 0) parts.push(`${strips} Strip${strips !== 1 ? 's' : ''}`)
+  if (tabs > 0) parts.push(`${tabs} Tab${tabs !== 1 ? 's' : ''}`)
+  return `Remove ${parts.join(' and ')}`
+}
+
 export function TabsForm({ onClose }: { onClose: () => void }) {
   const paths = usePathsStore((s) => s.paths)
   const selectedIds = usePathsStore((s) => s.selectedIds)
@@ -47,14 +54,23 @@ export function TabsForm({ onClose }: { onClose: () => void }) {
 
   const [form, setForm] = useState<TabsFormState>(() => {
     const saved = load('tabs') as Partial<TabsFormState> | null
+    const asked = useUIStore.getState().requestTabsMode
     return {
       count: saved?.count ?? 4,
       lengthMM: saved?.lengthMM ?? 5,
       heightMM: saved?.heightMM ?? BRIDGE_DEFAULTS.heightMM,
       bridgeWidthMM: saved?.bridgeWidthMM ?? bridges?.widthMM ?? BRIDGE_DEFAULTS.widthMM,
-      mode: saved?.mode ?? 'bridges',
+      mode: asked ?? saved?.mode ?? 'bridges',
     }
   })
+  // A chip asks for the kind it stands for — on opening (read above) or while the form is
+  // already open, when it does not remount.
+  const askedMode = useUIStore((s) => s.requestTabsMode)
+  useEffect(() => {
+    if (!askedMode) return
+    useUIStore.getState().setRequestTabsMode(null)
+    setForm((f) => (f.mode === askedMode ? f : { ...f, mode: askedMode }))
+  }, [askedMode])
 
   // Every selected path. A sheet of parts is tabbed in one click, as one undo step
   // (applyTabsMany). An STL model takes tabs on its silhouette seen from above
@@ -70,9 +86,11 @@ export function TabsForm({ onClose }: { onClose: () => void }) {
   const stripTargets = targets.filter((p) => !p.stlSrc && !p.imageSrc)
   const targetIds = new Set(targets.map((p) => p.id))
   const singlePath = targets.length === 1 ? targets[0] : null
-  // Click to Place places whichever the toggle says, whatever is selected; otherwise one
-  // path always takes tabs.
-  const mode: HoldMode = targets.length > 1 || placing ? form.mode : 'tabs'
+  // The choice is shown from the start — it used to appear only with several paths selected
+  // or Click to Place on, which cost a click to reach the strips. Only a selection of nothing
+  // but models is held by tabs whatever the toggle says: strips join drawn parts.
+  const modelsOnly = targets.length > 0 && stripTargets.length === 0
+  const mode: HoldMode = modelsOnly ? 'tabs' : form.mode
   // The per-tab rows are for one path; over several the form says how many there are.
   const targetTabs = tabs.filter((t) => targetIds.has(t.pathId))
   const pathTabs = singlePath ? targetTabs : []
@@ -80,7 +98,12 @@ export function TabsForm({ onClose }: { onClose: () => void }) {
   for (const t of targetTabs) tabsOn.set(t.pathId, (tabsOn.get(t.pathId) ?? 0) + 1)
 
   function up<K extends keyof TabsFormState>(k: K, v: TabsFormState[K]) {
-    setForm((f) => ({ ...f, [k]: v }))
+    setForm((f) => {
+      const next = { ...f, [k]: v }
+      // The kind is remembered as soon as it is picked, not only on Apply.
+      if (k === 'mode') save('tabs', next)
+      return next
+    })
   }
 
   // CLICK TO PLACE publishes the sizes a click would use, and follows the fields while it is
@@ -110,6 +133,11 @@ export function TabsForm({ onClose }: { onClose: () => void }) {
     if (singlePath) regenerateAffected(singlePath.id)
   }
 
+  function handleRemoveAll() {
+    if (ownStrips > 0) removeStripsOf(targets.map((p) => p.id))
+    if (targetTabs.length > 0) handleClearAll()
+  }
+
   function handleClearAll() {
     if (targets.length === 0) return
     deleteTabsOf(targets.map((p) => p.id))
@@ -120,6 +148,11 @@ export function TabsForm({ onClose }: { onClose: () => void }) {
   const labelCls = 'block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1'
   const clearBtnCls = 'w-full py-1 rounded text-label border border-gray-400 dark:border-neutral-600 text-gray-600 dark:text-neutral-400 hover:text-red-400 hover:border-red-400 transition-colors'
   const lineCount = bridges?.lines.length ?? 0
+  // The strips holding the SELECTED parts — what the remove button takes, as it takes only
+  // the selected paths' tabs. A chip selects its own paths, so it removes only its own.
+  const ownStrips = useMemo(() => stripsOf(targets.map((p) => p.id)).length,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [bridges, selectedIds])
   // Strips join only the parts some cut sets free — not the labels and holes a drag box
   // catches with them (holdableParts) — read off the outlines, so profiling can come later.
   const operations = useToolpathStore((s) => s.operations)
@@ -169,7 +202,7 @@ export function TabsForm({ onClose }: { onClose: () => void }) {
           </p>
         )}
       </div>
-      {(targets.length > 1 || placing) && (
+      {!modelsOnly && (
         <div>
           <div className={labelCls}>Hold With</div>
           <div className="flex gap-1">
@@ -246,7 +279,6 @@ export function TabsForm({ onClose }: { onClose: () => void }) {
             {lineCount} holding strip{lineCount !== 1 ? 's' : ''}, {fmtLen(bridges.widthMM, units)} wide and {fmtLen(bridges.heightMM, units)} high.
             Re-placing replaces them all.
           </p>
-          <button onClick={removeBridges} className={clearBtnCls}>Remove Strips</button>
         </div>
       )}
       {mode === 'tabs' && pathTabs.length > 0 && (
@@ -263,17 +295,22 @@ export function TabsForm({ onClose }: { onClose: () => void }) {
               </button>
             </div>
           ))}
-          <button onClick={handleClearAll} className={clearBtnCls}>Clear All Tabs</button>
         </div>
       )}
-      {/* Several paths: no per-tab rows (hundreds of them), just the count and a clear. */}
+      {/* Several paths: no per-tab rows (hundreds of them), just the count. */}
       {!singlePath && targetTabs.length > 0 && (
-        <div className="space-y-1">
-          <p className="text-label text-gray-600 dark:text-neutral-400">
-            {targetTabs.length} tab{targetTabs.length !== 1 ? 's' : ''} on {tabsOn.size} of the {targets.length} selected paths
-          </p>
-          <button onClick={handleClearAll} className={clearBtnCls}>Clear Tabs on {targets.length} Paths</button>
-        </div>
+        <p className="text-label text-gray-600 dark:text-neutral-400">
+          {targetTabs.length} tab{targetTabs.length !== 1 ? 's' : ''} on {tabsOn.size} of the {targets.length} selected paths
+        </p>
+      )}
+      {/* ONE remove, whichever kind the toggle is on: the strips and the tabs that hold the
+          SELECTED paths — no others — and it says how many of each. It was two buttons,
+          each shown only in its own mode, so strips could not be removed with the toggle on
+          tabs — and a chip opened the form on whichever mode it was left on. */}
+      {(ownStrips > 0 || targetTabs.length > 0) && (
+        <button onClick={handleRemoveAll} className={clearBtnCls}>
+          {removeLabel(ownStrips, targetTabs.length)}
+        </button>
       )}
       {targets.length > 1 && (
         <PathListSection count={targets.length} toggle>

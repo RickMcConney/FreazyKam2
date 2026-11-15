@@ -5,7 +5,7 @@ import { useTabStore } from '../store/tabStore'
 import { useWorkpieceStore } from '../store/workpieceStore'
 import { regenerateAffected } from '../cam/regenerate'
 import { stripAt, type StripPick } from '../cam/bridgePick'
-import { cornerClearMM } from '../cam/bridges'
+import { cornerClearMM, MAX_JOIN_MM } from '../cam/bridges'
 import { tabTAt, tabPointAt } from '../cam/tabPlacement'
 import { tabOutline } from '../cam/stlOutline'
 import type { ImportedPath } from '../store/pathsStore'
@@ -13,6 +13,7 @@ import { holdIndexNow, cutterRadiusFor, addStrip } from '../tools/bridgesRun'
 import { closestVisiblePath, onCanvas, type FlatOf } from './pathHit'
 import type { CanvasView } from './useCanvasView'
 import { screenToCNC } from './viewport'
+import { outsideSide } from './layers/TabLayer'
 
 // The Tabs form's CLICK TO PLACE (uiStore.tabPlace). It places the kind the form's Hold With
 // toggle is on — never decides for itself:
@@ -27,13 +28,17 @@ import { screenToCNC } from './viewport'
 // Hovering shows where, as a ghost (`holdPreview`, HoldPreviewLayer), so the click is never
 // a guess.
 
-/** The widest gap a click joins across, and how far round the outline it may slide to clear a corner. */
-const REACH_MM = 30
+/** How far from an outline a click may land and still be taken as a click on it. */
+const PICK_MM = 30
+// The widest gap a click joins across is the network's own, MAX_JOIN_MM — the same reach a
+// stub must find clear in front of it. With a shorter one here (it was 30) a gap between that
+// and 60 mm was too wide to join and too close for a stub, so nothing could be placed across
+// it: two parts a medium distance apart could not be strapped on their facing sides at all.
 const GRAB_PX = 12
 
 type HoldPlan =
   | { kind: 'strip'; pick: StripPick; widthMM: number; heightMM: number }
-  | { kind: 'tab'; pathId: string; d: string; t: number; x: number; y: number; tx: number; ty: number }
+  | { kind: 'tab'; pathId: string; d: string; t: number; x: number; y: number; tx: number; ty: number; outSide: 1 | -1 }
   | null
 
 // The cutter radius the corner clearance is judged with — the widest one cutting round any
@@ -53,7 +58,7 @@ function planAt(x: number, y: number, scale: number, getFlat: FlatOf): HoldPlan 
     if (radiusMemo?.index !== ix) radiusMemo = { index: ix, r: cutterRadiusFor(ix.parts.map((p) => p.id)) }
     const toolRadiusMM = radiusMemo.r
     const searchMM = 2 * cornerClearMM(widthMM, toolRadiusMM) + 2
-    const pick = stripAt(ix, x, y, { widthMM, toolRadiusMM, reachMM: REACH_MM, searchMM, pickMM: REACH_MM })
+    const pick = stripAt(ix, x, y, { widthMM, toolRadiusMM, reachMM: MAX_JOIN_MM, searchMM, pickMM: PICK_MM })
     // Only where the click IS — on the strip, give or take the slide off a corner. Without
     // it a click out in open stock reached the nearest outline 30 mm away and joined it to
     // whatever lay beyond.
@@ -62,7 +67,7 @@ function planAt(x: number, y: number, scale: number, getFlat: FlatOf): HoldPlan 
     }
     // No part across from the outline: a stub into the open stock — but only for a click ON
     // the outline (or on where the stub would go), not one out in the middle of the waste.
-    const stub = stripAt(ix, x, y, { widthMM, toolRadiusMM, reachMM: REACH_MM, searchMM, pickMM: REACH_MM, toPart: 'frame' })
+    const stub = stripAt(ix, x, y, { widthMM, toolRadiusMM, reachMM: MAX_JOIN_MM, searchMM, pickMM: PICK_MM, toPart: 'frame' })
     if (stub && distToSeg(x, y, stub.line) <= GRAB_PX / scale + widthMM / 2 + searchMM) {
       return { kind: 'strip', pick: stub, widthMM, heightMM }
     }
@@ -78,7 +83,7 @@ function planAt(x: number, y: number, scale: number, getFlat: FlatOf): HoldPlan 
   const t = tabTAt(polys, x, y, place.lengthMM)
   if (t === null) return null
   const at = tabPointAt(polys, t)
-  return at ? { kind: 'tab', pathId: hit.id, d: hit.d, t, ...at } : null
+  return at ? { kind: 'tab', pathId: hit.id, d: hit.d, t, ...at, outSide: outsideSide(polys, at.x, at.y, at.tx, at.ty) } : null
 }
 
 function distToSeg(x: number, y: number, l: { x1: number; y1: number; x2: number; y2: number }): number {
@@ -110,7 +115,7 @@ export function useTabPlaceTool({ stageRef, viewportRef }: CanvasView, getFlat: 
         const place = ui.tabPlace
         ui.setHoldPreview(!plan ? null
           : plan.kind === 'strip' ? { kind: 'strip', ...plan.pick.line, widthMM: plan.widthMM }
-            : { kind: 'tab', x: plan.x, y: plan.y, tx: plan.tx, ty: plan.ty, lengthMM: place.lengthMM, heightMM: place.heightMM })
+            : { kind: 'tab', x: plan.x, y: plan.y, tx: plan.tx, ty: plan.ty, lengthMM: place.lengthMM, heightMM: place.heightMM, outSide: plan.outSide })
       })
     }
     const onLeave = () => useUIStore.getState().setHoldPreview(null)

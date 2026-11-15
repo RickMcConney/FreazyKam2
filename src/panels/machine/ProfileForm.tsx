@@ -12,7 +12,7 @@ import { usePathsStore, type ImportedPath } from '../../store/pathsStore'
 import { useSelectedPathsInOrder } from '../../store/pathsStore'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 import { seedStepDownMM } from '../../cam/feeds'
-import { DEFAULT_BRIDGE_MAX_MM, DEFAULT_CORNER_TOLERANCE_MM, DEFAULT_FINISH_PASS_MM, PROFILE_TOOL_TYPES, profileFormDefaults, profileSaveKeys, savedProfileFor } from './opDefaults'
+import { DEFAULT_BRIDGE_MAX_MM, DEFAULT_CORNER_TOLERANCE_MM, DEFAULT_TAB_RAMP_DEG, DEFAULT_FINISH_PASS_MM, PROFILE_TOOL_TYPES, profileFormDefaults, profileSaveKeys, savedProfileFor } from './opDefaults'
 import { maxCutRadiusMM, toolRadiusAtHeight } from '../../cam/geom'
 
 interface ProfileFormState {
@@ -27,6 +27,9 @@ interface ProfileFormState {
   allowanceMM: number
   roundCorners: boolean
   cornerToleranceMM: number
+  /** RAMP OVER TABS — stored on the op as `tabRampDeg` (0 = square tabs). */
+  rampTabs: boolean
+  tabRampDeg: number
   /** FINISHING PASS — stored on the op as `finishPassMM` (0 = off) and `springPass`. */
   finishPass: boolean
   finishPassMM: number
@@ -63,6 +66,8 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
       // A profile saved before the option existed has none, and stays unrounded.
       roundCorners: (editOp.cornerToleranceMM ?? 0) > 0,
       cornerToleranceMM: (editOp.cornerToleranceMM ?? 0) > 0 ? editOp.cornerToleranceMM! : DEFAULT_CORNER_TOLERANCE_MM,
+      rampTabs: (editOp.tabRampDeg ?? 0) > 0,
+      tabRampDeg: (editOp.tabRampDeg ?? 0) > 0 ? editOp.tabRampDeg! : DEFAULT_TAB_RAMP_DEG,
       finishPass: (editOp.finishPassMM ?? 0) > 0,
       finishPassMM: (editOp.finishPassMM ?? 0) > 0 ? editOp.finishPassMM! : DEFAULT_FINISH_PASS_MM,
       springPass: editOp.springPass ?? false,
@@ -198,12 +203,13 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
     const { toolId, side, depthMM, stepDownMM, stepDownManual, direction, rampIn, allowanceMM, startFrom } = form
     const cornerToleranceMM = form.roundCorners && side !== 'centerline' && !sharing ? form.cornerToleranceMM : 0
     const finishPassMM = finishing ? form.finishPassMM : 0
+    const tabRampDeg = form.rampTabs ? form.tabRampDeg : 0
     const springPass = finishing && form.springPass
     if (sharing) {
       const [first, ...rest] = selectedPaths
       const bridgeMaxMM = form.bridgeGaps ? form.bridgeMaxMM : 0
       await generate({
-        settings: { toolId, side: 'outside', depthMM, stepDownMM, stepDownManual, direction, rampIn, allowanceMM, cornerToleranceMM: 0, finishPassMM: 0, springPass: false, sharedLines: true, bridgeMaxMM, startFrom },
+        settings: { toolId, side: 'outside', depthMM, stepDownMM, stepDownManual, direction, rampIn, allowanceMM, cornerToleranceMM: 0, tabRampDeg, finishPassMM: 0, springPass: false, sharedLines: true, bridgeMaxMM, startFrom },
         items: [{
           key: sharedEdit ? editOp!.id : `shared:${selectedPaths.map((p) => p.id).sort().join(',')}`,
           op: sharedEdit ? editOp : undefined,
@@ -219,7 +225,7 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
     const item = (path: ImportedPath, op?: ProfileOperation) =>
       ({ key: path.id, op, name: `Profile: ${path.name} (${tool.name})`, fields: { pathId: path.id } })
     await generate({
-      settings: { toolId, side, depthMM, stepDownMM, stepDownManual, direction, rampIn, allowanceMM, cornerToleranceMM, finishPassMM, springPass, sharedLines: false, bridgeMaxMM: 0, startFrom },
+      settings: { toolId, side, depthMM, stepDownMM, stepDownManual, direction, rampIn, allowanceMM, cornerToleranceMM, tabRampDeg, finishPassMM, springPass, sharedLines: false, bridgeMaxMM: 0, startFrom },
       items: converting
         // The sheet becoming one op per part: every part is a new op, and the sheet goes.
         ? selectedPaths.map((path) => item(path))
@@ -332,6 +338,27 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
           )}
         </div>
       )}
+      <div>
+        <CheckRow id="profile-ramp-tabs" checked={form.rampTabs} onChange={(v) => up('rampTabs', v)}
+          label="Ramp Over Tabs" hint="so the machine need not stop" />
+        {form.rampTabs && (
+          <>
+            <label htmlFor="profile-tab-ramp-deg" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mt-1">
+              Ramp Angle <span className="text-gray-500 dark:text-neutral-400 normal-case">{form.tabRampDeg}°</span>
+            </label>
+            <input id="profile-tab-ramp-deg" type="range" min={5} max={45} step={1} value={form.tabRampDeg}
+              onChange={(e) => up('tabRampDeg', parseInt(e.target.value))}
+              className="w-full accent-blue-500" />
+            <p className="text-label text-gray-600 dark:text-neutral-400 mt-0.5">
+              The tool climbs over each tab and back down while it keeps moving, instead of
+              stopping to lift straight up and drop. A ramp leaves a wedge of stock at each
+              tab's foot, about {fmtLen((units === 'in' ? 3.175 : 1) / Math.tan(form.tabRampDeg * Math.PI / 180), units)} long per 1{units === 'in' ? '/8"' : ' mm'} of
+              tab height; trim it off with the tab. Shallower runs faster: Z is usually the
+              slowest axis.
+            </p>
+          </>
+        )}
+      </div>
       <CheckRow id="profile-ramp-in" checked={form.rampIn} onChange={(v) => up('rampIn', v)}
         label="Ramp In" hint="2× dia, 50% feed" />
       <FormNotice msg={skippedInner === 0

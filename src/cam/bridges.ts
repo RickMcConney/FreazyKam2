@@ -42,6 +42,7 @@ import { flattenPath } from './pathFlattener'
 import { pointInPolygon } from './geom'
 import type { MotionSegment } from '../store/toolpathStore'
 import { cellOfPoint, cellOffset, cellKey, type Cell } from './sheets'
+import { tabRampShape, type TabRamp, type RampShape } from './tabRamp'
 
 /** One strip: its centreline from (x1, y1) to (x2, y2). `manual`: placed or moved BY HAND
  *  (click-to-place, a drag) — Apply re-lays the network round it and never replaces it. */
@@ -672,8 +673,10 @@ function clip(ax: number, ay: number, bx: number, by: number, x0: number, x1: nu
  * finishing pass and a link through the kerf are all held off by the same test, exactly,
  * whatever made them. An arc that could reach a strip below `topZ` is followed as a polyline
  * (0.25 mm steps), since only a straight move can be raised part of the way.
+ *
+ * With `ramp`, the steps become slopes: see `rampOverStrips`.
  */
-export function clampToBridges(segs: MotionSegment[], set: BridgeSet, clearMM: number, topZ: number): MotionSegment[] {
+export function clampToBridges(segs: MotionSegment[], set: BridgeSet, clearMM: number, topZ: number, ramp?: TabRamp): MotionSegment[] {
   const half = set.widthMM / 2 + clearMM
   const boxes = set.lines.flatMap((l): Box[] => {
     const len = Math.hypot(l.x2 - l.x1, l.y2 - l.y1)
@@ -682,6 +685,8 @@ export function clampToBridges(segs: MotionSegment[], set: BridgeSet, clearMM: n
     return [{ ox: l.x1, oy: l.y1, ux, uy, lo: -clearMM, hi: len + clearMM, half }]
   })
   const out: MotionSegment[] = []
+  // The points the clamp put at the strip top — where a ramp spreads out from.
+  const held = new Set<MotionSegment>()
   let prev: MotionSegment | null = null
   for (const s of segs) {
     if (!prev || s.rapid || s.toolChange !== undefined || (prev.z >= topZ && s.z >= topZ)) { out.push(s); prev = s; continue }
@@ -690,12 +695,104 @@ export function clampToBridges(segs: MotionSegment[], set: BridgeSet, clearMM: n
     if (s.arc && !pieces.some((q, i) => touches(i === 0 ? from : pieces[i - 1], q, boxes))) { out.push(s); prev = s; continue }
     let at: MotionSegment = from
     for (const q of pieces) {
-      for (const m of raiseMove(at, q, boxes, topZ)) out.push(m)
+      for (const m of raiseMove(at, q, boxes, topZ, held)) out.push(m)
       at = q
     }
     prev = s
   }
+  return ramp && held.size ? rampOverStrips(out, held, topZ, ramp) : out
+}
+
+/**
+ * RAMPING OVER STRIPS. The clamp lifts the tool straight up at a strip's edge and drops it
+ * straight down at the other, which is four dead stops per crossing. Here each stretch the
+ * clamp held at the top spreads outward along the cut as the same ramp a tab gets
+ * (cam/tabRamp.ts): Z becomes the HIGHER of the clamped move and the ramp, so a move is only
+ * ever raised, never lowered — between any two emitted points both are straight lines and
+ * the new one is above the old at both ends — and nothing the clamp kept the tool out of is
+ * cut. A pass and the next are one run (joined by the plunge), so a strip across a loop's
+ * start ramps across the seam as anywhere else. Arcs are followed as lines only where a
+ * ramp reaches them, so the rest of the pass keeps its G2/G3.
+ */
+function rampOverStrips(segs: MotionSegment[], held: Set<MotionSegment>, topZ: number, ramp: TabRamp): MotionSegment[] {
+  const out: MotionSegment[] = []
+  let i = 0
+  while (i < segs.length) {
+    if (segs[i].rapid || segs[i].toolChange !== undefined || i === 0) { out.push(segs[i]); i++; continue }
+    let j = i
+    while (j < segs.length && !segs[j].rapid && segs[j].toolChange === undefined) j++
+    rampRun(segs, i, j, held, topZ, ramp, out)
+    i = j
+  }
   return out
+}
+
+// One run of feed moves segs[i..j), starting from segs[i - 1].
+function rampRun(segs: MotionSegment[], i: number, j: number, held: Set<MotionSegment>, topZ: number, ramp: TabRamp, out: MotionSegment[]): void {
+  let any = false
+  for (let k = i; k < j; k++) if (held.has(segs[k])) { any = true; break }
+  if (!any) { for (let k = i; k < j; k++) out.push(segs[k]); return }
+
+  // Every move as its straight pieces (an arc as its polyline), with arc length along the run.
+  const start = segs[i - 1]
+  const pieces: { seg: MotionSegment; lines: MotionSegment[]; s0: number; s1: number }[] = []
+  let s = 0
+  let at = start
+  for (let k = i; k < j; k++) {
+    const seg = segs[k]
+    const lines = seg.arc ? arcAsLines(at, seg) : [seg]
+    const s0 = s
+    let p = at
+    for (const q of lines) { s += Math.hypot(q.x - p.x, q.y - p.y); p = q }
+    pieces.push({ seg, lines, s0, s1: s })
+    at = seg
+  }
+
+  // The held stretches, each with the floor at its feet — the move's own depth either side.
+  const shapes: RampShape[] = []
+  for (let k = 0; k < pieces.length; k++) {
+    if (!held.has(pieces[k].seg)) continue
+    let e = k
+    while (e + 1 < pieces.length && held.has(pieces[e + 1].seg)) e++
+    const before = k > 0 ? pieces[k - 1].seg.z : start.z
+    const after = e + 1 < pieces.length ? pieces[e + 1].seg.z : pieces[e].seg.z
+    const zf = Math.min(before, after)
+    // The stretch starts where the tool reached the top: the end of the move into it.
+    const sh = tabRampShape({ start: k > 0 ? pieces[k - 1].s1 : 0, end: pieces[e].s1, tabZ: topZ }, zf, ramp)
+    if (sh) shapes.push(sh)
+    k = e
+  }
+  const spans = shapes.map((sh) => [Math.min(...sh.knots) - 1e-6, Math.max(...sh.knots) + 1e-6])
+  const zAt = (u: number, z: number) => { for (const sh of shapes) z = Math.max(z, sh.zAt(u)); return z }
+  const knots = shapes.flatMap((sh) => sh.knots).sort((a, b) => a - b)
+
+  const put = (m: MotionSegment) => {
+    const last = out[out.length - 1]
+    if (last && !last.rapid && !m.arc && Math.abs(last.x - m.x) < 1e-9 && Math.abs(last.y - m.y) < 1e-9 && Math.abs(last.z - m.z) < 1e-9) return
+    out.push(m)
+  }
+  let from = start
+  let su = 0
+  let kn = 0
+  for (const pc of pieces) {
+    // A move wholly at or above the top cannot be raised: keep it, arc and all.
+    const touched = Math.min(from.z, pc.seg.z) < topZ - 1e-9 && spans.some(([a, b]) => pc.s1 >= a && pc.s0 <= b)
+    if (!touched) { put(pc.seg); from = pc.seg; su = pc.s1; while (kn < knots.length && knots[kn] <= su) kn++; continue }
+    for (const q of pc.lines) {
+      const len = Math.hypot(q.x - from.x, q.y - from.y)
+      const s1 = su + len
+      const { arc: _arc, ...base } = q
+      while (kn < knots.length && knots[kn] < s1 - 1e-6) {
+        const u = knots[kn++]
+        if (u <= su + 1e-6) continue
+        const t = (u - su) / len
+        put({ ...base, x: from.x + t * (q.x - from.x), y: from.y + t * (q.y - from.y), z: zAt(u, from.z + t * (q.z - from.z)) })
+      }
+      put({ ...base, z: zAt(s1, q.z) })
+      from = q
+      su = s1
+    }
+  }
 }
 
 function touches(a: MotionSegment, b: MotionSegment, boxes: Box[]): boolean {
@@ -703,7 +800,7 @@ function touches(a: MotionSegment, b: MotionSegment, boxes: Box[]): boolean {
 }
 
 // One straight move a→b, raised to `topZ` over the stretches of it inside any box.
-function raiseMove(a: MotionSegment, b: MotionSegment, boxes: Box[], topZ: number): MotionSegment[] {
+function raiseMove(a: MotionSegment, b: MotionSegment, boxes: Box[], topZ: number, held?: Set<MotionSegment>): MotionSegment[] {
   const { arc: _arc, ...base } = b
   const spans: [number, number][] = []
   for (const bx of boxes) {
@@ -726,7 +823,10 @@ function raiseMove(a: MotionSegment, b: MotionSegment, boxes: Box[], topZ: numbe
   const put = (x: number, y: number, z: number) => {
     const last = out[out.length - 1]
     if (last && Math.abs(last.x - x) < 1e-9 && Math.abs(last.y - y) < 1e-9 && Math.abs(last.z - z) < 1e-9) return
-    out.push({ ...base, x, y, z })
+    const m = { ...base, x, y, z }
+    // At the strip top, on a move that had to be raised to get there.
+    if (held && Math.abs(z - topZ) < 1e-9 && m.z > Math.min(a.z, b.z) - 1e-9 && Math.min(a.z, b.z) < topZ) held.add(m)
+    out.push(m)
   }
   for (const [u0, u1] of merged) {
     const p0 = pt(u0), p1 = pt(u1)

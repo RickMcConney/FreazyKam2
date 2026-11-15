@@ -11,7 +11,7 @@ import { useUIStore } from '../store/uiStore'
 import { bridgedOps, holdableParts, holdableHoles, cutterRadiusFor } from './bridgeParts'
 export { bridgedOps, holdableParts, holdableHoles, cutterRadiusFor }
 import { usePathsStore, type ImportedPath } from '../store/pathsStore'
-import { buildHoldIndex, type HoldIndex } from '../cam/bridgePick'
+import { buildHoldIndex, stripEnds, type HoldIndex } from '../cam/bridgePick'
 
 /** A network of bridges joining the parts among `paths` (`holdableParts`) — `count` joins to
  *  each — and `count` strips into the slug of each hole in them (`holdableHoles`), replacing
@@ -147,6 +147,33 @@ export function moveStrip(i: number, line0: BridgeLine): void {
 }
 
 /** Take strip `i` away; the last one takes the set with it. */
+/** Which strips hold any of `pathIds`: the indexes of those with either end on one of them. */
+export function stripsOf(pathIds: string[]): number[] {
+  const lines = useWorkpieceStore.getState().bridges?.lines ?? []
+  if (lines.length === 0 || pathIds.length === 0) return []
+  const ids = new Set(pathIds)
+  // Among hidden paths too: a strip on a part that is hidden still belongs to it.
+  const ix = holdIndexNow(true)
+  const out: number[] = []
+  lines.forEach((l, i) => {
+    const e = stripEnds(ix, l)
+    if (e && (ids.has(e.a) || (e.b !== 'frame' && ids.has(e.b)))) out.push(i)
+  })
+  return out
+}
+
+/** Remove the strips holding any of `pathIds` — and only those — as one step. */
+export function removeStripsOf(pathIds: string[]): void {
+  const wp = useWorkpieceStore.getState()
+  const cur = wp.bridges
+  const drop = new Set(stripsOf(pathIds))
+  if (!cur || drop.size === 0) return
+  const old = cur.lines.filter((_, k) => drop.has(k))
+  const lines = cur.lines.filter((_, k) => !drop.has(k))
+  wp.setBridges(lines.length > 0 ? { ...cur, lines } : null)
+  regenerateNear(old, cur.widthMM / 2, [])
+}
+
 export function removeStrip(i: number): void {
   const wp = useWorkpieceStore.getState()
   const cur = wp.bridges

@@ -48,6 +48,9 @@ export const DEFAULT_BRIDGE_MAX_MM = 20
 // radius over 0.1 mm to do it) even at a 60° corner, where the arc's radius equals the
 // deviation; small enough that the bottom of a corner barely changes.
 export const DEFAULT_CORNER_TOLERANCE_MM = 0.2
+// Shallow, because a ramp moves at Z's rate / sin(angle) at most, and Z is the slow axis on a
+// hobby machine: 400 mm/min of Z still lets a 15° ramp run at over 1500 mm/min.
+export const DEFAULT_TAB_RAMP_DEG = 15
 
 // Stock the depth passes leave for the finishing pass: enough that the last pass cuts
 // everywhere on the wall, past the tool's deflection and the depth passes' step lines,
@@ -68,6 +71,8 @@ export function profileFormDefaults(defaultTool: Tool | undefined, thicknessMM: 
     allowanceMM: 0,
     roundCorners: true,
     cornerToleranceMM: DEFAULT_CORNER_TOLERANCE_MM,
+    rampTabs: false,
+    tabRampDeg: DEFAULT_TAB_RAMP_DEG,
     finishPass: false,
     finishPassMM: DEFAULT_FINISH_PASS_MM,
     springPass: false,

@@ -347,12 +347,12 @@ export default function Toolbar() {
             onClick={toggleSnap}
             active={snapEnabled}
           />
-          {/* Lock dragging: a part moves only by handles, arrows, typed values or Shift-drag. */}
+          {/* Lock dragging: no drags and no resize/rotate handles; a part moves only by arrows, typed values or Shift-drag. */}
           <ToolbarButton
             icon={moveLocked ? <Lock size={ICON.md} /> : <LockOpen size={ICON.md} />}
             label={moveLocked
-              ? 'Dragging Locked (L) — parts move only by Shift-drag, handles, arrow keys or typed values'
-              : 'Lock Dragging (L) — stop parts being dragged by mistake'}
+              ? 'Dragging Locked (L) — no dragging, resizing or rotating on the canvas; parts move only by Shift-drag, arrow keys or typed values'
+              : 'Lock Dragging (L) — stop parts being dragged, resized or rotated by mistake'}
             onClick={toggleMoveLock}
             active={moveLocked}
           />

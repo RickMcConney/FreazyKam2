@@ -27,7 +27,7 @@ export type CanvasMode =
   // the select tool Shift is the drag lock's override) and the live preview
   // of the part's OWN constraints for nothing — and so the two kinds of drag
   // cannot bake differently.
-  | { type: 'move'; pathIds: string[]; startCNC: { x: number; y: number }; initBbox: BBox; snapTargets: SnapTargets; pick?: { held: AnchorCandidate; hot: AnchorCandidate }; narrowTo?: string; toggleOutOnClick?: string[] }
+  | { type: 'move'; pathIds: string[]; startCNC: { x: number; y: number }; initBbox: BBox; snapTargets: SnapTargets; pick?: { held: AnchorCandidate; hot: AnchorCandidate }; narrowTo?: string; toggleOutOnClick?: string[]; addOnClick?: string[] }
   | { type: 'resize'; pathIds: string[]; handle: HandleType; anchor: { x: number; y: number }; initHandle: { x: number; y: number }; startCNC: { x: number; y: number }; initBbox: BBox; shiftHeld: boolean; snapTargets: SnapTargets }
   | { type: 'rotate'; pathIds: string[]; center: { x: number; y: number }; initAngle: number }
   // `onPath`: the box began on a part while dragging was locked. A click that never

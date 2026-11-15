@@ -589,6 +589,8 @@ export default function TimelinePanel() {
     if (chip.form) {
       // Tabs and Corners edit the SELECTION, which the line above just set. A job's form
       // edits the job, and the selection shows its holes.
+      // The Tabs form opens on the kind the chip stands for, not on whichever it was left on.
+      if (chip.form === 'tabs') ui.setRequestTabsMode(chip.key === 'job:bridges' ? 'bridges' : 'tabs')
       ui.setRequestMachineForm(chip.form)
       return
     }

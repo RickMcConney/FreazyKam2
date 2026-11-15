@@ -94,6 +94,9 @@ export interface ProfileOperation extends BaseOperation {
    *  from the part (cam/cornerRounding.ts). Absent/0 = off — which is what every profile
    *  saved before the option existed reads as, so reopening one never moves its path. */
   cornerToleranceMM?: number
+  /** Ride over tabs on a slope this many degrees from horizontal instead of lifting
+   *  straight up (cam/profile.ts "Ramping over tabs"). Absent/0 = square tabs. */
+  tabRampDeg?: number
   /** FINISHING PASS: the depth passes stay this much (mm) further off the wall and one
    *  full-depth pass at the end takes it off (cam/profile.ts). Absent/0 = off — what every
    *  profile saved before it existed reads as. Not with `sharedLines`. */

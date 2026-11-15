@@ -167,6 +167,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
     const result = await runInWorkerFor(opId, 'generateSharedLineProfile', parts, tool, {
       side: op.side, depthMM: op.depthMM, stepDownMM: stepDown(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual), direction: forSpindle(op.direction, spindleReversed),
       startNear: op.entryHint, rampIn: op.rampIn, safeHeightMM, allowanceMM: op.allowanceMM, startZMM, bridges,
+      tabRampDeg: op.tabRampDeg,
       stockBottomZMM: -thicknessMM,
     }, machineRates(), { bridgeMaxMM: op.bridgeMaxMM ?? 0 })
     setSegments(opId, result.segments, builtWith)
@@ -180,6 +181,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       startNear: op.entryHint, rampIn: op.rampIn, safeHeightMM,
       allowanceMM: op.allowanceMM,
       cornerToleranceMM: op.cornerToleranceMM,
+      tabRampDeg: op.tabRampDeg,
       finishPassMM: op.finishPassMM, springPass: op.springPass,
       startZMM, bridges, stockBottomZMM: -thicknessMM,
     }, tabsForGeneration(op.pathId)), builtWith)

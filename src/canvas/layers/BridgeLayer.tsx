@@ -25,12 +25,15 @@ import { screenToCNC } from '../viewport'
 
 const GRAB_PX = 12
 
+// The strip's centreline pulled in by half its width at each end, for a ROUND-CAPPED stroke
+// of that width: the caps put the ends back, so it covers exactly the strip's length. A strip
+// shorter than it is wide draws as a disc at its middle.
 function band(l: BridgeLine, h: number): number[] | null {
   const len = Math.hypot(l.x2 - l.x1, l.y2 - l.y1)
   if (len < 1e-9) return null
-  // The band's corners: the centreline pushed half a width to either side.
-  const nx = -(l.y2 - l.y1) / len * h, ny = (l.x2 - l.x1) / len * h
-  return [l.x1 + nx, l.y1 + ny, l.x2 + nx, l.y2 + ny, l.x2 - nx, l.y2 - ny, l.x1 - nx, l.y1 - ny]
+  const pull = Math.min(h, len / 2) / len
+  const dx = (l.x2 - l.x1) * pull, dy = (l.y2 - l.y1) * pull
+  return [l.x1 + dx, l.y1 + dy, l.x2 - dx, l.y2 - dy]
 }
 
 export const BridgeLayer = memo(function BridgeLayer({ viewport }: { viewport: Viewport }) {
@@ -106,11 +109,11 @@ export const BridgeLayer = memo(function BridgeLayer({ viewport }: { viewport: V
         const hot = interactive && (hover === i || drag?.i === i)
         return (
           <Group key={i}>
-            <Line closed fill={OP_TYPE_COLORS.tabs} opacity={hot ? 0.75 : 0.45} perfectDrawEnabled={false} points={pts} listening={false} />
+            <Line stroke={OP_TYPE_COLORS.tabs} strokeWidth={2 * h} lineCap="round" opacity={hot ? 0.75 : 0.45} perfectDrawEnabled={false} points={pts} listening={false} />
             {/* The grab area: the strip, or GRAB_PX across on screen when it is thinner than
                 that. Invisible — opacity does not reach Konva's hit canvas. */}
             {interactive && (
-              <Line points={[l.x1, l.y1, l.x2, l.y2]} stroke="#000" opacity={0}
+              <Line points={[l.x1, l.y1, l.x2, l.y2]} stroke="#000" opacity={0} lineCap="round"
                 strokeWidth={Math.max(bridges.widthMM, GRAB_PX / viewport.scale)}
                 onMouseDown={onDown(i)}
                 onMouseEnter={() => { setHover(i); if (!drag) document.body.style.cursor = 'grab' }}

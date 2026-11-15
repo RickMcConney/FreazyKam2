@@ -107,7 +107,7 @@ interface UIState {
   tabPlace: { kind: 'tabs' | 'bridges'; lengthMM: number; heightMM: number; widthMM: number } | null
   // What a click would place right now, drawn as a ghost under the pointer (HoldPreviewLayer).
   holdPreview: { kind: 'strip'; x1: number; y1: number; x2: number; y2: number; widthMM: number }
-    | { kind: 'tab'; x: number; y: number; tx: number; ty: number; lengthMM: number; heightMM: number }
+    | { kind: 'tab'; x: number; y: number; tx: number; ty: number; lengthMM: number; heightMM: number; outSide: 1 | -1 }
     | null
   shapesPanelOpen: boolean
   // The clock designer (panels/draw/ClockPanel). Its own flag rather than an
@@ -169,6 +169,9 @@ interface UIState {
   // Ask MachinePanel to open a specific form (timeline tabs/corner chips —
   // those forms edit the current selection, which the chip click sets).
   requestMachineForm: string | null
+  // Which kind of hold the Tabs form should show when a chip opens it: a strips chip asks for
+  // 'bridges', a tabs chip for 'tabs'. TabsForm takes it and clears it.
+  requestTabsMode: 'tabs' | 'bridges' | null
   // Bumped when a path chip is clicked so PropertiesPanel briefly highlights —
   // it's the editor for the chip's shape/text parameters.
   propertiesFlashSeq: number
@@ -236,6 +239,7 @@ interface UIState {
   setActiveTile: (k: number) => void
   setRequestEditPathId: (id: string | null) => void
   setRequestMachineForm: (form: string | null) => void
+  setRequestTabsMode: (mode: 'tabs' | 'bridges' | null) => void
   flashProperties: () => void
   setSidebarTab: (tab: SidebarTab) => void
   setWorkspaceTab: (tab: WorkspaceTab) => void
@@ -325,6 +329,7 @@ export const useUIStore = create<UIState>()(
   activeTile: 0,
   requestEditPathId: null,
   requestMachineForm: null,
+  requestTabsMode: null,
   propertiesFlashSeq: 0,
   nodeEditUndo: null,
   nodeEditRedo: null,
@@ -392,6 +397,7 @@ export const useUIStore = create<UIState>()(
   setActiveTile: (k) => set({ activeTile: k }),
   setRequestEditPathId: (id) => set({ requestEditPathId: id }),
   setRequestMachineForm: (form) => set({ requestMachineForm: form }),
+  setRequestTabsMode: (mode) => set({ requestTabsMode: mode }),
   flashProperties: () => set((s) => ({ propertiesFlashSeq: s.propertiesFlashSeq + 1 })),
   setSidebarTab: (tab) => set({ sidebarTab: tab, activeTool: 'select' }),
   setWorkspaceTab: (tab) => set({ workspaceTab: tab }),

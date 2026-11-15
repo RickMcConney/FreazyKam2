@@ -13,6 +13,7 @@ import { tabOutline } from '../../cam/stlOutline'
 import { regenerateAffected } from '../../cam/regenerate'
 import type { Pt2 } from '../../cam/pathFlattener'
 import { drawFrame, nativeCtx, overlaps } from '../batchDraw'
+import { pointInPolygon } from '../../cam/geom'
 
 interface TabVisual {
   id: string
@@ -24,6 +25,18 @@ interface TabVisual {
   ty: number
   lengthMM: number
   heightMM: number
+  /** Which side of the path is OUTSIDE the shape: +1 its left (the tangent turned CCW), −1
+   *  its right. The handle points that way, into open stock rather than across the part. */
+  outSide: 1 | -1
+}
+
+// The left of the tangent is outside when a point a hair that way is in none — or an even
+// number — of the outline's rings.
+export function outsideSide(outline: Pt2[][], x: number, y: number, tx: number, ty: number): 1 | -1 {
+  const e = 0.01
+  let inside = false
+  for (const ring of outline) if (ring.length > 2 && pointInPolygon(x - ty * e, y + tx * e, ring)) inside = !inside
+  return inside ? -1 : 1
 }
 
 // FLATTENING AT 0.05 mm IS NOT SOMETHING TO DO IN A RENDER — the stage re-renders on every
@@ -110,14 +123,31 @@ interface Props {
   viewport: Viewport
 }
 
-// Perpendicular visual width is driven by tab.heightMM; length along path is tab.lengthMM
-const TAB_COLOR = '#f59e0b'
+// A TAB IS DRAWN AT A SIZE YOU CAN GRAB, NOT AT ITS HEIGHT. Its length along the path is
+// real — that is where it holds the part — but never under TAB_MIN_LEN_PX on screen; across
+// the path it is TAB_BAR_PX at every zoom, and the dot a fixed size. Height is a Z figure:
+// drawn as the bar's width it made a 3 mm tab a sliver a few pixels wide on a large part
+// zoomed out, and impossible to find, drag or delete. The strips are drawn the same way
+// (never thinner than their grab width — BridgeLayer).
+export const TAB_COLOR = '#f59e0b'
 const TAB_HOVER_COLOR = '#fcd34d'
 const TAB_DRAG_COLOR = '#fde68a'
+const TAB_BAR_PX = 10
+const TAB_MIN_LEN_PX = 18
+const TAB_DOT_PX = 4
+
+/** The marker's half length along the path and half width across it, mm, at `ppu` px/mm. */
+function tabMarker(v: { lengthMM: number }, ppu: number): { halfLen: number; halfW: number; dotR: number } {
+  return {
+    halfLen: Math.max(v.lengthMM, TAB_MIN_LEN_PX / ppu) / 2,
+    halfW: TAB_BAR_PX / ppu / 2,
+    dotR: TAB_DOT_PX / ppu,
+  }
+}
 
 // One tab's marker as two paths in CNC mm: the rotated bar and the dot on it.
-function tabShapes(v: TabVisual, dotRadius: number): { bar: Path2D; dot: Path2D } {
-  const halfLen = v.lengthMM / 2, halfW = v.heightMM / 2
+function tabShapes(v: TabVisual, ppu: number): { bar: Path2D; dot: Path2D } {
+  const { halfLen, halfW, dotR } = tabMarker(v, ppu)
   const ux = v.tx, uy = v.ty, nx = -v.ty, ny = v.tx
   const bar = new Path2D()
   bar.moveTo(v.x - ux * halfLen - nx * halfW, v.y - uy * halfLen - ny * halfW)
@@ -126,7 +156,7 @@ function tabShapes(v: TabVisual, dotRadius: number): { bar: Path2D; dot: Path2D 
   bar.lineTo(v.x - ux * halfLen + nx * halfW, v.y - uy * halfLen + ny * halfW)
   bar.closePath()
   const dot = new Path2D()
-  dot.arc(v.x, v.y, dotRadius, 0, 2 * Math.PI)
+  dot.arc(v.x, v.y, dotR, 0, 2 * Math.PI)
   return { bar, dot }
 }
 
@@ -135,16 +165,16 @@ function tabShapes(v: TabVisual, dotRadius: number): { bar: Path2D; dot: Path2D 
 // Same look as the interactive markers: bar at 0.7, dot rimmed in white.
 const TabBatch = memo(function TabBatch({ visuals }: { visuals: TabVisual[] }) {
   const sceneFunc = useMemo(() => {
-    const items = visuals.map((v) => {
-      const r = Math.max(v.lengthMM, v.heightMM) / 2
-      return { ...tabShapes(v, v.heightMM / 2 * 0.6), minX: v.x - r, minY: v.y - r, maxX: v.x + r, maxY: v.y + r }
-    })
     return (ctx: Konva.Context, shape: Konva.Shape) => {
       const { ppu, view } = drawFrame(shape)
       const bars = new Path2D(), dots = new Path2D()
       let any = false
-      for (const it of items) {
-        if (!overlaps(it, view)) continue
+      // The marker's size is in screen pixels, so it is built for this frame's zoom.
+      const reach = Math.max(TAB_MIN_LEN_PX, TAB_BAR_PX) / ppu
+      for (const v of visuals) {
+        const r = Math.max(v.lengthMM / 2, reach)
+        if (!overlaps({ minX: v.x - r, minY: v.y - r, maxX: v.x + r, maxY: v.y + r }, view)) continue
+        const it = tabShapes(v, ppu)
         bars.addPath(it.bar)
         dots.addPath(it.dot)
         any = true
@@ -167,7 +197,61 @@ const TabBatch = memo(function TabBatch({ visuals }: { visuals: TabVisual[] }) {
 })
 
 // Radius, in screen px, a tab can be grabbed within while the Tabs form is open.
-const TAB_GRAB_PX = 12
+const TAB_GRAB_PX = 16
+// THE HANDLE: a stem out from the dot, away from the part, to a knob — something to take
+// hold of that is not sitting on the outline, where a press is easily read as one on the
+// part. Screen pixels, so it is the same size at every zoom. Only while the form is open.
+const HANDLE_STEM_PX = 20
+const HANDLE_KNOB_PX = 8
+
+/**
+ * A tab's marker in its own frame (x along the path, +y to its left): the bar, and the dot and
+ * the handle's knob as one shape. TabLayer draws placed tabs with it; HoldPreviewLayer draws
+ * the ghost of the one a click would place, so the two are the same size on screen.
+ */
+export function TabMarker({ lengthMM, outSide, scale, fill }: { lengthMM: number; outSide: 1 | -1; scale: number; fill: string }) {
+  const { halfLen, halfW, dotR } = tabMarker({ lengthMM }, scale)
+  return (
+    <>
+      <Rect
+        x={-halfLen}
+        y={-halfW}
+        width={halfLen * 2}
+        height={halfW * 2}
+        fill={fill}
+        opacity={0.7}
+      />
+      {/* The dot and the knob as ONE filled shape: the two circles and the two lines
+          tangent to both, outlined in white round the outside only. */}
+      <Shape
+        sceneFunc={(ctx, shape) => {
+          const r1 = dotR * 1.4, r2 = HANDLE_KNOB_PX / scale
+          const d = HANDLE_STEM_PX / scale
+          const uy = outSide                    // the knob's centre is at (0, uy·d)
+          // A line tangent to both circles on the same side has normal n with
+          // n·u = (r1 − r2) / d; the two such normals mirror each other across the stem.
+          const k = (r1 - r2) / d, q = Math.sqrt(Math.max(0, 1 - k * k))
+          const nA = [q, k * uy], nB = [-q, k * uy]
+          const ang = (n: number[]) => Math.atan2(n[1], n[0])
+          // Round each circle on the side away from the other: angles increase from +x
+          // toward +y, so turning from nA toward +u is increasing when nA × u > 0.
+          const far = nA[0] * uy > 0
+          ctx.beginPath()
+          ctx.moveTo(r1 * nA[0], r1 * nA[1])
+          ctx.lineTo(r2 * nA[0], uy * d + r2 * nA[1])
+          ctx.arc(0, uy * d, r2, ang(nA), ang(nB), !far)
+          ctx.lineTo(r1 * nB[0], r1 * nB[1])
+          ctx.arc(0, 0, r1, ang(nB), ang(nA), !far)
+          ctx.closePath()
+          ctx.fillStrokeShape(shape)
+        }}
+        fill={fill}
+        stroke="#ffffff"
+        strokeWidth={1.5 / scale}
+      />
+    </>
+  )
+}
 
 // Memoised for the same reason DesignLayer is: the stage re-renders on every
 // mouse move and this one walks every path in the document looking for tabs.
@@ -202,7 +286,7 @@ export const TabLayer = memo(function TabLayer({ viewport }: Props) {
         const outline = tabOutline(path)
         const pos = evalPathAtT(outline, tab.t)
         if (!pos) continue
-        out.push({ id: tab.id, pathId: path.id, outline, x: pos.x, y: pos.y, tx: pos.tx, ty: pos.ty, lengthMM: tab.lengthMM, heightMM: tab.heightMM })
+        out.push({ id: tab.id, pathId: path.id, outline, x: pos.x, y: pos.y, tx: pos.tx, ty: pos.ty, lengthMM: tab.lengthMM, heightMM: tab.heightMM, outSide: outsideSide(outline, pos.x, pos.y, pos.tx, pos.ty) })
       }
     }
     return out
@@ -214,13 +298,11 @@ export const TabLayer = memo(function TabLayer({ viewport }: Props) {
   return (
     <Group name="tabs" listening={tabsFormActive}>
       {visuals.map((v) => {
-        const halfLen = v.lengthMM / 2
-        const halfW = v.heightMM / 2
+        const { halfLen, halfW } = tabMarker(v, scale)
         const rotDeg = Math.atan2(v.ty, v.tx) * 180 / Math.PI
         const isDragging = draggingTabId === v.id
         const isHovered = hoveredTabId === v.id
         const fill = isDragging ? TAB_DRAG_COLOR : isHovered ? TAB_HOVER_COLOR : TAB_COLOR
-        const dotRadius = tabsFormActive ? halfW * 0.8 : halfW * 0.6
 
         return (
           <Group
@@ -286,19 +368,13 @@ export const TabLayer = memo(function TabLayer({ viewport }: Props) {
               fill="#000"
               opacity={0}
             />
-            <Rect
-              x={-halfLen}
-              y={-halfW}
-              width={v.lengthMM}
-              height={halfW * 2}
-              fill={fill}
-              opacity={0.7}
-            />
+            <TabMarker lengthMM={v.lengthMM} outSide={v.outSide} scale={scale} fill={fill} />
+            {/* Its grab area, a little bigger than the knob. */}
             <Circle
-              radius={dotRadius}
-              fill={fill}
-              stroke="#ffffff"
-              strokeWidth={0.5 / scale}
+              y={v.outSide * HANDLE_STEM_PX / scale}
+              radius={(HANDLE_KNOB_PX + 6) / scale}
+              fill="#000"
+              opacity={0}
             />
           </Group>
         )
