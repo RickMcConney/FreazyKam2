@@ -11,6 +11,7 @@
 // panel, since until then a work position says nothing about where the stock is.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { useMachineStore } from '../machine/machineStore'
 import { stockRectInWork } from '../machine/stockMap'
 import { workToMap } from '../machine/mapRotation'
@@ -43,7 +44,7 @@ export default function GoToMap({ enabled, onStockBox }: Props) {
   const zeroed = useMachineStore((s) => s.zeroed)
   const loadedJob = useMachineStore((s) => s.job)
   const job = loadedJob
-  const { widthMM, heightMM, origin, units, material } = useWorkpieceStore()
+  const { widthMM, heightMM, origin, units, material } = useWorkpieceStore(useShallow((s) => ({ widthMM: s.widthMM, heightMM: s.heightMM, origin: s.origin, units: s.units, material: s.material })))
   // The stock in its material's colour, as the canvas draws it — the amber this
   // replaced read as a warning on a tab where amber and red mean Hold and Alarm.
   const darkMode = useUIStore((s) => s.darkMode)

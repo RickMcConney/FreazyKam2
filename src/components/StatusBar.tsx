@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { RefreshCw } from 'lucide-react'
 import { useUIStore } from '../store/uiStore'
 import { useCanvasStore } from '../store/canvasStore'
@@ -60,7 +61,7 @@ export default function StatusBar() {
   const darkMode = useUIStore((s) => s.darkMode)
   const setScreenCalibrationOpen = useUIStore((s) => s.setScreenCalibrationOpen)
   const { pxPerMM: realPx } = useRealScale()
-  const { units, origin, widthMM, heightMM, thicknessMM, material, machineRigidity } = useWorkpieceStore()
+  const { units, origin, widthMM, heightMM, thicknessMM, material, machineRigidity } = useWorkpieceStore(useShallow((s) => ({ units: s.units, origin: s.origin, widthMM: s.widthMM, heightMM: s.heightMM, thicknessMM: s.thicknessMM, material: s.material, machineRigidity: s.machineRigidity })))
 
   const orgWorld = originWorldXY(origin, widthMM, heightMM)
 

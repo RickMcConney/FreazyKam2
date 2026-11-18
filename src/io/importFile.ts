@@ -6,7 +6,7 @@ import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
 import { usePathsStore } from '../store/pathsStore'
 import { useWorkpieceStore } from '../store/workpieceStore'
 import { useUIStore } from '../store/uiStore'
-import { useSimStore } from '../store/simStore'
+import { useSimStore, parseGcodeForDrawing } from '../store/simStore'
 import { useProjectStore } from '../store/projectStore'
 import { useToolpathStore, GCODE_IMPORT_TOOL_ID, type GcodeOperation, type MotionSegment } from '../store/toolpathStore'
 import { useTimelineStore } from '../timeline/timelineStore'
@@ -140,6 +140,10 @@ export function completeDxfImport(text: string, fileName: string, units?: DxfUni
 // set starts every file.text() at once, and the set's program order must be the drop order,
 // not whichever read happens to finish first.
 let gcodeImportQueue: Promise<void> = Promise.resolve()
+// Files of the current drop still in the queue: the simulator is loaded with the whole
+// imported set once, when the last of them lands. Loading it after EACH file parsed the
+// set again every time — N(N+1)/2 parses for an N-file split-by-tool drop.
+let gcodeImportsPending = 0
 
 /** Load every visible imported G-code file into the simulator as ONE program, in operation
  *  order — the machine running them back to back. Plain concatenation is exact: the parser
@@ -165,17 +169,16 @@ export function importFile(file: File): void {
     useUIStore.getState().showStatus(`Import failed — could not read ${file.name}`, 'error')
 
   if (/\.(gcode|nc|ngc|tap)$/i.test(file.name)) {
+    gcodeImportsPending++
     gcodeImportQueue = gcodeImportQueue.then(() => file.text()).then((text) => {
-      // Parse this file ON ITS OWN first, to get its moves for the operation's segments;
-      // the simulator is loaded with the whole imported set below. autoReload:false — this
-      // program came from a file, not from the operations, so regenerating them must not
-      // rebuild over it (generateGcode skips imported G-code ops). See sim/simAutoReload.ts.
-      useSimStore.getState().loadGcode(text, { autoReload: false })
-
+      // Parse this file ON ITS OWN, as the simulator would hold it, for the operation's
+      // segments; the simulator is loaded with the whole imported set once the drop is in.
+      // (autoReload:false there — this program came from a file, not from the operations,
+      // so regenerating them must not rebuild over it. See sim/simAutoReload.ts.)
       // Convert parsed SimSegments (machine coords) → MotionSegments (workpiece coords)
       const { widthMM, heightMM, origin } = useWorkpieceStore.getState()
       const org = originWorldXY(origin, widthMM, heightMM)
-      const simSegs = useSimStore.getState().segments
+      const simSegs = parseGcodeForDrawing(text).segments
       const motionSegs: MotionSegment[] = simSegs.map((s) => ({
         x: s.x + org.x,
         y: s.y + org.y,
@@ -215,9 +218,6 @@ export function importFile(file: File): void {
         )
       }
 
-      // Show the whole imported set, this file appended to any already loaded.
-      loadImportedGcode()
-
       // Rename project to match the imported file
       useProjectStore.getState().setName(opName)
 
@@ -228,7 +228,10 @@ export function importFile(file: File): void {
       useUIStore.getState().setSidebarTab('draw')
       const cur = useUIStore.getState().workspaceTab
       if (cur !== '2d' && cur !== '3d') useUIStore.getState().setWorkspaceTab('2d')
-    }).catch(readFailed)
+    }).catch(readFailed).finally(() => {
+      // Show the whole imported set, every file of the drop appended to any already loaded.
+      if (--gcodeImportsPending === 0) loadImportedGcode()
+    })
     return
   }
 

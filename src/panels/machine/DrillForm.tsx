@@ -1,5 +1,5 @@
 // ─── Drill form ───────────────────────────────────────────────────────────────
-import { FormShell, PathChip, PathListSection, PathRevisionHint, usePathToggle, ExcludedAfter, useExcludedPathIds, ToolSelector, DepthRow, GenerateBtn, useSessionOps, StartRow, useStartZ, toolsOfType, pickToolId, FormError, useBatchGenerate, generateLabel } from './shared'
+import { FormShell, PathChip, PathListSection, PathRevisionHint, usePathToggle, ExcludedAfter, useExcludedPathIds, ToolSelector, DepthRow, GenerateBtn, useSessionOps, StartRow, useStartZ, toolsOfType, pickToolId, FormError, useBatchGenerate, generateLabel, pathIndex } from './shared'
 import type { BatchItem } from './batchGenerate'
 import { reviseBatch } from './reviseBatch'
 import { useState, useEffect, useRef, useMemo } from 'react'
@@ -131,12 +131,13 @@ export function DrillForm({ onClose, editOp }: { onClose: () => void; editOp?: D
   // of this is live, or clicking a path would silently convert hand-placed points into
   // circle-drilling. Adding a point to those is the drill tool's job, not the selection's.
   const editPairs = editBatch.flatMap((op) => {
-    const path = op.pathId ? paths.find((p) => p.id === op.pathId) : undefined
+    const path = op.pathId ? pathIndex(paths).get(op.pathId) : undefined
     return path ? [{ op, path }] : []
   })
   const pathBatch = editBatch.length > 0 && editBatch.every((op) => !!op.pathId)
   const rev = reviseBatch(editPairs, (e) => e.path, pathBatch ? selectionHoles.map((h) => h.path) : [])
-  const holesFor = (pathId: string) => selectionHoles.find((h) => h.path.id === pathId)?.holes ?? []
+  const holesByPath = new Map(selectionHoles.map((h) => [h.path.id, h.holes]))
+  const holesFor = (pathId: string) => holesByPath.get(pathId) ?? []
   const revisedCount = rev.keep.length + rev.add.length
   // Members clicked out in the path list stay in their own row there (ExcludedAfter); only
   // the ones taken out on the canvas join the removed rows at the end.

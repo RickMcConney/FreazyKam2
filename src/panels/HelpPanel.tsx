@@ -1,4 +1,5 @@
 import { X, BookOpen } from 'lucide-react'
+import { useShallow } from 'zustand/react/shallow'
 import { useUIStore } from '../store/uiStore'
 
 type Section = {
@@ -121,7 +122,7 @@ function Kbd({ children }: { children: string }) {
 }
 
 export default function HelpPanel() {
-  const { helpOpen, setHelpOpen } = useUIStore()
+  const { helpOpen, setHelpOpen } = useUIStore(useShallow((s) => ({ helpOpen: s.helpOpen, setHelpOpen: s.setHelpOpen })))
   if (!helpOpen) return null
 
   return (

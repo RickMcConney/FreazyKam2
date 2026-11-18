@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { useCanvasStore } from '../store/canvasStore'
 import { constraintFrame, type AnchorCandidate } from '../store/constraints'
 import { usePathsStore } from '../store/pathsStore'
@@ -25,7 +26,7 @@ export function NodeEditDimensionOverlay({
   dragNodeIdx: number | null
   hoverSegIdx: number | null
 }) {
-  const { units } = useWorkpieceStore()
+  const { units } = useWorkpieceStore(useShallow((s) => ({ units: s.units })))
   if (nodes.length < 2) return null
 
   const fmt = (d: number) => fmtLen(d, units)
@@ -125,7 +126,7 @@ export function PenLengthOverlay({ viewport, draggingHandle, snappedCursor }: { 
   const penNodes = useUIStore((s) => s.penNodes)
   const snapEnabled = useUIStore((s) => s.snapEnabled)
   const cursorMM = useCanvasStore((s) => s.cursorMM)
-  const { units, origin, widthMM, heightMM } = useWorkpieceStore()
+  const { units, origin, widthMM, heightMM } = useWorkpieceStore(useShallow((s) => ({ units: s.units, origin: s.origin, widthMM: s.widthMM, heightMM: s.heightMM })))
 
   if (activeTool !== 'pen' || penNodes.length === 0 || !cursorMM || draggingHandle) return null
 

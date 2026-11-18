@@ -14,6 +14,7 @@
 // An upload — through the button or dropped on the file list — becomes the job too.
 
 import { useEffect, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { RefreshCw, Upload, Trash2, Folder, FileText, CornerLeftUp, Play, Pause, Square, X, Eject, HardDrive, DraftingCompass, Send } from 'lucide-react'
 import { ICON } from '../theme'
 import { useMachineStore } from '../machine/machineStore'
@@ -30,7 +31,7 @@ const headCls = 'px-3 py-1.5 border-b border-gray-300 dark:border-neutral-700 te
 const btnCls = 'px-3 py-1 rounded text-sm border border-gray-400 dark:border-neutral-600 text-gray-700 dark:text-neutral-200 hover:bg-gray-300 dark:hover:bg-neutral-700 disabled:opacity-40'
 
 export default function SdCardPanel() {
-  const m = useMachineStore()
+  const m = useMachineStore(useShallow((s) => ({ link: s.link, sdBusy: s.sdBusy, position: s.position, sdListing: s.sdListing, job: s.job, sdPath: s.sdPath, sdLoad: s.sdLoad, sdUpload: s.sdUpload, sdRefresh: s.sdRefresh, sendDesignToCard: s.sendDesignToCard, sdDelete: s.sdDelete, sdError: s.sdError })))
   const fileRef = useRef<HTMLInputElement>(null)
   // Delete is two clicks on the same row: the first arms it, the second deletes.
   const [armed, setArmed] = useState<string | null>(null)
@@ -208,7 +209,7 @@ export default function SdCardPanel() {
 }
 
 function JobBox() {
-  const m = useMachineStore()
+  const m = useMachineStore(useShallow((s) => ({ link: s.link, position: s.position, job: s.job, zeroed: s.zeroed, unloadJob: s.unloadJob, sdBusy: s.sdBusy, runJob: s.runJob, resume: s.resume, feedHold: s.feedHold, cancelJob: s.cancelJob, softReset: s.softReset })))
   const connected = m.link === 'connected'
   const state = m.position.state
   const idle = connected && state === 'Idle'

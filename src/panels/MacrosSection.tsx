@@ -5,6 +5,7 @@
 // Kept with the machine's settings, and carried in a settings file's Machine tab section.
 
 import { useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { Pencil, Play, Plus, Trash2 } from 'lucide-react'
 import { ICON } from '../theme'
 import { useMachineStore, macroLines, type Macro } from '../machine/machineStore'
@@ -16,7 +17,7 @@ const iconBtn = 'p-1 rounded text-gray-600 dark:text-neutral-400 hover:bg-gray-2
 const inputCls = 'w-full px-2 py-1 rounded border border-gray-400 dark:border-neutral-600 bg-white dark:bg-neutral-900 text-gray-800 dark:text-neutral-200 text-xs'
 
 export default function MacrosSection({ sectionCls, headCls }: Props) {
-  const m = useMachineStore()
+  const m = useMachineStore(useShallow((s) => ({ link: s.link, position: s.position, macroRunning: s.macroRunning, addMacro: s.addMacro, macros: s.macros, updateMacro: s.updateMacro, runMacro: s.runMacro, deleteMacro: s.deleteMacro })))
   // The macro being edited: an id, 'new' for one being added, or null.
   const [editing, setEditing] = useState<string | 'new' | null>(null)
   // Delete is two clicks on the same row, as on the SD card.

@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { Group, Arrow, Circle, Text } from 'react-konva'
 import type { Viewport } from '../viewport'
 import { useWorkpieceStore } from '../../store/workpieceStore'
@@ -25,7 +26,7 @@ const AXIS_FS = 14 // X / Y label font size in pixels
 const FS = 10    // Z label font size in pixels (it sits off the axes, and reads fine)
 
 export const OriginLayer = memo(function OriginLayer({ viewport }: Props) {
-  const { widthMM, heightMM, origin, zOrigin, machineXDir } = useWorkpieceStore()
+  const { widthMM, heightMM, origin, zOrigin, machineXDir } = useWorkpieceStore(useShallow((s) => ({ widthMM: s.widthMM, heightMM: s.heightMM, origin: s.origin, zOrigin: s.zOrigin, machineXDir: s.machineXDir })))
   const org = originWorldXY(origin, widthMM, heightMM)
   const darkMode = useUIStore((s) => s.darkMode)
 

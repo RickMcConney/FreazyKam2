@@ -12,7 +12,7 @@
 // Hovering a row or any folder lights its paths up on the canvas (`uiStore.hoverPathIds`,
 // HoverHighlightLayer). The pencil renames a path or a top-level folder in place
 // (tools/renamePaths — a path's toolpaths are renamed with it).
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { ICON } from '../theme'
 import { Eye, EyeOff, Trash2, Layers, ChevronRight, ChevronDown, FolderOpen, Folder, Image, Box, Pencil } from 'lucide-react'
 import { usePathsStore, groupKeyOf, outerGroupOf, type ImportedPath } from '../store/pathsStore'
@@ -72,8 +72,18 @@ function RenameButton({ onClick }: { onClick: () => void }) {
 }
 
 /** One path: a row of a folder, or a loose one at the top level. */
+// The selection as a Set, built once per selectedIds array and shared by every row's
+// selector: each row running `selectedIds.includes` was O(rows × selection) per
+// selection change — ~800k comparisons for a select-all on the Charizard sheet.
+const selectedSets = new WeakMap<string[], Set<string>>()
+function selectedSet(ids: string[]): Set<string> {
+  let set = selectedSets.get(ids)
+  if (!set) { set = new Set(ids); selectedSets.set(ids, set) }
+  return set
+}
+
 function PathRow({ p }: { p: ImportedPath }) {
-  const selected = usePathsStore((s) => s.selectedIds.includes(p.id))
+  const selected = usePathsStore((s) => selectedSet(s.selectedIds).has(p.id))
   const onlySelected = usePathsStore((s) => s.selectedIds.length === 1)
   const { selectPath, toggleVisibility, deletePath, showPath } = usePathsStore.getState()
   const [renaming, setRenaming] = useState(false)
@@ -125,7 +135,7 @@ function SourceItems({ items, open, onToggle }: {
   open: ReadonlySet<string>
   onToggle: (id: string) => void
 }) {
-  const selectedIds = usePathsStore((s) => s.selectedIds)
+  const sel = usePathsStore((s) => selectedSet(s.selectedIds))
   const { setSelectedIds, setPathsVisible, applyPathEdit } = usePathsStore.getState()
   return (
     <ul className="ml-5 space-y-0.5 mt-0.5">
@@ -134,7 +144,7 @@ function SourceItems({ items, open, onToggle }: {
         const isOpen = open.has(it.id)
         const ids = it.paths.map((p) => p.id)
         const allVisible = it.paths.every((p) => p.visible)
-        const anySelected = ids.some((id) => selectedIds.includes(id))
+        const anySelected = ids.some((id) => sel.has(id))
         return (
           <li key={it.id}>
             <div
@@ -145,7 +155,7 @@ function SourceItems({ items, open, onToggle }: {
               title="Click to select this group's paths; shift-click to add them"
               onMouseEnter={() => hover(ids)} onMouseLeave={() => hover([])}
               onClick={(e) => setSelectedIds(e.shiftKey
-                ? [...selectedIds, ...ids.filter((id) => !selectedIds.includes(id))]
+                ? [...usePathsStore.getState().selectedIds, ...ids.filter((id) => !sel.has(id))]
                 : ids)}
             >
               <button title={isOpen ? 'Collapse' : 'Expand'}
@@ -180,14 +190,16 @@ function GroupFolder({ groupId, name, members, openSource, toggleSource }: {
   openSource: ReadonlySet<string>; toggleSource: (id: string) => void
 }) {
   const collapsed = usePathsStore((s) => s.collapsedGroups.has(groupId))
-  const selectedIds = usePathsStore((s) => s.selectedIds)
+  // Only whether ANY member is selected: subscribing to the whole selection re-rendered
+  // every folder, and rebuilt its sourceTree, on every click anywhere.
+  const anySelected = usePathsStore((s) => { const sel = selectedSet(s.selectedIds); return members.some((p) => sel.has(p.id)) })
   const { toggleGroupCollapsed, setPathsVisible, applyPathEdit } = usePathsStore.getState()
   const [renaming, setRenaming] = useState(false)
   // Acting on the members SHOWN: under a sheet folder that is the part of the group on
   // that sheet, which is what its eye and its delete are seen to be beside.
   const ids = members.map((p) => p.id)
   const allVisible = members.every((p) => p.visible)
-  const anySelected = members.some((p) => selectedIds.includes(p.id))
+  const tree = useMemo(() => (collapsed ? [] : sourceTree(members)), [collapsed, members])
   return (
     <li>
       <div
@@ -217,7 +229,7 @@ function GroupFolder({ groupId, name, members, openSource, toggleSource }: {
         </button>
       </div>
       {/* Member paths, in the file's own groups where it had any */}
-      {!collapsed && <SourceItems items={sourceTree(members)} open={openSource} onToggle={toggleSource} />}
+      {!collapsed && <SourceItems items={tree} open={openSource} onToggle={toggleSource} />}
     </li>
   )
 }

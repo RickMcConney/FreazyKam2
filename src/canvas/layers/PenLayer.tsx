@@ -1,4 +1,5 @@
 import { Group, Path, Line, Circle } from 'react-konva'
+import { useShallow } from 'zustand/react/shallow'
 import type { Viewport } from '../viewport'
 import type { PenNode } from '../../store/uiStore'
 import { penNodesToPathD, liveSegmentD, type PenCurveType } from '../../cam/penCurves'
@@ -24,7 +25,7 @@ export function PenLayer({ viewport, penNodes, livePen, penClosing, curveType, s
   const rawCursorCNC = useCanvasStore((s) => s.cursorMM)
   const snapEnabled = useUIStore((s) => s.snapEnabled)
   const penCurveType = useUIStore((s) => s.penCurveType)
-  const { units, origin, widthMM, heightMM } = useWorkpieceStore()
+  const { units, origin, widthMM, heightMM } = useWorkpieceStore(useShallow((s) => ({ units: s.units, origin: s.origin, widthMM: s.widthMM, heightMM: s.heightMM })))
   const { scale: s } = viewport
 
   let cursorCNC = rawCursorCNC

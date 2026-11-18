@@ -4,7 +4,7 @@ import type { ImportedPath, PathDefinition, NestStamp } from '../importers/svgIm
 import type { ClockSpec } from '../shapes/clockTrain'
 import { applyPlacementD, placementMat, foldPlacement, isPlacementOnly, getBBox, applyTransformStep, applyTransformSteps, isIdentityStep, type TransformStep } from '../canvas/selectionUtils'
 import { generateShapeD, generateShapeParts, shapeDisplayName, ANNOTATION_SWITCH, type ShapeParams } from '../shapes/shapeGenerators'
-import { useToolpathStore, refsPathId, remapOpsForSplit, type AnyOperation } from './toolpathStore'
+import { useToolpathStore, refsAnyPath, remapOpsForSplit, type AnyOperation } from './toolpathStore'
 import { useTabStore } from './tabStore'
 import { useTimelineStore } from '../timeline/timelineStore'
 import { serializeOp, type PathsAddSource, type PathEditGesture } from '../timeline/events'
@@ -217,7 +217,7 @@ function dropDependentsOf(deleteIds: string[]): string[] {
   const opsBefore = useToolpathStore.getState().operations
   const reshaped: string[] = []
   const newOps = opsBefore.flatMap((op): AnyOperation[] => {
-    if (!deleteIds.some((id) => refsPathId(op, id))) return [op]
+    if (!refsAnyPath(op, (id) => gone.has(id))) return [op]
     if ((op.type === 'pocket' || op.type === 'vcarve') && !gone.has(op.pathId)) {
       reshaped.push(op.id)
       return [{ ...op, islandIds: op.islandIds.filter((id) => !gone.has(id)) }]
@@ -225,7 +225,7 @@ function dropDependentsOf(deleteIds: string[]): string[] {
     // An inlay male whose only lost path is its cut-out band keeps going without it — the
     // band is a convenience drawn for it, not part of the plug.
     if (op.type === 'inlay' && op.bandId && gone.has(op.bandId)
-        && !deleteIds.some((id) => id !== op.bandId && refsPathId(op, id))) {
+        && !refsAnyPath(op, (id) => id !== op.bandId && gone.has(id))) {
       reshaped.push(op.id)
       return [{ ...op, bandId: undefined }]
     }
@@ -724,9 +724,10 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
   rewriteGeneratedRaw: ({ updates = [], add = [], deleteIds = [] }) => {
     const s = get()
     const reshaped = dropDependentsOf(deleteIds)
+    const gone = new Set(deleteIds)
     const map = new Map(updates.map((u) => [u.id, u]))
     const paths = s.paths
-      .filter((p) => !deleteIds.includes(p.id))
+      .filter((p) => !gone.has(p.id))
       .map((p) => {
         const upd = map.get(p.id)
         if (!upd) return p
@@ -750,7 +751,7 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
     set({
       paths: solved.paths,
       ...(deleteIds.length > 0
-        ? { selectedIds: s.selectedIds.filter((sid) => !deleteIds.includes(sid)) }
+        ? { selectedIds: s.selectedIds.filter((sid) => !gone.has(sid)) }
         : {}),
     })
     regenerateEdited([...new Set([...solved.movedIds, ...touched])], reshaped)
@@ -777,9 +778,10 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
       if (off) { deleteIds = off.deleteIds; updates = off.updates }
     }
     const reshaped = dropDependentsOf(deleteIds)
+    const gone = new Set(deleteIds)
     const map = new Map(updates.map((u) => [u.id, u]))
     let paths = s.paths
-      .filter((p) => !deleteIds.includes(p.id))
+      .filter((p) => !gone.has(p.id))
       .map((p) => {
         const upd = map.get(p.id)
         return upd ? applyUpdateToPath(p, upd) : p
@@ -805,7 +807,7 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
       ...(selectAfter
         ? { selectedIds: selectAfter }
         : deleteIds.length > 0
-          ? { selectedIds: s.selectedIds.filter((sid) => !deleteIds.includes(sid)) }
+          ? { selectedIds: s.selectedIds.filter((sid) => !gone.has(sid)) }
           : {}),
     })
     useTimelineStore.getState().record(

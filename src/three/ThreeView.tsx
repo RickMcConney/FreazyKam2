@@ -1,4 +1,5 @@
 import { cellOffset, opCell, sameCell, type Cell } from '../cam/sheets'
+import type { ImportedPath } from '../importers/svgImporter'
 import { currentSheet, pathCell, simProgramIsStaleNow } from '../canvas/useSheets'
 import { useUIStore } from '../store/uiStore'
 import { useEffect, useRef, useState } from 'react'
@@ -119,6 +120,7 @@ interface SceneRefs {
   // not re-derive the sheet layout sixty times a second.
   simStale: boolean
   stlGeoCache: Map<string, StlGeoCacheEntry>  // path.id → parsed raw geometry
+  outlineCache: Map<string, OutlineEntry>       // path.id → its drawn outline
   rafId: number
   running: boolean            // is the rAF loop currently scheduled?
   fpsSamples: number[]
@@ -225,6 +227,7 @@ export default function ThreeView() {
       underKey: [],
       simStale: simProgramIsStaleNow(),
       stlGeoCache: new Map(),
+      outlineCache: new Map(),
       toolpathLines: new Map(),
       rafId: 0,
       running: false,
@@ -556,6 +559,8 @@ export default function ThreeView() {
       // The decoded model is shared (decodeStlMesh) and plain arrays; only the baked geometry is ours.
       for (const entry of refs.stlGeoCache.values()) entry.bakedGeo?.dispose()
       refs.stlGeoCache.clear()
+      for (const entry of refs.outlineCache.values()) disposeOutline(entry.group)
+      refs.outlineCache.clear()
       for (const entry of refs.toolpathLines.values()) disposeToolpathLine(entry.line)
       refs.toolpathLines.clear()
       // The scene's own pieces. The view is UNMOUNTED on every 2D/3D switch, so anything
@@ -796,7 +801,40 @@ function activeSheetPlacement(): { stock: { widthMM: number; heightMM: number };
   return { stock, cell, at: cellOffset(cell, stock) }
 }
 
+// A path's outline as drawn on the stock: one Line per subpath in a Group, at the stock's
+// own frame (the sheet offset goes on the group's position). Cached by path OBJECT —
+// paths are replaced, never mutated — so an edit to one path re-flattens that path alone,
+// where every write used to re-flatten and re-upload every outline in the drawing.
+interface OutlineEntry { path: ImportedPath; surfaceY: number; group: THREE.Group }
+
+function disposeOutline(group: THREE.Group) {
+  for (const child of group.children) (child as THREE.Line).geometry.dispose()
+  const mat = (group.children[0] as THREE.Line | undefined)?.material as THREE.Material | undefined
+  mat?.dispose()
+}
+
+function buildOutline(path: ImportedPath, surfaceY: number): THREE.Group {
+  const group = new THREE.Group()
+  const lineMat = new THREE.LineBasicMaterial({ color: new THREE.Color(path.color) })
+  for (const pts of flattenPath(path.d, 0.3)) {
+    if (pts.length < 2) continue
+    const positions = new Float32Array(pts.length * 3)
+    for (let i = 0; i < pts.length; i++) {
+      positions[i * 3]     = pts[i][0]
+      positions[i * 3 + 1] = surfaceY
+      positions[i * 3 + 2] = -pts[i][1]
+    }
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    group.add(new THREE.Line(geo, lineMat))
+  }
+  if (group.children.length === 0) lineMat.dispose()
+  return group
+}
+
 function rebuildShapes(refs: SceneRefs) {
+  // The outline groups have no geometry or material of their own, so this only detaches
+  // them; their lines are disposed when the cache drops them below.
   clearGroup(refs.shapesGroup)
 
   const paths = usePathsStore.getState().paths
@@ -850,19 +888,21 @@ function rebuildShapes(refs: SceneRefs) {
       continue
     }
 
-    const polylines = flattenPath(path.d, 0.3)
-    const lineMat = new THREE.LineBasicMaterial({ color: new THREE.Color(path.color) })
-    for (const pts of polylines) {
-      if (pts.length < 2) continue
-      const positions = new Float32Array(pts.length * 3)
-      for (let i = 0; i < pts.length; i++) {
-        positions[i * 3]     = pts[i][0] - at.x
-        positions[i * 3 + 1] = surfaceY
-        positions[i * 3 + 2] = -(pts[i][1] - at.y)
-      }
-      const geo = new THREE.BufferGeometry()
-      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-      refs.shapesGroup.add(new THREE.Line(geo, lineMat))
+    let entry = refs.outlineCache.get(path.id)
+    if (!entry || entry.path !== path || entry.surfaceY !== surfaceY) {
+      if (entry) disposeOutline(entry.group)
+      entry = { path, surfaceY, group: buildOutline(path, surfaceY) }
+      refs.outlineCache.set(path.id, entry)
+    }
+    // CNC (x, y) → three (x − at.x, −(y − at.y)): the sheet offset is the group's position.
+    entry.group.position.set(-at.x, 0, at.y)
+    refs.shapesGroup.add(entry.group)
+  }
+  // Outlines of paths that are gone, or replaced (built above), are dropped.
+  if (refs.outlineCache.size > 0) {
+    const live = new Set(paths)
+    for (const [id, entry] of refs.outlineCache) {
+      if (!live.has(entry.path)) { disposeOutline(entry.group); refs.outlineCache.delete(id) }
     }
   }
 

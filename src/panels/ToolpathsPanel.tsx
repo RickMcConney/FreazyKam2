@@ -397,6 +397,11 @@ export default function ToolpathsPanel() {
     dragRef.current = { ids, sheet, startY: e.clientY, moved: false, to: -1 }
   }
 
+  // The window listeners are added once; what they call from this render is read through
+  // a ref. With no dependency array they were removed and re-added on every render —
+  // and a drag re-renders on every mousemove (setDropY).
+  const liveRef = useRef({ dropAt, moveOps })
+  liveRef.current = { dropAt, moveOps }
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       const d = dragRef.current
@@ -405,7 +410,7 @@ export default function ToolpathsPanel() {
       if (!d.moved && Math.abs(e.clientY - d.startY) < 4) return
       if (!d.moved) { d.moved = true; setDraggingIds(d.ids); useUIStore.getState().setHoverOpIds([]) }
       const dragged = useToolpathStore.getState().operations.find((o) => o.id === d.ids[0])
-      const { index, y } = dropAt(e.clientY, d.sheet, dragged?.toolId)
+      const { index, y } = liveRef.current.dropAt(e.clientY, d.sheet, dragged?.toolId)
       d.to = index
       setDropY(index >= 0 ? y : null)
     }
@@ -416,7 +421,7 @@ export default function ToolpathsPanel() {
       setDropY(null)
       if (!d) return
       if (d.moved) {
-        if (d.to >= 0) moveOps(d.ids, d.to)
+        if (d.to >= 0) liveRef.current.moveOps(d.ids, d.to)
         return
       }
       // No travel: a plain click. Select the paths the operation is built from — so the
@@ -447,7 +452,7 @@ export default function ToolpathsPanel() {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
     }
-  })
+  }, [])
 
   if (operations.length === 0) {
     return (

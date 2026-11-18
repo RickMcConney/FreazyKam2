@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { RotateCw, RulerDimensionLine, X } from 'lucide-react'
 import { usePathsStore, useSelectedPathsInOrder, type ImportedPath } from '../store/pathsStore'
 import { useConstraintsStore } from '../store/constraintsStore'
@@ -235,7 +236,7 @@ export default function ConstraintsSection() {
   const selected = useSelectedPathsInOrder()
   const constraints = useConstraintsStore((s) => s.constraints)
   const addConstraint = useConstraintsStore((s) => s.addConstraint)
-  const { units, widthMM, heightMM } = useWorkpieceStore()
+  const { units, widthMM, heightMM } = useWorkpieceStore(useShallow((s) => ({ units: s.units, widthMM: s.widthMM, heightMM: s.heightMM })))
   const activeTool = useUIStore((s) => s.activeTool)
   const constrainMode = useUIStore((s) => s.constrainMode)
   const focusConstraintId = useUIStore((s) => s.focusConstraintId)

@@ -6,6 +6,7 @@
 // end of the row was what was left after the buttons, and a feed was cut to "120…".
 
 import { RotateCcw, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useShallow } from 'zustand/react/shallow'
 import { ICON } from '../theme'
 import { useMachineStore } from '../machine/machineStore'
 import { useWorkpieceStore, fmtFeed, feedValue } from '../store/workpieceStore'
@@ -20,7 +21,7 @@ const liveCls = 'text-[10px] tabular-nums text-gray-500 dark:text-neutral-500 wh
 
 
 export default function OverridesSection({ sectionCls, headCls }: Props) {
-  const m = useMachineStore()
+  const m = useMachineStore(useShallow((s) => ({ link: s.link, position: s.position, overrideStep: s.overrideStep, override: s.override, rapidOverride: s.rapidOverride })))
   const units = useWorkpieceStore((s) => s.units)
   const ft = useWorkpieceStore((s) => s.feedTime)
   const spindleType = useWorkpieceStore((s) => s.spindleType)

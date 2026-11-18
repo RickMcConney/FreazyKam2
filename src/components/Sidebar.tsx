@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { DraftingCompass, Route, SlidersHorizontal, X } from 'lucide-react'
 import { ICON } from '../theme'
 import { useUIStore, type SidebarTab } from '../store/uiStore'
@@ -66,7 +67,7 @@ function PathsTab() {
 }
 
 export default function Sidebar() {
-  const { sidebarTab, setSidebarTab, setMachineFormActive, setShapesPanelOpen, setClockPanelOpen, setSetupPanelOpen, setWorkspaceTab } = useUIStore()
+  const { sidebarTab, setSidebarTab, setMachineFormActive, setShapesPanelOpen, setClockPanelOpen, setSetupPanelOpen, setWorkspaceTab } = useUIStore(useShallow((s) => ({ sidebarTab: s.sidebarTab, setSidebarTab: s.setSidebarTab, setMachineFormActive: s.setMachineFormActive, setShapesPanelOpen: s.setShapesPanelOpen, setClockPanelOpen: s.setClockPanelOpen, setSetupPanelOpen: s.setSetupPanelOpen, setWorkspaceTab: s.setWorkspaceTab })))
   const selectedIds = usePathsStore((s) => s.selectedIds)
   const gcodeViewerOpen = useSimStore((s) => s.gcodeViewerOpen)
   const hasGcode = useSimStore((s) => !!s.gcode)

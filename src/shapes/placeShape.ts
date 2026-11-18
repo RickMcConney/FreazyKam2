@@ -31,7 +31,6 @@ function regenWhenFontLoads(family: string, pathId: string, groupId: string | un
 export function placeShape(params: ShapeParams, opts: { fromCenter?: boolean } = {}): string[] {
   const id = uid('shape')
   const { addPaths: add, selectPath: sel, setSelectedIds } = usePathsStore.getState()
-  const d = generateShapeD(params)
   // A multi-part shape lands as one path per part (a gear's teeth, bore and
   // spokes each want their own operation — see generateShapeParts). They
   // share a groupId so the paths list keeps them together, and each carries
@@ -65,6 +64,9 @@ export function placeShape(params: ShapeParams, opts: { fromCenter?: boolean } =
     regenGroup = groupId
     ids = made.map((p) => p.id)
   } else {
+    // Only a single-path shape needs the whole outline: for a parts shape generateShapeD
+    // is the parts joined, so computing it up front generated the shape twice.
+    const d = generateShapeD(params)
     add([{
       id, name: shapeDisplayName(params.type), d, visible: true, color: nextPathColor(), shapeParams: params,
       ...(opts.fromCenter ? { fromCenter: true } : {}),

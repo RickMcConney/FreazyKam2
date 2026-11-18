@@ -1,4 +1,5 @@
 import { memo, useMemo, useRef } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { SIM_HEAT_COLORS, SIM_TOOL_CUTTING_COLOR, SIM_TOOL_RAPID_COLOR } from '../../colors'
 import { Group, Shape, Image as KonvaImage } from 'react-konva'
 import type { Viewport } from '../viewport'
@@ -149,7 +150,7 @@ export const SimulationLayer = memo(function SimulationLayer({ viewport }: Props
   const gcode = useSimStore((s) => s.gcode)
   const { scale } = viewport
 
-  const { widthMM, heightMM, origin } = useWorkpieceStore()
+  const { widthMM, heightMM, origin } = useWorkpieceStore(useShallow((s) => ({ widthMM: s.widthMM, heightMM: s.heightMM, origin: s.origin })))
   // What the heat map judges a chip against — the chip gauge's own inputs. Memoised so
   // the trail sees the same object until one of them actually changes.
   const material = useWorkpieceStore((s) => s.material)

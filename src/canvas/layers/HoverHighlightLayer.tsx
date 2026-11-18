@@ -62,8 +62,8 @@ function movesOf(segs: MotionSegment[]): MoveRun[] {
  * change would repaint the whole drawing. ONE Shape whatever the count (see the canvas
  * CLAUDE.md on N shapes) — a sheet folder can light up hundreds of parts.
  *
- * An operation with no toolpath yet (not generated, or failed) lights its source paths
- * instead, so every row lights SOMETHING up.
+ * An operation with no toolpath yet (not generated, or failed), or a hidden one, lights its
+ * source paths instead, so every row lights SOMETHING up.
  */
 export const HoverHighlightLayer = memo(function HoverHighlightLayer({ viewport }: { viewport: Viewport }) {
   const hoverOpIds = useUIStore((s) => s.hoverOpIds)
@@ -83,7 +83,10 @@ export const HoverHighlightLayer = memo(function HoverHighlightLayer({ viewport 
     for (const id of new Set(hoverPathIds)) { const p = byId.get(id); if (p) ownPaths.push(p) }
     for (const op of operations) {
       if (!want.has(op.id)) continue
-      if (op.segments.length > 0) { segRuns.push({ segs: op.segments, toolId: op.toolId }); continue }
+      // A HIDDEN op's toolpath is not drawn, so hovering it must not draw it either — the
+      // pointer is still on the row when its eye is clicked, and the glow read as the hide
+      // not working. It lights its source paths, like an op with no toolpath.
+      if (op.visible && op.segments.length > 0) { segRuns.push({ segs: op.segments, toolId: op.toolId }); continue }
       for (const id of pathIdsOf(op)) {
         const p = byId.get(id)
         if (p && !seen.has(p.id)) { seen.add(p.id); hitPaths.push(p) }

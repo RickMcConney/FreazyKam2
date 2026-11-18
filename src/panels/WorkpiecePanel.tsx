@@ -1,4 +1,5 @@
 import { useState, useId } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { ICON } from '../theme'
 import { ChevronDown, ChevronRight, Import, RotateCcw, Share } from 'lucide-react'
 import { RestoreMachineButton } from '../components/RestoreButtons'
@@ -282,7 +283,7 @@ export default function WorkpiecePanel() {
     setWidth, setHeight, setThickness, setOrigin, setZOrigin, setMaterial,
     setTableLimitWidth, setTableLimitHeight, setTableLimitDepth, setSafeHeight,
     setMachineRigidity, setMaxFeed, setMinSpindleRpm, setMaxSpindleRpm, setSpindleType, setCustomDialRpm, setAutoFeedEnabled,
-  } = useWorkpieceStore()
+  } = useWorkpieceStore(useShallow((s) => ({ widthMM: s.widthMM, heightMM: s.heightMM, thicknessMM: s.thicknessMM, units: s.units, origin: s.origin, zOrigin: s.zOrigin, material: s.material, tableLimitWidthMM: s.tableLimitWidthMM, tableLimitHeightMM: s.tableLimitHeightMM, tableLimitDepthMM: s.tableLimitDepthMM, safeHeightMM: s.safeHeightMM, machineRigidity: s.machineRigidity, maxFeedMmMin: s.maxFeedMmMin, minSpindleRpm: s.minSpindleRpm, maxSpindleRpm: s.maxSpindleRpm, spindleType: s.spindleType, customDialRpm: s.customDialRpm, autoFeedEnabled: s.autoFeedEnabled, accelXYMmS2: s.accelXYMmS2, accelZMmS2: s.accelZMmS2, maxRateZMmMin: s.maxRateZMmMin, junctionDeviationMM: s.junctionDeviationMM, machineXDir: s.machineXDir, setMachineXDir: s.setMachineXDir, feedTime: s.feedTime, rapidRateXYMmMin: s.rapidRateXYMmMin, setRapidRateXY: s.setRapidRateXY, setAccelXY: s.setAccelXY, setAccelZ: s.setAccelZ, setMaxRateZ: s.setMaxRateZ, setJunctionDeviation: s.setJunctionDeviation, setWidth: s.setWidth, setHeight: s.setHeight, setThickness: s.setThickness, setOrigin: s.setOrigin, setZOrigin: s.setZOrigin, setMaterial: s.setMaterial, setTableLimitWidth: s.setTableLimitWidth, setTableLimitHeight: s.setTableLimitHeight, setTableLimitDepth: s.setTableLimitDepth, setSafeHeight: s.setSafeHeight, setMachineRigidity: s.setMachineRigidity, setMaxFeed: s.setMaxFeed, setMinSpindleRpm: s.setMinSpindleRpm, setMaxSpindleRpm: s.setMaxSpindleRpm, setSpindleType: s.setSpindleType, setCustomDialRpm: s.setCustomDialRpm, setAutoFeedEnabled: s.setAutoFeedEnabled })))
   const feedId = useId()
   const [importing, setImporting] = useState<SettingsFile | null>(null)
 

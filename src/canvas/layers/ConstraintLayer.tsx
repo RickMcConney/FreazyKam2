@@ -1,4 +1,5 @@
 import { memo, useMemo } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { Group, Line, Text, Rect, Circle } from 'react-konva'
 import type { Viewport } from '../viewport'
 import { usePathsStore } from '../../store/pathsStore'
@@ -311,7 +312,7 @@ export const ConstraintLayer = memo(function ConstraintLayer({ viewport, pending
   const constraining = useUIStore((s) => s.activeTool === 'constrain')
   const subjectIds = useUIStore((s) => s.constrainSubjectIds)
   const focusConstraintId = useUIStore((s) => s.focusConstraintId)
-  const { units, widthMM, heightMM } = useWorkpieceStore()
+  const { units, widthMM, heightMM } = useWorkpieceStore(useShallow((s) => ({ units: s.units, widthMM: s.widthMM, heightMM: s.heightMM })))
 
   const dims = useMemo(() => {
     if (constraints.length === 0 || hideCommitted || !constraining) return []

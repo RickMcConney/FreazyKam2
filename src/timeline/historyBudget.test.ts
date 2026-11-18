@@ -57,6 +57,35 @@ describe('evictHistorySegments', () => {
     expect(snaps[2].operations[0].segments).toHaveLength(0)
   })
 
+  it('gives the same eviction whether snapshots share one operations array or each hold a copy', () => {
+    // Path-only edits never replace the operations array, so most snapshots share one. The
+    // walk is per distinct array; it must pick the same victims as a walk per snapshot.
+    const build = (share: boolean) => {
+      // 'keep' is never regenerated, so it is the SAME object in every generation's array:
+      // its newest snapshot is the last one, not the first one it appeared in.
+      const keep = op('keep', segs(5))
+      const gens = Array.from({ length: 5 }, (_, g) => [op('a' + g, segs(10)), op('b' + g, segs(7)), keep])
+      const snaps: Snap[] = []
+      for (let i = 0; i < 500; i++) {
+        const ops = gens[Math.floor(i / 100)]
+        snaps.push({ operations: share ? ops : [...ops] })
+      }
+      return { snaps, live: [op('a', segs(10))] }
+    }
+    const shared = build(true), copied = build(false)
+    const nShared = evictHistorySegments(shared.snaps, shared.live, 40)
+    const nCopied = evictHistorySegments(copied.snaps, copied.live, 40)
+    expect(nShared).toBe(nCopied)
+    const sig = (s: Snap[]) => s.map((x) => x.operations.map((o) => o.id + ':' + o.segments.length).join(',')).join('|')
+    expect(sig(shared.snaps)).toBe(sig(copied.snaps))
+    // Oldest generations go first: the newest two (17 + 17) and 'keep' (5) fit 40.
+    expect(shared.snaps[499].operations[0].segments).toHaveLength(10)
+    expect(shared.snaps[499].operations[2].segments).toHaveLength(5)
+    expect(shared.snaps[0].operations[0].segments).toHaveLength(0)
+    // Snapshots that shared an array still share it after the strip.
+    expect(shared.snaps[0].operations).toBe(shared.snaps[99].operations)
+  })
+
   it('never evicts an imported G-code program, which nothing can regenerate', () => {
     const prog = op('g', segs(1000), 'gcode')
     const snaps: Snap[] = [{ operations: [prog] }]

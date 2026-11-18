@@ -21,7 +21,7 @@ import type { RectInfo } from '../canvas/selectionUtils'
 import { traceIsolines } from '../cam/marchingSquares'
 import { round4 } from '../util/num'
 import { inflatePathsD, unionD, differenceD, intersectD, areaD, FillRule, JoinType, EndType, ClipperD, PolyTreeD, PolyPathD, ClipType } from 'clipper2-ts'
-import { interiorPoint, pointInPolygon } from '../cam/geom'
+import { interiorPoint, pointInPolygon, ringsBBox } from '../cam/geom'
 
 export interface TraceParams {
   /** Brightness cut, 0 (black) … 255 (white). Ignored when `autoThreshold` is on. */
@@ -567,47 +567,61 @@ export function thinMask(mask: Uint8Array, w: number, h: number): void {
  */
 export function traceSkeleton(mask: Uint8Array, w: number, h: number): { pts: Pt2[]; closed: boolean }[] {
   const on = (x: number, y: number) => x >= 0 && y >= 0 && x < w && y < h && mask[y * w + x] === 1
-  const nbrs = (i: number): number[] => {
+  // Each skeleton pixel's links, worked out ONCE, in N8 order: `nb[8i + j]` is the j-th
+  // linked pixel and `dir[8i + j]` the N8 index it lies in, `deg[i]` how many. The walk
+  // asked for them two or three times per pixel, allocating an array each time.
+  const n = w * h
+  const deg = new Uint8Array(n)
+  const nb = new Int32Array(n * 8)
+  const dir = new Uint8Array(n * 8)
+  for (let i = 0; i < n; i++) {
+    if (!mask[i]) continue
     const x = i % w, y = (i - x) / w
-    const out: number[] = []
+    let c = 0
     for (let k = 0; k < 8; k++) {
       const [dx, dy] = N8[k]
       if (!on(x + dx, y + dy)) continue
       if (k & 1 && (on(x + dx, y) || on(x, y + dy))) continue
-      out.push((y + dy) * w + x + dx)
+      nb[i * 8 + c] = (y + dy) * w + x + dx
+      dir[i * 8 + c] = k
+      c++
     }
-    return out
+    deg[i] = c
   }
+  // A used edge is a bit at BOTH ends — direction k from one, k + 4 from the other —
+  // where it was a template-string key in a Set.
+  const used = new Uint8Array(n)
+  const useEdge = (i: number, j: number) => { const k = dir[i * 8 + j]; used[i] |= 1 << k; used[nb[i * 8 + j]] |= 1 << ((k + 4) & 7) }
+  const isUsed = (i: number, j: number) => (used[i] >> dir[i * 8 + j]) & 1
   const pt = (i: number): Pt2 => [i % w, Math.floor(i / w)]
   const paths: { pts: Pt2[]; closed: boolean }[] = []
-  const usedEdge = new Set<string>()
-  const ek = (a: number, b: number) => (a < b ? `${a}-${b}` : `${b}-${a}`)
-  const isNode = (i: number) => nbrs(i).length !== 2
-  const seen = new Uint8Array(w * h)
-  const walk = (from: number, next: number): number[] => {
+  const seen = new Uint8Array(n)
+  // Walk out of `from` along its j-th link.
+  const walk = (from: number, j0: number): number[] => {
     const chain = [from]
-    let prev = from, cur = next
-    usedEdge.add(ek(prev, cur))
+    let prev = from, cur = nb[from * 8 + j0]
+    useEdge(from, j0)
     while (true) {
       chain.push(cur); seen[cur] = 1
-      if (isNode(cur)) break
-      const nx = nbrs(cur).find((j) => j !== prev && !usedEdge.has(ek(cur, j)))
-      if (nx === undefined) break
-      usedEdge.add(ek(cur, nx))
-      prev = cur; cur = nx
+      if (deg[cur] !== 2) break
+      let next = -1
+      for (let j = 0; j < deg[cur]; j++) {
+        if (nb[cur * 8 + j] !== prev && !isUsed(cur, j)) { next = j; break }
+      }
+      if (next < 0) break
+      useEdge(cur, next)
+      prev = cur; cur = nb[cur * 8 + next]
     }
     return chain
   }
-  for (let i = 0; i < w * h; i++) {
-    if (!mask[i] || !isNode(i)) continue
+  for (let i = 0; i < n; i++) {
+    if (!mask[i] || deg[i] === 2) continue
     seen[i] = 1
-    for (const j of nbrs(i)) if (!usedEdge.has(ek(i, j))) paths.push({ pts: walk(i, j).map(pt), closed: false })
+    for (let j = 0; j < deg[i]; j++) if (!isUsed(i, j)) paths.push({ pts: walk(i, j).map(pt), closed: false })
   }
-  for (let i = 0; i < w * h; i++) {
-    if (!mask[i] || seen[i]) continue
-    const n = nbrs(i)
-    if (n.length !== 2) continue
-    const chain = walk(i, n[0])
+  for (let i = 0; i < n; i++) {
+    if (!mask[i] || seen[i] || deg[i] !== 2) continue
+    const chain = walk(i, 0)
     if (chain[chain.length - 1] === i) chain.pop()
     paths.push({ pts: chain.map(pt), closed: true })
   }
@@ -953,9 +967,17 @@ function dropHalos(band: { x: number; y: number }[][], inner: { x: number; y: nu
   const pieces = toPieces(band)
   // A piece stays if some part of the band beyond the reach lies in it (outline, not holes).
   const marks = far.filter((r) => areaD(r) > 0).map((r) => interiorPoint([pts(r)])).filter((p): p is Pt2 => !!p)
-  const inPiece = (rings: { x: number; y: number }[][], p: Pt2) =>
-    rings.reduce((ins, r) => ins !== pointInPolygon(p[0], p[1], pts(r)), false)
-  return pieces.filter((rings) => marks.some((p) => inPiece(rings, p))).flat()
+  // Each piece's rings converted once, with the outline's box: a mark outside the box
+  // cannot be inside the piece (holes lie within the outline), so it skips the walk.
+  const kept = pieces.filter((rings) => {
+    const conv = rings.map(pts)
+    const bb = ringsBBox([conv[0]])
+    return marks.some((p) => {
+      if (!bb || p[0] < bb.minX || p[0] > bb.maxX || p[1] < bb.minY || p[1] > bb.maxY) return false
+      return conv.reduce((ins, r) => ins !== pointInPolygon(p[0], p[1], r), false)
+    })
+  })
+  return kept.flat()
 }
 
 /**

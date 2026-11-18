@@ -92,6 +92,14 @@ export function ClockAnimLayer({ viewport }: Props) {
 
     // Each part's own geometry with its ARBOR AT THE ORIGIN, so placing it is a
     // plain rotate-then-translate.
+    // One generate per escapement spec: the wheel's parts and the anchor's come from the same
+    // call, which was made twice per rebuild (~20 ms each).
+    const escCache = new Map<object, ReturnType<typeof generateEscapementParts>>()
+    const escParts = (p: Parameters<typeof generateEscapementParts>[0]) => {
+      let r = escCache.get(p)
+      if (!r) { r = generateEscapementParts({ ...p, cx: 0, cy: 0 }); escCache.set(p, r) }
+      return r
+    }
     const wheels = assembly.map((a) => {
       if (a.params.type === 'gear') {
         // The pinion this gear emits belongs on the NEXT arbor and is drawn
@@ -99,7 +107,7 @@ export function ClockAnimLayer({ viewport }: Props) {
         return generateGearParts({ ...a.params, cx: 0, cy: 0, emitPinion: false })
           .map((p) => p.d).join(' ')
       }
-      return generateEscapementParts({ ...a.params, cx: 0, cy: 0 })
+      return escParts(a.params)
         .filter((p) => ['wheel', 'spokes', 'bore'].includes(p.key))
         .map((p) => p.d).join(' ')
     })
@@ -112,7 +120,7 @@ export function ClockAnimLayer({ viewport }: Props) {
     const esc = assembly[assembly.length - 1].params
     const anchor = esc.type === 'escapement'
       ? {
-          d: generateEscapementParts({ ...esc, cx: 0, cy: 0 })
+          d: escParts(esc)
             .filter((p) => ['anchor', 'anchorbore'].includes(p.key))
             .map((p) => p.d).join(' '),
           // Drawn clear at `anchorOffset` above the wheel; its arbor really goes

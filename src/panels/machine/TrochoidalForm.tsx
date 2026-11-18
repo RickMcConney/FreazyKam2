@@ -1,5 +1,5 @@
 // ─── Trochoidal form ──────────────────────────────────────────────────────────
-import { FormShell, ToolSelector, ToggleRow, DepthRow, GenerateBtn, useSessionOps, toolsOfType, pickToolId, LengthInput, FormError, FormNotice, useBatchGenerate, generateLabel, NoPathBanner, CheckRow, BatchPathList } from './shared'
+import { FormShell, ToolSelector, ToggleRow, DepthRow, GenerateBtn, useSessionOps, toolsOfType, pickToolId, LengthInput, FormError, FormNotice, useBatchGenerate, generateLabel, pathIndex, NoPathBanner, CheckRow, BatchPathList } from './shared'
 import { reviseBatch } from './reviseBatch'
 import { skipOpenPaths, skippedOpenMsg } from './containment'
 import { useState } from 'react'
@@ -63,7 +63,7 @@ export function TrochoidalForm({ onClose, editOp }: { onClose: () => void; editO
   // Editing covers every operation created by the same Generate click — see PocketForm.
   const editBatch = editOp ? (batchOf(editOp, operations) as TrochoidalOperation[]) : []
   const editPairs = editBatch.flatMap((op) => {
-    const path = paths.find((p) => p.id === op.pathId)
+    const path = pathIndex(paths).get(op.pathId)
     return path ? [{ op, path }] : []
   })
   // While a batch is open for editing the canvas selection is the set of paths it cuts —

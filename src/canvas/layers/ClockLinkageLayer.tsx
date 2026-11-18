@@ -74,14 +74,22 @@ export function ClockLinkageLayer({ viewport, liveAngles, onNodeMouseDown, activ
   // every mouse move, and none of the outlines depend on them.
   const built = useMemo(() => {
     if (!assembly || assembly.length < 2) return null
+    // One generate per escapement spec: the wheel's parts and the anchor's come from the same
+    // call, which was made twice per rebuild (~20 ms each).
+    const escCache = new Map<object, ReturnType<typeof generateEscapementParts>>()
+    const escParts = (p: Parameters<typeof generateEscapementParts>[0]) => {
+      let r = escCache.get(p)
+      if (!r) { r = generateEscapementParts({ ...p, cx: 0, cy: 0 }); escCache.set(p, r) }
+      return r
+    }
     const wheels = assembly.map((a) => a.params.type === 'gear'
       ? generateGearParts({ ...a.params, cx: 0, cy: 0, emitPinion: false }).map((p) => p.d).join(' ')
-      : generateEscapementParts({ ...a.params, cx: 0, cy: 0 })
+      : escParts(a.params)
           .filter((p) => ['wheel', 'spokes', 'bore'].includes(p.key)).map((p) => p.d).join(' '))
     const esc = assembly[assembly.length - 1].params
     const anchor = esc.type === 'escapement'
       ? {
-          d: generateEscapementParts({ ...esc, cx: 0, cy: 0 })
+          d: escParts(esc)
             .filter((p) => ['anchor', 'anchorbore'].includes(p.key)).map((p) => p.d).join(' '),
           drawnAt: anchorOffset(esc),
           gap: escapementDims(esc).centreDistance,

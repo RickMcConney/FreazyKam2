@@ -9,6 +9,7 @@
 // deepest feed move). With no job loaded: Setup's safe height, and no cut depth.
 
 import { useLayoutEffect, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { ChevronUp, ChevronDown } from 'lucide-react'
 import { useMachineStore } from '../machine/machineStore'
 import { useWorkpieceStore, lenValue, zDatumOffsetMM } from '../store/workpieceStore'
@@ -62,7 +63,7 @@ function ProbeZBar({ stockBox, view }: { stockBox: StockBox | null; view: { star
   const toolWZ = useMachineStore((s) => s.position.wpos[2])
   const zeroedZ = useMachineStore((s) => s.zeroed.z)
   const plateMM = useMachineStore((s) => s.probePlateMM)
-  const { material, units, zOrigin, thicknessMM } = useWorkpieceStore()
+  const { material, units, zOrigin, thicknessMM } = useWorkpieceStore(useShallow((s) => ({ material: s.material, units: s.units, zOrigin: s.zOrigin, thicknessMM: s.thicknessMM })))
   const darkMode = useUIStore((s) => s.darkMode)
   const stockFill = MATERIAL_COLORS[material][darkMode ? 'dark' : 'light']
   const fmt = (mm: number) => lenValue(mm, units, 1)
@@ -151,7 +152,7 @@ function StockZBar({ stockBox }: { stockBox: StockBox | null }) {
   // The loaded job's own heights; without one, Setup's safe height and no cut depth —
   // the design is not on the machine until it is sent and loaded.
   const job = useMachineStore((s) => s.job)
-  const { thicknessMM, zOrigin, safeHeightMM, material, units } = useWorkpieceStore()
+  const { thicknessMM, zOrigin, safeHeightMM, material, units } = useWorkpieceStore(useShallow((s) => ({ thicknessMM: s.thicknessMM, zOrigin: s.zOrigin, safeHeightMM: s.safeHeightMM, material: s.material, units: s.units })))
   const darkMode = useUIStore((s) => s.darkMode)
   const stockFill = MATERIAL_COLORS[material][darkMode ? 'dark' : 'light']
 

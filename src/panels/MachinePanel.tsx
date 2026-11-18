@@ -1,4 +1,5 @@
 import { ProfileForm, TrochoidalForm, FlutingForm, PocketForm, DrillForm, VCarveForm, PhotoVCarveForm, InlayForm, Profile3dForm, SurfaceForm, BooleanForm, OffsetForm, PatternForm, NestForm, TabsForm, NodeEditForm, TraceForm, AlongPathForm, DoubleSidedForm, TilingForm } from './machine'
+import { useShallow } from 'zustand/react/shallow'
 import { useState, useEffect } from 'react'
 import { useToolpathStore } from '../store/toolpathStore'
 import { usePathsStore } from '../store/pathsStore'
@@ -80,7 +81,7 @@ function AddOperationMenu({ onSelect }: { onSelect: (t: OpType) => void }) {
 // ─── Main panel ───────────────────────────────────────────────────────────────
 
 export default function MachinePanel({ fill = false }: { fill?: boolean }) {
-  const { machineFormActive, setMachineFormActive, setActiveTool, setTabsFormActive } = useUIStore()
+  const { machineFormActive, setMachineFormActive, setActiveTool, setTabsFormActive } = useUIStore(useShallow((s) => ({ machineFormActive: s.machineFormActive, setMachineFormActive: s.setMachineFormActive, setActiveTool: s.setActiveTool, setTabsFormActive: s.setTabsFormActive })))
   const [activeForm, setActiveForm] = useState<FormState>('menu')
   // Editing an EXISTING operation in this panel (timeline op-chip click):
   // the matching form opens with editOp so its parameters can be amended.

@@ -16,6 +16,7 @@
 // each editable through its own chip in the usual way.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { Clock, Info, Lock, LockOpen } from 'lucide-react'
 import { ICON } from '../../theme'
 import { useUIStore } from '../../store/uiStore'
@@ -111,7 +112,7 @@ export default function ClockPanel() {
   const linkClockId = usePathsStore((s) => s.paths.find((p) => p.id === clockLinkPathId)?.clockId ?? null)
   const clockRunning = !!clockEditId && animClockId === clockEditId
   const clockArranging = !!clockEditId && linkClockId === clockEditId
-  const { units, widthMM, heightMM } = useWorkpieceStore()
+  const { units, widthMM, heightMM } = useWorkpieceStore(useShallow((s) => ({ units: s.units, widthMM: s.widthMM, heightMM: s.heightMM })))
   const [spec, setSpec] = useState<ClockSpec>(DEFAULT_CLOCK_SPEC)
   const [reLayout, setReLayout] = useState(true)
   const [busy, setBusy] = useState(false)

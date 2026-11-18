@@ -264,13 +264,36 @@ function design(g: G) {
   let reach = 0
   for (let i = 0; i <= 24; i++) reach = Math.max(reach, reachAt(plain, pivot, (swing * i) / 24))
   const housingR = Math.max(reachAt(plain, pivot, 0) + g.c, reach)
-  if (wallAngle(plain, pivot, housingR) <= STOP_LIMIT) return { wheel, lift, housingR, heel: 0 }
+  if (wallAngle(plain, pivot, housingR) <= STOP_LIMIT) return { wheel, lift, housingR, heel: 0, plain }
   const B = onFace(f, g.Ro, g.c)
   const heel = Math.max(0, wallAngle([[B]], pivot, housingR) - swing)
-  return { wheel, lift, housingR, heel }
+  return { wheel, lift, housingR, heel, plain }
 }
 
+/** Pawl `i` (on `g.faces[i]`) with the heel `design` chose — the first one is `plain`
+ *  itself when there is no heel, so it is not built twice. */
+function pawlOf(g: G, d: ReturnType<typeof design>, i: number): Pt[][] {
+  return i === 0 && d.heel === 0 ? d.plain : pawlRings(g, g.faces[i], d.wheel, d.heel)
+}
+
+// The panels call ratchetDims in their render bodies, so every spinner tick and every
+// unrelated store write asked for it again (66 ms at 48 teeth). Position cannot change a
+// dimension, so the key leaves out cx/cy — the same scheme as escapementToothClearance.
+const dimsMemo = new Map<string, RatchetDims>()
+const DIMS_MEMO_SIZE = 8
+
 export function ratchetDims(spec: RatchetSpec): RatchetDims {
+  const { cx: _cx, cy: _cy, ...shape } = spec
+  const key = JSON.stringify(shape)
+  const hit = dimsMemo.get(key)
+  if (hit) return hit
+  const dims = computeRatchetDims(spec)
+  dimsMemo.set(key, dims)
+  if (dimsMemo.size > DIMS_MEMO_SIZE) dimsMemo.delete(dimsMemo.keys().next().value!)
+  return dims
+}
+
+function computeRatchetDims(spec: RatchetSpec): RatchetDims {
   const g = geometry(spec)
   // The fewest pawls high enough, over every angle the gear can stop at. Every
   // pawl is on the circle at spacing 2π/n, so a sweep over one spacing covers it.
@@ -283,8 +306,9 @@ export function ratchetDims(spec: RatchetSpec): RatchetDims {
   }
   const pinR = spec.pivotDia / 2
   const pivot = pivotOf(g, g.faces[0])
-  const { wheel, lift, housingR, heel } = design(g)
-  const pawl0 = pawlRings(g, g.faces[0], wheel, heel)
+  const des = design(g)
+  const { lift, housingR, heel } = des
+  const pawl0 = pawlOf(g, des, 0)
   // Where the wall really catches the pawl, off its own outline.
   const stop = wallAngle(pawl0, pivot, housingR)
   // Asked of the outlines themselves, and at BOTH ends of the swing: the pawls
@@ -297,7 +321,7 @@ export function ratchetDims(spec: RatchetSpec): RatchetDims {
   if (g.n > 1) {
     const poses = (f: number, rings: Pt[][]) => [rings, rings.map((r) => rotateAbout(r, pivotOf(g, f), -stop))]
     const a = poses(g.faces[0], pawl0)
-    const b = poses(g.faces[1], pawlRings(g, g.faces[1], wheel, heel))
+    const b = poses(g.faces[1], pawlOf(g, des, 1))
     pawlsCollide = a.some((pa) => b.some((pb) => boolRings('intersection', inflateRings(pa, g.c / 2), pb).length > 0))
   }
   return {
@@ -384,6 +408,17 @@ function hull(pts: Pt[]): Pt[] {
  * Swung about the pivot it rises on the pivot's side of the face line, so the
  * nose face still runs straight and never overhangs the tooth.
  */
+// The wheel grown by the clearance is the same for every pawl of one wheel, so it is
+// grown once per wheel rather than once per pawl.
+const grownWheels = new WeakMap<Pt[][], { c: number; rings: Pt[][] }>()
+function grownWheel(wheelCut: Pt[][], c: number): Pt[][] {
+  const hit = grownWheels.get(wheelCut)
+  if (hit && hit.c === c) return hit.rings
+  const rings = inflateRings(wheelCut, c)
+  grownWheels.set(wheelCut, { c, rings })
+  return rings
+}
+
 function pawlRings(g: G, f: number, wheelCut: Pt[][], heel: number): Pt[][] {
   const pivot = pivotOf(g, f)
   const boss = ellipseRing(pivot[0], pivot[1], g.W / 2, g.W / 2)
@@ -391,6 +426,10 @@ function pawlRings(g: G, f: number, wheelCut: Pt[][], heel: number): Pt[][] {
   const pts = [onFace(f, g.Rr - 1, g.c), B, ...boss]
   if (heel > 0) pts.push(rotateAbout([B], pivot, -heel)[0])
   const body = hull(pts)
+  // A relief disc that cannot reach the hull removes nothing from it, so only the few
+  // tips the pawl actually straddles are unioned (it was all Z − 1 of them, every pawl).
+  let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity
+  for (const [x, y] of body) { bx0 = Math.min(bx0, x); by0 = Math.min(by0, y); bx1 = Math.max(bx1, x); by1 = Math.max(by1, y) }
   const tips: Pt[][] = []
   for (let k = 1; k < g.Z; k++) {
     const tip = polar(g.Ro, f - k * g.p)
@@ -404,9 +443,10 @@ function pawlRings(g: G, f: number, wheelCut: Pt[][], heel: number): Pt[][] {
     while (!clear() && R > rise + 1e-9) R = Math.max(rise, R - 0.25)
     while (!clear() && rise > g.toolR + 1e-9) { rise = Math.max(g.toolR, rise - 0.25); R = rise }
     const [x, y] = centre()
+    if (x + R < bx0 || x - R > bx1 || y + R < by0 || y - R > by1) continue
     tips.push(ellipseRing(x, y, R, R))
   }
-  const keepOut = boolRings('union', inflateRings(wheelCut, g.c), tips)
+  const keepOut = boolRings('union', grownWheel(wheelCut, g.c), tips)
   return boolRings('difference', [body], keepOut)
 }
 
@@ -425,7 +465,9 @@ export function generateRatchetParts(spec: RatchetSpec): RatchetPart[] {
   const place = (r: Pt[]) => r.map(([x, y]) => [spec.cx + g.mirror * x, spec.cy + y] as Pt)
   const out: RatchetPart[] = []
 
-  const wheel = cutWheel(g)
+  // design() cuts the wheel and the first pawl; both are reused rather than built again.
+  const des = design(g)
+  const { wheel, housingR } = des
   out.push({ key: 'wheel', d: wheel.map((r) => ringToD(place(r), true)).join(' ') })
 
   const boreR = clamp(spec.bore / 2, 0, g.Rr - 1)
@@ -434,10 +476,10 @@ export function generateRatchetParts(spec: RatchetSpec): RatchetPart[] {
   const pawls: string[] = []
   const pivots: string[] = []
   const pr = clamp(spec.pivotDia / 2, 0, g.W / 2 - 0.5)
-  const { housingR, heel } = design(g)
   out.push({ key: 'housing', d: ringToD(place(ellipseRing(0, 0, housingR, housingR)), false) })
-  for (const f of g.faces) {
-    pawls.push(...pawlRings(g, f, wheel, heel).map((r) => ringToD(place(r), true)))
+  for (let i = 0; i < g.faces.length; i++) {
+    const f = g.faces[i]
+    pawls.push(...pawlOf(g, des, i).map((r) => ringToD(place(r), true)))
     if (pr > 0.1) {
       const [x, y] = pivotOf(g, f)
       pivots.push(ringToD(place(ellipseRing(x, y, pr, pr)), false))

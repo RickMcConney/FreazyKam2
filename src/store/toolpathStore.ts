@@ -392,20 +392,27 @@ export function nothingToCut(op: AnyOperation, operations: AnyOperation[]): bool
 }
 
 export function refsPathId(op: AnyOperation, pathId: string): boolean {
-  if (op.type === 'profile') return op.pathId === pathId || !!op.pathIds?.includes(pathId)
-  if (op.type === 'trochoidal') return op.pathId === pathId
-  if (op.type === 'fluting') return op.pathId === pathId
-  if (op.type === 'pocket') return op.pathId === pathId || op.islandIds.includes(pathId)
-  if (op.type === 'drill') return op.pathId === pathId
-  if (op.type === 'vcarve') return op.pathId === pathId || op.islandIds.includes(pathId)
-  if (op.type === 'photovcarve') return op.pathId === pathId
+  return refsAnyPath(op, (id) => id === pathId)
+}
+
+/** Does `op` reference any path id `has` accepts? refsPathId over a whole set at once —
+ *  deleting thousands of paths asks this once per op instead of once per op per id. */
+export function refsAnyPath(op: AnyOperation, has: (id: string) => boolean): boolean {
+  const is = (id: string | undefined) => id !== undefined && has(id)
+  if (op.type === 'profile') return is(op.pathId) || !!op.pathIds?.some(has)
+  if (op.type === 'trochoidal') return is(op.pathId)
+  if (op.type === 'fluting') return is(op.pathId)
+  if (op.type === 'pocket') return is(op.pathId) || op.islandIds.some(has)
+  if (op.type === 'drill') return is(op.pathId)
+  if (op.type === 'vcarve') return is(op.pathId) || op.islandIds.some(has)
+  if (op.type === 'photovcarve') return is(op.pathId)
   // The male's field is geometry it machines (its background clearance), so it counts as a
   // source path like any island: edit it and the op is stale, delete it and the op goes.
-  if (op.type === 'inlay') return op.pathId === pathId || op.islandIds.includes(pathId) ||
-    op.fieldId === pathId || !!op.fieldPlugIds?.includes(pathId) || op.bandId === pathId
+  if (op.type === 'inlay') return is(op.pathId) || op.islandIds.some(has) ||
+    is(op.fieldId) || !!op.fieldPlugIds?.some(has) || is(op.bandId)
   // A boundary path is geometry the op machines to, like an inlay's field: edit it and the
   // op is stale, delete it and the op goes.
-  if (op.type === 'profile3d') return op.pathId === pathId || (op.boundary === 'path' && op.boundaryPathId === pathId)
+  if (op.type === 'profile3d') return is(op.pathId) || (op.boundary === 'path' && is(op.boundaryPathId))
   return false
 }
 
@@ -699,7 +706,8 @@ export const useToolpathStore = create<ToolpathState>()((set, get) => ({
 
   deleteOperations: (ids) => {
     if (ids.length === 0) return
-    set((s) => ({ operations: s.operations.filter((o) => !ids.includes(o.id)) }))
+    const gone = new Set(ids)
+    set((s) => ({ operations: s.operations.filter((o) => !gone.has(o.id)) }))
     useTimelineStore.getState().record({ kind: 'op.delete', opIds: ids })
     get().revalidateStartHeights()
   },

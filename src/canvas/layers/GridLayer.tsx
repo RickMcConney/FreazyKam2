@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { Group, Shape } from 'react-konva'
 import type { Viewport } from '../viewport'
 import { useWorkpieceStore } from '../../store/workpieceStore'
@@ -17,7 +18,7 @@ const FONT = 'ui-monospace, "SF Mono", Menlo, monospace'
 const FONT_PX = 12
 
 export const GridLayer = memo(function GridLayer({ viewport, stageWidth, stageHeight }: Props) {
-  const { units, origin, widthMM, heightMM } = useWorkpieceStore()
+  const { units, origin, widthMM, heightMM } = useWorkpieceStore(useShallow((s) => ({ units: s.units, origin: s.origin, widthMM: s.widthMM, heightMM: s.heightMM })))
   const darkMode = useUIStore((s) => s.darkMode)
   const C = canvasTheme(darkMode)
   const { x: vx, y: vy, scale } = viewport

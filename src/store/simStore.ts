@@ -93,6 +93,27 @@ function tilePlacement(opts: LoadGcodeOpts): { tile: number | null; tileAt: { x:
   return { tile: opts.tile, tileAt: tileOffset(tiling, useWorkpieceStore.getState(), opts.tile) }
 }
 
+/**
+ * A program parsed as the simulator holds it: timed by the machine's planner, Z made
+ * top-referenced, and turned onto the drawing's axes. What `loadGcode` loads — and what an
+ * imported file's operation takes its segments from, without loading it into the player.
+ */
+export function parseGcodeForDrawing(text: string): ReturnType<typeof parseGcode> {
+  const { zOrigin, thicknessMM, safeHeightMM } = useWorkpieceStore.getState()
+  const genZOff = zDatumOffsetMM(zOrigin, thicknessMM)
+  // Parser's initial cz must match the machine-coord safe height so the tool
+  // starts at the right position when elapsedTimeS = 0 (reset to start). Timed by the
+  // machine's own planner, so playback, the clock and the chip gauge see real speeds.
+  const parsed = parseGcode(text, safeHeightMM + genZOff, machineMotionLimits())
+  // To top-referenced, once and in place: these are this parse's own objects, so
+  // nothing else holds them, and every consumer reads this one array.
+  if (genZOff) for (const s of parsed.segments) { s.z -= genZOff; s.prevZ -= genZOff }
+  // And onto the drawing's axes: a program is in the MACHINE's, which may run turned
+  // (cam/machineFrame.ts). An imported file too — it was written for the machine.
+  movesToDrawing(parsed.segments, useWorkpieceStore.getState().machineXDir)
+  return parsed
+}
+
 // Fresh arrays per call — the cleared state is handed to consumers, not shared.
 const emptyProgram = (): Partial<SimState> => ({
   gcode: '', lineStarts: new Uint32Array(0), segments: [], toolStates: [], messages: [], rapidGouges: [],
@@ -119,21 +140,12 @@ export const useSimStore = create<SimState>()((set, get) => ({
   tileAt: { x: 0, y: 0 },
 
   loadGcode: (text, opts) => {
-    const { zOrigin, thicknessMM, safeHeightMM } = useWorkpieceStore.getState()
+    const { zOrigin, thicknessMM } = useWorkpieceStore.getState()
     const genZOff = zDatumOffsetMM(zOrigin, thicknessMM)
-    // Parser's initial cz must match the machine-coord safe height so the tool
-    // starts at the right position when elapsedTimeS = 0 (reset to start). Timed by the
-    // machine's own planner, so playback, the clock and the chip gauge see real speeds.
-    const parsed = parseGcode(text, safeHeightMM + genZOff, machineMotionLimits())
+    const parsed = parseGcodeForDrawing(text)
     // App-generated G-code never triggers these; imported external files can.
     if (parsed.warnings.length > 0)
       useUIStore.getState().showStatus(`G-code simulation: ${parsed.warnings.join('; ')}`, 'warn')
-    // To top-referenced, once and in place: these are this parse's own objects, so
-    // nothing else holds them, and every consumer reads this one array.
-    if (genZOff) for (const s of parsed.segments) { s.z -= genZOff; s.prevZ -= genZOff }
-    // And onto the drawing's axes: a program is in the MACHINE's, which may run turned
-    // (cam/machineFrame.ts). An imported file too — it was written for the machine.
-    movesToDrawing(parsed.segments, useWorkpieceStore.getState().machineXDir)
     set({
       gcode: text,
       lineStarts: lineStartsOf(text),

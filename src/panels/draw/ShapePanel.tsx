@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { ICON } from '../../theme'
 import { Square, Circle, Ellipse, Hexagon, Star as StarIcon, PenTool, Type, Squircle, Heart, Shield, Orbit, Grid3x3, Cog, Cloud, Dices, ChevronDown, Clock, Weight, TrainTrack, Webhook, Package } from 'lucide-react'
 import { SignIcon, SlotIcon, BoardIcon, EscapementIcon, FingerJointIcon, DovetailIcon, BowtieIcon } from './shapeIcons'
@@ -741,8 +742,8 @@ function FromCentreCheck({ checked, onChange }: { checked: boolean; onChange: (v
 // ─── Main ShapePanel ──────────────────────────────────────────────────────────
 
 export default function ShapePanel({ fill = false }: { fill?: boolean }) {
-  const { activeTool, setActiveTool, shapeToolConfig, setShapeToolConfig, setShapesPanelOpen, setClockPanelOpen, penCurveType, setPenCurveType, lastShapeType, setLastShapeType, shapeFromCenter, setShapeFromCenter } = useUIStore()
-  const { units } = useWorkpieceStore()
+  const { activeTool, setActiveTool, shapeToolConfig, setShapeToolConfig, setShapesPanelOpen, setClockPanelOpen, penCurveType, setPenCurveType, lastShapeType, setLastShapeType, shapeFromCenter, setShapeFromCenter } = useUIStore(useShallow((s) => ({ activeTool: s.activeTool, setActiveTool: s.setActiveTool, shapeToolConfig: s.shapeToolConfig, setShapeToolConfig: s.setShapeToolConfig, setShapesPanelOpen: s.setShapesPanelOpen, setClockPanelOpen: s.setClockPanelOpen, penCurveType: s.penCurveType, setPenCurveType: s.setPenCurveType, lastShapeType: s.lastShapeType, setLastShapeType: s.setLastShapeType, shapeFromCenter: s.shapeFromCenter, setShapeFromCenter: s.setShapeFromCenter })))
+  const { units } = useWorkpieceStore(useShallow((s) => ({ units: s.units })))
   const isShapeTool = SHAPES.some((s) => s.type === activeTool)
   const lastShape = SHAPE_META[lastShapeType] ?? SHAPE_META.rectangle
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { ptSegDistSq, pointInPolygon } from '../cam/geom'
 import { flattenPath } from '../cam/pathFlattener'
+import { getBBox, type BBox } from './selectionUtils'
 import { usePathsStore, type ImportedPath } from '../store/pathsStore'
 
 // ── Path proximity helpers ────────────────────────────────────────────────────
@@ -26,6 +27,18 @@ function distToPolylines(px: number, py: number, polys: [number, number][][]): n
   return Math.sqrt(minSq)
 }
 
+// Each path's exact box, by path OBJECT (paths are replaced, never mutated).
+const boxOf = new WeakMap<ImportedPath, BBox | null>()
+function pathBox(p: ImportedPath): BBox | null {
+  let b = boxOf.get(p)
+  if (b === undefined) { b = getBBox(p.d); boxOf.set(p, b) }
+  return b
+}
+
+// Slack on the box test: the flattened points lie ON the curve, so inside its exact box,
+// but they are computed separately and may sit a few ulps outside it.
+const BOX_SLACK_MM = 1e-6
+
 export function closestVisiblePath(
   px: number, py: number,
   paths: ImportedPath[],
@@ -35,6 +48,16 @@ export function closestVisiblePath(
   let best: ImportedPath | null = null
   let bestDist = thresholdMM
   for (const p of paths) {
+    // The polylines lie inside the path's box, so the distance to the box is a lower
+    // bound: a path whose box is no nearer than the best so far cannot win (the test
+    // below is strict), and is skipped without walking — or flattening — it. On a nest
+    // this was every segment of every path per press and per tab-placing hover frame.
+    const b = pathBox(p)
+    if (b) {
+      const dx = Math.max(b.minX - px, 0, px - b.maxX)
+      const dy = Math.max(b.minY - py, 0, py - b.maxY)
+      if (Math.hypot(dx, dy) - BOX_SLACK_MM >= bestDist) continue
+    }
     const dist = distToPolylines(px, py, getPolys(p))
     if (dist < bestDist) { bestDist = dist; best = p }
   }

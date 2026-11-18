@@ -1,5 +1,5 @@
 // ─── Profile form ─────────────────────────────────────────────────────────────
-import { FormShell, ToolSelector, ToggleRow, DepthRow, GenerateBtn, useSessionOps, StartRow, useStartZ, toolsOfType, pickToolId, LengthInput, FormError, FormNotice, useBatchGenerate, generateLabel, NoPathBanner, CheckRow, BatchPathList } from './shared'
+import { FormShell, ToolSelector, ToggleRow, DepthRow, GenerateBtn, useSessionOps, StartRow, useStartZ, toolsOfType, pickToolId, LengthInput, FormError, FormNotice, useBatchGenerate, generateLabel, pathIndex, NoPathBanner, CheckRow, BatchPathList } from './shared'
 import { reviseBatch } from './reviseBatch'
 import { skipOpenPaths, skippedOpenMsg } from './containment'
 import { outermostPaths } from './selectionKinds'
@@ -98,7 +98,7 @@ export function ProfileForm({ onClose, editOp }: { onClose: () => void; editOp?:
   // selected paths at once is one decision, so changing the depth afterwards is one edit.
   const editBatch = editOp ? (batchOf(editOp, operations) as ProfileOperation[]) : []
   const editPairs = editBatch.flatMap((op) => {
-    const path = paths.find((p) => p.id === op.pathId)
+    const path = pathIndex(paths).get(op.pathId)
     return path ? [{ op, path }] : []
   })
   // While a batch is open for editing, the canvas selection is the set of paths it

@@ -2514,7 +2514,22 @@ export function escapementEnergy(spec: EscapementSpec): EscapementEnergy {
   }
 }
 
+// escapementDims is ~10 ms (toothGeom + seatHub) and the readout asks for it twice per
+// render — itself and through escapementEnergy — while a spinner is held, and clockPlate
+// twice for one escape part. Kept for the last few specs, keyed on the WHOLE spec so the
+// answer cannot depend on anything the key leaves out. Callers only read the result.
 export function escapementDims(spec: EscapementSpec): EscapementDims {
+  const key = JSON.stringify(spec)
+  const hit = dimsCache.get(key)
+  if (hit) return hit
+  const out = computeEscapementDims(spec)
+  dimsCache.set(key, out)
+  if (dimsCache.size > 8) dimsCache.delete(dimsCache.keys().next().value!)
+  return out
+}
+const dimsCache = new Map<string, EscapementDims>()
+
+function computeEscapementDims(spec: EscapementSpec): EscapementDims {
   const { R, Rm, tipR, N, L, rho, beat, mu, lam, pitch: pitchR } = frame(spec)
   const t = toothGeom(spec)
   const rRoot = t.rRoot

@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { Group, Rect } from 'react-konva'
 import type { Viewport } from '../viewport'
 import { useWorkpieceStore, type OriginPosition } from '../../store/workpieceStore'
@@ -33,7 +34,7 @@ interface Props {
 }
 
 export const WorkpieceLayer = memo(function WorkpieceLayer({ viewport }: Props) {
-  const { widthMM, heightMM, material } = useWorkpieceStore()
+  const { widthMM, heightMM, material } = useWorkpieceStore(useShallow((s) => ({ widthMM: s.widthMM, heightMM: s.heightMM, material: s.material })))
   const { scale } = viewport
   const darkMode = useUIStore((s) => s.darkMode)
   const fill = MATERIAL_COLORS[material][darkMode ? 'dark' : 'light']

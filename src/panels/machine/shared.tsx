@@ -752,3 +752,13 @@ export function BatchPathList({ groups, addedIds, removed, editing }: {
     </PathListSection>
   )
 }
+
+// The path list by id, built once per paths array and shared by every form that looks
+// paths up by id on render — a `paths.find` per batch op was ~165k comparisons a render
+// with a 186-hole drill batch open on an 890-path sheet.
+const pathIndexes = new WeakMap<readonly ImportedPath[], Map<string, ImportedPath>>()
+export function pathIndex(paths: readonly ImportedPath[]): Map<string, ImportedPath> {
+  let m = pathIndexes.get(paths)
+  if (!m) { m = new Map(paths.map((p) => [p.id, p])); pathIndexes.set(paths, m) }
+  return m
+}

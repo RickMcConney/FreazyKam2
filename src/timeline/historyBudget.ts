@@ -41,16 +41,26 @@ export function evictHistorySegments<S extends { operations: AnyOperation[] }>(
 
   // Each history-only array → the index of the NEWEST snapshot holding it. Counted once
   // however many snapshots share it.
-  const newest = new Map<MotionSegment[], number>()
-  let total = 0
+  //
+  // Walked per distinct OPERATIONS ARRAY, not per snapshot: a path-only edit never replaces
+  // that array, so most consecutive snapshots hold the very same one and walking each of
+  // them re-counted the same ops up to 500 times on every recorded step. The arrays are
+  // taken in order of first appearance, which is the order the per-snapshot walk first met
+  // each segments array in, so ties in the age sort below break the same way.
+  const arrayNewest = new Map<AnyOperation[], number>()
   for (let i = 0; i < snapshots.length; i++) {
     const snap = snapshots[i]
-    if (!snap) continue
-    for (const op of snap.operations) {
+    if (snap) arrayNewest.set(snap.operations, i)
+  }
+  const newest = new Map<MotionSegment[], number>()
+  let total = 0
+  for (const [ops, i] of arrayNewest) {
+    for (const op of ops) {
       const segs = op.segments
       if (op.type === 'gcode' || !segs || segs.length === 0 || live.has(segs)) continue
-      if (!newest.has(segs)) total += segs.length
-      newest.set(segs, i)
+      const prev = newest.get(segs)
+      if (prev === undefined) { total += segs.length; newest.set(segs, i) }
+      else if (i > prev) newest.set(segs, i)
     }
   }
   if (total <= budget) return 0
@@ -74,13 +84,19 @@ export function evictHistorySegments<S extends { operations: AnyOperation[] }>(
     }
     return out
   }
+  // Likewise one stripped array per original array (null: nothing in it was evicted).
+  const rewritten = new Map<AnyOperation[], AnyOperation[] | null>()
   for (let i = 0; i < snapshots.length; i++) {
     const snap = snapshots[i]
-    if (!snap || !snap.operations.some((o) => victims.has(o.segments))) continue
-    snapshots[i] = {
-      ...snap,
-      operations: snap.operations.map((o) => (victims.has(o.segments) ? strip(o) : o)),
+    if (!snap) continue
+    let ops = rewritten.get(snap.operations)
+    if (ops === undefined) {
+      ops = snap.operations.some((o) => victims.has(o.segments))
+        ? snap.operations.map((o) => (victims.has(o.segments) ? strip(o) : o))
+        : null
+      rewritten.set(snap.operations, ops)
     }
+    if (ops) snapshots[i] = { ...snap, operations: ops }
   }
   return victims.size
 }

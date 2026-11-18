@@ -403,6 +403,10 @@ export function classifySubpaths(subpaths: Pt2[][], opts: { preserveOrder?: bool
   const reps: Pt2[] = subpaths.map((sp) =>
     interiorPoint([sp]) ?? [centroidX(sp), centroidY(sp)])
   const areas = subpaths.map((sp) => Math.abs(signedArea(sp)))
+  // Each ring's box, so a pair far apart is rejected in O(1). A point outside a ring's
+  // closed box cannot be inside the ring, so this is a pure filter — the answer is the
+  // same, without the |a|·|b| sharesVertex walk on every pair of different areas.
+  const boxes = subpaths.map((sp) => ringsBBox([sp]))
 
   // Direct parent of each ring: the SMALLEST ring that contains it. Smallest, not largest,
   // is what makes the depth count below a nesting level rather than "is enclosed at all".
@@ -414,9 +418,12 @@ export function classifySubpaths(subpaths: Pt2[][], opts: { preserveOrder?: bool
       // point test alone inverts nested rings: the stand-in point for a ring that HAS a
       // child can legitimately sit inside that child, which then reads as the parent.
       if (areas[i] <= areas[j]) continue
-      // Loops touching at a vertex are siblings (e.g. letter K arms), not holes.
-      if (sharesVertex(subpaths[j], subpaths[i])) continue
+      const b = boxes[i]
+      if (!b || reps[j][0] < b.minX || reps[j][0] > b.maxX || reps[j][1] < b.minY || reps[j][1] > b.maxY) continue
       if (!pointInPolygon(reps[j][0], reps[j][1], subpaths[i])) continue
+      // Loops touching at a vertex are siblings (e.g. letter K arms), not holes. Last:
+      // it is the O(|a|·|b|) test, and every filter here is order-independent.
+      if (sharesVertex(subpaths[j], subpaths[i])) continue
       if (parent[j] === -1 || areas[i] < areas[parent[j]]) parent[j] = i
     }
   }

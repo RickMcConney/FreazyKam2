@@ -178,12 +178,17 @@ class BitGrid {
   /** Each row's longest run of clear cells, or -1 once a write has made it stale. */
   private readonly freeRun: Int32Array
 
-  constructor(cols: number, rows: number) {
+  constructor(cols: number, rows: number, from?: BitGrid) {
     this.cols = cols
     this.rows = rows
     this.wpr = (cols + 31) >> 5
-    this.bits = new Uint32Array(this.wpr * rows)
-    this.freeRun = new Int32Array(rows).fill(-1)
+    this.bits = from ? from.bits.slice() : new Uint32Array(this.wpr * rows)
+    this.freeRun = from ? from.freeRun.slice() : new Int32Array(rows).fill(-1)
+  }
+
+  /** An independent copy: same cells, same cached runs. */
+  clone(): BitGrid {
+    return new BitGrid(this.cols, this.rows, this)
   }
 
   /**
@@ -680,18 +685,23 @@ export function nest(items: NestItem[], params: NestParams, onPass?: (done: numb
   const rad = Math.max(1, Math.ceil(params.spacingMM / res + 1.5))
 
   // A fresh sheet with everything already spoken for stamped into it. One per
-  // pack pass, since a pass fills its own grid up.
+  // pack pass, since a pass fills its own grid up — but the obstacles are the same for
+  // every pass, so they are rasterised and stamped ONCE and each pass gets a copy. (They
+  // were re-rasterised for each of up to 18 passes, and again on every sheet.)
+  let stamped: BitGrid | null = null
   const freshGrid = (): BitGrid => {
-    const g = new BitGrid(cols, rows)
-    for (const obstacle of obstacles ?? []) {
-      const bb = ringsBBox(usableRings(obstacle))
-      if (!bb) continue
-      const col0 = Math.floor(bb.minX / res)
-      const row0 = Math.floor(bb.minY / res)
-      const local = translateRings(obstacle, -col0 * res, -row0 * res)
-      stampDilated(g, rasterizeMask(local, res, mode), col0, row0, rad)
+    if (!stamped) {
+      stamped = new BitGrid(cols, rows)
+      for (const obstacle of obstacles ?? []) {
+        const bb = ringsBBox(usableRings(obstacle))
+        if (!bb) continue
+        const col0 = Math.floor(bb.minX / res)
+        const row0 = Math.floor(bb.minY / res)
+        const local = translateRings(obstacle, -col0 * res, -row0 * res)
+        stampDilated(stamped, rasterizeMask(local, res, mode), col0, row0, rad)
+      }
     }
-    return g
+    return stamped.clone()
   }
 
   // Sorted by area, biggest first — measured on the mask, so it is the area that
@@ -1340,10 +1350,8 @@ export function groupPathsForNesting(paths: NestablePath[], tolerance = 0.1): Ne
   // nested as a part of its own, while the longer strokes of the same label found an
   // interior span and rode with their part. A point ON the stroke stands for it.
   const probes = groups.map((g) => interiorPoint(g.rings) ?? strokePoint(g.rings))
-  const areas = groups.map((g) => {
-    const bb = ringsBBox(g.rings)
-    return bb ? (bb.maxX - bb.minX) * (bb.maxY - bb.minY) : 0
-  })
+  const boxes = groups.map((g) => ringsBBox(g.rings))
+  const areas = boxes.map((bb) => bb ? (bb.maxX - bb.minX) * (bb.maxY - bb.minY) : 0)
 
   // Each group joins the SMALLEST group that contains it. For plain nesting the
   // choice does not show — a chain collapses to its root below either way — but
@@ -1357,6 +1365,9 @@ export function groupPathsForNesting(paths: NestablePath[], tolerance = 0.1): Ne
     let bestJ = -1
     for (let j = 0; j < groups.length; j++) {
       if (j === i || areas[j] <= areas[i]) continue
+      // A probe outside j's box is outside j: skip the full crossing test over its rings.
+      const bb = boxes[j]
+      if (!bb || probe[0] < bb.minX || probe[0] > bb.maxX || probe[1] < bb.minY || probe[1] > bb.maxY) continue
       if (!insideEvenOdd(probe[0], probe[1], groups[j].rings)) continue
       if (bestJ < 0 || areas[j] < areas[bestJ]) bestJ = j
     }
