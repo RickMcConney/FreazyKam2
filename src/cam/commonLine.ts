@@ -33,7 +33,7 @@
 //
 // Straight segments only: a curve arrives as its flattening. CNC mm; winding is free.
 
-import type { Pt2 } from './pathFlattener'
+import { ptSegDist, type Pt2 } from './pathFlattener'
 
 /** The most two borders may differ by and still be one physical line, whatever the user's tolerance. */
 export const MAX_PHYSICAL_COINCIDENCE_MM = 1e-3
@@ -154,12 +154,7 @@ function locate(p: Pt2, poly: readonly Pt2[], tol: number): Location {
   return inside ? 'inside' : 'outside'
 }
 
-function pointSegDist(p: Pt2, a: Pt2, b: Pt2): number {
-  const ab = sub(b, a)
-  const l2 = dot(ab, ab)
-  if (l2 === 0) return dist(p, a)
-  return dist(p, add(a, mul(ab, clamp01(dot(sub(p, a), ab) / l2))))
-}
+const pointSegDist = (p: Pt2, a: Pt2, b: Pt2): number => ptSegDist(p[0], p[1], a[0], a[1], b[0], b[1])
 
 // ─── Tolerances ───────────────────────────────────────────────────────────────
 

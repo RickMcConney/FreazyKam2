@@ -25,7 +25,7 @@
 import type { MotionSegment } from '../store/toolpathStore'
 import type { Tool } from '../store/toolStore'
 import { flattenPath, isOpenSubpath, type Pt2 } from './pathFlattener'
-import { zPasses } from './geom'
+import { zPasses, arcLengths } from './geom'
 
 export interface FluteBreakpoint {
   /** Position along the path, 0 = its start, 1 = its end. */
@@ -173,9 +173,7 @@ function thin3d(pts: Pt3[], tol: number): Pt3[] {
  * drawn vertex, every breakpoint, and for a smooth profile a sample every SMOOTH_STEP_MM.
  */
 function sampleSubpath(sub: Pt2[], pts: FluteBreakpoint[], tangents: number[] | null, depthMM: number): { x: number; y: number; d: number }[] {
-  const cum = [0]
-  for (let i = 1; i < sub.length; i++) cum.push(cum[i - 1] + Math.hypot(sub[i][0] - sub[i - 1][0], sub[i][1] - sub[i - 1][1]))
-  const L = cum[cum.length - 1]
+  const { lens: cum, total: L } = arcLengths(sub)
   if (L < 1e-6) return []
   const at = new Set<number>(cum)
   for (const p of pts) at.add(p.t * L)

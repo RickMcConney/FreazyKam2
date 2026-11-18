@@ -1,7 +1,7 @@
 // Shared widgets used by the operation forms (extracted from MachinePanel — tofix.md R1).
 // ─── Shared sub-components ───────────────────────────────────────────────────
 import { createContext, useContext, useEffect, useMemo, useState, useId } from 'react'
-import { NumericInput } from '../../components/NumericInput'
+import { LengthField } from '../../components/LengthField'
 import { NUMERIC_HINT } from '../../components/parseNumeric'
 import { ICON } from '../../theme'
 import { AlertCircle, AlertTriangle, Loader2, RotateCcw, Square } from 'lucide-react'
@@ -9,14 +9,14 @@ import { abortGeneration } from '../../workers/abortGeneration'
 import { useUIStore } from '../../store/uiStore'
 import type { Tool } from '../../store/toolStore'
 import { ToolPicker } from './ToolPicker'
-import { useWorkpieceStore, fromMM, toMM, fmtLen, lenValue, displayFieldBounds } from '../../store/workpieceStore'
+import { useWorkpieceStore, fmtLen, lenValue } from '../../store/workpieceStore'
 import { useGenProgressStore } from '../../store/genProgressStore'
 import { useToolpathStore } from '../../store/toolpathStore'
 import { effectiveStepDownMM } from '../../cam/feeds'
 import { resolveStartZ, listFlatFloorOps, type StartFrom, type StartZ } from '../../cam/startHeight'
 import { usePathsStore, type ImportedPath } from '../../store/pathsStore'
 import { useFormDefaultsStore } from '../../store/formDefaultsStore'
-import { runBatchGenerate, type BatchGenerateArgs } from './batchGenerate'
+import { runBatchGenerate, singleGenerateArgs, type BatchGenerateArgs, type SingleGenerate } from './batchGenerate'
 import { useExcludedPaths, togglePathInSelection, watchSelectionForExclusions, placeExcluded, type ExcludedPath } from './pathExclusion'
 
 // Tracks operations created by this form instance, keyed by target (path/group id), so a
@@ -316,20 +316,9 @@ export function LengthInput({ id, valueMM, onChangeMM, minMM, maxMM, stepMM = 0.
   stepMM?: number
   className?: string
 }) {
-  const units = useWorkpieceStore((s) => s.units)
-  const bounds = displayFieldBounds(units, { min: minMM, max: maxMM, step: stepMM })
   return (
-    <NumericInput
-      id={id}
-      value={fromMM(valueMM, units)}
-      min={bounds.min}
-      max={bounds.max}
-      step={bounds.step}
-      unit={units}
-      onChange={(v) => onChangeMM(toMM(v, units))}
-      className={className ?? FIELD_CLS}
-      title={NUMERIC_HINT}
-    />
+    <LengthField id={id} valueMM={valueMM} onChangeMM={onChangeMM} minMM={minMM} maxMM={maxMM} stepMM={stepMM}
+      className={className ?? FIELD_CLS} title={NUMERIC_HINT} />
   )
 }
 
@@ -689,6 +678,23 @@ export function useBatchGenerate<F extends object>(type: BatchGenerateArgs['type
     }
   }
   return { generating, errorMsg, generate }
+}
+
+/**
+ * The Generate of a form that makes ONE operation — Surface, Photo V-Carve, 3D Profile.
+ * It is a batch of one through the same `runBatchGenerate`: those three forms each wrote
+ * out the add/update, remember, generate, report and discard steps by hand, and had
+ * drifted (one saved its defaults after a failure, two only on success; one could leave
+ * the button spinning; none checked a Stop pressed between jobs).
+ *
+ * `key` is what the form session remembers the op by (the model or image path, or a
+ * fixed key for an op with no path). `settings` must not carry `name`: the name is
+ * written only where it is still the automatic one, never over one the user typed.
+ */
+export function useSingleGenerate<F extends object>(type: BatchGenerateArgs['type'], formKey: string, session: BatchGenerateArgs['session']) {
+  const { generating, errorMsg, generate } = useBatchGenerate<F>(type, formKey)
+  const run = (a: SingleGenerate, form: F) => generate(singleGenerateArgs(a, session), form)
+  return { generating, errorMsg, generate: run }
 }
 
 /** The Generate button's words: an edited batch regenerates, a repeat click updates. */

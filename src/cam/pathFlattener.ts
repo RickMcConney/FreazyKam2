@@ -3,13 +3,30 @@
 
 export type Pt2 = [number, number]
 
-function dist(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+// THE point-to-segment distance. Here rather than in geom.ts (which re-exports both)
+// because this is the leaf module: geom imports the flattener, so the flattener's own
+// Douglas–Peucker and arc fit could not import from geom. Eight hand copies each guarded a
+// zero-length segment their own way (=== 0, < 1e-20, < 1e-18, > 1e-12, || 1); one guard now.
+
+/** Squared distance from point (px,py) to segment (ax,ay)-(bx,by). */
+export function ptSegDistSq(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const abx = bx - ax, aby = by - ay
+  const len2 = abx * abx + aby * aby
+  if (len2 === 0) return (px - ax) ** 2 + (py - ay) ** 2
+  const t = Math.max(0, Math.min(1, ((px - ax) * abx + (py - ay) * aby) / len2))
+  return (px - ax - t * abx) ** 2 + (py - ay - t * aby) ** 2
+}
+
+/** Distance from point (px,py) to segment (ax,ay)-(bx,by). */
+export function ptSegDist(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
   const dx = bx - ax, dy = by - ay
   const len2 = dx * dx + dy * dy
-  if (len2 < 1e-20) return Math.hypot(px - ax, py - ay)
+  if (len2 === 0) return Math.hypot(px - ax, py - ay)
   const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2))
   return Math.hypot(px - ax - t * dx, py - ay - t * dy)
 }
+
+const dist = ptSegDist
 
 function cubicFlat(
   p0x: number, p0y: number, p1x: number, p1y: number,

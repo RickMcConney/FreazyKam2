@@ -14,7 +14,7 @@
 // positive rotation about +Y.
 import * as THREE from 'three'
 import type { Tool, ToolType } from '../store/toolStore'
-import { toolProfileHeightMM, vProfileHeightMM, type FluteHelix } from '../cam/geom'
+import { toolProfileHeightMM, vProfileHeightMM, arcLengths, type FluteHelix } from '../cam/geom'
 
 // Helix angle of spiral flutes. Which way they twist is the bit's FluteHelix (read from its
 // name): an UPCUT is right-handed — a flute climbs CCW seen from above, so under M3 (CW) it
@@ -105,10 +105,7 @@ export function cutterOutline(tool: Tool, r: number, fluteTop: number): { tip: [
     const d = r * i / N
     dense.push([d, toolProfileHeightMM(tool, d)])
   }
-  const cum = [0]
-  for (let i = 1; i <= N; i++) {
-    cum.push(cum[i - 1] + Math.hypot(dense[i][0] - dense[i - 1][0], dense[i][1] - dense[i - 1][1]))
-  }
+  const cum = arcLengths(dense).lens
   const flatEnd = dense[N][1] < 1e-9
   const rows = flatEnd ? 6 : 40
   const tip: [number, number][] = []

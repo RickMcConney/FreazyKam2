@@ -15,7 +15,7 @@
 //
 // Pure, no DOM: the caller decodes the picture (io/imageLuminance.ts) on the main thread.
 
-import type { Pt2 } from '../cam/pathFlattener'
+import { ptSegDist, type Pt2 } from '../cam/pathFlattener'
 import type { PhotoImage } from '../cam/photoVcarve'
 import type { RectInfo } from '../canvas/selectionUtils'
 import { traceIsolines } from '../cam/marchingSquares'
@@ -176,13 +176,7 @@ function ringArea(r: Pt2[]): number {
   return a / 2
 }
 
-function distToSeg(p: Pt2, a: Pt2, b: Pt2): number {
-  const dx = b[0] - a[0], dy = b[1] - a[1]
-  const len2 = dx * dx + dy * dy
-  if (len2 < 1e-18) return Math.hypot(p[0] - a[0], p[1] - a[1])
-  const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2))
-  return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy)
-}
+const distToSeg = (p: Pt2, a: Pt2, b: Pt2): number => ptSegDist(p[0], p[1], a[0], a[1], b[0], b[1])
 
 // Open Douglas–Peucker over pts[i0..i1], marking the kept indices.
 function dp(pts: Pt2[], i0: number, i1: number, tol: number, keep: Uint8Array): void {

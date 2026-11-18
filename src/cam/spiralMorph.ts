@@ -12,7 +12,7 @@
 // climb/conventional upstream and we never flip it.
 
 import { stripClosingDuplicate, pointInPolygon, ringPerimeter } from './geom'
-import { signedArea, type Pt2 } from './pathFlattener'
+import { signedArea, ptSegDist, type Pt2 } from './pathFlattener'
 
 // Resample a closed loop to exactly `n` points equally spaced by arc length.
 // The first sample is the point whose direction from `center` is nearest
@@ -86,12 +86,7 @@ function distToBoundary(px: number, py: number, poly: Pt2[]): number {
   let best = Infinity
   for (let i = 0; i < poly.length; i++) {
     const a = poly[i], b = poly[(i + 1) % poly.length]
-    const dx = b[0] - a[0], dy = b[1] - a[1]
-    const l2 = dx * dx + dy * dy
-    let t = l2 > 1e-12 ? ((px - a[0]) * dx + (py - a[1]) * dy) / l2 : 0
-    t = t < 0 ? 0 : t > 1 ? 1 : t
-    const ex = px - (a[0] + t * dx), ey = py - (a[1] + t * dy)
-    best = Math.min(best, Math.hypot(ex, ey))
+    best = Math.min(best, ptSegDist(px, py, a[0], a[1], b[0], b[1]))
   }
   return best
 }

@@ -1,5 +1,5 @@
 // ─── 3D Profile form ──────────────────────────────────────────────────────────
-import { FormShell, StepDownField, GenerateBtn, useSessionOps, toolsOfType, pickToolId, LengthInput, FormError, useGenerateError, discardFailedOps, ToggleRow } from './shared'
+import { FormShell, StepDownField, GenerateBtn, useSessionOps, toolsOfType, pickToolId, LengthInput, FormError, useSingleGenerate, ToggleRow } from './shared'
 import { ToolPicker } from './ToolPicker'
 import { useState, useEffect, useMemo } from 'react'
 import { NumericInput } from '../../components/NumericInput'
@@ -7,15 +7,13 @@ import { NUMERIC_HINT } from '../../components/parseNumeric'
 import { ICON } from '../../theme'
 import { AlertCircle } from 'lucide-react'
 import { useToolStore, type PassDirection } from '../../store/toolStore'
-import { useToolpathStore, type AnyOperation, type Profile3dOperation } from '../../store/toolpathStore'
+import { type Profile3dOperation } from '../../store/toolpathStore'
 import { useFormDefaultsStore, mergeWithDefaults } from '../../store/formDefaultsStore'
 import { usePathsStore } from '../../store/pathsStore'
 import { pathCell, sheetName, useSheetLayout } from '../../canvas/useSheets'
 import { sameCell } from '../../cam/sheets'
 import { modelLabels, pickModelPathId } from './modelPick'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
-import { isWorkCancelled } from '../../workers/workerClient'
-import { generateOperation } from '../../cam/opJob'
 import { effectiveStepDownMM } from '../../cam/feeds'
 import { profile3dDepthMM, modelBelowCut, MODEL_BELOW_CUT_MSG } from '../../cam/profile3d'
 import { enclosingBoundaries } from '../../cam/boundaryCandidates'
@@ -32,10 +30,7 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
   // Individual selectors, not whole-store destructuring — see DrillForm.
   const tools = useToolStore((s) => s.tools)
   const paths = usePathsStore((s) => s.paths)
-  const addOperation = useToolpathStore((s) => s.addOperation)
-  const updateOperation = useToolpathStore((s) => s.updateOperation)
   const load = useFormDefaultsStore((s) => s.load)
-  const save = useFormDefaultsStore((s) => s.save)
   const autoFeedEnabled = useWorkpieceStore((s) => s.autoFeedEnabled)
   const thicknessMM = useWorkpieceStore((s) => s.thicknessMM)
   const units = useWorkpieceStore((s) => s.units)
@@ -82,11 +77,10 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
       // '' is "no roughing pass" — an explicit choice, not a stale id.
       roughingToolId: base.roughingToolId === '' ? '' : pickToolId(base.roughingToolId, roughTools) }
   })
-  const [generating, setGenerating] = useState(false)
   // The tolerance the checkbox turns back on at — the last one typed, this session.
   const [skipTolLast, setSkipTolLast] = useState(() => form.skipFlatTolMM > 0 ? form.skipFlatTolMM : DEFAULT_SKIP_FLAT_TOL_MM)
-  const [errorMsg, reportError, clearError] = useGenerateError()
   const session = useSessionOps()
+  const { generating, errorMsg, generate } = useSingleGenerate<Profile3dFormState>('profile3d', 'profile3d', session)
 
   // Keep the model in step: a model clicked on the canvas while the form is open becomes the
   // one cut (not while editing an operation — that cuts its own model), and a model deleted
@@ -139,46 +133,11 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
 
   function handleGenerate() {
     if (!selectedTool || !selectedPath || !hasModel) return
-    setGenerating(true)
-    clearError()
-    // Re-Generate for a model this form already generated for updates that op in place.
-    const existingId = editOp ? undefined : session.liveOpId(form.pathId)
-    const updateId = editOp?.id ?? existingId
-
-    // WRITE THE SETTINGS, THEN GENERATE FROM THE OPERATION — see PhotoVCarveForm. This
-    // form generated first and stored afterwards, so an edit that picked a different model
-    // cut it onto an operation still naming the old one.
     // The op's settings, written the same way whether it is new or edited: an unused
     // roughing or boundary field is cleared, not left behind from an earlier setting.
-    const settings = profile3dOpFields(form, selectedPath, selectedTool, roughingTool)
-    let opId: string
-    if (updateId) {
-      updateOperation(updateId, { ...settings, status: 'generating' } as Partial<AnyOperation>)
-      opId = updateId
-    } else {
-      opId = addOperation({ ...settings, type: 'profile3d' })
-      // Remembered before generating, so a re-Generate after a cancel updates this op
-      // rather than adding a second one.
-      session.remember(form.pathId, opId)
-      updateOperation(opId, { status: 'generating' })
-    }
-
-    setTimeout(async () => {
-      try {
-        // The STL decode, the outline check and the roughing parameters all live in the
-        // shared call (cam/opJob), exactly as an automatic regenerate runs them.
-        await generateOperation(opId)
-        save('profile3d', form)
-      } catch (err) {
-        if (!isWorkCancelled(err)) {
-          reportError(opId, err)
-          // A Generate that failed leaves nothing behind — but only an op this click made.
-          if (!updateId) discardFailedOps([opId])
-        }
-      } finally {
-        setGenerating(false)
-      }
-    }, 0)
+    // Re-Generate for a model this form already generated for updates that op in place.
+    const { name, ...settings } = profile3dOpFields(form, selectedPath, selectedTool, roughingTool)
+    void generate({ key: form.pathId, name, settings, editOp }, form)
   }
 
   const depthCutMM = profile3dDepthMM(form.maxDepthMM, thicknessMM)

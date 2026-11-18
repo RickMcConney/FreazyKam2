@@ -91,6 +91,8 @@ import {
 } from './polyOps'
 import { seatHub, spokeWindows, pinRing, pinRingHoles, type HubFit, type PinRing } from './spokedWheel'
 import { getTreatableCorners, applyCornerTreatments } from '../tools/cornerTreatment'
+import { ptSegDist } from '../cam/pathFlattener'
+import { arcLengths } from '../cam/geom'
 
 export type EscapementType = 'recoil' | 'deadbeat'
 
@@ -681,10 +683,7 @@ function deadFace(spec: EscapementSpec): { total: number; landing: number; impul
     const { pts, corner } = actingFace(spec, side)
     const end = clamp(corner, 1, pts.length - 1)
     // Arc length along the locking face, deep end to the corner's round.
-    const at: number[] = [0]
-    for (let i = 1; i <= end; i++) {
-      at.push(at[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]))
-    }
+    const at = arcLengths(pts.slice(0, end + 1)).lens
     const total = at[end]
     // Where the tooth rests at the landing: its acting point is `dropLock` deep
     // along the dead arc, and the face is one tip round off that point — so the
@@ -2839,11 +2838,7 @@ function measureToothClearance(spec: EscapementSpec): ToothClearance {
   return { ...best, clearance: Math.max(0, best.clearance) }
 }
 
-function segDist(p: Pt, a: Pt, b: Pt): number {
-  const dx = b[0] - a[0], dy = b[1] - a[1]
-  const u = clamp(((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy || 1), 0, 1)
-  return Math.hypot(a[0] + u * dx - p[0], a[1] + u * dy - p[1])
-}
+const segDist = (p: Pt, a: Pt, b: Pt): number => ptSegDist(p[0], p[1], a[0], a[1], b[0], b[1])
 
 /** Spoke and rim widths are proportions of the wheel — an escape wheel has no
  *  module to state them in, and nobody wants two more fields to set them. */

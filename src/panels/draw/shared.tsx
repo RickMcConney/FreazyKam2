@@ -7,8 +7,9 @@
 // the '/' keystroke and a typed fraction can never be entered.
 
 import { useId } from 'react'
-import { fromMM, toMM, displayFieldBounds } from '../../store/workpieceStore'
+import type { Units } from '../../store/workpieceStore'
 import { NumericInput } from '../../components/NumericInput'
+import { LengthField } from '../../components/LengthField'
 // The unit column and the slider readout are shared with PropertiesPanel, so
 // they live outside this file — re-exported here so a draw panel still has one
 // place to import a row part from.
@@ -30,25 +31,12 @@ export function NumInput({ label, valueMM, units, onChange, min = 0.1, max, step
   label: string; valueMM: number; units: string; onChange: (mm: number) => void
   min?: number; max?: number; step?: number; integer?: boolean
 }) {
-  const display = integer ? valueMM : fromMM(valueMM, units as 'mm' | 'in')
-  const bounds = displayFieldBounds(units as 'mm' | 'in', { min, max, step, integer })
   const id = useId()
-
   return (
     <div className="flex items-center gap-1.5">
       <label className={labelCls} htmlFor={id}>{label}</label>
-      <NumericInput
-        id={id}
-        value={display}
-        min={bounds.min}
-        max={bounds.max}
-        step={bounds.step}
-        integer={integer}
-        unit={integer ? undefined : units}
-        unitCol
-        onChange={(v) => onChange(integer ? v : toMM(v, units as 'mm' | 'in'))}
-        className={inputCls}
-      />
+      <LengthField id={id} valueMM={valueMM} units={units as Units} onChangeMM={onChange}
+        minMM={min} maxMM={max} stepMM={step} integer={integer} unitCol className={inputCls} />
     </div>
   )
 }

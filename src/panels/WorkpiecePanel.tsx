@@ -19,10 +19,10 @@ import {
   feedUnit,
   type FeedTime,
   rapidRateMmMin,
-  displayFieldBounds,
 } from '../store/workpieceStore'
 import { SPINDLE_INFO, customDialValid, spindleHasDial, type SpindleType } from '../store/spindle'
 import { NumericInput } from '../components/NumericInput'
+import { LengthField } from '../components/LengthField'
 import { NUMERIC_HINT } from '../components/parseNumeric'
 import { rigidityInfo } from '../rigidity'
 import { exportSettings, pickSettingsFile } from '../io/settingsFile'
@@ -48,22 +48,18 @@ function DimInput({
   onChange: (mm: number) => void
   min?: number
 }) {
-  const displayVal = fromMM(valueMM, units)
-  // `min` is MM (0.1 mm was a 0.1-INCH, 2.54 mm floor on stock thickness in inch mode).
-  const bounds = displayFieldBounds(units, { min })
   const rowId = useId()
 
   return (
     <div className="flex items-center gap-2 mb-1.5">
       <label htmlFor={rowId} className="text-gray-500 dark:text-neutral-400 text-body w-24 shrink-0">{label}</label>
-      <NumericInput
+      <LengthField
         id={rowId}
-        value={displayVal}
-        min={bounds.min}
-        step={bounds.step}
+        valueMM={valueMM}
+        units={units}
+        onChangeMM={onChange}
+        minMM={min}
         title={NUMERIC_HINT}
-        unit={units}
-        onChange={(v) => onChange(toMM(v, units))}
         className="w-full bg-gray-50 dark:bg-neutral-900 border border-gray-400 dark:border-neutral-600 rounded px-2 py-1 text-body text-gray-900 dark:text-neutral-100 focus:border-blue-500 focus:outline-none font-mono"
       />
     </div>

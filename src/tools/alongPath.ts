@@ -23,6 +23,7 @@
 
 import { flattenPath, signedArea, type Pt2 } from '../cam/pathFlattener'
 import { parseD, stringifyD, applyMat } from '../importers/svgImporter'
+import { arcLengths } from '../cam/geom'
 
 export type AlongSide = 'out' | 'on' | 'in'
 
@@ -72,9 +73,7 @@ export function guideOf(d: string): Guide | null {
     if (Math.hypot(start.p[0] - pts[0][0], start.p[1] - pts[0][1]) > 1e-9) pts.unshift(start.p)
     pts.push(pts[0])
   }
-  const lens = [0]
-  for (let i = 1; i < pts.length; i++) lens.push(lens[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]))
-  const total = lens[lens.length - 1]
+  const { lens, total } = arcLengths(pts)
   if (total < 1e-6) return null
   return { pts, lens, total, closed }
 }

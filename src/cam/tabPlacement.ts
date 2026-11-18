@@ -12,6 +12,7 @@
 // drawn on top of each other.
 
 import type { Pt2 } from './pathFlattener'
+import { arcLengths } from './geom'
 
 // A vertex is a corner when the outline turns by more than this there. A flattened curve
 // turns by only a few degrees per vertex at 0.05 mm, so this finds the drawn corners and
@@ -43,9 +44,7 @@ interface Measured { len: number; closed: boolean; corners: number[] }
 
 function measure(pts: Pt2[]): Measured {
   const n = pts.length
-  const cum = [0]
-  for (let i = 1; i < n; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]))
-  const len = cum[n - 1] ?? 0
+  const { lens: cum, total: len } = arcLengths(pts)
   const closed = n > 2 && Math.hypot(pts[0][0] - pts[n - 1][0], pts[0][1] - pts[n - 1][1]) < 1e-6
   const corners: number[] = []
   const cosMax = Math.cos((CORNER_DEG * Math.PI) / 180)

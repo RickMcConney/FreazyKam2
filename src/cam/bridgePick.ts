@@ -12,7 +12,7 @@
 // Pure, and the index is built once per state: a nest is thousands of outlines, and a drag
 // asks again on every mouse move.
 import { flattenPath } from './pathFlattener'
-import { pointInPolygon } from './geom'
+import { pointInPolygon, arcLengths } from './geom'
 import { cellOfPoint, cellOffset, type Stock } from './sheets'
 import { ringCorners, nearCorner, cornerClearMM, OVERLAP_MM, FRAME_STUB_MM, MAX_JOIN_MM, type BridgeLine } from './bridges'
 
@@ -62,12 +62,9 @@ export function buildHoldIndex(parts: { id: string; d: string }[], stock: Stock,
       const pts = r.slice()
       const n = pts.length
       if (Math.hypot(pts[0][0] - pts[n - 1][0], pts[0][1] - pts[n - 1][1]) > 1e-6) pts.push(pts[0])
-      const cum = [0]
+      const cum = arcLengths(pts).lens
       let area = 0
-      for (let i = 1; i < pts.length; i++) {
-        cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]))
-        area += pts[i - 1][0] * pts[i][1] - pts[i][0] * pts[i - 1][1]
-      }
+      for (let i = 1; i < pts.length; i++) area += pts[i - 1][0] * pts[i][1] - pts[i][0] * pts[i - 1][1]
       // Outward from a part; INTO a hole.
       const ccw = area > 0
       return { pts, cum, len: cum[cum.length - 1], out: (ccw !== hole ? 1 : -1) as 1 | -1 }

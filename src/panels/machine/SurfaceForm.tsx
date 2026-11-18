@@ -1,12 +1,10 @@
 // ─── Surface form ─────────────────────────────────────────────────────────────
-import { FormShell, ToolSelector, DepthRow, GenerateBtn, useSessionOps, toolsOfType, pickToolId, FormError, useGenerateError, discardFailedOps } from './shared'
+import { FormShell, ToolSelector, DepthRow, GenerateBtn, useSessionOps, toolsOfType, pickToolId, FormError, useSingleGenerate } from './shared'
 import { useState } from 'react'
 import { useToolStore } from '../../store/toolStore'
-import { useToolpathStore, type AnyOperation, type SurfaceOperation } from '../../store/toolpathStore'
+import { type SurfaceOperation } from '../../store/toolpathStore'
 import { useFormDefaultsStore, mergeWithDefaults } from '../../store/formDefaultsStore'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
-import { isWorkCancelled } from '../../workers/workerClient'
-import { generateOperation } from '../../cam/opJob'
 import { seedStepDownMM } from '../../cam/feeds'
 import { SURFACE_TOOL_TYPES, surfaceFormDefaults } from './opDefaults'
 
@@ -26,10 +24,7 @@ export function SurfaceForm({ onClose, editOp }: { onClose: () => void; editOp?:
   const widthMM = useWorkpieceStore((s) => s.widthMM)
   const heightMM = useWorkpieceStore((s) => s.heightMM)
   const units = useWorkpieceStore((s) => s.units)
-  const addOperation = useToolpathStore((s) => s.addOperation)
-  const updateOperation = useToolpathStore((s) => s.updateOperation)
   const load = useFormDefaultsStore((s) => s.load)
-  const save = useFormDefaultsStore((s) => s.save)
 
   // A flat face across the whole slab — see SURFACE_TOOL_TYPES.
   const endMills = toolsOfType(tools, SURFACE_TOOL_TYPES)
@@ -41,9 +36,8 @@ export function SurfaceForm({ onClose, editOp }: { onClose: () => void; editOp?:
     } : mergeWithDefaults(load('surface'), surfaceFormDefaults(defaultTool), tools)
     return { ...base, stepDownManual: editOp ? base.stepDownManual : false, toolId: pickToolId(base.toolId, endMills) }
   })
-  const [generating, setGenerating] = useState(false)
-  const [errorMsg, reportError, clearError] = useGenerateError()
   const session = useSessionOps()
+  const { generating, errorMsg, generate } = useSingleGenerate<SurfaceFormState>('surface', 'surface', session)
   const selectedTool = tools.find((t) => t.id === form.toolId)
   const updating = !editOp && !!session.liveOpId('surface')
 
@@ -56,54 +50,18 @@ export function SurfaceForm({ onClose, editOp }: { onClose: () => void; editOp?:
     setForm((f) => ({ ...f, [k]: v }))
   }
 
-  async function handleGenerate() {
-    clearError()
+  function handleGenerate() {
     if (!selectedTool) return
-    setGenerating(true)
-    if (editOp) {
-      updateOperation(editOp.id, {
-        toolId: form.toolId, depthMM: form.depthMM, stepDownMM: form.stepDownMM, stepDownManual: form.stepDownManual,
-        stepoverPercent: form.stepoverPercent, passAngleDeg: form.passAngleDeg, status: 'generating',
-      } as Partial<AnyOperation>)
-      try {
-        // Generated from the settings just written — the same call an automatic
-        // regenerate makes (cam/opJob).
-        await generateOperation(editOp.id)
-      } catch (err) {
-        if (!isWorkCancelled(err)) reportError(editOp.id, err)
-      }
-      setGenerating(false)
-      save('surface', form)
-      return
-    }
     // Re-Generate after this form already made a surface op updates it in place.
-    const existingId = session.liveOpId('surface')
-    const name = `Surface (${selectedTool.name})`
-    const opId = existingId ?? addOperation({
-      name,
-      type: 'surface',
-      toolId: form.toolId,
-      depthMM: form.depthMM,
-      stepDownMM: form.stepDownMM,
-      stepDownManual: form.stepDownManual,
-      stepoverPercent: form.stepoverPercent,
-      passAngleDeg: form.passAngleDeg,
-    })
-    if (!existingId) session.remember('surface', opId)
-    updateOperation(opId, existingId ? {
-      name, toolId: form.toolId, depthMM: form.depthMM, stepDownMM: form.stepDownMM, stepDownManual: form.stepDownManual,
-      stepoverPercent: form.stepoverPercent, passAngleDeg: form.passAngleDeg, status: 'generating',
-    } as Partial<AnyOperation> : { status: 'generating' })
-    try {
-      await generateOperation(opId)
-    } catch (err) {
-      if (!isWorkCancelled(err)) reportError(opId, err)
-    }
-    // A Generate that failed leaves nothing behind — but only for the op this click
-    // created; a re-Generate over an existing one keeps it and its error.
-    if (!existingId) discardFailedOps([opId])
-    setGenerating(false)
-    save('surface', form)
+    void generate({
+      key: 'surface',
+      name: `Surface (${selectedTool.name})`,
+      settings: {
+        toolId: form.toolId, depthMM: form.depthMM, stepDownMM: form.stepDownMM, stepDownManual: form.stepDownManual,
+        stepoverPercent: form.stepoverPercent, passAngleDeg: form.passAngleDeg,
+      },
+      editOp,
+    }, form)
   }
 
   return (

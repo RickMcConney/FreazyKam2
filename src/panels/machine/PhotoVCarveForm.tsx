@@ -1,16 +1,14 @@
 // ─── Photo V-Carve form ───────────────────────────────────────────────────────
-import { FormShell, ToolSelector, GenerateBtn, useSessionOps, StartRow, useStartZ, toolsOfType, pickToolId, LengthInput, FormError, useGenerateError, discardFailedOps } from './shared'
+import { FormShell, ToolSelector, GenerateBtn, useSessionOps, StartRow, useStartZ, toolsOfType, pickToolId, LengthInput, FormError, useSingleGenerate } from './shared'
 import { type StartFrom } from '../../cam/startHeight'
 import { useState, useEffect } from 'react'
 import { ICON } from '../../theme'
 import { AlertCircle } from 'lucide-react'
 import { useToolStore } from '../../store/toolStore'
-import { useToolpathStore, type AnyOperation, type PhotoVCarveOperation } from '../../store/toolpathStore'
+import { type PhotoVCarveOperation } from '../../store/toolpathStore'
 import { useFormDefaultsStore, mergeWithDefaults } from '../../store/formDefaultsStore'
 import { usePathsStore } from '../../store/pathsStore'
 import { useWorkpieceStore, fmtLen, lenValue } from '../../store/workpieceStore'
-import { isWorkCancelled } from '../../workers/workerClient'
-import { generateOperation } from '../../cam/opJob'
 import { extractRectInfo } from '../../canvas/selectionUtils'
 import { grooveWidthMM, lineSpacingMM } from '../../cam/photoVcarve'
 import { PHOTO_VCARVE_TOOL_TYPES, photoVcarveFormDefaults, norm180 } from './opDefaults'
@@ -29,10 +27,7 @@ export function PhotoVCarveForm({ onClose, editOp }: { onClose: () => void; edit
   // Individual selectors, not whole-store destructuring — see DrillForm.
   const tools = useToolStore((s) => s.tools)
   const paths = usePathsStore((s) => s.paths)
-  const addOperation = useToolpathStore((s) => s.addOperation)
-  const updateOperation = useToolpathStore((s) => s.updateOperation)
   const load = useFormDefaultsStore((s) => s.load)
-  const save = useFormDefaultsStore((s) => s.save)
   const units = useWorkpieceStore((s) => s.units)
 
   // V-bits only — see PHOTO_VCARVE_TOOL_TYPES.
@@ -58,9 +53,8 @@ export function PhotoVCarveForm({ onClose, editOp }: { onClose: () => void; edit
       ...(editOp ? {} : { startFrom: { mode: 'auto' as const } }),
     }
   })
-  const [generating, setGenerating] = useState(false)
-  const [errorMsg, reportError, clearError] = useGenerateError()
   const session = useSessionOps()
+  const { generating, errorMsg, generate } = useSingleGenerate<PhotoVCarveFormState>('photovcarve', 'photovcarve', session)
 
   // Saved defaults carry a path id from a previous session, which no longer exists — and
   // an image imported while this form is open should be picked up (same as Profile3dForm).
@@ -99,61 +93,18 @@ export function PhotoVCarveForm({ onClose, editOp }: { onClose: () => void; edit
 
   function handleGenerate() {
     if (!selectedTool || !selectedPath?.imageSrc) return
-    setGenerating(true)
-    clearError()
+    // Settings are written to the operation, then it is generated from them (cam/opJob) —
+    // the only order in which the toolpath is by construction what the operation says.
     // Re-Generate for an image this form already carved updates that op in place.
-    const existingId = editOp ? undefined : session.liveOpId(form.pathId)
-    const updateId = editOp?.id ?? existingId
-    const opName = `Photo V-Carve: ${selectedPath.name} (${selectedTool.name})`
-
-    // WRITE THE SETTINGS, THEN GENERATE FROM THE OPERATION — the order every other form
-    // uses, and the only one in which the toolpath is by construction what the operation
-    // says. This form used to generate first and store the settings afterwards, so an
-    // edit that picked a different image carved the new picture onto an operation still
-    // naming the old one, and the next automatic regenerate carved the old one again.
-    let opId: string
-    if (updateId) {
-      updateOperation(updateId, {
+    void generate({
+      key: form.pathId,
+      name: `Photo V-Carve: ${selectedPath.name} (${selectedTool.name})`,
+      settings: {
         toolId: form.toolId, pathId: form.pathId, angleDeg, passAngleDeg: form.passAngleDeg,
-        minDepthMM: form.minDepthMM, maxDepthMM: form.maxDepthMM,
-        startFrom: form.startFrom,
-        name: opName, status: 'generating',
-      } as Partial<AnyOperation>)
-      opId = updateId
-    } else {
-      opId = addOperation({
-        name: opName,
-        type: 'photovcarve',
-        toolId: form.toolId,
-        pathId: form.pathId,
-        angleDeg,
-        passAngleDeg: form.passAngleDeg,
-        minDepthMM: form.minDepthMM,
-        maxDepthMM: form.maxDepthMM,
-        startFrom: form.startFrom,
-      })
-      // Remembered before generating, so a re-Generate after a cancel updates this op
-      // rather than adding a second one.
-      session.remember(form.pathId, opId)
-      updateOperation(opId, { status: 'generating' })
-    }
-
-    setTimeout(async () => {
-      try {
-        // The start height, the image decode and the rectangle check all live in the
-        // shared call (cam/opJob), exactly as an automatic regenerate runs them.
-        await generateOperation(opId)
-        save('photovcarve', form)
-      } catch (err) {
-        if (!isWorkCancelled(err)) {
-          reportError(opId, err)
-          // A Generate that failed leaves nothing behind — but only an op this click made.
-          if (!updateId) discardFailedOps([opId])
-        }
-      } finally {
-        setGenerating(false)
-      }
-    }, 0)
+        minDepthMM: form.minDepthMM, maxDepthMM: form.maxDepthMM, startFrom: form.startFrom,
+      },
+      editOp,
+    }, form)
   }
 
   const canGenerate = !!selectedTool && selectedTool.type === 'vbit' && !!selectedPath?.imageSrc

@@ -38,8 +38,8 @@
 // off its guide.
 //
 // Pure, so it runs in the worker and under the node tests.
-import { flattenPath } from './pathFlattener'
-import { pointInPolygon } from './geom'
+import { flattenPath, ptSegDist } from './pathFlattener'
+import { pointInPolygon, arcLengths } from './geom'
 import type { MotionSegment } from '../store/toolpathStore'
 import { cellOfPoint, cellOffset, cellKey, type Cell } from './sheets'
 import { tabRampShape, type TabRamp, type RampShape } from './tabRamp'
@@ -47,6 +47,10 @@ import { tabRampShape, type TabRamp, type RampShape } from './tabRamp'
 /** One strip: its centreline from (x1, y1) to (x2, y2). `manual`: placed or moved BY HAND
  *  (click-to-place, a drag) — Apply re-lays the network round it and never replaces it. */
 export interface BridgeLine { x1: number; y1: number; x2: number; y2: number; manual?: true }
+
+/** Distance from (x, y) to a holding strip's centre line. */
+export const distToBridgeLine = (x: number, y: number, l: Pick<BridgeLine, 'x1' | 'y1' | 'x2' | 'y2'>): number =>
+  ptSegDist(x, y, l.x1, l.y1, l.x2, l.y2)
 
 export interface BridgeSet {
   lines: BridgeLine[]
@@ -180,9 +184,7 @@ export function targetSpots(rings: [number, number][][], count: number, clearMM:
     const r = r0.slice()
     if (r.length < 3) continue
     if (Math.hypot(r[0][0] - r[r.length - 1][0], r[0][1] - r[r.length - 1][1]) > 1e-6) r.push(r[0])
-    const cum = [0]
-    for (let i = 1; i < r.length; i++) cum.push(cum[i - 1] + Math.hypot(r[i][0] - r[i - 1][0], r[i][1] - r[i - 1][1]))
-    const len = cum[cum.length - 1]
+    const { lens: cum, total: len } = arcLengths(r)
     if (len < 1e-6) continue
     // Corner positions as arc length along the ring.
     const cs = ringCorners(r).map(([cx, cy]) => {

@@ -7,7 +7,7 @@ import { splitCompoundPath } from '../canvas/nodeUtils'
 import { regenerateAffectedMany } from '../cam/regenerate'
 import { useCanvasStore } from '../store/canvasStore'
 import { parseNumeric, NUMERIC_HINT, shouldCommitDraft } from '../components/parseNumeric'
-import { useWorkpieceStore, fromMM, toMM, displayFieldBounds } from '../store/workpieceStore'
+import { useWorkpieceStore, fromMM, type Units } from '../store/workpieceStore'
 import { getMultiBBox, placedAngleDeg, type TransformStep } from '../canvas/selectionUtils'
 import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
 import { spirographLoops, SPIRO_RATIO_RANGE, scaleShapeParams, isScaleLocked, type ShapeParams } from '../shapes/shapeGenerators'
@@ -23,6 +23,7 @@ import { pendulumDims } from '../shapes/pendulumGenerator'
 import { trackDims, BRIO } from '../shapes/trackGenerator'
 import { BOARD_EDGE_LABEL, BOARD_HANDLE_LABELS, BOARD_HANDLE_HAS_INSET, BOARD_HANDLE_DEFAULTS } from '../shapes/cuttingBoardGenerator'
 import { NumericInput } from '../components/NumericInput'
+import { LengthField } from '../components/LengthField'
 import { UnitLabel, SliderValue } from '../components/UnitColumn'
 import FontSelect from '../components/FontSelect'
 import ConstraintsSectionBase from './ConstraintsSection'
@@ -61,23 +62,11 @@ function EditField({
   min?: number
   integer?: boolean
 }) {
-  const display = integer ? valueMM : fromMM(valueMM, units as 'mm' | 'in')
-  // `min` is MM for a length (a placed track's W min={10} was a 10-INCH floor in inch mode).
-  const bounds = displayFieldBounds(units as 'mm' | 'in', { min, integer })
-
   return (
     <div className="flex items-center gap-1.5">
       <span className={labelCls}>{label}</span>
-      <NumericInput
-        value={display}
-        min={bounds.min}
-        step={bounds.step}
-        integer={integer}
-        unit={integer ? undefined : units}
-        unitCol
-        onChange={(v) => onChange(integer ? v : toMM(v, units as 'mm' | 'in'))}
-        className={fieldCls}
-      />
+      <LengthField valueMM={valueMM} units={units as Units} onChangeMM={onChange} minMM={min} integer={integer}
+        unitCol className={fieldCls} />
     </div>
   )
 }

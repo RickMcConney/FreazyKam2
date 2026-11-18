@@ -32,6 +32,7 @@
 // Line numbers are 1-based, as a sender or an editor shows them. Pure: text in, text out.
 
 import { commentLines } from '../cam/gcode'
+import { codeOf, wordsOf, isMotionG, isCannedG, isProbeG, isOffsetG, isHomeOrMachineG, type GWord } from '../sim/gcodeWords'
 
 export interface ResumeOptions {
   /** Clearance height, in the file's units. Default: the Z the program's XY rapids travel
@@ -103,8 +104,6 @@ interface ModalState {
   operation: string | null
 }
 
-const CANNED = new Set([73, 81, 82, 83, 84, 85, 86, 87, 88, 89])
-const WORD_RE = /([A-Za-z])\s*([-+]?\d*\.?\d+)/g
 // The tool-shape markers our writer puts after a tool's `dia` comment (and the simulator
 // reads), so the block describing the tool in force can be carried into the resume.
 const DIA_RE = /\bdia\s+[\d.]+\s*(mm|in)\b/i
@@ -113,24 +112,12 @@ const OP_RE = /===\s*(.+?)\s*===/
 
 const eq = (a: number, b: number) => Math.abs(a - b) < 1e-4
 
-/** The code part of a line: comments, block-delete and checksums removed. */
-function codeOf(raw: string): string {
-  return raw.replace(/\([^)]*\)/g, ' ').replace(/;.*$/, '').replace(/\*\d+\s*$/, '').trim()
-}
 
 function commentOnly(raw: string): boolean {
   return raw.trim() !== '' && codeOf(raw) === ''
 }
 
-interface Word { letter: string; value: number; raw: string }
-
-function wordsOf(code: string): Word[] {
-  const out: Word[] = []
-  WORD_RE.lastIndex = 0
-  let m: RegExpExecArray | null
-  while ((m = WORD_RE.exec(code)) !== null) out.push({ letter: m[1].toUpperCase(), value: parseFloat(m[2]), raw: m[2] })
-  return out
-}
+type Word = GWord
 
 const fmtNum = (v: number): string => {
   const s = v.toFixed(4).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')
@@ -176,13 +163,13 @@ function applyLine(s: ModalState, raw: string): { moved: boolean; rapidXY: boole
     const v = w.value
     switch (w.letter) {
       case 'G':
-        if (eq(v, 0) || eq(v, 1) || eq(v, 2) || eq(v, 3)) motionWord = Math.round(v)
+        if (isMotionG(v)) motionWord = Math.round(v)
         else if (eq(v, 80)) motionWord = 80
-        else if (CANNED.has(Math.round(v)) && eq(v, Math.round(v))) motionWord = Math.round(v)
-        else if (v >= 38.15 && v < 38.65) { motionWord = null; unknownAfter = true; nonModalAxis = true }
+        else if (isCannedG(v)) motionWord = Math.round(v)
+        else if (isProbeG(v)) { motionWord = null; unknownAfter = true; nonModalAxis = true }
         else if (eq(v, 4)) nonModalAxis = true
-        else if (eq(v, 10) || eq(v, 92) || eq(v, 92.1) || eq(v, 92.2) || eq(v, 92.3)) { s.offsetChanged = true; nonModalAxis = true }
-        else if (eq(v, 28) || eq(v, 30) || eq(v, 53)) { unknownAfter = true; nonModalAxis = true }
+        else if (isOffsetG(v)) { s.offsetChanged = true; nonModalAxis = true }
+        else if (isHomeOrMachineG(v)) { unknownAfter = true; nonModalAxis = true }
         else if (eq(v, 20) || eq(v, 21)) {
           const u = eq(v, 20) ? 'G20' : 'G21'
           // A unit switch after a position was set leaves that position in the old units.
@@ -268,7 +255,7 @@ function modalMoveAt(lines: string[], from: number): number {
   for (let i = from; i < lines.length; i++) {
     const words = wordsOf(codeOf(lines[i]))
     const gs = words.filter((w) => w.letter === 'G').map((w) => w.value)
-    if (gs.some((v) => v <= 3.0001 || (v >= 38 && v < 39) || eq(v, 80) || CANNED.has(Math.round(v)))) return -1
+    if (gs.some((v) => v <= 3.0001 || isProbeG(v) || eq(v, 80) || isCannedG(v))) return -1
     const nonModal = gs.some((v) => eq(v, 4) || eq(v, 10) || eq(v, 28) || eq(v, 30) || eq(v, 53) || (v >= 92 && v < 93))
     if (!nonModal && words.some((w) => w.letter === 'X' || w.letter === 'Y' || w.letter === 'Z')) return i
   }
@@ -331,7 +318,7 @@ export function buildResume(text: string, line: number, opts: ResumeOptions = {}
   if (st.relative) return { ok: false, reason: `Line ${line} is inside a G91 (relative) section — choose a line where the program is absolute (G90).` }
   if (st.feedMode === 'G93') return { ok: false, reason: `Line ${line} is in G93 inverse-time feed mode, which cannot be resumed part way.` }
   if (st.cutterComp) return { ok: false, reason: `Cutter compensation (G41/G42) is on at line ${line} — choose a line before it starts or after G40.` }
-  if (st.motion !== null && CANNED.has(st.motion)) return { ok: false, reason: `Line ${line} is inside a canned drilling cycle — choose the line that starts the cycle, or one after G80.` }
+  if (st.motion !== null && isCannedG(st.motion)) return { ok: false, reason: `Line ${line} is inside a canned drilling cycle — choose the line that starts the cycle, or one after G80.` }
   if (st.offsetChanged) return { ok: false, reason: `The program changes its coordinate system (G92/G10) before line ${line}, which a resume cannot rebuild.` }
   if (st.rotary) return { ok: false, reason: `The program moves a rotary axis (A/B/C) before line ${line}; only X, Y and Z can be resumed.` }
   const { x, y, z } = st.pos

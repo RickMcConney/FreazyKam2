@@ -174,6 +174,32 @@ export async function runBatchGenerate(a: BatchGenerateArgs): Promise<void> {
   }
 }
 
+/** What a one-operation form (Surface, Photo V-Carve, 3D Profile) generates. */
+export interface SingleGenerate {
+  /** What the form session remembers the op by — the model/image path, or a fixed key. */
+  key: string
+  /** The automatic name. Written to an edited op only while it is still automatic. */
+  name: string
+  /** The op's settings, WITHOUT `name`. */
+  settings: Record<string, unknown>
+  editOp?: AnyOperation
+}
+
+/**
+ * A one-operation Generate as a batch of one. Those forms each wrote the add/update,
+ * remember, generate, report and discard steps by hand and had drifted — so they now run
+ * through `runBatchGenerate` like the path forms, and `useSingleGenerate` is the hook.
+ */
+export function singleGenerateArgs(a: SingleGenerate, session: BatchSession): Omit<BatchGenerateArgs, 'type' | 'onError'> {
+  const rename = a.editOp && !a.editOp.nameIsCustom ? { name: a.name } : {}
+  return {
+    settings: a.settings,
+    items: [{ key: a.key, name: a.name, fields: rename, op: a.editOp }],
+    session,
+    editOp: a.editOp,
+  }
+}
+
 /** Delete the ops among `createdIds` that ended in error — in one step. */
 export function discardFailedOps(createdIds: string[]) {
   if (createdIds.length === 0) return

@@ -1,7 +1,7 @@
 // Shared CAM geometry helpers. Canonical home for utilities that were once
 // duplicated across the per-operation modules (see tofix.md R2).
 
-import { signedArea, sharesVertex, type Pt2 } from './pathFlattener'
+import { signedArea, sharesVertex, ptSegDistSq, type Pt2 } from './pathFlattener'
 import type { Tool } from '../store/toolStore'
 
 // ─── Tool profile ─────────────────────────────────────────────────────────────
@@ -451,14 +451,8 @@ export function classifySubpaths(subpaths: Pt2[][], opts: { preserveOrder?: bool
   return found.map(f => f.region)
 }
 
-// Squared distance from point (px,py) to segment (ax,ay)-(bx,by).
-export function ptSegDistSq(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
-  const abx = bx - ax, aby = by - ay
-  const len2 = abx * abx + aby * aby
-  if (len2 === 0) return (px - ax) ** 2 + (py - ay) ** 2
-  const t = Math.max(0, Math.min(1, ((px - ax) * abx + (py - ay) * aby) / len2))
-  return (px - ax - t * abx) ** 2 + (py - ay - t * aby) ** 2
-}
+// Point-to-segment distance lives in pathFlattener (the leaf module) and is re-exported here.
+export { ptSegDistSq, ptSegDist } from './pathFlattener'
 
 /**
  * Append `src` to `dst` in place.

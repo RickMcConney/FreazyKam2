@@ -5,7 +5,7 @@ import { useTabStore } from '../store/tabStore'
 import { useWorkpieceStore } from '../store/workpieceStore'
 import { regenerateAffected } from '../cam/regenerate'
 import { stripAt, type StripPick } from '../cam/bridgePick'
-import { cornerClearMM, MAX_JOIN_MM } from '../cam/bridges'
+import { cornerClearMM, MAX_JOIN_MM, distToBridgeLine } from '../cam/bridges'
 import { tabTAt, tabPointAt } from '../cam/tabPlacement'
 import { tabOutline } from '../cam/stlOutline'
 import type { ImportedPath } from '../store/pathsStore'
@@ -62,13 +62,13 @@ function planAt(x: number, y: number, scale: number, getFlat: FlatOf): HoldPlan 
     // Only where the click IS — on the strip, give or take the slide off a corner. Without
     // it a click out in open stock reached the nearest outline 30 mm away and joined it to
     // whatever lay beyond.
-    if (pick && distToSeg(x, y, pick.line) <= GRAB_PX / scale + widthMM / 2 + searchMM) {
+    if (pick && distToBridgeLine(x, y, pick.line) <= GRAB_PX / scale + widthMM / 2 + searchMM) {
       return { kind: 'strip', pick, widthMM, heightMM }
     }
     // No part across from the outline: a stub into the open stock — but only for a click ON
     // the outline (or on where the stub would go), not one out in the middle of the waste.
     const stub = stripAt(ix, x, y, { widthMM, toolRadiusMM, reachMM: MAX_JOIN_MM, searchMM, pickMM: PICK_MM, toPart: 'frame' })
-    if (stub && distToSeg(x, y, stub.line) <= GRAB_PX / scale + widthMM / 2 + searchMM) {
+    if (stub && distToBridgeLine(x, y, stub.line) <= GRAB_PX / scale + widthMM / 2 + searchMM) {
       return { kind: 'strip', pick: stub, widthMM, heightMM }
     }
     return null
@@ -86,11 +86,6 @@ function planAt(x: number, y: number, scale: number, getFlat: FlatOf): HoldPlan 
   return at ? { kind: 'tab', pathId: hit.id, d: hit.d, t, ...at, outSide: outsideSide(polys, at.x, at.y, at.tx, at.ty) } : null
 }
 
-function distToSeg(x: number, y: number, l: { x1: number; y1: number; x2: number; y2: number }): number {
-  const dx = l.x2 - l.x1, dy = l.y2 - l.y1, l2 = dx * dx + dy * dy
-  const u = l2 > 0 ? Math.max(0, Math.min(1, ((x - l.x1) * dx + (y - l.y1) * dy) / l2)) : 0
-  return Math.hypot(x - l.x1 - u * dx, y - l.y1 - u * dy)
-}
 
 export function useTabPlaceTool({ stageRef, viewportRef }: CanvasView, getFlat: FlatOf) {
   const active = useUIStore((s) => s.tabPlace !== null && s.tabsFormActive)

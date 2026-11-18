@@ -6,7 +6,7 @@
 import { useWorkpieceStore } from '../store/workpieceStore'
 import { useToolpathStore, pathIdsOf, type AnyOperation } from '../store/toolpathStore'
 import { regenerateMany } from '../cam/regenerate'
-import { placeBridges, planSlugStrips, BRIDGE_DEFAULTS, type BridgeSet, type BridgeLine } from '../cam/bridges'
+import { placeBridges, planSlugStrips, BRIDGE_DEFAULTS, distToBridgeLine, type BridgeSet, type BridgeLine } from '../cam/bridges'
 import { useUIStore } from '../store/uiStore'
 import { bridgedOps, holdableParts, holdableHoles, cutterRadiusFor } from './bridgeParts'
 export { bridgedOps, holdableParts, holdableHoles, cutterRadiusFor }
@@ -30,7 +30,7 @@ export function applyBridges(paths: ImportedPath[], widthMM: number, heightMM: n
   const slugs = planSlugStrips(holes, [...parts, ...holes], { count, widthMM, toolRadiusMM })
   const kept = (wp.bridges?.lines ?? []).filter((l) => l.manual)
   // A planned strip whose middle lies on a hand-placed one would be that strip twice.
-  const onKept = (l: BridgeLine) => kept.some((k) => distToLine((l.x1 + l.x2) / 2, (l.y1 + l.y2) / 2, k) < widthMM)
+  const onKept = (l: BridgeLine) => kept.some((k) => distToBridgeLine((l.x1 + l.x2) / 2, (l.y1 + l.y2) / 2, k) < widthMM)
   const planned = [...placeBridges(parts, wp, { count, widthMM, toolRadiusMM }), ...slugs.map((s) => s.line)].filter((l) => !onKept(l))
   const lines = [...kept, ...planned]
   if (lines.length === 0) return null
@@ -41,11 +41,6 @@ export function applyBridges(paths: ImportedPath[], widthMM: number, heightMM: n
   return set
 }
 
-function distToLine(x: number, y: number, l: BridgeLine): number {
-  const dx = l.x2 - l.x1, dy = l.y2 - l.y1, l2 = dx * dx + dy * dy
-  const u = l2 > 0 ? Math.max(0, Math.min(1, ((x - l.x1) * dx + (y - l.y1) * dy) / l2)) : 0
-  return Math.hypot(x - l.x1 - u * dx, y - l.y1 - u * dy)
-}
 
 export function removeBridges(): void {
   const wp = useWorkpieceStore.getState()

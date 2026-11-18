@@ -15,6 +15,7 @@ import { downloadText } from '../io/download'
 import { reachesProgram } from './programOps'
 import { toMachine, type MachineXDir } from './machineFrame'
 import { thumbnailLines } from './thumbnail'
+import { wordMatcher, codeOf } from '../sim/gcodeWords'
 
 
 function f(n: number, decimals = 3) { return n.toFixed(decimals) }
@@ -59,7 +60,7 @@ function sub(template: string, vals: Record<string, string | number>): string {
 export interface ModalWords { g: number | null; x: number | null; y: number | null; z: number | null; f: number | null }
 export const unknownModal = (): ModalWords => ({ g: null, x: null, y: null, z: null, f: null })
 
-const MOTION_WORD_RE = /([A-Za-z])\s*([-+]?(?:\d+\.?\d*|\.\d+))/g
+const MOTION_WORD_RE = wordMatcher()
 
 /**
  * A motion line with every word the controller already holds left out — G0/G1/G2/G3, X, Y,
@@ -102,7 +103,7 @@ export function compactMotionLine(line: string, st: ModalWords): string {
 /** Fold what `line` sets into `st`, unchanged in its wording. */
 function modalAfter(line: string, st: ModalWords): void {
   MOTION_WORD_RE.lastIndex = 0
-  const code = line.replace(/\([^)]*\)/g, '').replace(/;.*$/, '')
+  const code = codeOf(line)
   let m: RegExpExecArray | null
   while ((m = MOTION_WORD_RE.exec(code)) !== null) {
     const v = parseFloat(m[2])

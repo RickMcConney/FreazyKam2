@@ -1,6 +1,7 @@
 
 import type { ToolType } from '../store/toolStore'
 import { fluteHelixFromName, type FluteHelix } from '../cam/geom'
+import { wordMatcher, codeOf, isProbeG, takesAxisArgs, isCannedG } from './gcodeWords'
 import { planMotion, trapezoidAt, FALLBACK_RAPID_MM_MIN, type MotionLimits, type PlanBlock, type Trapezoid } from './motionPlanner'
 
 export interface SimSegment {
@@ -129,8 +130,9 @@ export function feedDiameterOf(ts: ToolState): number {
   return ts.toolTipRadiusMM ? ts.toolTipRadiusMM + ts.toolDiameterMM / 2 : ts.toolDiameterMM
 }
 
-// One G-code word: a letter and its number. Global, so `lastIndex` is reset per line.
-const WORD_RE = /([A-Za-z])\s*(-?\d*\.?\d+)/g
+// One G-code word: a letter and its number (sim/gcodeWords, shared with resume and the
+// writer). Global, so `lastIndex` is reset per line.
+const WORD_RE = wordMatcher()
 
 // Every tool-comment marker read below ("dia", "vbit-angle:", "taper-tip:", "ballnose",
 // "bullnose-r:", "fzmax:", "drillbit", "flutes:") contains an a, an i or a colon, so a line with none of them
@@ -374,9 +376,7 @@ export function parseGcode(text: string, initialZMM = 5, limits?: MotionLimits):
 
     // Words, in one pass. A letter's FIRST occurrence on the line is the one that
     // counts; the G words are folded straight into the flags read below.
-    const clean = raw.indexOf(';') < 0 && raw.indexOf('(') < 0
-      ? raw
-      : raw.replace(/;.*$/, '').replace(/\([^)]*\)/g, '')
+    const clean = raw.indexOf(';') < 0 && raw.indexOf('(') < 0 ? raw : codeOf(raw)
     let wordCount = 0
     let wF: number | undefined, wS: number | undefined
     let wX: number | undefined, wY: number | undefined, wZ: number | undefined
@@ -407,10 +407,10 @@ export function parseGcode(text: string, initialZMM = 5, limits?: MotionLimits):
           if (Math.abs(v - 90.1) < 0.001) g90dot1 = true
           if (Math.abs(v - 41) < 0.001 || Math.abs(v - 42) < 0.001) g41or42 = true
           if (Math.abs(v - 4) < 0.001) g4 = true
-          if (v >= 38 && v < 39) g38 = true
-          if ([10, 28, 30, 53, 92, 92.1, 92.2, 92.3].some((n) => Math.abs(v - n) < 0.001)) nonModalAxis = true
+          if (isProbeG(v)) g38 = true
+          if (takesAxisArgs(v)) nonModalAxis = true
           if (Math.abs(v - 80) < 0.001) g80 = true
-          if (Math.abs(v - 73) < 0.001 || (v >= 81 - 0.001 && v <= 89 + 0.001 && Math.abs(v - Math.round(v)) < 0.001)) canned = Math.round(v)
+          if (isCannedG(v)) canned = Math.round(v)
           // G0-G3 motion mode
           if (gm === undefined && v >= 0 && v <= 3) gm = v
           break
