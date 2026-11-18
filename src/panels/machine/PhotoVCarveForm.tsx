@@ -64,12 +64,16 @@ export function PhotoVCarveForm({ onClose, editOp }: { onClose: () => void; edit
 
   // Saved defaults carry a path id from a previous session, which no longer exists — and
   // an image imported while this form is open should be picked up (same as Profile3dForm).
+  // Keyed on the IDS, not the count: one edit that swaps a picture for another (an undo
+  // and a re-import, a delete and an add in one step) leaves the count alone, and the form
+  // kept pointing at the deleted one with Generate disabled and nothing to say why.
+  const imageIdsKey = imagePaths.map((p) => p.id).join()
   useEffect(() => {
     if (!imagePaths.find((p) => p.id === form.pathId)) {
       const first = imagePaths[0]
       if (first) setForm((f) => ({ ...f, pathId: first.id }))
     }
-  }, [imagePaths.length]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [imageIdsKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedTool = tools.find((t) => t.id === form.toolId)
   const selectedPath = paths.find((p) => p.id === form.pathId)

@@ -71,6 +71,9 @@ export async function loadFont(family: string): Promise<void> {
       fontCache.set(family, font)
     } catch (err) {
       console.warn(`[textGenerator] Failed to load font "${family}":`, err)
+      // Forget the attempt, or every later loadFont returns this settled promise and a
+      // transient failure (offline before the fonts were cached) lasts the whole session.
+      fontPromises.delete(family)
     }
   })()
 

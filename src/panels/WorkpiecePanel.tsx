@@ -18,6 +18,7 @@ import {
   feedUnit,
   type FeedTime,
   rapidRateMmMin,
+  displayFieldBounds,
 } from '../store/workpieceStore'
 import { SPINDLE_INFO, customDialValid, spindleHasDial, type SpindleType } from '../store/spindle'
 import { NumericInput } from '../components/NumericInput'
@@ -47,7 +48,8 @@ function DimInput({
   min?: number
 }) {
   const displayVal = fromMM(valueMM, units)
-  const step = units === 'in' ? 0.0625 : 1
+  // `min` is MM (0.1 mm was a 0.1-INCH, 2.54 mm floor on stock thickness in inch mode).
+  const bounds = displayFieldBounds(units, { min })
   const rowId = useId()
 
   return (
@@ -56,8 +58,8 @@ function DimInput({
       <NumericInput
         id={rowId}
         value={displayVal}
-        min={min}
-        step={step}
+        min={bounds.min}
+        step={bounds.step}
         title={NUMERIC_HINT}
         unit={units}
         onChange={(v) => onChange(toMM(v, units))}

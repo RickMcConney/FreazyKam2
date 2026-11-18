@@ -5,7 +5,7 @@
 import {  signedArea, ensureWinding, douglasPeucker, type Pt2 } from '../pathFlattener'
 import { perfLog } from '../../debug'
 import { inflatePathsD, differenceD, intersectD, JoinType, EndType, FillRule } from 'clipper2-ts'
-import {  arcLengths, interpPt, ringPerimeter, stripClosingDuplicate, pointInPolygon, pointOnRing, ptSegDistSq } from '../geom'
+import {  arcLengths, interpPt, ringPerimeter, stripClosingDuplicate, pointInPolygon, pointOnRing, ptSegDistSq, interiorPoint } from '../geom'
 import { toCP, fromCP } from '../clipperAdapters'
 import type { ClearanceField } from './clearance'
 import type { MotionSegment } from '../../store/toolpathStore'
@@ -390,6 +390,64 @@ export function offsetRing(pts: Pt2[], delta: number, joinType: JoinType = JoinT
   if (result.length === 0) return []
   const best = result.reduce((a, b) => (b.length > a.length ? b : a))
   return stripClosingDuplicate(best.map(({ x, y }) => [x, y] as Pt2))
+}
+
+// Every piece of an offset, where `offsetRing` keeps only the one with the most vertices.
+// An inset SPLITS wherever the shape has a waist narrower than twice the offset — two
+// lobes joined by a neck — and keeping one piece silently dropped the other lobe.
+export function offsetRingPieces(pts: Pt2[], delta: number, joinType: JoinType = JoinType.Miter): Pt2[][] {
+  const clean = stripClosingDuplicate(pts)
+  if (clean.length < 3) return []
+  const ccw = signedArea(clean) >= 0 ? clean : [...clean].reverse()
+  return inflatePathsD([ccw.map(([x, y]) => ({ x, y }))], delta, joinType, EndType.Polygon, 4, 6)
+    .map((r) => stripClosingDuplicate(r.map(({ x, y }) => [x, y] as Pt2)))
+    .filter((r) => r.length >= 3)
+}
+
+// A piece smaller than this is offsetting noise, not a place the tool can usefully go.
+const MIN_PIECE_AREA_MM2 = 1e-3
+
+/** Which of `outers` each hole lies in, by an interior point (never a centroid). */
+export function assignHoles(outers: Pt2[][], holes: Pt2[][]): { outer: Pt2[]; holes: Pt2[][] }[] {
+  const out = outers.map((outer) => ({ outer, holes: [] as Pt2[][] }))
+  for (const h of holes) {
+    const p = interiorPoint([h])
+    const home = p && out.find((o) => pointInPolygon(p[0], p[1], o.outer))
+    if (home) home.holes.push(h)
+  }
+  return out
+}
+
+// SPLIT A REGION AT ITS TOOL WAIST. Where a neck narrower than the tool joins two lobes,
+// the tool-centre region (the outline inset by the radius) is two pieces with nothing
+// between them, so the lobes are two pockets. Every planner insets the boundary itself and
+// kept ONE piece (`offsetRing`), so the other lobe got no fill at all: rest cleanup's few
+// rounds of rings mopped up a small one and left most of a large one standing.
+//
+// Each piece becomes its own region: the original outline MINUS what the tool can reach
+// from every OTHER piece (each grown back by the radius). Every wall a lobe has — its
+// corners at the neck's mouth included — is then exactly the drawn one; only the far side
+// of the neck, where the other lobe's reach begins, is a new edge, and nothing reaches it.
+// Growing the piece itself back instead (its opening) re-shaped the mouth: the piece ends
+// in a cusp there, and the planners' inset of a grown cusp let morph graze the drawn corner
+// by 55 µm (it is ~20 µm on the drawn shape, as at the step of any L).
+// A region whose inset does not split is returned as it came, untouched.
+export function splitAtToolWaist(outer: Pt2[], holes: Pt2[][], toolRadius: number): { outer: Pt2[]; holes: Pt2[][] }[] {
+  const pieces = offsetRingPieces(outer, -toolRadius, JoinType.Round)
+    .filter((p) => Math.abs(signedArea(p)) > MIN_PIECE_AREA_MM2)
+  if (pieces.length <= 1) return [{ outer, holes }]
+  const outerCP = [toCP(ensureWinding(outer, true))]
+  const reach = pieces.map((p) => inflatePathsD([toCP(ensureWinding(p, true))], toolRadius, JoinType.Round, EndType.Polygon, 2, 6))
+  const subOuters: Pt2[][] = []
+  pieces.forEach((p, i) => {
+    const others = reach.flatMap((r, j) => (j === i ? [] : r))
+    const at = interiorPoint([p])
+    if (!at) return
+    for (const r of differenceD(outerCP, others, FillRule.NonZero, 6).map(fromCP)) {
+      if (r.length >= 3 && signedArea(r) > MIN_PIECE_AREA_MM2 && pointInPolygon(at[0], at[1], r)) subOuters.push(r)
+    }
+  })
+  return subOuters.length > 1 ? assignHoles(subOuters, holes) : [{ outer, holes }]
 }
 
 // Shrink polygon inward by delta. Returns [] if it collapses or inverts.

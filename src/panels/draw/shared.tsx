@@ -7,7 +7,7 @@
 // the '/' keystroke and a typed fraction can never be entered.
 
 import { useId } from 'react'
-import { fromMM, toMM } from '../../store/workpieceStore'
+import { fromMM, toMM, displayFieldBounds } from '../../store/workpieceStore'
 import { NumericInput } from '../../components/NumericInput'
 // The unit column and the slider readout are shared with PropertiesPanel, so
 // they live outside this file — re-exported here so a draw panel still has one
@@ -23,14 +23,15 @@ export const noteCls = 'text-label text-gray-600 dark:text-neutral-400'
 /**
  * A number field. `integer` marks a COUNT — teeth, spokes, pins — which is
  * unitless and must not be converted; everything else is a length held in mm and
- * shown in the user's units.
+ * shown in the user's units. `min`, `max` and `step` are in MM for a length (see
+ * displayFieldBounds) — never pick an inch step at the call site.
  */
 export function NumInput({ label, valueMM, units, onChange, min = 0.1, max, step, integer }: {
   label: string; valueMM: number; units: string; onChange: (mm: number) => void
   min?: number; max?: number; step?: number; integer?: boolean
 }) {
   const display = integer ? valueMM : fromMM(valueMM, units as 'mm' | 'in')
-  const s = step ?? (integer ? 1 : units === 'in' ? 0.0625 : 1)
+  const bounds = displayFieldBounds(units as 'mm' | 'in', { min, max, step, integer })
   const id = useId()
 
   return (
@@ -39,9 +40,9 @@ export function NumInput({ label, valueMM, units, onChange, min = 0.1, max, step
       <NumericInput
         id={id}
         value={display}
-        min={min}
-        max={max}
-        step={s}
+        min={bounds.min}
+        max={bounds.max}
+        step={bounds.step}
         integer={integer}
         unit={integer ? undefined : units}
         unitCol

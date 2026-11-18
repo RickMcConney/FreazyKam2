@@ -219,3 +219,64 @@ describe('an open boundary is refused, not filled in', () => {
     expect(() => generatePocket(`${CLOSED} M 90 90`, TOOL, params())).not.toThrow()
   })
 })
+
+describe('a pocket with a waist the tool cannot cross is cut on both sides of it', () => {
+  // Two square lobes joined by a neck. Where the neck is too narrow for the tool — or for
+  // the tool plus the finish allowance on both walls — the tool-centre region is two pieces,
+  // and every offset that fed a planner kept ONE of them. The other lobe got no fill: with
+  // an allowance no strategy cut it at all, and on big lobes raster and auto left ~40% of it
+  // standing (rest cleanup's few rings mopped up a small lobe, which hid it there).
+  const dumbbell = (S: number, neck: number) => {
+    const a = S / 2 - neck / 2, b = S / 2 + neck / 2
+    return toD([[0, 0], [S, 0], [S, a], [S + 20, a], [S + 20, 0], [2 * S + 20, 0], [2 * S + 20, S],
+      [S + 20, S], [S + 20, b], [S, b], [S, S], [0, S]])
+  }
+  /** Percent of a lobe's middle (sampled on a grid) that no full-depth move came within the radius of. */
+  function uncutPercent(segs: ReturnType<typeof generatePocket>, x0: number, S: number, margin: number): number {
+    const cuts: number[][] = []
+    for (let i = 1; i < segs.length; i++) {
+      const a = segs[i - 1], b = segs[i]
+      if (!b.rapid && a.z <= -3 + 1e-6 && b.z <= -3 + 1e-6) cuts.push([a.x, a.y, b.x, b.y])
+    }
+    const R = TOOL.diameterMM / 2
+    const step = Math.max(1, S / 30)
+    let total = 0, uncut = 0
+    for (let x = x0 + margin; x <= x0 + S - margin; x += step) {
+      for (let y = margin; y <= S - margin; y += step) {
+        total++
+        const hit = cuts.some(([ax, ay, bx, by]) => {
+          const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy
+          const t = l2 > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0
+          return Math.hypot(x - ax - t * dx, y - ay - t * dy) <= R + 0.05
+        })
+        if (!hit) uncut++
+      }
+    }
+    return Math.round((100 * uncut) / total)
+  }
+  const run = (S: number, neck: number, strategy: string, allowance = 0) => {
+    const segs = generatePocket(dumbbell(S, neck), TOOL, params({
+      strategy: strategy as PocketParams['strategy'], forceStrategy: true, depthMM: 3, stepDownMM: 3,
+      stepoverPercent: 40, finishAllowanceMM: allowance,
+    }))
+    const m = TOOL.diameterMM / 2 + allowance + 1
+    return `left ${uncutPercent(segs, 0, S, m)}% right ${uncutPercent(segs, S + 20, S, m)}%`
+  }
+
+  it('with a finish allowance wider than the neck leaves, every strategy cuts both lobes', () => {
+    for (const strategy of ['raster', 'contour', 'hybrid', 'morph', 'adaptive']) {
+      expect(`${strategy}: ${run(40, 4, strategy, 2.5)}`).toBe(`${strategy}: left 0% right 0%`)
+    }
+  })
+
+  it('raster and auto fill both 150 mm lobes through a neck narrower than the tool', () => {
+    for (const strategy of ['raster', 'hybrid']) {
+      expect(`${strategy}: ${run(150, 4, strategy)}`).toBe(`${strategy}: left 0% right 0%`)
+    }
+  })
+
+  it('raster fills both lobes through a neck only just wider than the tool', () => {
+    // 6.2 mm: one region at the tool radius, two at radius + the 0.2 mm link margin.
+    expect(run(150, 6.2, 'raster')).toBe('left 0% right 0%')
+  })
+})

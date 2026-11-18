@@ -543,10 +543,28 @@ function applyMoves(
  * history to the caller, which records afterwards so its snapshot holds both.
  */
 export function applyConstraintSolve(anchorIds: string[] = []): void {
-  const solved = enforceConstraints(usePathsStore.getState().paths, [], anchorIds)
+  const before = usePathsStore.getState().paths
+  const solved = enforceConstraints(before, [], anchorIds)
   if (solved.movedIds.length === 0) return
+  const touched = refitBridgesTo(before, solved.paths)
   usePathsStore.setState({ paths: solved.paths })
-  regenerateEdited(solved.movedIds)
+  regenerateEdited([...new Set([...solved.movedIds, ...touched])])
+}
+
+/**
+ * STRIPS FOLLOW THE PARTS THEY HOLD (tools/bridgeRefit): re-fit them for a write of the
+ * paths from `before` to `after`, store the new set, and hand back the parts whose cuts
+ * the change reaches (owed a regeneration). EVERY writer of `paths` that can move
+ * geometry calls it — applyPathEdit, rewriteGeneratedRaw, the single-path
+ * updateShapeParams and applyConstraintSolve; the last two once wrote `paths` directly,
+ * so typing a rectangle wider left its strips where the old outline was.
+ * Call it BEFORE the step is recorded, so the snapshot holds both and one undo takes both back.
+ */
+function refitBridgesTo(before: ImportedPath[], after: ImportedPath[]): string[] {
+  const refit = refitBridges(before, after)
+  if (!refit) return []
+  useWorkpieceStore.setState({ bridges: refit.set })
+  return refit.touched
 }
 
 /**
@@ -728,15 +746,14 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
       add.length > 0 ? [...paths, ...add] : paths, deleteIds,
       [...updates.map((u) => u.id), ...add.map((a) => a.id)])
     // Strips follow the parts they hold (tools/bridgeRefit), in the same write.
-    const refit = refitBridges(s.paths, solved.paths)
-    if (refit) useWorkpieceStore.setState({ bridges: refit.set })
+    const touched = refitBridgesTo(s.paths, solved.paths)
     set({
       paths: solved.paths,
       ...(deleteIds.length > 0
         ? { selectedIds: s.selectedIds.filter((sid) => !deleteIds.includes(sid)) }
         : {}),
     })
-    regenerateEdited(refit ? [...new Set([...solved.movedIds, ...refit.touched])] : solved.movedIds, reshaped)
+    regenerateEdited([...new Set([...solved.movedIds, ...touched])], reshaped)
   },
 
   applyPathEdit: ({ updates = [], add = [], deleteIds = [], label, gesture, selectAfter, regenerate = true }) => {
@@ -778,10 +795,8 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
     const solved = enforceConstraints(
       paths, deleteIds, [...updates.map((u) => u.id), ...add.map((a) => a.id)])
     paths = solved.paths
-    // STRIPS FOLLOW THE PARTS THEY HOLD (tools/bridgeRefit): re-fitted here and written
-    // before the step is recorded, so the snapshot holds both and one undo takes back both.
-    const refit = refitBridges(s.paths, paths)
-    if (refit) useWorkpieceStore.setState({ bridges: refit.set })
+    // STRIPS FOLLOW THE PARTS THEY HOLD — re-fitted here, before the step is recorded.
+    const touched = refitBridgesTo(s.paths, paths)
     set({
       paths,
       // Only touch selection when the caller asks (selectAfter) or something
@@ -808,7 +823,7 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
     // constraints carried along, and any pocket that has just lost an island.
     const own = regenerate ? changedIds(s.paths, updates) : []
     // The cuts of every part a re-fitted strip leaves or reaches, as well as the edit's own.
-    const owed = [...new Set([...own, ...solved.movedIds, ...(refit?.touched ?? [])])]
+    const owed = [...new Set([...own, ...solved.movedIds, ...touched])]
     regenerateEdited(owed, reshaped)
   },
 
@@ -948,8 +963,9 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
     const d = applyPlacementD(generateShapeD(params), self?.placement)
     const solved = enforceConstraints(
       s0.paths.map((p) => p.id === id ? { ...p, d, shapeParams: params } : p), [], [id])
+    const touched = refitBridgesTo(s0.paths, solved.paths)
     set({ paths: solved.paths })
-    regenerateEdited(solved.movedIds)
+    regenerateEdited([...new Set([...solved.movedIds, ...touched])])
     // Parameter edits join the step that created/last defined the shape when it is the
     // latest step — changing text or a star's point count is an argument edit to that
     // call. Otherwise (an older definer, or none) this records a shape.params step, which
@@ -986,6 +1002,16 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
       groupId: orig.groupId,
       groupName: orig.groupName,
       userGroups: orig.userGroups,
+      // Splitting changes no one's mind about what a piece IS: it stays on the file's layer
+      // (Select Only), in its source group and element (the paths list's folders, and the
+      // nest keeping a part's pieces together), and in its user groups under their names.
+      // What the pieces lose is the recipe — shapeParams, corners, definition — which
+      // describes the whole outline and none of its parts.
+      groupLabels: orig.groupLabels,
+      layer: orig.layer,
+      sourceGroups: orig.sourceGroups,
+      sourceGroupNames: orig.sourceGroupNames,
+      sourceElement: orig.sourceElement,
     }))
     const opsBefore = useToolpathStore.getState().operations
     const tabsBefore = useTabStore.getState().tabs

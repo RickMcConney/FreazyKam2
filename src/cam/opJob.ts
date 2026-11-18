@@ -248,7 +248,7 @@ export async function generateOperation(opId: string, overrides: GenerateOverrid
       // here without recording would make the live op differ from its replay.
       // Nothing else reads it — segments are what cut — so recomputing each time is
       // enough.
-      const points = circles.length > 0 ? circles.map((c) => ({ x: c.cx, y: c.cy })) : op.points
+      const points = circles.length > 0 ? circles.map((c) => ({ x: c.cx, y: c.cy })) : (op.points ?? [])
       setSegments(opId, await runInWorkerFor(opId, 'generatePeckDrill', points, tool, {
         depthMM: op.depthMM, stepDownMM: stepDown(tool, op.stepDownMM, op.depthMM, undefined, op.stepDownManual), startNear: op.entryHint, safeHeightMM, startZMM,
       }), builtWith)

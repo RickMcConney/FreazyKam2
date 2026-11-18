@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { runInWorkerFor, cancelAllWork, cancelWork, isWorkCancelled, __setWorkerFactoryForTests } from './workerClient'
+import { GeometryTooSmallError } from '../cam/errors'
 
 // The public signature ties `fn` to a real handler and its argument types; these
 // tests only exercise scheduling, so they go through one loosened alias rather
@@ -199,5 +200,27 @@ describe('cancelling one key', () => {
     expect(live).toHaveLength(1)
     pool.complete(live[0].p.id, 'ok')
     await expect(second).resolves.toBe('ok')
+  })
+})
+
+describe('a failed job keeps its error type across the worker boundary', () => {
+  const failWith = async (error: unknown) => {
+    const pool = makeFakePool()
+    const p = run('op-err', 'generatePocket')
+    const [{ w, p: posted }] = pool.dispatched()
+    ;(w.onmessage as (e: { data: unknown }) => void)({ data: { id: posted.id, error } })
+    return p.then(() => { throw new Error('resolved') }, (e: unknown) => e as Error)
+  }
+
+  it('rebuilds a GeometryTooSmallError as one, with the bare message the user is shown', async () => {
+    const e = await failWith({ name: 'GeometryTooSmallError', message: 'Pocket area is too small for the selected tool diameter' })
+    expect(e).toBeInstanceOf(GeometryTooSmallError)
+    expect(e.message).toBe('Pocket area is too small for the selected tool diameter')
+  })
+
+  it('keeps the name of an error it has no class for', async () => {
+    const e = await failWith({ name: 'CommonLinePlanningError', message: 'crossing' })
+    expect(e).not.toBeInstanceOf(GeometryTooSmallError)
+    expect([e.name, e.message]).toEqual(['CommonLinePlanningError', 'crossing'])
   })
 })

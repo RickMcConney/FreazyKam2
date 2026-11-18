@@ -120,6 +120,30 @@ describe('copyPaths', () => {
   })
 })
 
+describe('copyPaths — names and nests ride on ids, so they are re-keyed with them', () => {
+  it('keeps a renamed user group\'s name on the copy, under the copy\'s own group id', () => {
+    const a = path({ id: 'a', userGroups: ['g'], groupLabels: { g: 'Bracket' } })
+    const b = path({ id: 'b', userGroups: ['g'], groupLabels: { g: 'Bracket' } })
+    for (const opts of [DUPLICATE, PASTE]) {
+      const { paths: out } = copyPaths([a, b], [], [], opts)
+      expect(out[0].userGroups![0]).not.toBe('g')
+      expect(out[0].groupLabels).toEqual({ [out[0].userGroups![0]]: 'Bracket' })
+      expect(out[1].groupLabels).toEqual(out[0].groupLabels)
+    }
+  })
+
+  it('gives copied parts a nest of their own, shared among them, with the same settings', () => {
+    const nest = { id: 'n1', spacingMM: 3, marginMM: 5, rotationStepDeg: 90, packFrom: 'left', useHoles: false, avoidOthers: true } as ImportedPath['nest']
+    const a = path({ id: 'a', nest })
+    const b = path({ id: 'b', nest })
+    const { paths: out } = copyPaths([a, b], [], [], DUPLICATE)
+    expect(out[0].nest!.id).not.toBe('n1')
+    expect(out[1].nest!.id).toBe(out[0].nest!.id)
+    expect({ ...out[0].nest, id: 'n1' }).toEqual(nest)
+    expect(a.nest!.id).toBe('n1')
+  })
+})
+
 describe('copyPaths — the drawing\'s own grouping', () => {
   // Shared ids would tie a copied part to its original in the nest.
   it('gives the copies source groups and a source element of their own, still shared among them', () => {

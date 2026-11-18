@@ -33,6 +33,7 @@ interface LegacyEvent {
   pattern?: { sourceIds: string[]; params: PatternParams }
   duplicate?: { pairs: { sourceId: string; resultId: string }[]; offsetMM: number }
   boolOp?: BooleanOpType
+  gesture?: string
   clockId?: string
   spec?: ClockSpec
 }
@@ -80,8 +81,12 @@ export function migrateProvenance(paths: ImportedPath[], events: unknown): Migra
       }
     }
     // A boolean's result is the path the edit ADDED; its sources are the paths it
-    // updated (which it hid).
-    if (raw.kind === 'paths.edit' && raw.add?.length) {
+    // updated (which it hid). Only an edit RECORDED as a boolean: BooleanForm always
+    // wrote `gesture: 'boolean'` with its `boolOp`, while plenty of other edits add
+    // paths too — a multi-part shape growing a part (clock.fkam's escapement gained its
+    // Spokes that way), a node-edit split or weld. Stamped as a union of whatever they
+    // updated, their chip reopened the Boolean form over unrelated geometry.
+    if (raw.kind === 'paths.edit' && raw.add?.length && (raw.boolOp || raw.gesture === 'boolean')) {
       for (const a of raw.add) {
         defById.set(a.id, {
           id: defId, kind: 'boolean', op: raw.boolOp ?? 'union',

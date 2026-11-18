@@ -75,6 +75,45 @@ describe('undo and redo', () => {
     expect(ids()).toEqual(['a', 'c'])
   })
 
+  it('abandons the redo branch even when the edit after the undo would merge with the step before', async () => {
+    // A move chains onto the previous move whatever the time between them. Made right after
+    // an undo, it merged into the step at the cursor but left the undone step in place: redo
+    // stayed lit, and pressing it put back a state captured BEFORE the second move — which
+    // silently threw that move away.
+    P().addPaths([path('a')])
+    await step()
+    move('a', 5)
+    await step()
+    P().addPaths([path('b')])
+    await step()
+    await undo()
+    move('a', 9)
+    await step()
+    expect(TL().canRedo()).toBe(false)
+    expect(P().paths.find((p) => p.id === 'a')?.d).toBe(rectD(9))
+    TL().redo()
+    await step()
+    expect(P().paths.find((p) => p.id === 'a')?.d).toBe(rectD(9))
+    expect(ids()).toEqual(['a'])
+  })
+
+  it('abandons the redo branch for a quick edit after an undo, inside the merge window', async () => {
+    P().addPaths([path('a')])
+    await step()
+    move('a', 5)
+    await step()
+    P().addPaths([path('b')])
+    await step()
+    TL().undo()
+    await step(100)        // well inside the 800 ms window that merges repeat edits
+    move('a', 9)
+    await step()
+    expect(TL().canRedo()).toBe(false)
+    TL().redo()
+    await step()
+    expect(P().paths.find((p) => p.id === 'a')?.d).toBe(rectD(9))
+  })
+
   it('stops calling the project clean once the step it was saved at is abandoned', async () => {
     P().addPaths([path('a')])
     await step()

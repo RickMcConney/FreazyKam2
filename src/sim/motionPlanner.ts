@@ -102,7 +102,13 @@ export function planMotion(blocks: PlanBlock[], lim: MotionLimits): Trapezoid[] 
       : alongDir(ux[i], uy[i], uz[i], rateXY, rateZ)
     vNom[i] = Math.min(asked, cap)
     if (!Number.isFinite(vNom[i])) vNom[i] = FALLBACK_RAPID_MM_MIN / 60
-    acc[i] = accelOn ? alongDir(ux[i], uy[i], uz[i], lim.accelXYMmS2, lim.accelZMmS2) : Infinity
+    // A block with no length has no direction, and alongDir of a zero vector is Infinity —
+    // then 2·acc·len is ∞·0 = NaN in the backward pass, which spreads to every block before
+    // it (durations, the total, the scrubber). Any finite figure does here: it covers no
+    // distance. A G2/G3 ending a hair from its start chords to exactly such blocks.
+    acc[i] = !accelOn ? Infinity
+      : L > EPS ? alongDir(ux[i], uy[i], uz[i], lim.accelXYMmS2, lim.accelZMmS2)
+      : lim.accelXYMmS2
   }
 
   if (!accelOn) {

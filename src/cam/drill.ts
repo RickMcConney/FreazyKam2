@@ -47,7 +47,8 @@ export function generatePeckDrill(
   _tool: Tool,
   params: DrillParams
 ): MotionSegment[] {
-  if (points.length === 0) throw new Error('No drill points specified')
+  // `points` may be missing outright: a peck op with no source circles and no stored points.
+  if (!points?.length) throw new Error('No drill points specified')
   const safeZ = params.safeHeightMM ?? 5
   const startZ = Math.min(0, params.startZMM ?? 0)
   const zLevels = zPasses(params.depthMM, params.stepDownMM, startZ)
@@ -83,6 +84,10 @@ export function generateHelicalDrill(
   tool: Tool,
   params: DrillParams
 ): MotionSegment[] {
+  // The spiral steps out by a fraction of the tool's diameter, so a 0 (or NaN, or negative)
+  // one makes it Infinity revolutions — a loop that fills the worker's memory rather than
+  // failing. Only a hand-edited or corrupt library entry gets here; say what is wrong.
+  if (!(tool.diameterMM > 0)) throw new Error(`Tool "${tool.name}" has no diameter — set one in the Tool Library`)
   if (helicalRadius <= 0) {
     // Tool is larger than the hole — fall back to peck drilling at center
     return generatePeckDrill([{ x: centerX, y: centerY }], tool, params)

@@ -6,6 +6,7 @@ import { usePathsStore, type ImportedPath } from '../../store/pathsStore'
 import { useToolpathStore, pathIdsOf, type MotionSegment } from '../../store/toolpathStore'
 import { useToolStore } from '../../store/toolStore'
 import { maxCutRadiusMM } from '../../cam/geom'
+import { toolpathRuns } from '../toolpathRuns'
 
 // Amber for a TOOLPATH's source paths: it reads against both the blue selection and the
 // toolpath colours, in either theme. A hovered PATH glows the selection's own blue — it is
@@ -26,39 +27,24 @@ function path2dOf(p: ImportedPath): Path2D {
 // regenerate, never mutated, so a hover over a big pocket builds its Path2D once. Split
 // into one run per TOOL, at each tool change, so each run can be drawn at its bit's width;
 // `toolId: null` is the op's own tool, until the first change.
-interface MoveRun { toolId: string | null; path: Path2D }
+interface MoveRun { toolId: string | null; path: Path2D; plunges: [number, number][] }
 const moveRuns = new WeakMap<MotionSegment[], MoveRun[]>()
 function movesOf(segs: MotionSegment[]): MoveRun[] {
   let runs = moveRuns.get(segs)
   if (runs) return runs
-  runs = [{ toolId: null, path: new Path2D() }]
-  let p2 = runs[0].path
-  // Cutting moves only — a rapid lifts the pen — with arcs drawn as arcs, so what lights
-  // up is the path the tool's centre actually takes.
-  let down = false
-  let px = 0, py = 0
-  for (const g of segs) {
-    if (g.toolChange) {
-      down = false
-      p2 = new Path2D()
-      runs.push({ toolId: g.toolChange, path: p2 })
-      continue
+  // Cutting moves only, with arcs drawn as arcs, so what lights up is the path the tool's
+  // centre actually takes (toolpathRuns, which says why a rapid does not lose the pen).
+  runs = toolpathRuns(segs).map(({ toolId, cmds }) => {
+    const path = new Path2D()
+    const plunges: [number, number][] = []
+    for (const c of cmds) {
+      if (c.k === 'M') path.moveTo(c.x, c.y)
+      else if (c.k === 'L') path.lineTo(c.x, c.y)
+      else if (c.k === 'D') plunges.push([c.x, c.y])
+      else path.arc(c.cx, c.cy, c.r, c.a0, c.a1, c.anticlockwise)
     }
-    if (g.rapid || !down) { p2.moveTo(g.x, g.y); down = !g.rapid; px = g.x; py = g.y; continue }
-    if (g.arc) {
-      const { cx, cy, cw } = g.arc
-      const r = Math.hypot(px - cx, py - cy)
-      if (r < 0.001) p2.lineTo(g.x, g.y)
-      else {
-        const a0 = Math.atan2(py - cy, px - cx)
-        const full = Math.abs(px - g.x) < 0.001 && Math.abs(py - g.y) < 0.001
-        // Canvas angles run +x towards +y, which in CNC Y-up is CCW — so CW is `anticlockwise`.
-        const a1 = full ? a0 + (cw ? -2 * Math.PI : 2 * Math.PI) : Math.atan2(g.y - cy, g.x - cx)
-        p2.arc(cx, cy, r, a0, a1, cw)
-      }
-    } else p2.lineTo(g.x, g.y)
-    px = g.x; py = g.y
-  }
+    return { toolId, path, plunges }
+  })
   moveRuns.set(segs, runs)
   return runs
 }
@@ -144,6 +130,18 @@ export const HoverHighlightLayer = memo(function HoverHighlightLayer({ viewport 
             c.globalAlpha = 1
             c.lineWidth = 2 * px
             c.stroke(run.path)
+            // A plunge — a drilled hole, a straight-down entry — is the bit's disc, the
+            // same swath glow as a cut, ringed at its edge as a cut has its centreline.
+            if (run.plunges.length) {
+              const r = Math.max(width, 3 * px) / 2
+              const discs = new Path2D()
+              for (const [x, y] of run.plunges) { discs.moveTo(x + r, y); discs.arc(x, y, r, 0, 2 * Math.PI) }
+              c.fillStyle = GLOW
+              c.globalAlpha = 0.35
+              c.fill(discs)
+              c.globalAlpha = 1
+              c.stroke(discs)
+            }
           }
         }
         c.restore()

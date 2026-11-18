@@ -3,7 +3,8 @@ import { pointInPolygon } from '../geom'
 import { toCP, fromCP } from '../clipperAdapters'
 import { differenceD, inflatePathsD, intersectD, unionD, EndType, JoinType, FillRule } from 'clipper2-ts'
 import type { MotionSegment } from '../../store/toolpathStore'
-import { type PocketPlan, type PocketPlanner, _timed, emitLinkedContourRings, growIslands, offsetRing } from './shared'
+import { type PocketPlan, type PocketPlanner, type TravelSafetyObstacles, _timed, emitLinkedContourRings, growIslands, offsetRing } from './shared'
+import { buildPocketClearance } from './clearance'
 import { LINK_MARGIN_MM, planRasterPocket } from './raster'
 import { planContourOutermost } from './contour'
 
@@ -303,12 +304,21 @@ export const planHybridPocket: PocketPlanner = (boundary, islands, tool, params,
       }
     }
     // Contour each island's family, outermost ring inward, against the cleared raster.
+    //
+    // Travel is judged against the DRAWN pocket — wall and every island — as the raster's is.
+    // With no obstacles at all, the link from wherever the previous sub-plan left the tool
+    // to this family's first ring always passed, and when that was under the link ceiling it
+    // was cut at full depth straight through whatever island lay between: on a pocket with
+    // three small islands, a third of stepovers drove the cutter through one of them.
+    const familyTravel: TravelSafetyObstacles = {
+      edgeObstacles: [], field: { field: buildPocketClearance(boundary, islands), clearanceMM: toolRadius },
+    }
     for (const rings of contourFamilies) {
       subPlans.push({
         finishRings: [],
-        travelObstacles: { edgeObstacles: [] },
+        travelObstacles: familyTravel,
         emitCuts: (z, prevZ, pos, segs) =>
-          emitLinkedContourRings(rings, z, { edgeObstacles: [] }, segs, params.startNear,
+          emitLinkedContourRings(rings, z, familyTravel, segs, params.startNear,
             params.rampIn ? 2 * tool.diameterMM : undefined, prevZ, params.safeHeightMM ?? 5,
             tool.diameterMM, pos, true),
       })

@@ -24,6 +24,34 @@ describe('parseGcode — probing', () => {
   })
 })
 
+describe('parseGcode — words whose axis values are not a destination', () => {
+  const below = (segs: { z: number }[]) => segs.filter((s) => s.z < -1e-9)
+
+  it('does not move on G53 — a machine-coordinate retract in an end block is not a plunge', () => {
+    const { segments } = parseGcode('G21 G90\nG0 X10 Y10 Z5\nG53 G0 Z-5\nG0 X20')
+    expect(below(segments)).toEqual([])
+    expect(segments[segments.length - 1]).toMatchObject({ x: 20, y: 10, z: 5 })
+  })
+
+  it('does not move on G10, G92, G28 or G30, whatever axis words they carry', () => {
+    const { segments } = parseGcode('G21 G90\nG0 X10 Y10 Z5\nG10 L20 P0 X0 Y0 Z0\nG92 X0 Y0\nG28 G91 Z0\nG90\nG30 X0 Y0 Z0\nG92.1')
+    expect(segments).toHaveLength(1)
+    expect(segments[0]).toMatchObject({ x: 10, y: 10, z: 5 })
+  })
+
+  it('does not run a canned cycle as the G0 it replaced, and says it is not simulated', () => {
+    const { segments, warnings } = parseGcode('G21 G90\nG0 X10 Y10 Z5\nG81 X10 Y10 Z-5 R2 F100\nX20\nX30 Y5\nG80\nG0 X40 Y40 Z5')
+    expect(below(segments)).toEqual([])
+    expect(segments.map((s) => [s.x, s.y, s.z])).toEqual([[10, 10, 5], [40, 40, 5]])
+    expect(warnings.some((w) => /canned/i.test(w))).toBe(true)
+  })
+
+  it('still moves on a plain line in the same program', () => {
+    const { segments } = parseGcode('G21 G90\nG53 G0 Z-5\nG0 X10 Y10 Z5\nG1 Z-1 F300')
+    expect(segments.map((s) => s.z)).toEqual([5, -1])
+  })
+})
+
 describe('parseGcode — linear motion', () => {
   it('parses G0 rapids and G1 feeds with correct endpoints and duration', () => {
     const { segments, totalTimeS } = parseGcode('G21 G90\nG0 X10 Y0 Z5\nG1 X10 Y10 F100')

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseD, stringifyD, applyMat, fitViewBox, svgDisplayNone, svgVisibilityHidden, svgToCncMat, type Mat6 } from './svgImporter'
+import { parseD, stringifyD, applyMat, fitViewBox, svgDisplayNone, svgVisibilityHidden, svgToCncMat, switchChild, type Mat6 } from './svgImporter'
 
 describe('parseD', () => {
   it('parses absolute M/L/Z', () => {
@@ -144,5 +144,36 @@ describe('svg visibility', () => {
     expect(svgVisibilityHidden(attrs({ visibility: 'hidden' }))).toBe(true)
     expect(svgVisibilityHidden(attrs({ style: 'visibility:collapse' }))).toBe(true)
     expect(svgVisibilityHidden(attrs({ style: 'visibility:visible' }))).toBe(false)
+  })
+})
+
+// No DOMParser under node, so the choice is checked on stand-in elements carrying just
+// what switchChild reads.
+describe('<switch> — which child is drawn', () => {
+  const node = (tagName: string, attrs: Record<string, string> = {}, children: Element[] = []): Element =>
+    ({ tagName, children, getAttribute: (n: string) => attrs[n] ?? null }) as unknown as Element
+
+  it('draws the plain group after Illustrator\'s private copy of the artwork', () => {
+    // How Illustrator writes every SVG it exports: a foreignObject that only Illustrator
+    // reads, then the drawing itself. Falling through the switch imported nothing.
+    const g = node('g', { 'i:extraneous': 'self' })
+    const sw = node('switch', {}, [node('foreignObject', { requiredExtensions: 'http://ns.adobe.com/AdobeIllustrator/10.0/' }), g])
+    expect(switchChild(sw)).toBe(g)
+  })
+
+  it('draws only the FIRST child whose conditions hold, never the alternatives after it', () => {
+    const first = node('path'), second = node('path')
+    expect(switchChild(node('switch', {}, [first, second]))).toBe(first)
+  })
+
+  it('passes over a child needing an extension, and a foreignObject even without one', () => {
+    const rect = node('rect')
+    expect(switchChild(node('switch', {}, [node('g', { requiredExtensions: 'urn:x' }), node('foreignObject'), rect]))).toBe(rect)
+    expect(switchChild(node('switch', {}, [node('foreignObject')]))).toBe(null)
+  })
+
+  it('passes over a child for a language that is not this one', () => {
+    const en = node('g', { systemLanguage: 'en' })
+    expect(switchChild(node('switch', {}, [node('g', { systemLanguage: 'xx-zz' }), en]))).toBe(en)
   })
 })

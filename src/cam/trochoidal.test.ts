@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import type { Tab } from '../store/tabStore'
 import { generateTrochoidal } from './trochoidal'
 import type { TrochoidalParams } from './trochoidal'
 import type { Tool } from '../store/toolStore'
@@ -174,5 +175,18 @@ describe('generateTrochoidal — a SIDED cut still needs a closed shape', () => 
 
   it('rejects a path with nothing drawn at all', () => {
     expect(() => generateTrochoidal('', EM6, params())).toThrow('No geometry found in path')
+  })
+})
+
+describe('generateTrochoidal — a tab is held only on the loop it was placed on', () => {
+  // Two 30 mm squares in ONE path, 100 mm apart, one tab on the first: the second square's
+  // loops must run at full depth all the way round (as in profile.ts).
+  const TWO = 'M 0 0 L 30 0 L 30 30 L 0 30 Z M 130 0 L 160 0 L 160 30 L 130 30 Z'
+  it('the other square is cut to full depth all the way round, and the tab is still held', () => {
+    const tab = { id: 't1', pathId: 'p', t: 0.1, lengthMM: 10, heightMM: 2 } as Tab
+    const segs = generateTrochoidal(TWO, EM6, params({ side: 'outside', depthMM: 5, stepDownMM: 5 }), [tab])
+    const deepest = Math.min(...cuts(segs).map((s) => s.z))
+    expect(cuts(segs).filter((s) => s.x > 110 && s.z > deepest + 1e-9 && s.z < 0).length).toBe(0)
+    expect(cuts(segs).some((s) => s.x < 50 && Math.abs(s.z - (deepest + 2)) < 1e-9)).toBe(true)
   })
 })

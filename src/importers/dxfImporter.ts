@@ -102,7 +102,8 @@ function ellipseToD(
   return pts.join(' ')
 }
 
-// De Boor's algorithm for evaluating a B-spline at parameter t
+// De Boor's algorithm for evaluating a B-spline at parameter t: find the span, then the
+// blossom with every parameter t (see blossom below — one recurrence for both).
 function deBoor(
   pts: { x: number; y: number }[],
   degree: number,
@@ -115,16 +116,54 @@ function deBoor(
   for (let i = degree; i <= n; i++) {
     if (t >= knots[i] && (t < knots[i + 1] || i === n)) { k = i; break }
   }
+  return blossom(pts, degree, knots, k, Array(degree).fill(t))
+}
+
+/**
+ * The B-spline's BLOSSOM (polar form) on knot span k, at the parameters `ts` (one per
+ * degree): de Boor's recurrence with level r evaluated at ts[r-1] instead of one t
+ * throughout. With every ts equal to t it IS the point at t; with a's and b's mixed it
+ * gives the span's exact Bézier control points (below).
+ */
+function blossom(pts: { x: number; y: number }[], degree: number, knots: number[], k: number, ts: number[]): { x: number; y: number } {
   const d = pts.slice(k - degree, k + 1).map((p) => ({ x: p.x, y: p.y }))
   for (let r = 1; r <= degree; r++) {
+    const t = ts[r - 1]
     for (let j = degree; j >= r; j--) {
-      const denom = knots[k - degree + j + r] - knots[k - degree + j]
-      const alpha = denom === 0 ? 0 : (t - knots[k - degree + j]) / denom
+      const lo = knots[k - degree + j], hi = knots[j + 1 + k - r]
+      const alpha = hi === lo ? 0 : (t - lo) / (hi - lo)
       d[j].x = (1 - alpha) * d[j - 1].x + alpha * d[j].x
       d[j].y = (1 - alpha) * d[j - 1].y + alpha * d[j].y
     }
   }
   return d[degree]
+}
+
+/**
+ * A spline of degree 1–3 as EXACT SVG segments — one per non-empty knot span: L for a
+ * line, Q for a quadratic, C for a cubic. On span [a, b] the Bézier control points are
+ * the blossoms f(a…a, b…b) with j b's for the j-th point, so the curve is not sampled at
+ * all: it comes in with handles, as a pen-tool curve does, and edits as one. Null when
+ * the degree has no SVG segment (above 3) or the knots do not fit, for the caller to
+ * sample instead.
+ */
+function splineToBezierD(cps: { x: number; y: number }[], degree: number, knots: number[]): string | null {
+  if (degree < 1 || degree > 3) return null
+  const n = cps.length - 1
+  if (knots.length < n + degree + 2) return null
+  const fmt = (p: { x: number; y: number }) => `${round4(p.x)},${round4(p.y)}`
+  const out: string[] = []
+  for (let k = degree; k <= n; k++) {
+    const a = knots[k], b = knots[k + 1]
+    if (!(b > a)) continue
+    const ctrl = Array.from({ length: degree + 1 }, (_, j) =>
+      blossom(cps, degree, knots, k, [...Array(degree - j).fill(a), ...Array(j).fill(b)]))
+    if (ctrl.some((p) => !isFinite(p.x) || !isFinite(p.y))) return null
+    if (out.length === 0) out.push(`M${fmt(ctrl[0])}`)
+    const cmd = degree === 1 ? 'L' : degree === 2 ? 'Q' : 'C'
+    out.push(cmd + ctrl.slice(1).map(fmt).join(' '))
+  }
+  return out.length > 1 ? out.join(' ') : null
 }
 
 function splineToD(
@@ -137,6 +176,9 @@ function splineToD(
   if (!knots || knots.length < controlPoints.length + degree + 1) {
     return polyToD(controlPoints, closed ?? false)
   }
+  const exact = splineToBezierD(controlPoints, degree, knots)
+  if (exact) return closed ? exact + ' Z' : exact
+  // Above cubic: no SVG segment can hold it, so it is sampled.
   const tMin = knots[degree]
   const tMax = knots[controlPoints.length]
   const steps = Math.max(32, controlPoints.length * 8)
@@ -152,6 +194,44 @@ function splineToD(
   }
   if (closed && pts.length > 0) pts.push('Z')
   return pts.join(' ')
+}
+
+/**
+ * A SPLINE stored only as FIT points — the points the curve passes through, which is how
+ * AutoCAD keeps one drawn by picking points until it is edited. dxf-parser gives no control
+ * points for those, and the curve AutoCAD would solve also depends on end tangents and a
+ * knot parameterisation it may not have written, so this is a centripetal Catmull–Rom
+ * through the points as cubic Béziers: it passes through every one, is C1, and does not
+ * loop or overshoot on uneven spacing.
+ */
+function fitPointsToD(pts: { x: number; y: number }[], closed: boolean): string {
+  const n = pts.length
+  if (n === 2) return `M${round4(pts[0].x)},${round4(pts[0].y)} L${round4(pts[1].x)},${round4(pts[1].y)}`
+  // An open end has no neighbour beyond it: a phantom point mirrored through the end gives
+  // the end the direction of its own chord, where a repeated point would stall it to zero.
+  const at = (i: number): { x: number; y: number } => {
+    if (closed) return pts[((i % n) + n) % n]
+    if (i < 0) return { x: 2 * pts[0].x - pts[1].x, y: 2 * pts[0].y - pts[1].y }
+    if (i > n - 1) return { x: 2 * pts[n - 1].x - pts[n - 2].x, y: 2 * pts[n - 1].y - pts[n - 2].y }
+    return pts[i]
+  }
+  const out = [`M${round4(pts[0].x)},${round4(pts[0].y)}`]
+  const segs = closed ? n : n - 1
+  for (let i = 0; i < segs; i++) {
+    const p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2)
+    // Centripetal knot spacing (alpha = 0.5); a repeated end point gets a tiny interval.
+    const d01 = Math.max(1e-9, Math.sqrt(Math.hypot(p1.x - p0.x, p1.y - p0.y)))
+    const d12 = Math.max(1e-9, Math.sqrt(Math.hypot(p2.x - p1.x, p2.y - p1.y)))
+    const d23 = Math.max(1e-9, Math.sqrt(Math.hypot(p3.x - p2.x, p3.y - p2.y)))
+    // Tangents at p1 and p2 (Barry–Goldman), scaled to this segment's interval.
+    const t1 = (k: 'x' | 'y') => (p1[k] - p0[k]) / d01 - (p2[k] - p0[k]) / (d01 + d12) + (p2[k] - p1[k]) / d12
+    const t2 = (k: 'x' | 'y') => (p2[k] - p1[k]) / d12 - (p3[k] - p1[k]) / (d12 + d23) + (p3[k] - p2[k]) / d23
+    const c1 = { x: p1.x + (t1('x') * d12) / 3, y: p1.y + (t1('y') * d12) / 3 }
+    const c2 = { x: p2.x - (t2('x') * d12) / 3, y: p2.y - (t2('y') * d12) / 3 }
+    out.push(`C${round4(c1.x)},${round4(c1.y)} ${round4(c2.x)},${round4(c2.y)} ${round4(p2.x)},${round4(p2.y)}`)
+  }
+  if (closed) out.push('Z')
+  return out.join(' ')
 }
 
 // One stitchable DXF edge: a LINE, or a partial ARC (CCW from p0 to p1 in CNC
@@ -557,12 +637,21 @@ export function importDxf(
           }
           case 'SPLINE': {
             const e = entity as import('dxf-parser').SplineEntity
-            pushPath(mapD(splineToD(
-              e.controlPoints.map((p) => ({ x: sc(p.x), y: sc(p.y) })),
-              e.degree,
-              e.knots,
-              e.closed,
-            ), ocs), 'Spline')
+            const cps = e.controlPoints ?? []
+            const fits = e.fitPoints ?? []
+            if (cps.length >= 2) {
+              pushPath(mapD(splineToD(
+                cps.map((p) => ({ x: sc(p.x), y: sc(p.y) })),
+                e.degreeOfSplineCurve ?? 3,
+                e.knotValues,
+                e.closed,
+              ), ocs), 'Spline')
+            } else if (fits.length >= 2) {
+              // Only the points the curve passes THROUGH: a smooth curve through them.
+              pushPath(mapD(fitPointsToD(fits.map((p) => ({ x: sc(p.x), y: sc(p.y) })), e.closed ?? false), ocs), 'Spline')
+            } else {
+              skip('spline (no points)')
+            }
             continue
           }
           case 'INSERT': {
@@ -577,11 +666,20 @@ export function importDxf(
             const sx = e.xScale ?? 1, sy = e.yScale ?? 1
             const place = mul(translate(sc(e.position.x), sc(e.position.y)), [cos, sin, -sin, cos, 0, 0])
             const fromBase = mul([sx, 0, 0, sy, 0, 0], translate(-sc(base.x), -sc(base.y)))
-            const cols = Math.max(1, e.columnCount ?? 1), rows = Math.max(1, e.rowCount ?? 1)
+            const cols = Math.max(1, Math.floor(e.columnCount ?? 1)), rows = Math.max(1, Math.floor(e.rowCount ?? 1))
+            // PRICE THE ARRAY BEFORE WALKING IT. The cap above is counted per entity, inside
+            // collect, so it never bounded this loop: a 32767 × 32767 array — or any array of an
+            // EMPTY block, which counts nothing at all — walked ~1e9 cells, allocating per cell,
+            // which is the hang the cap exists to prevent. Each cell costs at least 1.
+            const n = block.entities?.length ?? 0
+            if (expanded + rows * cols * Math.max(1, n) > MAX_BLOCK_ENTITIES) { skip('block expansion over the limit'); continue }
+            if (n === 0) { expanded += rows * cols; continue }
             // Captured: each cell's entities reset `layer` as they go.
             const insertLayer = layer
-            for (let r = 0; r < rows; r++) {
+            cells: for (let r = 0; r < rows; r++) {
               for (let c = 0; c < cols; c++) {
+                // Nested inserts can still run past the cap partway through; stop there.
+                if (expanded > MAX_BLOCK_ENTITIES) break cells
                 const cell = translate(sc(c * (e.columnSpacing ?? 0)), sc(r * (e.rowSpacing ?? 0)))
                 // Every cell is a part of its own, so every cell is a group of its own.
                 collect(block.entities ?? [], mul(ocs, mul(place, mul(cell, fromBase))), depth + 1, insertLayer,
@@ -594,7 +692,13 @@ export function importDxf(
             if (!SILENT.has(entity.type)) skip(skipLabel(entity.type))
             continue
         }
-      } catch { continue }
+      } catch {
+        // An entity the parser handed over in a shape this code cannot read. Reported like
+        // any other left-out entity — a curve silently missing from a part outline is the
+        // one thing an import must never do.
+        skip(`${skipLabel(entity.type ?? 'entity')} (unreadable)`)
+        continue
+      }
     }
   }
   collect(dxf.entities ?? [], IDENTITY, 0)

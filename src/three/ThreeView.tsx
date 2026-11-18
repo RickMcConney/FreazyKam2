@@ -558,6 +558,21 @@ export default function ThreeView() {
       refs.stlGeoCache.clear()
       for (const entry of refs.toolpathLines.values()) disposeToolpathLine(entry.line)
       refs.toolpathLines.clear()
+      // The scene's own pieces. The view is UNMOUNTED on every 2D/3D switch, so anything
+      // left here is left once per switch.
+      clearGroup(refs.workpieceGroup)
+      clearGroup(refs.shapesGroup)
+      clearGroup(refs.toolpathGroup)
+      disposeObject3D(refs.axesHelper)
+      refs.gridHelper.geometry.dispose()
+      ;(refs.gridHelper.material as THREE.Material).dispose()
+      controls.removeEventListener('change', wake)
+      controls.dispose()
+      // Give the GL context back NOW. dispose() frees what the renderer allocated but leaves
+      // the context to the garbage collector, and a browser keeps only ~16 alive: past that
+      // Chrome warns "Too many active WebGL contexts" and kills the oldest. Its context-lost
+      // listener is already off (above), so nothing asks for this one back.
+      renderer.forceContextLoss()
       renderer.dispose()
       if (container.contains(renderer.domElement)) container.removeChild(renderer.domElement)
     }

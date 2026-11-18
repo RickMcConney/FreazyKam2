@@ -187,6 +187,51 @@ describe('connecting', () => {
     expect(store().error).toMatch(/Another WebUI session/)
   })
 
+  it('a reconnect whose socket drops before it is named does not later read as connected', async () => {
+    // Its "live after 2 s without a session id" timer used to fire into the NEXT attempt:
+    // connected with no socket, the retry count back to 0, never giving up on a controller
+    // that drops every socket.
+    await connect()
+    link().handlers.onWsState!('closed', 1006)
+    expect(store().link).toBe('connecting')
+    await vi.advanceTimersByTimeAsync(2000)             // the reconnect opens a socket…
+    link().handlers.onWsState!('open')
+    await vi.advanceTimersByTimeAsync(500)
+    link().handlers.onWsState!('closed', 1006)          // …which drops half a second later
+    await vi.advanceTimersByTimeAsync(1600)             // past where the first socket's wait ran out
+    expect(store().link).toBe('connecting')
+    expect(store().log.some((l) => /Reconnected/.test(typeof l === 'string' ? l : JSON.stringify(l)))).toBe(false)
+    expect(store().error).toMatch(/reconnecting \(2\//)
+  })
+
+  it('starts a reopened socket on a fresh line — half a report from the dropped one is not glued on', async () => {
+    await connect()
+    link().handlers.onWsBinary!(new TextEncoder().encode('<Run|MPos:1.000,').buffer as ArrayBuffer)
+    link().handlers.onWsState!('closed', 1006)
+    await vi.advanceTimersByTimeAsync(2000)
+    link().handlers.onWsState!('open')
+    link().handlers.onWsText!('CURRENTID:8')
+    await flush()
+    report('<Idle|MPos:5.000,6.000,7.000|FS:0,0>')
+    expect(store().position).toMatchObject({ state: 'Idle', mpos: [5, 6, 7] })
+  })
+
+  it('a Disconnect while [ESP800] is still pending is just a disconnect, not an error', async () => {
+    let answer!: (r: HttpResponse) => void
+    g.__respond = (req) => req.query?.cmd === '[ESP800]json=yes'
+      ? new Promise<HttpResponse>((res) => { answer = res })
+      : controller(req)
+    const p = store().connect()
+    await flush()
+    store().disconnect()
+    answer({ status: 0, body: 'relay closed' })     // what the relay hands back to a pending request
+    await p
+    await flush()
+    expect(store().link).toBe('disconnected')
+    expect(store().error).toBeNull()
+    expect(link().wsOpens).toEqual([])
+  })
+
   it('reads a status report split across two socket frames', async () => {
     await connect()
     const bytes = new TextEncoder().encode('<Run|MPos:1.000,2.000,3.000|FS:500,0>\n')
@@ -539,6 +584,32 @@ describe('the SD card', () => {
     await store().sdUpload(new File(['G0 X0\n'], 'lost.nc'))
     expect(store().job?.name).toBe('a.nc')
     expect(store().sdError).toMatch(/did not appear on the card/)
+  })
+
+  it('a FAILED upload of a file already on the card leaves the loaded job as the card has it', async () => {
+    // Re-uploading an edited a.nc is the usual case. The POST times out (status 0), so the
+    // card still holds the OLD a.nc and Run would start that — but the listing from before
+    // the upload still named a.nc, and success was judged from it: the job swapped to the
+    // NEW program's preview, so the map showed one program while the machine would cut
+    // another.
+    await connect()
+    await store().sdLoad('a.nc')
+    const before = store().job!.preview
+    g.__respond = (req) => (req.method === 'POST' ? { status: 0, body: 'timeout' } : controller(req))
+    await store().sdUpload(new File([`${PROGRAM}G1 X0 Y10\nG1 X0 Y0\n`], 'a.nc'))
+    expect(card.get('/a.nc')).toBe(PROGRAM)
+    expect(store().job!.preview).toBe(before)
+    expect(store().sdError).toMatch(/HTTP 0/)
+  })
+
+  it('an upload answered with something other than a listing is not judged landed either', async () => {
+    await connect()
+    await store().sdLoad('a.nc')
+    const before = store().job!.preview
+    g.__respond = (req) => (req.method === 'POST' ? { status: 200, body: '<html>busy</html>' } : controller(req))
+    await store().sdUpload(new File([`${PROGRAM}G1 X0 Y10\n`], 'a.nc'))
+    expect(store().job!.preview).toBe(before)
+    expect(store().sdError).toMatch(/did not answer with a listing/)
   })
 
   it('sending the design with no toolpaths says so and uploads nothing', async () => {

@@ -45,6 +45,19 @@ const entries = (segs: MotionSegment[], safeZ = 5) =>
   segs.filter((s, i) => s.rapid && s.z === safeZ && segs[i + 1] && segs[i + 1].z !== safeZ)
       .map((s) => [s.x, s.y])
 
+describe('drilling — degenerate input fails with a message, never a hang or a TypeError', () => {
+  it('refuses a helical bore with a tool of no diameter (it would spiral out for ever)', () => {
+    for (const d of [0, -1, NaN]) {
+      expect(() => generateHelicalDrill(0, 0, 3, { ...EM6, diameterMM: d }, params())).toThrow(/no diameter/)
+    }
+  })
+
+  it('refuses a peck op with no points at all, stored or derived', () => {
+    expect(() => generatePeckDrill(undefined as never, EM6, params())).toThrow(/No drill points/)
+    expect(() => generatePeckDrill([], EM6, params())).toThrow(/No drill points/)
+  })
+})
+
 describe('generatePeckDrill', () => {
   it('pecks: plunge, retract to the surface, plunge deeper, and only then to safe height', () => {
     // Retracting to Z0 between pecks is the chip break — it clears the flutes

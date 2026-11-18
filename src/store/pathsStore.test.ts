@@ -8,7 +8,7 @@
 // snapshot at the cursor is refreshed in a microtask after every write, so `step()`
 // flushes those before the next action reads anything.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { usePathsStore, bakePathsStep, bakePathsSteps, type ImportedPath } from './pathsStore'
+import { usePathsStore, bakePathsStep, bakePathsSteps, applyConstraintSolve, type ImportedPath } from './pathsStore'
 import { regenerateAffectedMany } from '../cam/regenerate'
 import { useToolpathStore, type AnyOperation } from './toolpathStore'
 import { useTabStore, type Tab } from './tabStore'
@@ -574,6 +574,23 @@ describe('splitPath', () => {
     expect(useConstraintsStore.getState().constraints).toHaveLength(1)
   })
 
+  it('keeps each piece on its layer, in its source group and user group, but not the whole outline\'s recipe', async () => {
+    await load({ paths: [path('c', {
+      layer: 'Holes', sourceGroups: ['g1'], sourceGroupNames: ['Bracket'], sourceElement: 'e1',
+      userGroups: ['u1'], groupLabels: { u1: 'Left side' },
+      corners: { baseD: rectD(0, 0, 10, 10), treatments: {} } as ImportedPath['corners'],
+    })] })
+    S().splitPath('c', [rectD(0, 0, 4, 4), rectD(6, 6, 4, 4)])
+    await step()
+    for (const p of S().paths) {
+      expect(p).toMatchObject({
+        layer: 'Holes', sourceGroups: ['g1'], sourceGroupNames: ['Bracket'], sourceElement: 'e1',
+        userGroups: ['u1'], groupLabels: { u1: 'Left side' },
+      })
+      expect(p.corners).toBeUndefined()
+    }
+  })
+
   it('does nothing for a path with a single subpath', async () => {
     await load({ paths: [path('c')] })
     S().splitPath('c', [rectD(0, 0, 10, 10)])
@@ -747,6 +764,47 @@ describe('strips follow the parts they hold', () => {
     vi.mocked(regenerateAffectedMany).mockClear()
     S().applyPathEdit({ updates: [{ id: 'b', d: rectD(80, 50, 60, 40) }] })
     await step()
+    const asked = vi.mocked(regenerateAffectedMany).mock.calls.flatMap((c) => c[0])
+    expect(asked).toEqual(expect.arrayContaining(['a', 'b']))
+  })
+
+  it('a shape whose parameters are edited carries its strips too, and its partner is regenerated', async () => {
+    // The single-path branch of updateShapeParams wrote `paths` itself and skipped the
+    // re-fit applyPathEdit does: type a rectangle wider and its strips stayed where the
+    // old outline was, and the part it is held to was never regenerated for it.
+    await joined()
+    const p0 = { ...shapeParamsFromConfig('rectangle', 106, 70, DEFAULT_SHAPE_CONFIG), w: 60, h: 40 } as ShapeParams & { x: number; y: number }
+    const bb = getBBox(generateShapeD(p0))!
+    const rect = { ...p0, x: p0.x + 76 - bb.minX, y: p0.y + 50 - bb.minY } as ShapeParams & { x: number }
+    S().updatePathD('b', generateShapeD(rect))
+    usePathsStore.setState({ paths: S().paths.map((p) => p.id === 'b' ? { ...p, shapeParams: rect } : p) })
+    await step()
+    const before = { ...strip() }
+    vi.mocked(regenerateAffectedMany).mockClear()
+    S().updateShapeParams('b', { ...rect, x: rect.x + 4 } as ShapeParams)
+    await step()
+    expect(strip()).not.toEqual(before)
+    expect(Math.max(strip().x1, strip().x2)).toBeCloseTo(Math.max(before.x1, before.x2) + 4, 6)
+    const asked = vi.mocked(regenerateAffectedMany).mock.calls.flatMap((c) => c[0])
+    expect(asked).toEqual(expect.arrayContaining(['a']))
+  })
+
+  it('a part a constraint carries along carries its strips too', async () => {
+    // applyConstraintSolve is the constraint actions' own write of the paths, and it
+    // skipped the re-fit the same way.
+    await joined()
+    usePathsStore.setState({ paths: [...S().paths, path('c', { d: rectD(200, 150, 10, 10) })] })
+    // b's centre is (106, 70); c's is (205, 155). Hold b 4 mm further right of c than it is.
+    useConstraintsStore.setState({ constraints: [{
+      id: 'cb', mode: 'xy', offsetXMM: 110 - 205, offsetYMM: 70 - 155,
+      from: { kind: 'path', id: 'c', anchor: 'center' }, to: { kind: 'path', id: 'b', anchor: 'center' },
+    } as Constraint] })
+    const before = { ...strip() }
+    vi.mocked(regenerateAffectedMany).mockClear()
+    applyConstraintSolve(['c'])
+    await step()
+    expect(getBBox(S().paths.find((p) => p.id === 'b')!.d)!.minX).toBeCloseTo(80, 6)
+    expect(Math.max(strip().x1, strip().x2)).toBeCloseTo(Math.max(before.x1, before.x2) + 4, 6)
     const asked = vi.mocked(regenerateAffectedMany).mock.calls.flatMap((c) => c[0])
     expect(asked).toEqual(expect.arrayContaining(['a', 'b']))
   })

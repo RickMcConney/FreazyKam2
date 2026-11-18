@@ -273,8 +273,10 @@ describe('the seam between hybrid\'s contour families and its raster areas', () 
     // the symptom visible on the canvas. 1554 with the seam flush, 1356 overlapping only by
     // LINK_MARGIN_MM, ~1050 overlapping by the stepover too. The project file itself goes
     // 1108 -> 939 -> 708. Bounded rather than pinned exactly, since the count moves with any
-    // change to the split.
-    expect(hybrid(25).length).toBeLessThan(1200)
+    // change to the split. (1199 until the contour families' links were judged against the
+    // drawn islands: two short links that grazed the finish allowance by a few µm now lift,
+    // 1202. The annulus this guards against is 1356+.)
+    expect(hybrid(25).length).toBeLessThan(1250)
   })
 
   it('holds across stepovers, where the band the raster misses scales with it', () => {
@@ -283,6 +285,39 @@ describe('the seam between hybrid\'s contour families and its raster areas', () 
     for (const so of [15, 25, 45, 70]) {
       expect(`${so}%: ${hybrid(so).length < 1400}`).toBe(`${so}%: true`)
     }
+  })
+})
+
+describe('hybrid never cuts through an island to reach the next one', () => {
+  // A 120 × 90 pocket with three small square islands in a diagonal line. Each island's
+  // contour family is its own sub-plan, and the move from wherever the previous one left
+  // the tool to the next family's first ring was judged against NO obstacles — so whenever
+  // it was short enough to stay down, it was cut at full depth straight through the island
+  // between (16 of 54 such pockets). With Ramp In the move to the ramp's start, two
+  // diameters back along the ring from the vertex the link was checked to, was never
+  // checked at all. Every feed move below the stock top must keep the cutter's radius
+  // clear of the DRAWN wall and islands.
+  const sq = (cx: number, cy: number, h: number): Pt2[] =>
+    [[cx - h, cy - h], [cx + h, cy - h], [cx + h, cy + h], [cx - h, cy + h]]
+  const toD = (p: Pt2[]) => 'M ' + p.map((q) => q.join(' ')).join(' L ') + ' Z'
+  const wall: Pt2[] = [[0, 0], [120, 0], [120, 90], [0, 90]]
+
+  it('at full depth and on a ramped entry, at every island size, spacing and stepover', () => {
+    const offenders: string[] = []
+    for (const size of [3, 5, 8]) for (const gap of [10, 15, 20]) for (const so of [30, 40, 50]) for (const rampIn of [false, true]) {
+      const islands = [0, 1, 2].map((k) => sq(30 + k * (size + gap), 30 + k * 7, size / 2))
+      const segs = generatePocket(toD(wall), TOOL, params({
+        strategy: 'hybrid', depthMM: 6, stepDownMM: 3, stepoverPercent: so, rampIn, islandDs: islands.map(toD),
+      }))
+      const field = buildPocketClearance(wall, islands)
+      for (let i = 1; i < segs.length; i++) {
+        const a = segs[i - 1], b = segs[i]
+        if (b.rapid || a.z >= 0 || b.z >= 0) continue
+        const d = field.segmentDistance([a.x, a.y], [b.x, b.y])
+        if (d < TOOL.diameterMM / 2 - 0.05) { offenders.push(`size ${size} gap ${gap} ${so}% ramp ${rampIn}: ${d.toFixed(3)} mm`); break }
+      }
+    }
+    expect(offenders).toEqual([])
   })
 })
 

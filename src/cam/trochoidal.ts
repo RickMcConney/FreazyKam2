@@ -1,7 +1,7 @@
 import { flattenPath, ensureWinding, signedArea, rotatePolylineNear, arcFitPolyline, splitSelfIntersecting, requireClosedSubpaths, isOpenSubpath, type Pt2 } from './pathFlattener'
 import { inflatePathsD, JoinType, EndType } from 'clipper2-ts'
 import { zPasses, arcLengths, interpPt, stripClosingDuplicate, pushAll } from './geom'
-import { designPathAtT, nearestArcLen, polylinePassWithTabs, withBridges, holdTopZ } from './profile'
+import { designPathAtT, nearestArcLen, polylinePassWithTabs, withBridges, holdTopZ, distToPolyline } from './profile'
 import type { BridgeSet } from './bridges'
 import type { MotionSegment } from '../store/toolpathStore'
 import type { Tool } from '../store/toolStore'
@@ -206,6 +206,10 @@ export function generateTrochoidal(
 
   const STEPS = 32  // segments per trochoidal loop (matches pocket.ts)
 
+  // A tab is held only on the loop nearest it — one per subpath of a compound path — or
+  // one tab on one part held up every other part too (as profile.ts).
+  const tabPosAll = (tabs ?? []).map((tab) => designPathAtT(designSubs, tab.t))
+  const tabNearest = tabPosAll.map((pos) => (pos ? Math.min(...offsetPaths.map((o) => distToPolyline(pos, o.pts, !o.isOpen))) : Infinity))
   for (const { pts: rawPts, isOpen } of offsetPaths) {
     // Round sharp corners so trochoidal loops sweep smoothly around them instead of
     // snapping. Radius is scaled to the loop geometry: large enough to fit a couple of
@@ -277,9 +281,9 @@ export function generateTrochoidal(
     const exactLens = arcLengths(closedExact)
     const tabRangesExact: { start: number; end: number; tabZ: number }[] = []
     if (tabs && tabs.length > 0) {
-      for (const tab of tabs) {
-        const pos = designPathAtT(designSubs, tab.t)
-        if (!pos) continue
+      for (const [ti, tab] of tabs.entries()) {
+        const pos = tabPosAll[ti]
+        if (!pos || distToPolyline(pos, rawPts, !isOpen) > tabNearest[ti] + 1e-3) continue
         const tabZ = holdTopZ(0, params.depthMM, tab.heightMM, params.stockBottomZMM)
         const half = tab.lengthMM / 2 + tool.diameterMM / 2
         const center = nearestArcLen(closed, lens, pos[0], pos[1])

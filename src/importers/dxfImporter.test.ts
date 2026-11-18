@@ -123,6 +123,136 @@ const square = (x: number, y: number) => ['0', 'LWPOLYLINE', '8', '0', '90', '4'
   '10', `${x}`, '20', `${y}`, '10', `${x + 10}`, '20', `${y}`, '10', `${x + 10}`, '20', `${y + 10}`, '10', `${x}`, '20', `${y + 10}`]
 const bb = (d: string) => { const b = getBBox(d)!; return [b.minX, b.minY, b.maxX, b.maxY].map((v) => +v.toFixed(4)) }
 
+describe('importDxf — an INSERT array too big to expand', () => {
+  // 70 = columns, 71 = rows. 30000 × 30000 is 9e8 cells.
+  const huge = (name: string) => ['0', 'INSERT', '8', '0', '2', name, '10', '0', '20', '0', '30', '0', '70', '30000', '71', '30000', '44', '1', '45', '1']
+
+  it('is refused and reported at once, even for an empty block (which counts nothing per cell)', () => {
+    const t0 = performance.now()
+    const r = importDxf(dxfWithBlocks([{ name: 'E', entities: [] }], [huge('E'), square(0, 0)]), 'g')
+    expect(performance.now() - t0).toBeLessThan(2000)
+    expect(r.skipped['block expansion over the limit']).toBe(1)
+    expect(r.paths).toHaveLength(1)                    // the rest of the file still comes in
+  })
+
+  it('is refused for a block with something in it, before a single cell is drawn', () => {
+    const r = importDxf(dxfWithBlocks([{ name: 'S', entities: [square(0, 0)] }], [huge('S')]), 'g')
+    expect(r.skipped['block expansion over the limit']).toBe(1)
+    expect(r.paths).toHaveLength(0)
+  })
+
+  it('still expands an ordinary array', () => {
+    const r = importDxf(dxfWithBlocks([{ name: 'S', entities: [square(0, 0)] }], [insert('S', 0, 0, { cols: 4, colGap: 20 })]), 'g')
+    expect(r.skipped).toEqual({})
+    expect(r.paths).toHaveLength(4)
+  })
+})
+
+describe('importDxf — SPLINE', () => {
+  const spline = (codes: (string | number)[]) => ['0', 'SPLINE', '8', '0', ...codes.map(String)]
+  const pt = (code: number, x: number, y: number) => [code, x, code + 10, y, code + 20, 0]
+
+  it('draws a spline from its control points as the CURVE, not as its control polygon', () => {
+    // A clamped cubic with four control points is one Bézier: (0,0) (0,10) (10,10) (10,0)
+    // rises to y = 7.5 at its middle. Read with the wrong field names it came in as the
+    // three straight sides of the box, 10 high.
+    const r = importDxf(dxf(spline([70, 8, 71, 3, 72, 8, 73, 4,
+      ...[0, 0, 0, 0, 1, 1, 1, 1].flatMap((k) => [40, k]),
+      ...pt(10, 0, 0), ...pt(10, 0, 10), ...pt(10, 10, 10), ...pt(10, 10, 0)])), 'g', 'mm')
+    expect(r.skipped).toEqual({})
+    expect(r.paths).toHaveLength(1)
+    const [x0, y0, x1, y1] = bb(r.paths[0].d)
+    expect([x0, y0, x1]).toEqual([0, 0, 10])
+    expect(y1).toBeCloseTo(7.5, 3)
+    // …and as one Bézier, handles and all — not sampled points.
+    expect(r.paths[0].d).toBe('M0,0 C0,10 10,10 10,0')
+  })
+
+  it('puts every point of a spline of several spans on the curve, measured by the basis functions', () => {
+    // Cox–de Boor from the definition, independent of the importer's de Boor evaluation.
+    const knots = [0, 0, 0, 0, 0.5, 1, 1, 1, 1]
+    const cps = [[0, 0], [5, 20], [15, -10], [25, 15], [30, 0]]
+    const N = (i: number, p: number, t: number): number => {
+      if (p === 0) return (knots[i] <= t && t < knots[i + 1]) || (t === 1 && knots[i + 1] === 1 && knots[i] < 1) ? 1 : 0
+      const a = knots[i + p] - knots[i], b = knots[i + p + 1] - knots[i + 1]
+      return (a ? ((t - knots[i]) / a) * N(i, p - 1, t) : 0) + (b ? ((knots[i + p + 1] - t) / b) * N(i + 1, p - 1, t) : 0)
+    }
+    const on = (t: number) => cps.reduce(([x, y], [cx, cy], i) => [x + N(i, 3, t) * cx, y + N(i, 3, t) * cy], [0, 0])
+    const r = importDxf(dxf(spline([70, 8, 71, 3, 72, 9, 73, 5, ...knots.flatMap((k) => [40, k]),
+      ...cps.flatMap(([x, y]) => pt(10, x, y))])), 'g', 'mm')
+    // One cubic per knot span: [0, 0.5] and [0.5, 1].
+    const d = r.paths[0].d
+    const nums = (s: string) => s.trim().split(/[ ,]+/).map(Number)
+    const start = nums(d.match(/^M([^C]+)/)![1])
+    const segs = [...d.matchAll(/C([^C]+)/g)].map((m) => nums(m[1]))
+    expect(segs).toHaveLength(2)
+    let p0 = start
+    segs.forEach((s, i) => {
+      const [c1x, c1y, c2x, c2y, ex, ey] = s
+      for (let u = 0; u <= 1; u += 0.125) {
+        const v = 1 - u
+        const bx = v * v * v * p0[0] + 3 * v * v * u * c1x + 3 * v * u * u * c2x + u * u * u * ex
+        const by = v * v * v * p0[1] + 3 * v * v * u * c1y + 3 * v * u * u * c2y + u * u * u * ey
+        const [qx, qy] = on(Math.min(0.5 * (i + u), 1))
+        expect(Math.hypot(bx - qx, by - qy)).toBeLessThan(1e-3)
+      }
+      p0 = [ex, ey]
+    })
+  })
+
+  it('samples a spline above cubic, which no SVG segment can hold, onto the curve', () => {
+    // A clamped quartic with five control points is one quartic Bézier.
+    const cps = [[0, 0], [10, 40], [20, -20], [30, 40], [40, 0]]
+    const r = importDxf(dxf(spline([70, 8, 71, 4, 72, 10, 73, 5, ...[0, 0, 0, 0, 0, 1, 1, 1, 1, 1].flatMap((k) => [40, k]),
+      ...cps.flatMap(([x, y]) => pt(10, x, y))])), 'g', 'mm')
+    const d = r.paths[0].d
+    expect(d).not.toMatch(/[CQ]/)
+    const got = [...d.matchAll(/[ML](-?[\d.]+),(-?[\d.]+)/g)].map((m) => [+m[1], +m[2]])
+    expect(got.length).toBeGreaterThan(30)
+    const bern = [1, 4, 6, 4, 1]
+    got.forEach(([x, y], i) => {
+      const u = Math.min(i / (got.length - 1), 1), v = 1 - u
+      const [ex, ey] = cps.reduce(([sx, sy], [cx, cy], j) => {
+        const w = bern[j] * v ** (4 - j) * u ** j
+        return [sx + w * cx, sy + w * cy]
+      }, [0, 0])
+      expect(Math.hypot(x - ex, y - ey)).toBeLessThan(1e-3)
+    })
+  })
+
+  it('brings a quadratic spline in as quadratic Béziers, and a degree-1 spline as lines', () => {
+    const quad = importDxf(dxf(spline([70, 8, 71, 2, 72, 6, 73, 3, ...[0, 0, 0, 1, 1, 1].flatMap((k) => [40, k]),
+      ...pt(10, 0, 0), ...pt(10, 5, 10), ...pt(10, 10, 0)])), 'g', 'mm')
+    expect(quad.paths[0].d).toBe('M0,0 Q5,10 10,0')
+    const lin = importDxf(dxf(spline([70, 8, 71, 1, 72, 5, 73, 3, ...[0, 0, 0.5, 1, 1].flatMap((k) => [40, k]),
+      ...pt(10, 0, 0), ...pt(10, 5, 10), ...pt(10, 10, 0)])), 'g', 'mm')
+    expect(lin.paths[0].d).toBe('M0,0 L5,10 L10,0')
+  })
+
+  it('draws a spline stored only as fit points through every one of them', () => {
+    const r = importDxf(dxf(spline([70, 8, 71, 3, 74, 3, ...pt(11, 0, 0), ...pt(11, 10, 10), ...pt(11, 20, 0)])), 'g', 'mm')
+    expect(r.skipped).toEqual({})
+    expect(r.paths).toHaveLength(1)
+    const d = r.paths[0].d
+    expect(d.startsWith('M0,0 ')).toBe(true)
+    expect(d).toMatch(/ 10,10 C/)
+    expect(d.endsWith(' 20,0')).toBe(true)
+    const [, , , y1] = bb(d)
+    expect(y1).toBeGreaterThanOrEqual(10)
+    expect(y1).toBeLessThan(11)       // a curve through the top, not an overshoot
+  })
+
+  it('reports a spline with no points, and any entity it cannot read, instead of dropping it', () => {
+    const r = importDxf(dxf(
+      spline([70, 8, 71, 3]),
+      ['0', 'CIRCLE', '8', '0', '40', '5'],          // no centre: unreadable
+      line(0, 0, 10, 0),
+    ), 'g', 'mm')
+    expect(r.skipped).toEqual({ 'spline (no points)': 1, 'circle (unreadable)': 1 })
+    expect(r.paths).toHaveLength(1)
+  })
+})
+
 describe('importDxf — blocks (INSERT)', () => {
   it('places a block at its insert point, scaled then rotated about its base point', () => {
     // Base (5,0): the block's geometry is measured from there, so the square's corner at

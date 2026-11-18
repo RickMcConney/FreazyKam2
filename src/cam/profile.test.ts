@@ -492,6 +492,92 @@ describe('generateProfile — start point and ramping', () => {
   })
 })
 
+describe('a tab is held only on the loop it was placed on', () => {
+  // Two separate 20 mm squares in ONE path, 80 mm apart, and one tab on the first. Every
+  // offset loop used to take every tab at its own nearest point, so the far square was
+  // held up as well, at whatever point of it lay closest to the tab.
+  const TWO = 'M 0 0 L 20 0 L 20 20 L 0 20 Z M 100 0 L 120 0 L 120 20 L 100 20 Z'
+  const deepest = -5
+  const liftedFar = (segs: MotionSegment[]) =>
+    cuts(segs).filter((s) => s.x > 90 && s.z > deepest + 1e-9 && s.z < 0).length
+
+  for (const side of ['outside', 'inside'] as const) {
+    it(`${side}: the other square is cut to full depth all the way round`, () => {
+      const segs = generateProfile(TWO, EM6, params({ side, depthMM: 5, stepDownMM: 5 }), [tab({ t: 0.1, heightMM: 2 })])
+      expect(liftedFar(segs)).toBe(0)
+      // ...and the tab is still there on the square it was put on.
+      expect(cuts(segs).some((s) => s.x < 30 && Math.abs(s.z - (deepest + 2)) < 1e-9)).toBe(true)
+    })
+  }
+
+  it('with a finishing pass, the finishing loops follow the same rule', () => {
+    const segs = generateProfile(TWO, EM6, params({ side: 'outside', depthMM: 5, stepDownMM: 5, finishPassMM: 0.5 }), [tab({ t: 0.1, heightMM: 2 })])
+    expect(liftedFar(segs)).toBe(0)
+  })
+})
+
+describe('ramp-in over a tab near the start', () => {
+  // The ramp descends between two pass depths along the first stretch of the loop. A tab
+  // within that stretch has to be ridden over like anywhere else on the pass, or the last
+  // pass ramps straight through it and the part comes loose.
+  // Every cutting move is sampled along its length, not just at its ends, so a straight
+  // move that dips under the tab between two points is caught too.
+  function minZUnderTab(segs: MotionSegment[], under: (x: number, y: number) => boolean): number {
+    let minZ = Infinity
+    for (let i = 1; i < segs.length; i++) {
+      const a = segs[i - 1], b = segs[i]
+      if (b.rapid) continue
+      for (let k = 0; k <= 40; k++) {
+        const t = k / 40
+        const x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t, z = a.z + (b.z - a.z) * t
+        if (under(x, y)) minZ = Math.min(minZ, z)
+      }
+    }
+    return minZ
+  }
+
+  it('closed loop: no move dips under the tab, whichever way round the loop runs', () => {
+    // 6 mm cutter outside the 40 mm square: the cut path's corner is (7,7). A tab at
+    // t = 0.95 sits on the design's left edge at (10,18), so on the cut path at (7,18),
+    // 11 mm from the start corner — inside the 12 mm ramp. Its hold runs 5 + 3 mm either side.
+    const t = tab({ t: 0.95, lengthMM: 10, heightMM: 3 })
+    const tabZ = -12 + 3
+    const under = (x: number, y: number) => Math.abs(x - 7) < 0.01 && Math.abs(y - 18) < 8 - 0.01
+    for (const direction of ['climb', 'conventional'] as const) {
+      const segs = generateProfile(SQ, EM6, params({
+        depthMM: 12, stepDownMM: 3, rampIn: true, direction, startNear: { x: 7, y: 7 },
+      }), [t])
+      expect(minZUnderTab(segs, under)).toBeGreaterThanOrEqual(tabZ - 1e-9)
+    }
+  })
+
+  it('open stroke: neither the ramp nor the cleanup back over it cuts through the tab', () => {
+    // A 100 mm centerline stroke, tab centred 8 mm in, held 2 + 3 mm either side (3…13).
+    // Three passes, so the last one runs forward and ramps down across the tab.
+    const t = tab({ t: 0.08, lengthMM: 4, heightMM: 2 })
+    const tabZ = -9 + 2
+    const under = (x: number, y: number) => Math.abs(y) < 0.01 && x > 3 + 0.01 && x < 13 - 0.01
+    const segs = generateProfile('M 0 0 L 100 0', EM6, params({
+      side: 'centerline', depthMM: 9, stepDownMM: 3, rampIn: true,
+    }), [t])
+    expect(minZUnderTab(segs, under)).toBeGreaterThanOrEqual(tabZ - 1e-9)
+  })
+
+  it('open stroke: a tab whose hold runs off the END is not plunged into when a pass turns round there', () => {
+    // Tab centred 97 mm along a 100 mm stroke, held 2 + 3 mm either side (92…102): the hold
+    // covers the end, where every back-and-forth pass turns round. Plain and ramped.
+    const t = tab({ t: 0.97, lengthMM: 4, heightMM: 2 })
+    const tabZ = -12 + 2
+    const under = (x: number, y: number) => Math.abs(y) < 0.01 && x > 92 + 0.01
+    for (const rampIn of [false, true]) {
+      const segs = generateProfile('M 0 0 L 100 0', EM6, params({
+        side: 'centerline', depthMM: 12, stepDownMM: 3, rampIn,
+      }), [t])
+      expect(minZUnderTab(segs, under)).toBeGreaterThanOrEqual(tabZ - 1e-9)
+    }
+  })
+})
+
 describe('generateProfile — failure modes', () => {
   it('names the tool when an inside offset eats the whole shape', () => {
     expect(() => generateProfile('M 0 0 L 4 0 L 4 4 L 0 4 Z', EM6, params({ side: 'inside', depthMM: 1, stepDownMM: 1 })))

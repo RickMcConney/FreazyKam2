@@ -1,5 +1,26 @@
 import type { WorkerHandlers } from './worker'
 import { perfLog } from '../debug'
+import { GeometryTooSmallError } from '../cam/errors'
+
+/** An error as the worker posts it: its class name and message, apart. */
+export interface WorkerError { name: string; message: string }
+
+// Error classes the main thread tells apart, rebuilt from the name a worker sends.
+const ERROR_TYPES: Record<string, new (message: string) => Error> = { GeometryTooSmallError }
+
+/**
+ * The error a worker posted, as the class it was thrown as: `instanceof
+ * GeometryTooSmallError` holds on this side too. Any other name is kept on a plain Error,
+ * and a bare string (an older worker build mid-update) is taken as the message.
+ */
+export function errorFromWorker(e: WorkerError | string): Error {
+  if (typeof e === 'string') return new Error(e)
+  const Type = ERROR_TYPES[e.name]
+  if (Type) return new Type(e.message)
+  const err = new Error(e.message)
+  err.name = e.name
+  return err
+}
 
 // Pool of generation workers.
 //
@@ -84,7 +105,7 @@ function spawn(): Slot {
   const worker = workerFactory()
   const slot: Slot = { worker, job: null }
 
-  worker.onmessage = (e: MessageEvent<{ id: number; result?: unknown; error?: string; progress?: number; label?: string }>) => {
+  worker.onmessage = (e: MessageEvent<{ id: number; result?: unknown; error?: WorkerError | string; progress?: number; label?: string }>) => {
     const { id, result, error, progress, label } = e.data
     const job = slot.job
     if (!job || job.id !== id) return
@@ -94,7 +115,7 @@ function spawn(): Slot {
     }
     emitProgress({ opId: job.key, fn: job.fn, frac: 1, done: true })
     finish(slot)
-    if (error !== undefined) job.reject(new Error(error))
+    if (error !== undefined) job.reject(errorFromWorker(error))
     else job.resolve(result)
     pump()
   }

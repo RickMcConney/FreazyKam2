@@ -34,12 +34,18 @@ declare module 'dxf-parser' {
     radius: number
   }
 
+  // The names dxf-parser actually writes (dist/entities/spline.js) — this once said
+  // `degree` and `knots`, which nothing sets, so every spline came in as its control
+  // polygon. Each list exists only when its group codes were present: a spline drawn
+  // through fit points has no controlPoints at all.
   interface SplineEntity extends BaseEntity {
     type: 'SPLINE'
-    controlPoints: DxfPoint[]
-    degree: number
-    knots?: number[]
+    controlPoints?: DxfPoint[]
+    fitPoints?: DxfPoint[]
+    degreeOfSplineCurve?: number
+    knotValues?: number[]
     closed?: boolean
+    periodic?: boolean
   }
 
   interface EllipseEntity extends BaseEntity {

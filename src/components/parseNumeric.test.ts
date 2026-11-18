@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseNumeric, isPartialFraction, isExpression } from './parseNumeric'
+import { parseNumeric, isPartialFraction, isExpression, shouldCommitDraft } from './parseNumeric'
 
 describe('parseNumeric', () => {
   it('reads plain decimals as before', () => {
@@ -114,5 +114,28 @@ describe('isPartialFraction', () => {
     expect(isPartialFraction('1')).toBe(false)
     expect(isPartialFraction('1.5')).toBe(false)
     expect(isPartialFraction('')).toBe(false)
+  })
+})
+
+describe('shouldCommitDraft — leaving a field writes back only what the user typed', () => {
+  it('does not write back a box the user clicked into and out of', () => {
+    // 6 mm in inch mode opens as 0.2362, which would come back as 5.99948 mm.
+    expect(shouldCommitDraft('0.2362', '0.2362')).toBe(false)
+    // An angle of 37.4821° opens as 37.48: applying it turns the shape by −0.0021°.
+    expect(shouldCommitDraft('37.48', '37.48')).toBe(false)
+  })
+
+  it('writes back a box whose text was changed', () => {
+    expect(shouldCommitDraft('0.25', '0.2362')).toBe(true)
+    expect(shouldCommitDraft('', '0.2362')).toBe(true)          // cleared: the caller decides what blank means
+  })
+
+  it('writes back a box typed back to where it started after publishing values live on the way', () => {
+    // '0.236' went out live; only the commit puts the field's own value back over it.
+    expect(shouldCommitDraft('0.2362', '0.2362', true)).toBe(true)
+  })
+
+  it('writes nothing when there is no draft', () => {
+    expect(shouldCommitDraft(null, '0.2362', true)).toBe(false)
   })
 })

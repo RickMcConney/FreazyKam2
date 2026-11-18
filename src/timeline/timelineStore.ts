@@ -488,8 +488,13 @@ export const useTimelineStore = create<TimelineState>()((set, get) => ({
     // final answer for its operations, so a session of hiding and showing while judging a
     // program is one decision, not one entry per click.
     const isVisibleChain = prev?.kind === 'op.setVisible' && payload.kind === 'op.setVisible'
+    // Only at the END of the log. After an undo there is a redo branch past the cursor, and
+    // merging kept it: redo stayed lit, and pressing it restored a snapshot taken before this
+    // edit, throwing the edit away. An edit after an undo is a new step, which abandons the
+    // branch below like any other.
     if (
       prev &&
+      s.cursor === s.events.length &&
       (isTransformChain || isWorkpieceChain || isReorderChain || isVisibleChain || now - prev.t < COALESCE_MS) &&
       prev.seq !== s.savedSeq
     ) {

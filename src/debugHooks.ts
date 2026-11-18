@@ -16,6 +16,7 @@ import { visibleRectMM, fitViewTo } from './store/canvasStore'
 import { useTabStore } from './store/tabStore'
 import { useWorkpieceStore } from './store/workpieceStore'
 import { useConstraintsStore } from './store/constraintsStore'
+import { useCanvasStore } from './store/canvasStore'
 import { useSimStore } from './store/simStore'
 import { useMachineStore } from './machine/machineStore'
 import { useAppUpdate } from './pwa/updateStore'
@@ -38,6 +39,7 @@ if (import.meta.env.DEV || import.meta.env.VITE_FKAM_HOOKS) {
     tabs: () => useTabStore.getState(),
     workpiece: () => useWorkpieceStore.getState(),
     constraints: () => useConstraintsStore.getState(),
+    canvas: () => useCanvasStore.getState(),
     sim: () => useSimStore.getState(),
     machine: () => useMachineStore,
     /** Apply a waiting update, past the button (which a linked machine disables). */

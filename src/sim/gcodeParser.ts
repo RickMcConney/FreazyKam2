@@ -262,7 +262,7 @@ export function parseGcode(text: string, initialZMM = 5, limits?: MotionLimits):
   let unitScale = 1
   let programUnits: 'mm' | 'in' = 'mm'
   let unitsDeclared = false
-  let motionMode = 0  // 0 = G0, 1 = G1, 2 = G2, 3 = G3
+  let motionMode = 0  // 0 = G0, 1 = G1, 2 = G2, 3 = G3; 80 = cancelled, 73/81–89 = a canned cycle (neither moves here)
   let absolute = true // G90 (default) vs G91 incremental distance mode
   const warnings = new Set<string>()
   const messages: SimMessage[] = []
@@ -384,6 +384,12 @@ export function parseGcode(text: string, initialZMM = 5, limits?: MotionLimits):
     let gm: number | undefined
     let g20 = false, g21 = false, g90 = false, g91 = false
     let g18or19 = false, g90dot1 = false, g41or42 = false, g4 = false, g38 = false, hasM = false
+    // Words whose axis values are ARGUMENTS, not a destination (as machine/resume.ts reads
+    // them): G10 and G92 set an offset, G28/G30 go home through a point, G53 moves in MACHINE
+    // coordinates. Read as a move in the modal G0/G1, a post's `G53 G0 Z-5` end block was a
+    // rapid 5 mm into the stock — carved, flagged red, and failed by the export check.
+    let nonModalAxis = false
+    let canned: number | undefined, g80 = false
     WORD_RE.lastIndex = 0
     let m: RegExpExecArray | null
     while ((m = WORD_RE.exec(clean)) !== null) {
@@ -402,6 +408,9 @@ export function parseGcode(text: string, initialZMM = 5, limits?: MotionLimits):
           if (Math.abs(v - 41) < 0.001 || Math.abs(v - 42) < 0.001) g41or42 = true
           if (Math.abs(v - 4) < 0.001) g4 = true
           if (v >= 38 && v < 39) g38 = true
+          if ([10, 28, 30, 53, 92, 92.1, 92.2, 92.3].some((n) => Math.abs(v - n) < 0.001)) nonModalAxis = true
+          if (Math.abs(v - 80) < 0.001) g80 = true
+          if (Math.abs(v - 73) < 0.001 || (v >= 81 - 0.001 && v <= 89 + 0.001 && Math.abs(v - Math.round(v)) < 0.001)) canned = Math.round(v)
           // G0-G3 motion mode
           if (gm === undefined && v >= 0 && v <= 3) gm = v
           break
@@ -436,6 +445,14 @@ export function parseGcode(text: string, initialZMM = 5, limits?: MotionLimits):
     if (g41or42) warnings.add('G41/G42 cutter compensation is ignored')
 
     if (gm !== undefined) motionMode = gm
+    // A canned cycle IS a motion mode: every later line of bare X/Y drills another hole
+    // until G80 or a G0–G3. It is not simulated — but neither may it run as the G0 or G1 it
+    // replaced, which drew each hole as a rapid plunge to the cycle's Z.
+    if (canned !== undefined) {
+      motionMode = canned
+      warnings.add('Canned drilling cycles (G73, G81–G89) are not simulated — their holes are not shown')
+    }
+    if (g80) motionMode = 80
 
     if (wF !== undefined) feedRate = wF * unitScale
 
@@ -450,6 +467,8 @@ export function parseGcode(text: string, initialZMM = 5, limits?: MotionLimits):
     // and the export check saw a rapid through the stock. The tool does not cut here and the
     // next line retracts, so standing still simulates the cut the same. Its F still stands.
     if (g38) continue
+    // Arguments, not a move (above); and no motion mode, or a canned one, moves nothing here.
+    if (nonModalAxis || motionMode > 3) continue
 
     if (wX === undefined && wY === undefined && wZ === undefined) continue
 

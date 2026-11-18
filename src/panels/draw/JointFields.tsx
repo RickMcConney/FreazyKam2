@@ -26,7 +26,7 @@ function FitFields<T extends { thickness: number; fingerW: number; clearance: nu
     <NumInput label="Thickness" valueMM={m.thickness} units={u} min={0.5} onChange={(thickness) => set({ thickness } as Partial<T>)} />
     {/* A target: the count is rounded to odd so both ends of an edge match. */}
     <NumInput label="Finger" valueMM={m.fingerW} units={u} min={1} onChange={(fingerW) => set({ fingerW } as Partial<T>)} />
-    <NumInput label="Clearance" valueMM={m.clearance} units={u} min={0} step={u === 'in' ? 0.002 : 0.05} onChange={(clearance) => set({ clearance } as Partial<T>)} />
+    <NumInput label="Clearance" valueMM={m.clearance} units={u} min={0} step={0.05} onChange={(clearance) => set({ clearance } as Partial<T>)} />
     <NumInput label="Tool Ø" valueMM={m.toolDia} units={u} min={0} onChange={(toolDia) => set({ toolDia } as Partial<T>)} />
     <Select label="Corners" value={m.relief} options={RELIEF_OPTIONS} onChange={(relief) => set({ relief } as Partial<T>)} />
   </>)
@@ -94,7 +94,7 @@ export function DovetailFields({ m, u, set }: Props<DovetailSpec>) {
     <NumInput label="Tail W" valueMM={m.tailW} units={u} min={1} onChange={(tailW) => set({ tailW })} />
     <NumInput label="Tail L" valueMM={m.tailDepth} units={u} min={1} onChange={(tailDepth) => set({ tailDepth })} />
     <PlainInput label="Angle" value={m.angleDeg} unit="°" min={0} max={30} step={1} onChange={(angleDeg) => set({ angleDeg })} />
-    <NumInput label="Clearance" valueMM={m.clearance} units={u} min={0} step={u === 'in' ? 0.002 : 0.05} onChange={(clearance) => set({ clearance })} />
+    <NumInput label="Clearance" valueMM={m.clearance} units={u} min={0} step={0.05} onChange={(clearance) => set({ clearance })} />
     <NumInput label="Tool Ø" valueMM={m.toolDia} units={u} min={0} onChange={(toolDia) => set({ toolDia })} />
     <p className={noteCls}>
       Tails {L(m.tailW)} wide, {L(dm.neck)} at the neck
@@ -124,7 +124,7 @@ export function BowtieFields({ m, u, set }: Props<BowtieSpec>) {
     <NumInput label="Length" valueMM={m.length} units={u} min={1} onChange={(length) => set({ length })} />
     <NumInput label="Width" valueMM={m.width} units={u} min={1} onChange={(width) => set({ width })} />
     <NumInput label="Waist" valueMM={m.waist} units={u} min={0.5} onChange={(waist) => set({ waist })} />
-    {straight && <NumInput label="Clearance" valueMM={m.clearance} units={u} min={0} step={u === 'in' ? 0.002 : 0.05} onChange={(clearance) => set({ clearance })} />}
+    {straight && <NumInput label="Clearance" valueMM={m.clearance} units={u} min={0} step={0.05} onChange={(clearance) => set({ clearance })} />}
     {straight && <NumInput label="Tool Ø" valueMM={m.toolDia} units={u} min={0} onChange={(toolDia) => set({ toolDia })} />}
     <p className={noteCls}>
       Sides flare {dm.flareDeg.toFixed(1)}°

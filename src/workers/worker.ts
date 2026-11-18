@@ -12,7 +12,11 @@ self.onmessage = async (e: MessageEvent<{ id: number; fn: keyof WorkerHandlers; 
     const result = await handler(...args)
     self.postMessage({ id, result })
   } catch (err) {
-    self.postMessage({ id, error: String(err) })
+    // Name and message apart, so the client can rebuild the error's TYPE (workerClient's
+    // errorFromWorker). String(err) shipped "Error: <message>", typeless, and that prefix
+    // reached every failure message the forms show.
+    const error = err instanceof Error ? { name: err.name, message: err.message } : { name: 'Error', message: String(err) }
+    self.postMessage({ id, error })
   } finally {
     setProgressReporter(null)
   }

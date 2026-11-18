@@ -274,6 +274,35 @@ describe('generateGcode — origin and Z datum', () => {
     expect(g).toContain('G0 Z22.000')
   })
 
+  it('bottom-of-stock Z origin shifts a compact or lowercase Z in the end block, and nothing in its comments', () => {
+    // \bZ needs a word boundary, which "G0Z10" has not (Z follows a digit): the retract went
+    // out unshifted — on 12 mm stock a rapid to 2 mm INTO the part. A Z inside a comment is
+    // text, and a G53 Z is in machine coordinates, which the work datum does not move.
+    useWorkpieceStore.setState({ zOrigin: 'bottom' }) // thickness 12 → zOff +12
+    const g = gen([makeOp([rapid(0, 0, 5), cut(0, 0, -1)])],
+      { ...POST, endGcode: 'G0Z10\ng0 z5 (lift to Z3)\nG1 Z+2 ; Z7 here\nG53 G0 Z-5\nM30' })
+    const end = g.slice(g.lastIndexOf('G0Z'))
+    expect(end).toContain('G0Z22.000\n')
+    expect(end).toContain('g0 z17.000 (lift to Z3)\n')
+    expect(end).toContain('G1 Z14.000 ; Z7 here\n')
+    expect(end).toContain('G53 G0 Z-5\n')
+  })
+
+  it('bottom-of-stock Z origin lifts an arc that is expanded to lines, not just plain moves', () => {
+    // An arc goes out as G1 chords when the post cannot output arcs (or it fails the
+    // error-33 radius check). Every chord must carry the same datum shift as a plain move,
+    // or the circle is cut a full stock thickness too deep.
+    useWorkpieceStore.setState({ zOrigin: 'bottom' }) // thickness 12 → zOff +12
+    const g = gen([makeOp([
+      rapid(10, 0, 5),
+      cut(10, 0, -3),
+      cut(-10, 0, -3, { arc: { cx: 0, cy: 0, cw: false } }),
+    ])], { ...POST, outputArcs: false })
+    const cuts = g.split('\n').filter((l) => /^G1 /.test(l))
+    expect(cuts.length).toBeGreaterThan(10)
+    for (const l of cuts) expect(l).toContain('Z9.000') // -3 + 12
+  })
+
   it('converts coordinates and feeds to inches in an inch post', () => {
     const g = gen(
       [makeOp([rapid(25.4, 0, 25.4), cut(25.4, 0, -25.4), cut(50.8, 0, -25.4)])],

@@ -24,6 +24,17 @@ function grblCornerSpeed(turnDeg: number, a: number, jd: number): number {
   return Math.sqrt((aj * jd * s) / (1 - s))
 }
 
+describe('planMotion — a block of no length', () => {
+  it('times every block, before and after it, as a finite number', () => {
+    const plan = planMotion([line(50, 0, 0, 1200), line(0, 0, 0, 1200), line(0, 50, 0, 1200), line(1e-12, 0, 0, 1200), line(50, 0, 0, 1200)], LIM)
+    for (const tr of plan) {
+      expect(Number.isFinite(tr.durationS)).toBe(true)
+      expect(Number.isFinite(tr.v0) && Number.isFinite(tr.v1)).toBe(true)
+    }
+    expect(plan[1].durationS).toBe(0)
+  })
+})
+
 describe('planMotion — a single move', () => {
   it('reaches the feed on a long move, ramping up and down at the acceleration limit', () => {
     // From rest to rest: time = L/v + v/a.

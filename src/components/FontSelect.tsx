@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { AVAILABLE_FONTS, loadFont, getFont, isSingleStrokeFont } from '../shapes/textGenerator'
+import { AVAILABLE_FONTS, loadFont, getFont, isFontLoaded, isSingleStrokeFont } from '../shapes/textGenerator'
 
 function buildPreviewSVG(family: string, text: string): string {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -97,14 +97,19 @@ export default function FontSelect({ value, onChange, previewText, className = '
 
   const sampleText = previewText?.trim() || 'AaBbCc'
 
+  // The font the preview is FOR. A slow download finishing after the pointer has moved on
+  // must not put its glyphs under another font's name — nor, if it failed (loadFont then
+  // resolves with nothing loaded), a stand-in face under its own.
+  const previewFor = useRef<string | null>(null)
   const showPreview = useCallback((family: string) => {
+    previewFor.current = family
     const font = getFont(family)
     if (font) {
       setPreviewSVG(buildPreviewSVG(family, sampleText))
     } else {
       setPreviewSVG('')
       loadFont(family).then(() => {
-        setPreviewSVG(buildPreviewSVG(family, sampleText))
+        if (previewFor.current === family && isFontLoaded(family)) setPreviewSVG(buildPreviewSVG(family, sampleText))
       })
     }
   }, [sampleText])

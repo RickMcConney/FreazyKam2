@@ -297,6 +297,9 @@ let keepAliveTimer: ReturnType<typeof setInterval> | undefined
 let autoReport = false      // the controller confirmed $Report/Interval on this socket
 let lastRxAt = 0            // last frame of any kind on the socket
 let reconnectTries = 0
+// Which socket a timer was started for. Bumped by every open and every loss, so a timer
+// left over from a socket that has since died finds a different number and does nothing.
+let socketGen = 0
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined
 let attemptTimer: ReturnType<typeof setTimeout> | undefined
 let upSince = 0             // when the socket last came up, for the drop log
@@ -360,14 +363,20 @@ export const useMachineStore = create<MachineState>()(
         })
       }
 
-      // Whether the folder shown lists this file — how an upload is known to have landed.
-      const onCard = (name: string) => !!get().sdListing?.files.some((f) => !f.isDir && f.name === name)
+      // Whether a listing names this file — how an upload is known to have landed. Asked of
+      // the listing THIS request answered with, never of the one already shown: that is from
+      // before the upload, and re-uploading an edited file it already lists is the usual case,
+      // so a failed upload read as landed and the job took the new program's preview while the
+      // card (and Run) still had the old file.
+      const lists = (listing: SdListing | null, name: string) => !!listing?.files.some((f) => !f.isDir && f.name === name)
 
-      // Every SD action answers with the directory's new listing.
-      const takeListing = (status: number, body: string, dir: string) => {
+      // Every SD action answers with the directory's new listing. Returns it, or null when
+      // the answer was not one (it then leaves the shown listing alone and says why).
+      const takeListing = (status: number, body: string, dir: string): SdListing | null => {
         const listing = status === 200 ? parseSdListing(body) : null
         if (listing) set({ sdListing: listing, sdPath: listing.path || dir, sdBusy: null })
         else set({ sdBusy: null, sdError: status === 200 ? `The card did not answer with a listing: ${body.slice(0, 80)}` : `SD: HTTP ${status} ${body.slice(0, 80)}` })
+        return listing
       }
 
       // The relay window's title carries the machine state (Idle, Run, Hold:0, Alarm),
@@ -566,6 +575,7 @@ export const useMachineStore = create<MachineState>()(
       // give up. Only a socket that WAS up is retried: one that never opened means
       // the controller is unreachable, and retrying would only delay saying so.
       const socketLost = (why: string) => {
+        socketGen++
         const info = get().info
         const wasUp = get().link === 'connected' || reconnectTries > 0
         if (attemptTimer) clearTimeout(attemptTimer)
@@ -625,8 +635,19 @@ export const useMachineStore = create<MachineState>()(
 
       const onWsState = (state: WsState, code?: number) => {
         if (state === 'open') {
+          // A new socket starts a new byte stream: a line cut off when the last one dropped
+          // must not be glued onto this one's first ("<Run|MPos:1.0," + "<Idle|…>" parsed as
+          // one Run report — the very report the did-it-move checks read on a reconnect).
+          lineBuf = ''
+          decoder = new TextDecoder()
+          // Live without a session id after a while (older firmware never sends one) — but
+          // only if THIS socket is still the one. A reconnect that opened and then dropped
+          // before the wait ran out left its timer to fire into the next attempt: "connected"
+          // with no socket, and the retry count reset, so a controller dropping every socket
+          // was never given up on.
+          const gen = ++socketGen
           setTimeout(() => {
-            if (get().link === 'connecting' && link) onSocketReady()
+            if (gen === socketGen && get().link === 'connecting' && link) onSocketReady()
           }, SESSION_ID_WAIT_MS)
           return
         }
@@ -803,15 +824,23 @@ export const useMachineStore = create<MachineState>()(
             return
           }
           link = l
+          // AFTER EVERY AWAIT: is this still the attempt in progress? A Disconnect (or the relay
+          // window closing) while one is pending has already torn it down, and the relay then
+          // answers what was pending with "relay closed" — read as a failure, that tore down a
+          // second time and put "[ESP800] failed: HTTP 0 relay closed" under a disconnect the
+          // user asked for.
           try {
             await l.open()   // first await: the popup is opened inside the click
           } catch (e) {
+            if (link !== l) return
             teardown((e as Error).message)
             if (e instanceof RelaySetupError) set({ relayMissing: true })
             return
           }
           l.setTheme(useUIStore.getState().darkMode)
+          if (link !== l) return
           const r = await l.http({ path: '/command', query: { cmd: '[ESP800]json=yes' } })
+          if (link !== l) return
           const info = r.status === 200 ? parseEsp800(r.body) : null
           if (!info) {
             l.close()
@@ -987,15 +1016,15 @@ export const useMachineStore = create<MachineState>()(
             },
           })
           log(`SD: uploaded ${sdJoin(dir, file.name)} (${r.status === 200 ? 'ok' : `HTTP ${r.status}`})`)
-          takeListing(r.status, r.body, dir)
+          const after = takeListing(r.status, r.body, dir)
           // The file just uploaded is the one about to be run, so it becomes the job and
           // the map shows it — as Send to card does — from the text already in hand, no
           // read back needed. Judged by the listing: only a file that landed is loaded.
           // (This also replaces a loaded job of the same name, whose preview would
           // otherwise be of a file that no longer exists.)
-          if (onCard(file.name)) {
+          if (lists(after, file.name)) {
             set({ job: { dir, name: file.name, preview: jobPreview(await data.text()) } })
-          } else if (r.status === 200) {
+          } else if (after) {
             set({ sdError: `${file.name} did not appear on the card after uploading` })
           }
         },
@@ -1059,11 +1088,12 @@ export const useMachineStore = create<MachineState>()(
             },
           })
           log(`SD: sent the design as ${sdJoin(dir, name)} (${r.status === 200 ? 'ok' : `HTTP ${r.status}`})`)
-          takeListing(r.status, r.body, dir)
+          const after = takeListing(r.status, r.body, dir)
           // The text is in hand, so it loads without reading it back off the card —
           // REPLACING a loaded job of the same name, which is the usual case after an
-          // edit. Success is judged by the listing, not one exact HTTP status.
-          if (r.status === 200 || onCard(name)) set({ job: { dir, name, preview: jobPreview(gcode) } })
+          // edit. Success is judged by the listing this upload answered with.
+          if (lists(after, name)) set({ job: { dir, name, preview: jobPreview(gcode) } })
+          else if (after) set({ sdError: `The design did not appear on the card after uploading` })
           else set({ sdError: `The design did not reach the card (HTTP ${r.status})` })
         },
 

@@ -144,6 +144,14 @@ export function copyPaths(
       // Every level is remapped, so copies come out nested exactly as the originals are —
       // and as their OWN groups, or copying a group grew the thing being copied.
       userGroups: p.userGroups?.map((g) => reissue(g, 'ugroup')!),
+      // A group's name rides on its members, keyed by the group's id — so it is re-keyed
+      // with the id, or a copied "Bracket" comes out as a nameless group.
+      groupLabels: p.groupLabels && Object.fromEntries(
+        Object.entries(p.groupLabels).map(([g, label]) => [reissue(g, 'ugroup')!, label])),
+      // A nest is found through its parts' stamp, so copies keep the settings under a nest
+      // id of their OWN — shared, they joined the original's run, and re-running or
+      // forgetting that Nest chip reached the copies too.
+      nest: p.nest && { ...p.nest, id: reissue(p.nest.id, 'nest')! },
       // The same for the drawing's own grouping: a copy is its own part, or the nest would
       // tie it to the original it was copied from.
       sourceGroups: p.sourceGroups?.map((g) => reissue(g, 'srcg')!),

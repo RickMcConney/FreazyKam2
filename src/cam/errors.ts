@@ -7,7 +7,12 @@
  * "Stepover too small" — a setting, which was then swallowed — and any rewording of a
  * real geometry message would have started failing inlays that used to generate.
  *
- * `name` is deliberately left as 'Error': the worker ships errors as `String(err)`, and
- * the text the user sees must not change.
+ * It crosses the worker pool by NAME (workerClient's errorFromWorker), which rebuilds it,
+ * so `instanceof` holds on the main thread as well.
  */
-export class GeometryTooSmallError extends Error {}
+export class GeometryTooSmallError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'GeometryTooSmallError'
+  }
+}

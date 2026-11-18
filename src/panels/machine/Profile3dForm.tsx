@@ -91,10 +91,13 @@ export function Profile3dForm({ onClose, editOp }: { onClose: () => void; editOp
   // Keep the model in step: a model clicked on the canvas while the form is open becomes the
   // one cut (not while editing an operation — that cuts its own model), and a model deleted
   // or imported after the form opened is caught here too.
+  // Keyed on the model IDS, not their count: a swap in one edit (undo then re-import, a
+  // delete and an add together) keeps the count and left the form on a deleted model.
+  const modelIdsKey = modelPaths.map((p) => p.id).join()
   useEffect(() => {
     const id = pickModelPathId(modelPaths, editOp ? [] : selectedIds, form.pathId)
     if (id && id !== form.pathId) setForm((f) => ({ ...f, pathId: id }))
-  }, [modelPaths.length, selectedIds]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [modelIdsKey, selectedIds]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedTool = tools.find((t) => t.id === form.toolId)
   const selectedPath = paths.find((p) => p.id === form.pathId)

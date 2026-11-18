@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { ChevronUp, ChevronDown } from 'lucide-react'
-import { parseNumeric, isPartialFraction, isExpression } from './parseNumeric'
+import { parseNumeric, isPartialFraction, isExpression, shouldCommitDraft } from './parseNumeric'
 import { UNIT_COL_W } from './UnitColumn'
 
 interface NumericInputProps {
@@ -42,6 +42,15 @@ interface NumericInputProps {
 export function NumericInput({ id, value, min, max, step, integer, onChange, className, title, unit, unitCol, placeholder, isEmpty, onEmpty }: NumericInputProps) {
   const [draft, setDraft] = useState<string | null>(null)
   const editing = draft !== null
+  // What the box opened with, and whether this edit has published anything live: leaving
+  // a box nobody typed in must not write its rounded display back (shouldCommitDraft).
+  const seeded = useRef<string | null>(null)
+  const publishedLive = useRef(false)
+  const finish = (raw: string | null) => {
+    if (shouldCommitDraft(raw, seeded.current, publishedLive.current)) commit(raw!)
+    seeded.current = null
+    publishedLive.current = false
+  }
 
   // WHERE A PENDING DRAFT LANDS, frozen for as long as one is in flight.
   //
@@ -85,6 +94,8 @@ export function NumericInput({ id, value, min, max, step, integer, onChange, cla
     const raw = fmt(current + dir * step)
     if (draft !== null) setDraft(raw)
     commit(raw)
+    // Committed already: leaving the box afterwards has nothing more to write.
+    if (draft !== null) { seeded.current = raw; publishedLive.current = false }
   }
 
   // The caller's className styles the BOX (border, background, padding, width), so it moves
@@ -119,23 +130,26 @@ export function NumericInput({ id, value, min, max, step, integer, onChange, cla
           const v = parseNumeric(raw)
           if (v !== null) {
             const inRange = (min === undefined || v >= min) && (max === undefined || v <= max)
-            if (inRange) onChange(integer ? Math.round(v) : v)
+            if (inRange) { onChange(integer ? Math.round(v) : v); publishedLive.current = true }
           }
         }}
         onFocus={(e) => {
           // A blank field opens blank, so its placeholder still says what blank means.
           // Seeding it with `value` would turn 'auto' into a typed number just by
           // clicking into the box.
-          setDraft(isEmpty ? '' : fmt(value))
+          const opened = isEmpty ? '' : fmt(value)
+          setDraft(opened)
+          seeded.current = opened
+          publishedLive.current = false
           e.target.select()
         }}
         onBlur={() => {
-          if (draft !== null) commit(draft)
+          finish(draft)
           setDraft(null)
         }}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
-            if (draft !== null) commit(draft)
+            finish(draft)
             setDraft(null)
             ;(e.target as HTMLInputElement).blur()
           }

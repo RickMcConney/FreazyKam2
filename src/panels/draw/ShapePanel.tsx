@@ -516,15 +516,15 @@ function ShapeConfig({ type, config, onChange, units }: {
           onChange={(v) => set({ freeSense: v === 'ccw' ? 1 : -1 })} />
         <NumInput label="Teeth"    valueMM={m.teeth} units="" min={3} integer onChange={(teeth) => set({ teeth: Math.max(3, Math.round(teeth)) })} />
         <NumInput label="Outside Ø" valueMM={m.outerDia} units={u} min={4} onChange={(outerDia) => set({ outerDia })} />
-        <NumInput label="Depth"    valueMM={m.toothDepth} units={u} min={0.2} step={u === 'in' ? 0.01 : 0.5} onChange={(toothDepth) => set({ toothDepth })} />
-        <NumInput label="Tip R"    valueMM={m.tipRadius} units={u} min={0} step={u === 'in' ? 0.01 : 0.25} onChange={(tipRadius) => set({ tipRadius })} />
+        <NumInput label="Depth"    valueMM={m.toothDepth} units={u} min={0.2} step={0.5} onChange={(toothDepth) => set({ toothDepth })} />
+        <NumInput label="Tip R"    valueMM={m.tipRadius} units={u} min={0} step={0.25} onChange={(tipRadius) => set({ tipRadius })} />
         <NumInput label="Bore Ø"   valueMM={m.bore} units={u} min={0} onChange={(bore) => set({ bore })} />
         <NumInput label="Pawls"    valueMM={m.pawls} units="" min={1} integer onChange={(pawls) => set({ pawls: Math.max(1, Math.round(pawls)) })} />
         <NumInput label="Length"   valueMM={m.pawlLength} units={u} min={1} onChange={(pawlLength) => set({ pawlLength })} />
         <NumInput label="Width"    valueMM={m.pawlWidth} units={u} min={1} onChange={(pawlWidth) => set({ pawlWidth })} />
         <NumInput label="Pin Ø"    valueMM={m.pivotDia} units={u} min={0} onChange={(pivotDia) => set({ pivotDia })} />
-        <NumInput label="Clearance" valueMM={m.clearance} units={u} min={0} step={u === 'in' ? 0.005 : 0.05} onChange={(clearance) => set({ clearance })} />
-        <NumInput label="Cutter Ø" valueMM={m.toolDia} units={u} min={0} step={u === 'in' ? 0.0625 : 0.5} onChange={(toolDia) => set({ toolDia })} />
+        <NumInput label="Clearance" valueMM={m.clearance} units={u} min={0} step={0.05} onChange={(clearance) => set({ clearance })} />
+        <NumInput label="Cutter Ø" valueMM={m.toolDia} units={u} min={0} step={0.5} onChange={(toolDia) => set({ toolDia })} />
         <p className="text-label text-gray-600 dark:text-neutral-400">
           Locks every {dm.pitchDeg.toFixed(1)}° · root Ø {L(2 * dm.rootR)}
           <br />
@@ -753,7 +753,11 @@ export default function ShapePanel({ fill = false }: { fill?: boolean }) {
     const family = shapeToolConfig.text.fontFamily
     if (isFontLoaded(family)) { setFontReady(true); return }
     setFontReady(false)
-    loadFont(family).then(() => setFontReady(true))
+    // Only for the font still chosen, and only if it actually arrived: switching A → B while
+    // A downloads must not report B ready when A lands.
+    let current = true
+    loadFont(family).then(() => { if (current) setFontReady(isFontLoaded(family)) })
+    return () => { current = false }
   }, [activeTool, shapeToolConfig.text.fontFamily])
 
   useEffect(() => { loadFont(shapeToolConfig.text.fontFamily) }, [shapeToolConfig.text.fontFamily])
@@ -764,7 +768,7 @@ export default function ShapePanel({ fill = false }: { fill?: boolean }) {
   const [countFontReady, setCountFontReady] = useState(() => isFontLoaded(SINGLE_LINE_FONT_FAMILY))
   useEffect(() => {
     if (activeTool !== 'gear' || countFontReady) return
-    loadFont(SINGLE_LINE_FONT_FAMILY).then(() => setCountFontReady(true))
+    loadFont(SINGLE_LINE_FONT_FAMILY).then(() => setCountFontReady(isFontLoaded(SINGLE_LINE_FONT_FAMILY)))
   }, [activeTool, countFontReady])
 
   // Load saved text config on mount

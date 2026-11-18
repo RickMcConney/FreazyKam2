@@ -3,7 +3,7 @@ import { pointInPolygon } from '../geom'
 import { JoinType } from 'clipper2-ts'
 import { buildPocketClearance } from './clearance'
 import type { MotionSegment } from '../../store/toolpathStore'
-import { type PocketPlan, type PocketPlanner, type TravelSafetyObstacles, POCKET_FLATTEN_TOL_MM, compoundFinishRings, emitCutTransition, emitRampDescent, growIslands, insetRing, isTravelSafe, rampLeadIn, SweptArea } from './shared'
+import { type PocketPlan, type PocketPlanner, type TravelSafetyObstacles, POCKET_FLATTEN_TOL_MM, compoundFinishRings, emitCutTransition, emitRampDescent, growIslands, insetRing, isTravelSafe, offsetRingPieces, rampLeadIn, SweptArea } from './shared'
 
 // ─── Raster utilities ──────────────────────────────────────────────────────────
 
@@ -415,7 +415,12 @@ export const planRasterPocket: PocketPlanner = (boundary, islands, tool, params)
   // Falling back to the unmargined ring matters in a region only just wider than the
   // cutter: the margin is what tips it from "one scanline fits" to "none does", and a
   // region with no scanlines is machined by its wall passes alone.
-  const marginBoundary = insetRing(boundary, toolRadius + LINK_MARGIN_MM)
+  // ...and only when the margin does not SPLIT the region: a waist just wider than the
+  // cutter is one region at the radius but two at radius + margin, and filling one piece
+  // left the far lobe with no fill at all.
+  const marginBoundary = offsetRingPieces(boundary, -(toolRadius + LINK_MARGIN_MM)).length === 1
+    ? insetRing(boundary, toolRadius + LINK_MARGIN_MM)
+    : []
   const fillBoundary = marginBoundary.length >= 3 ? marginBoundary : rasterBoundary
   const rawScanlines = fillBoundary.length >= 3
     ? generateScanlines(fillBoundary, stepoverMM, params.angle ?? 0)

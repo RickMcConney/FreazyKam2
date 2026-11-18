@@ -84,6 +84,25 @@ describe('translateShapeParams', () => {
   })
 })
 
+describe('a ratchet from before tipRadius existed', () => {
+  const ratchet = shapeParamsFromDrag('ratchet', { x: 0, y: 0 }, { x: 60, y: 60 }, DEFAULT_SHAPE_CONFIG) as Extract<ShapeParams, { type: 'ratchet' }>
+  const old = { ...ratchet } as Partial<typeof ratchet>
+  delete old.tipRadius
+
+  it('scales to sharp tips, as it is drawn — never NaN', () => {
+    const p = scaleShapeParams(old as ShapeParams, 0, 0, 2, 2) as typeof ratchet
+    expect(p.tipRadius).toBe(0)
+  })
+
+  it('draws from a tool config without it using the tool\'s default', () => {
+    const cfg = { ...DEFAULT_SHAPE_CONFIG, ratchet: { ...DEFAULT_SHAPE_CONFIG.ratchet } } as typeof DEFAULT_SHAPE_CONFIG
+    delete (cfg.ratchet as Partial<typeof cfg.ratchet>).tipRadius
+    const p = shapeParamsFromDrag('ratchet', { x: 0, y: 0 }, { x: 60, y: 60 }, cfg) as typeof ratchet
+    expect(Number.isFinite(p.tipRadius)).toBe(true)
+    expect(p.tipRadius).toBeGreaterThan(0)
+  })
+})
+
 describe('scaleShapeParams', () => {
   it('uniformly scales a circle around the anchor', () => {
     const p = scaleShapeParams({ type: 'circle', cx: 10, cy: 0, radius: 5 }, 0, 0, 2, 2)

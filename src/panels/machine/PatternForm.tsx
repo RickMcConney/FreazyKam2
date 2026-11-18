@@ -1,6 +1,6 @@
 // ─── Pattern form ─────────────────────────────────────────────────────────────
-import { FormShell, PathChip, PathListSection, ToggleRow, GenerateBtn } from './shared'
-import { useState } from 'react'
+import { FormShell, PathChip, PathListSection, ToggleRow, GenerateBtn, LengthInput } from './shared'
+import { useId, useState, type ReactNode } from 'react'
 import { NumericInput } from '../../components/NumericInput'
 import { ICON } from '../../theme'
 import { AlertCircle } from 'lucide-react'
@@ -10,7 +10,6 @@ import { useSelectedPaths } from '../../store/pathsStore'
 import type { PathDefinition } from '../../importers/svgImporter'
 import { useUIStore } from '../../store/uiStore'
 import { regenerateAffectedMany } from '../../cam/regenerate'
-import { useWorkpieceStore, fromMM, toMM } from '../../store/workpieceStore'
 import { isLegacyLinear, type PatternParams } from '../../tools/patternOp'
 import { PATTERN_DEFAULTS, patternDefs, createPattern } from '../../tools/pathToolActions'
 import { getMultiBBox } from '../../canvas/selectionUtils'
@@ -34,12 +33,22 @@ export interface PatternEditCtx {
   defId: string
 }
 
+
+// One labelled cell of the pattern grids; the label points at its own field.
+function PatternField({ id, label, children }: { id: string; label: string; children: ReactNode }) {
+  return (
+    <div>
+      <label htmlFor={id} className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">{label}</label>
+      {children}
+    </div>
+  )
+}
+
 export function PatternForm({ onClose, editCtx }: { onClose: () => void; editCtx?: PatternEditCtx }) {
   const paths = usePathsStore((s) => s.paths)
   const selPaths = useSelectedPaths()
   const load = useFormDefaultsStore((s) => s.load)
   const save = useFormDefaultsStore((s) => s.save)
-  const units = useWorkpieceStore((s) => s.units)
 
   const defPaths = editCtx ? paths.filter((p) => p.definition?.id === editCtx.defId) : []
   const def0 = defPaths.find((p) => p.definition?.kind === 'pattern')?.definition
@@ -129,7 +138,7 @@ export function PatternForm({ onClose, editCtx }: { onClose: () => void; editCtx
   }
 
   const inputCls = 'flex-1 bg-gray-50 dark:bg-neutral-900 border border-gray-400 dark:border-neutral-700 rounded px-2 py-1 text-body text-gray-900 dark:text-neutral-100 focus:outline-none focus:border-blue-500 min-w-0'
-  const u = units
+  const fid = useId()
 
   return (
     <FormShell title={editCtx ? 'Edit Pattern' : 'Pattern'} onClose={onClose}>
@@ -141,36 +150,44 @@ export function PatternForm({ onClose, editCtx }: { onClose: () => void; editCtx
       <ToggleRow label="Mode" options={['linear', 'circular'] as const} value={form.mode} onChange={(v) => setForm((f) => ({ ...f, mode: v }))} />
       {form.mode === 'linear' ? (
         <div className="grid grid-cols-2 gap-2">
-          {([
-            ['Rows', form.linParams.rows, (v: number) => upLin('rows', Math.max(1, Math.round(v))), 1, 1, ''],
-            ['Cols', form.linParams.cols, (v: number) => upLin('cols', Math.max(1, Math.round(v))), 1, 1, ''],
-            ['X Gap', fromMM(form.linParams.xGapMM, u as 'mm' | 'in'), (v: number) => upLin('xGapMM', toMM(v, u as 'mm' | 'in')), -Infinity, u === 'in' ? 0.0625 : 1, u],
-            ['Y Gap', fromMM(form.linParams.yGapMM, u as 'mm' | 'in'), (v: number) => upLin('yGapMM', toMM(v, u as 'mm' | 'in')), -Infinity, u === 'in' ? 0.0625 : 1, u],
-          ] as [string, number, (v: number) => void, number, number, string][]).map(([lbl, val, fn, min, step, suffix]) => (
-            <div key={lbl}>
-              <label htmlFor="pattern-f2" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">{lbl}</label>
-              <NumericInput id="pattern-f2" value={val} min={min} step={step} unit={suffix || undefined}
-                onChange={fn}
-                className={inputCls} />
-            </div>
-          ))}
+          {/* Each field its OWN id: they shared one, so every label focused Rows. Lengths go
+              through LengthInput, which owns the mm ⇄ display conversion. */}
+          <PatternField id={`${fid}-rows`} label="Rows">
+            <NumericInput id={`${fid}-rows`} value={form.linParams.rows} min={1} step={1} integer
+              onChange={(v) => upLin('rows', Math.max(1, Math.round(v)))} className={inputCls} />
+          </PatternField>
+          <PatternField id={`${fid}-cols`} label="Cols">
+            <NumericInput id={`${fid}-cols`} value={form.linParams.cols} min={1} step={1} integer
+              onChange={(v) => upLin('cols', Math.max(1, Math.round(v)))} className={inputCls} />
+          </PatternField>
+          <PatternField id={`${fid}-xgap`} label="X Gap">
+            <LengthInput id={`${fid}-xgap`} valueMM={form.linParams.xGapMM} stepMM={1}
+              onChangeMM={(mm) => upLin('xGapMM', mm)} className={inputCls} />
+          </PatternField>
+          <PatternField id={`${fid}-ygap`} label="Y Gap">
+            <LengthInput id={`${fid}-ygap`} valueMM={form.linParams.yGapMM} stepMM={1}
+              onChangeMM={(mm) => upLin('yGapMM', mm)} className={inputCls} />
+          </PatternField>
         </div>
       ) : (
         <div className="space-y-2">
           <div className="grid grid-cols-2 gap-2">
-            {([
-              ['Count', form.cirParams.count, (v: number) => upCir('count', Math.max(2, Math.round(v))), 2, 1, ''],
-              ['Radius', fromMM(form.cirParams.radiusMM, u as 'mm' | 'in'), (v: number) => upCir('radiusMM', toMM(v, u as 'mm' | 'in')), -Infinity, u === 'in' ? 0.0625 : 1, u],
-              ['Start°', form.cirParams.startAngleDeg, (v: number) => upCir('startAngleDeg', v), -360, 5, '°'],
-              ['End°',   form.cirParams.endAngleDeg,   (v: number) => upCir('endAngleDeg', v),   -360, 5, '°'],
-            ] as [string, number, (v: number) => void, number, number, string][]).map(([lbl, val, fn, min, step, suffix]) => (
-              <div key={lbl}>
-                <label htmlFor="pattern-f3" className="block text-label text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1">{lbl}</label>
-                <NumericInput id="pattern-f3" value={val} min={min} step={step} unit={suffix || undefined}
-                  onChange={fn}
-                  className={inputCls} />
-              </div>
-            ))}
+            <PatternField id={`${fid}-count`} label="Count">
+              <NumericInput id={`${fid}-count`} value={form.cirParams.count} min={2} step={1} integer
+                onChange={(v) => upCir('count', Math.max(2, Math.round(v)))} className={inputCls} />
+            </PatternField>
+            <PatternField id={`${fid}-radius`} label="Radius">
+              <LengthInput id={`${fid}-radius`} valueMM={form.cirParams.radiusMM} stepMM={1}
+                onChangeMM={(mm) => upCir('radiusMM', mm)} className={inputCls} />
+            </PatternField>
+            <PatternField id={`${fid}-start`} label="Start°">
+              <NumericInput id={`${fid}-start`} value={form.cirParams.startAngleDeg} min={-360} step={5} unit="°"
+                onChange={(v) => upCir('startAngleDeg', v)} className={inputCls} />
+            </PatternField>
+            <PatternField id={`${fid}-end`} label="End°">
+              <NumericInput id={`${fid}-end`} value={form.cirParams.endAngleDeg} min={-360} step={5} unit="°"
+                onChange={(v) => upCir('endAngleDeg', v)} className={inputCls} />
+            </PatternField>
           </div>
           <div className="flex items-center gap-2">
             <input type="checkbox" id="pattern-rotate" checked={form.cirParams.rotateItems}

@@ -8,7 +8,7 @@
 // exists under the pointer it stays at the last place that had one. Shift-click (or Alt-click) deletes.
 // One undo step and one regeneration per drag, on release — the moves in between are local.
 
-import { memo, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { usePathsStore } from '../../store/pathsStore'
 import { useCutHiddenKey, partsOut, stripsShown } from '../holdVisibility'
 import { Group, Line } from 'react-konva'
@@ -41,6 +41,13 @@ export const BridgeLayer = memo(function BridgeLayer({ viewport }: { viewport: V
   const interactive = useUIStore((s) => s.tabsFormActive)
   const [drag, setDrag] = useState<{ i: number; line: BridgeLine } | null>(null)
   const [hover, setHover] = useState<number | null>(null)
+  // The viewport as it is NOW: the wheel zooms mid-drag (see TabLayer).
+  const viewportRef = useRef(viewport)
+  viewportRef.current = viewport
+  // Ends a drag in progress when the form closes or the layer goes (see TabLayer).
+  const endDragRef = useRef<(() => void) | null>(null)
+  useEffect(() => { if (!interactive) endDragRef.current?.() }, [interactive])
+  useEffect(() => () => endDragRef.current?.(), [])
   // A strip touching only parts that are hidden — or whose every profile is — is not drawn
   // (canvas/holdVisibility). With nothing hidden nothing is asked: the index is a whole nest.
   const paths = usePathsStore((s) => s.paths)
@@ -78,7 +85,7 @@ export const BridgeLayer = memo(function BridgeLayer({ viewport }: { viewport: V
     const onMove = () => {
       const p = stage.getPointerPosition()
       if (!p) return
-      const cnc = screenToCNC(p.x, p.y, viewport)
+      const cnc = screenToCNC(p.x, p.y, viewportRef.current)
       const pick = stripAt(ix, cnc.x, cnc.y, opts)
       if (pick) { line = pick.line; setDrag({ i, line }) }
     }
@@ -86,6 +93,7 @@ export const BridgeLayer = memo(function BridgeLayer({ viewport }: { viewport: V
     const onUp = () => {
       if (done) return
       done = true
+      endDragRef.current = null
       stage.off('mousemove.bridgedrag')
       stage.off('mouseup.bridgedrag')
       window.removeEventListener('mouseup', onUp)
@@ -93,6 +101,7 @@ export const BridgeLayer = memo(function BridgeLayer({ viewport }: { viewport: V
       setDrag(null)
       if (line !== start) moveStrip(i, line)
     }
+    endDragRef.current = onUp
     stage.on('mousemove.bridgedrag', onMove)
     stage.on('mouseup.bridgedrag', onUp)
     // Released outside the canvas: still the end of the drag.

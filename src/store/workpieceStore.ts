@@ -165,6 +165,23 @@ export const inchStepFor = (stepMM: number): number => {
   return INCH_STEPS.reduce((best, s) => (Math.abs(s - target) < Math.abs(best - target) ? s : best))
 }
 
+// The bounds and arrow-key step of a field that SHOWS a length in the user's units but
+// takes them in MM (a count — teeth, spokes — passes `integer` and is not converted).
+// A field handed an mm minimum unconverted reads it in the display unit: an inch-mode
+// `min={10}` was a 10-INCH floor, so one stepper click took a 40 mm track to 254 mm.
+// One place does it, for LengthInput (machine forms) and NumInput (draw panels) alike.
+export function displayFieldBounds(
+  units: Units,
+  b: { min?: number; max?: number; step?: number; integer?: boolean },
+): { min?: number; max?: number; step: number } {
+  if (b.integer) return { min: b.min, max: b.max, step: b.step ?? 1 }
+  return {
+    min: b.min === undefined ? undefined : fromMM(b.min, units),
+    max: b.max === undefined ? undefined : fromMM(b.max, units),
+    step: b.step === undefined ? (units === 'in' ? 0.0625 : 1) : units === 'in' ? inchStepFor(b.step) : b.step,
+  }
+}
+
 export interface WorkpieceState {
   widthMM: number
   heightMM: number

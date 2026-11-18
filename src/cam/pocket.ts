@@ -20,7 +20,7 @@ import type { MotionSegment } from '../store/toolpathStore'
 import type { Tool } from '../store/toolStore'
 import {
   _perfReset, _perfLog, _timed, closedPath, cutPathsAtDepth, emitLinkedContourRings, offsetRing,
-  restCleanupRings, POCKET_FLATTEN_TOL_MM,
+  offsetRingPieces, assignHoles, splitAtToolWaist, restCleanupRings, POCKET_FLATTEN_TOL_MM,
   type PocketParams, type PocketPlanner, type PocketStrategy,
 } from './pocket/shared'
 import { planRasterPocket } from './pocket/raster'
@@ -101,14 +101,20 @@ export function generatePocket(
   const allowance = params.finishAllowanceMM ?? 0
   if (allowance !== 0) {
     regions = regions.flatMap(r => {
-      const outer = offsetRing(r.outer, -allowance)
-      if (outer.length < 3) return []
+      // EVERY piece: the allowance inset splits a neck narrower than twice the allowance,
+      // and keeping one piece dropped the other lobe whole — no strategy cut it at all.
+      const outers = offsetRingPieces(r.outer, -allowance)
+      if (outers.length === 0) return []
       const holes = r.holes.flatMap(h => { const o = offsetRing(h, allowance); return o.length >= 3 ? [o] : [] })
-      return [{ outer, holes }]
+      return outers.length === 1 ? [{ outer: outers[0], holes }] : assignHoles(outers, holes)
     })
     islands = islands.flatMap(isl => { const r = offsetRing(isl, allowance); return r.length >= 3 ? [r] : [] })
     if (regions.length === 0) throw new Error('Pocket allowance collapsed the boundary')
   }
+
+  // A region the tool cannot get across (a neck narrower than the cutter) is two pockets.
+  // See splitAtToolWaist; a region that does not split comes back untouched.
+  regions = regions.flatMap(r => splitAtToolWaist(r.outer, r.holes, tool.diameterMM / 2))
 
   // Legacy ids from older saved projects/forms. The offset-ring spiral ('spiral', once
   // 'spiralOffset') was dropped in 2026-07 — it left stock even at 50% stepover — so those

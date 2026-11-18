@@ -48,12 +48,17 @@ export const planAdaptiveFCPocket: PocketPlanner = (boundary, islands, tool, par
 
   // No catch: a failing engine must surface as its own error, not as a plan-less region
   // that generatePocket reports as "too small for the tool".
-  const outputs: AdaptiveOutput[] = _timed('adaptiveFC.execute', () => engine.execute([toDP(boundary)], geom))
-  if (mx < 0) for (const out of outputs) {
-    out.helixCenter = [-out.helixCenter[0], out.helixCenter[1]]
-    out.startPoint = [-out.startPoint[0], out.startPoint[1]]
-    for (const tp of out.adaptivePaths) for (const p of tp.pts) p[0] = -p[0]
-  }
+  const raw: AdaptiveOutput[] = _timed('adaptiveFC.execute', () => engine.execute([toDP(boundary)], geom))
+  // Mirrored back as NEW points, never negated in place: a point object the engine shares
+  // between two paths (a link's end that is also a lead-in's start) would be flipped once
+  // per path holding it, and an even number of flips leaves it on the wrong side.
+  const flip = ([x, y]: readonly [number, number] | number[]): [number, number] => [-x, y]
+  const outputs: AdaptiveOutput[] = mx > 0 ? raw : raw.map((out) => ({
+    ...out,
+    helixCenter: flip(out.helixCenter),
+    startPoint: flip(out.startPoint),
+    adaptivePaths: out.adaptivePaths.map((tp) => ({ ...tp, pts: tp.pts.map(flip) })),
+  }))
 
   return {
     finishRings: [],

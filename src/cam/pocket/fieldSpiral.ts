@@ -5,7 +5,7 @@ import { traceIsolines } from '../marchingSquares'
 import {  JoinType } from 'clipper2-ts'
 import {   stripClosingDuplicate, pointInPolygon, interiorPoint, ringPerimeter } from '../geom'
 import type { MotionSegment } from '../../store/toolpathStore'
-import { type PocketPlan, type PocketPlanner, _timed, centroidOfRing, compoundFinishRings, emitRampDescent, emitSpiralHelixEntry, growIslands, growRing, insetRing, isTravelSafe, rampLeadIn, setGap } from './shared'
+import { type PocketPlan, type PocketPlanner, _timed, centroidOfRing, compoundFinishRings, emitRampDescent, emitSpiralHelixEntry, growIslands, growRing, insetRing, rampLeadIn, setGap } from './shared'
 
 // ─── Spiral geometry: loop forest, chains, region clamping ───────────────────────
 //
@@ -622,12 +622,16 @@ export const planFieldSpiralPocket: PocketPlanner = (boundary, islands, tool, pa
     travelObstacles,
     emitCuts: (zDepth: number, prevZ: number, incomingPos: Pt2 | null, segs: MotionSegment[]) => {
       let lastPos: Pt2 | null = incomingPos
-      let cutAnything = false
 
-      const rampIn = (spiral: Pt2[], start: Pt2, passPrevZ: number) => {
-        if (lastPos !== null && !isTravelSafe(lastPos, start, travelObstacles)) {
-          segs.push({ x: lastPos[0], y: lastPos[1], z: safeZ, rapid: true })
-        }
+      // Every entry below goes via safe height, so leave depth STRAIGHT UP first. Skipping
+      // this when the travel looked safe made the climb a diagonal G0 out of the cut,
+      // dragging the cutter sideways at rapid while still down in the stock.
+      const liftHere = () => {
+        if (lastPos !== null) segs.push({ x: lastPos[0], y: lastPos[1], z: safeZ, rapid: true })
+      }
+
+      const rampIn = (spiral: Pt2[], passPrevZ: number) => {
+        liftHere()
         const { touchdown, sampleAt } = rampLeadIn(spiral, true, rampDist ?? 2 * tool.diameterMM)
         segs.push({ x: touchdown[0], y: touchdown[1], z: safeZ, rapid: true })
         segs.push({ x: touchdown[0], y: touchdown[1], z: passPrevZ, rapid: true })
@@ -635,8 +639,11 @@ export const planFieldSpiralPocket: PocketPlanner = (boundary, islands, tool, pa
       }
 
       for (const { spiral, entry, helixCenter } of chains) {
-        const start = spiral[0]
-        const passPrevZ = cutAnything ? zDepth : prevZ
+        // Each chain is entered from the floor the PREVIOUS level left, never this level's:
+        // a later chain is another region of the pocket, and nothing has cut it at this
+        // depth yet. Taking zDepth because an earlier chain had cut SOMEWHERE rapided the
+        // cutter a full step down into solid stock (and its "helix" then descended 0 mm).
+        const passPrevZ = prevZ
         // Bore concentric with the innermost loop so the helix meshes with the spiral.
         const hr = entry === 'helix' ? safeHelixRadius(helixCenter) : 0
         const helixOk = entry === 'helix' && hr >= 0.6
@@ -644,21 +651,18 @@ export const planFieldSpiralPocket: PocketPlanner = (boundary, islands, tool, pa
         if (helixOk) {
           // Integrated helix entry: bores the centre and ends at the first uncut point,
           // already moving along the spiral — no straight connector, no redundant seed loop.
-          if (lastPos !== null && !isTravelSafe(lastPos, start, travelObstacles)) {
-            segs.push({ x: lastPos[0], y: lastPos[1], z: safeZ, rapid: true })
-          }
+          liftHere()
           cutFrom = emitSpiralHelixEntry(spiral, helixCenter, hr, passPrevZ, zDepth, wantCCW, segs, safeZ)
         } else {
           // Ramp down along the spiral start — used for branch/island chains and for any
           // helix start with no room to bore (near a wall or island). Also ends at the
           // spiral start, flowing into it.
-          rampIn(spiral, start, passPrevZ)
+          rampIn(spiral, passPrevZ)
         }
         for (let i = cutFrom; i < spiral.length; i++) {
           segs.push({ x: spiral[i][0], y: spiral[i][1], z: zDepth, rapid: false })
         }
         lastPos = spiral[spiral.length - 1]
-        cutAnything = true
       }
       return lastPos
     },

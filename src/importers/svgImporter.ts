@@ -525,6 +525,33 @@ export function svgToCncMat(
   return [sx, 0, 0, sy, -vbX * sx, heightMM + vbY * (heightMM / vbH)]
 }
 
+/**
+ * The child a `<switch>` draws: the FIRST one whose conditions hold (SVG 1.1 §5.8.2). We
+ * support no extensions, so a child naming any `requiredExtensions` fails — that is what
+ * Illustrator's `<foreignObject requiredExtensions="…adobe…">` is for, its private copy of
+ * the artwork, with the plain `<g>` after it as the fallback every other reader draws. A
+ * `<foreignObject>` is passed over even without one: it is HTML, with no outline to cut.
+ * `systemLanguage` holds when absent or naming the browser's language (or English when
+ * there is no browser to ask); `requiredFeatures` is obsolete and always holds.
+ */
+export function switchChild(el: Element): Element | null {
+  const lang = (typeof navigator !== 'undefined' && navigator.language ? navigator.language : 'en').toLowerCase()
+  for (const child of Array.from(el.children)) {
+    const tag = child.tagName.toLowerCase().replace(/^.*:/, '')
+    if (tag === 'foreignobject') continue
+    const ext = child.getAttribute('requiredExtensions')
+    if (ext !== null && ext.trim() !== '') continue
+    const langs = child.getAttribute('systemLanguage')
+    if (langs !== null) {
+      const ok = langs.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+        .some((l) => l === lang || lang.startsWith(l + '-') || l.startsWith(lang.split('-')[0]))
+      if (!ok) continue
+    }
+    return child
+  }
+  return null
+}
+
 export function importSvg(svgText: string, options?: ImportOptions | number, groupName?: string): SvgImportResult {
   const groupId = uid('svg-group')
   const opts: ImportOptions = typeof options === 'number' ? { ppi: options } : (options ?? {})
@@ -593,6 +620,13 @@ export function importSvg(svgText: string, options?: ImportOptions | number, gro
 
     if (tag === 'g' || tag === 'svg' || tag === 'a') {
       for (const child of el.children) processElement(child, elMat, depth, ink)
+      return
+    }
+    // <switch> draws ONE of its children (see switchChild). Illustrator wraps the whole
+    // drawing in one, so falling through to "not a shape" imported nothing at all.
+    if (tag === 'switch') {
+      const chosen = switchChild(el)
+      if (chosen) processElement(chosen, elMat, depth, ink)
       return
     }
 

@@ -6,8 +6,8 @@ import { useUIStore } from '../store/uiStore'
 import { splitCompoundPath } from '../canvas/nodeUtils'
 import { regenerateAffectedMany } from '../cam/regenerate'
 import { useCanvasStore } from '../store/canvasStore'
-import { parseNumeric, NUMERIC_HINT } from '../components/parseNumeric'
-import { useWorkpieceStore, fromMM, toMM } from '../store/workpieceStore'
+import { parseNumeric, NUMERIC_HINT, shouldCommitDraft } from '../components/parseNumeric'
+import { useWorkpieceStore, fromMM, toMM, displayFieldBounds } from '../store/workpieceStore'
 import { getMultiBBox, placedAngleDeg, type TransformStep } from '../canvas/selectionUtils'
 import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
 import { spirographLoops, SPIRO_RATIO_RANGE, scaleShapeParams, isScaleLocked, type ShapeParams } from '../shapes/shapeGenerators'
@@ -62,15 +62,16 @@ function EditField({
   integer?: boolean
 }) {
   const display = integer ? valueMM : fromMM(valueMM, units as 'mm' | 'in')
-  const step = integer ? 1 : units === 'in' ? 0.0625 : 1
+  // `min` is MM for a length (a placed track's W min={10} was a 10-INCH floor in inch mode).
+  const bounds = displayFieldBounds(units as 'mm' | 'in', { min, integer })
 
   return (
     <div className="flex items-center gap-1.5">
       <span className={labelCls}>{label}</span>
       <NumericInput
         value={display}
-        min={min}
-        step={step}
+        min={bounds.min}
+        step={bounds.step}
         integer={integer}
         unit={integer ? undefined : units}
         unitCol
@@ -174,8 +175,8 @@ function CommitField({ label, unit, value, step, min, title, onCommit }: {
   // onCommit; the resync effect above cannot save it, being a passive effect
   // React runs in a later task. So an angle typed against one shape turned the
   // next one clicked. Untouched box (text === shown) re-arms it.
-  const target = useRef({ value, onCommit })
-  if (text === shown) target.current = { value, onCommit }
+  const target = useRef({ value, onCommit, shown })
+  if (text === shown) target.current = { value, onCommit, shown }
 
   // `parseNumeric`, never `parseFloat` — this field is hand-rolled rather than a
   // NumericInput (it must not fire while a value is being typed), which is exactly
@@ -185,8 +186,10 @@ function CommitField({ label, unit, value, step, min, title, onCommit }: {
   function commit(currentText: string) {
     if (committedRef.current) return
     committedRef.current = true
-    const v = parseNumeric(currentText)
-    const { value: from, onCommit: apply } = target.current
+    const { value: from, onCommit: apply, shown: opened } = target.current
+    // The box shows the value to 2 places; leaving it untouched must not apply the
+    // difference between that and the real value as a turn or a scale (shouldCommitDraft).
+    const v = shouldCommitDraft(currentText.trim(), opened) ? parseNumeric(currentText) : null
     if (v !== null && (min === undefined || v >= min) && Math.abs(v - from) > 0.0001) apply(v)
     setText(shown)
   }

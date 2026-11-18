@@ -791,7 +791,7 @@ export function generateGcodeWithOps(
           const [cmx, cmy] = mach(cx + rt * Math.cos(a), cy + rt * Math.sin(a))
           const ax = last ? x : f(toOut(cmx, profile), coordDecimals)
           const ay = last ? y : f(toOut(cmy, profile), coordDecimals)
-          const az = f(toOut(prevZ + (seg.z - prevZ) * t, profile), coordDecimals)
+          const az = f(toOut(prevZ + (seg.z - prevZ) * t + zOff, profile), coordDecimals)
           move(sub(profile.cutTemplate, { x: ax, y: ay, z: az, f: feed }))
         }
       } else {
@@ -832,7 +832,7 @@ export function generateGcodeWithOps(
       ? (() => {
           const decs = profile.unitMode === 'in' ? 4 : 3
           const zOffOut = toOut(zOff, profile)
-          return profile.endGcode.replace(/\bZ(-?[\d.]+)/g, (_, n) => `Z${f(parseFloat(n) + zOffOut, decs)}`)
+          return profile.endGcode.split('\n').map((line) => shiftEndBlockZ(line, zOffOut, decs)).join('\n')
         })()
       : profile.endGcode
     lines.push(...endBlock.split('\n'))
@@ -860,6 +860,23 @@ export function generateGcodeWithOps(
   perfLog(`[perf] generateGcode total ${(performance.now() - _tStart).toFixed(0)}ms | arc-fit ${_arcMs.toFixed(0)}ms | segs ${_segIn}→${_segOut}`)
 
   return { gcode: lines.join('\n'), opStarts }
+}
+
+/** One end-block line with every Z word moved by the datum offset. Matches a Z after a
+ *  digit ("G0Z10") and in lowercase, which `\bZ` missed — a retract left unshifted on a
+ *  bottom datum rapids into the part. Leaves comments (`(...)`, `;` to end of line)
+ *  alone, and a G53 line too: its Z is in machine coordinates, which the work datum
+ *  does not move. */
+export function shiftEndBlockZ(line: string, zOffOut: number, decs: number): string {
+  const semi = line.indexOf(';')
+  const code = semi < 0 ? line : line.slice(0, semi)
+  const tail = semi < 0 ? '' : line.slice(semi)
+  // Split into code and (...) comment pieces; only the code pieces are rewritten.
+  const parts = code.split(/(\([^)]*\)?)/)
+  if (/(?<![A-Za-z\d.])[Gg]0*53(?![\d.])/.test(parts.filter((_, i) => i % 2 === 0).join(' '))) return line
+  return parts.map((p, i) => i % 2 === 1 ? p
+    : p.replace(/(?<![A-Za-z])([Zz])\s*([-+]?(?:\d+\.?\d*|\.\d+))/g,
+        (_, z, n) => `${z}${f(parseFloat(n) + zOffOut, decs)}`)).join('') + tail
 }
 
 // ─── Split-by-tool export ──────────────────────────────────────────────────

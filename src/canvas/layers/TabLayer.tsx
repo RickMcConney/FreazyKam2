@@ -1,11 +1,11 @@
 // Renders tab markers on paths. When the Tabs form is open, tabs are draggable along the path,
 // and Shift-click (or Alt-click) deletes one.
 
-import { memo, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useCutHiddenKey, partsOut } from '../holdVisibility'
 import { Group, Rect, Circle, Shape } from 'react-konva'
 import type Konva from 'konva'
-import type { Viewport } from '../viewport'
+import { screenToCNC, type Viewport } from '../viewport'
 import { usePathsStore } from '../../store/pathsStore'
 import { useTabStore } from '../../store/tabStore'
 import { useUIStore } from '../../store/uiStore'
@@ -265,6 +265,15 @@ export const TabLayer = memo(function TabLayer({ viewport }: Props) {
 
   const [hoveredTabId, setHoveredTabId] = useState<string | null>(null)
   const [draggingTabId, setDraggingTabId] = useState<string | null>(null)
+  // The viewport AS IT IS NOW, for a drag's moves: the wheel zooms mid-drag, and the one
+  // captured at the press put the tab off the cursor from the first wheel step on.
+  const viewportRef = useRef(viewport)
+  viewportRef.current = viewport
+  // Ends the drag in progress, if any. A drag outlives the node it started on, so the
+  // layer has to be able to end it when the form closes or the canvas goes.
+  const endDragRef = useRef<(() => void) | null>(null)
+  useEffect(() => { if (!tabsFormActive) endDragRef.current?.() }, [tabsFormActive])
+  useEffect(() => () => endDragRef.current?.(), [])
 
   // Off the paths and tabs alone, so a pan (the viewport prop) recomputes nothing. Tabs are
   // indexed by path once: filtering the whole tab list per path is paths × tabs.
@@ -336,27 +345,35 @@ export const TabLayer = memo(function TabLayer({ viewport }: Props) {
 
               const outline = v.outline
               const pathId = v.pathId
-              const vp = viewport
 
               const handleMove = () => {
                 const pos = stage.getPointerPosition()
                 if (!pos) return
-                const cncX = (pos.x - vp.x) / vp.scale
-                const cncY = (vp.y - pos.y) / vp.scale
-                updateTabT(v.id, nearestTOnPath(outline, cncX, cncY))
+                const cnc = screenToCNC(pos.x, pos.y, viewportRef.current)
+                updateTabT(v.id, nearestTOnPath(outline, cnc.x, cnc.y))
               }
 
+              // Once, however it ends: on the stage, off it (the window's mouseup — Konva
+              // hears only its own element, and a release over the sidebar left the tab
+              // following every later move with no button held), or the form closing.
+              let done = false
               const handleUp = () => {
+                if (done) return
+                done = true
+                endDragRef.current = null
+                stage.off('mousemove.tabdrag')
+                stage.off('mouseup.tabdrag')
+                window.removeEventListener('mouseup', handleUp)
                 setDraggingTabId(null)
                 setHoveredTabId(null)
                 document.body.style.cursor = ''
-                stage.off('mousemove', handleMove)
-                stage.off('mouseup', handleUp)
                 regenerateAffected(pathId)
               }
 
-              stage.on('mousemove', handleMove)
-              stage.on('mouseup', handleUp)
+              endDragRef.current = handleUp
+              stage.on('mousemove.tabdrag', handleMove)
+              stage.on('mouseup.tabdrag', handleUp)
+              window.addEventListener('mouseup', handleUp, { once: true })
             }}
           >
             {/* The grab area: at least TAB_GRAB_PX round the tab on screen whatever the

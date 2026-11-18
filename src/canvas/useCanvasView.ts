@@ -113,10 +113,18 @@ export function useCanvasView(selectionBBoxRef: MutableRefObject<BBox | null>) {
     }
   }, [size, sheetBox, setViewport])
 
+  // A fit is owed when one is REQUESTED (every project load asks) or the stock changes size
+  // after one — never because the container did. `size` is a dependency only so a request
+  // made before the canvas has been measured is carried out once it has; keyed on it alone,
+  // a project load left every later window resize, panel change or wake re-measure throwing
+  // the user's zoom and pan away.
+  const fittedForRef = useRef('')
   useEffect(() => {
     if (fitRequest === 0 || size.width <= 100) return
+    const owed = `${fitRequest}|${widthMM}|${heightMM}`
+    if (owed === fittedForRef.current) return
+    fittedForRef.current = owed
     setViewport(fitViewport(size.width, size.height, sheetBoxRef.current))
-    // The stock size stays a dependency: a new stock re-fits, as it always has.
   }, [fitRequest, size, widthMM, heightMM, setViewport])
 
   const fitToWorkpiece = useCallback(() => {

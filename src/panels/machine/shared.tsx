@@ -9,7 +9,7 @@ import { abortGeneration } from '../../workers/abortGeneration'
 import { useUIStore } from '../../store/uiStore'
 import type { Tool } from '../../store/toolStore'
 import { ToolPicker } from './ToolPicker'
-import { useWorkpieceStore, fromMM, toMM, fmtLen, lenValue, inchStepFor } from '../../store/workpieceStore'
+import { useWorkpieceStore, fromMM, toMM, fmtLen, lenValue, displayFieldBounds } from '../../store/workpieceStore'
 import { useGenProgressStore } from '../../store/genProgressStore'
 import { useToolpathStore } from '../../store/toolpathStore'
 import { effectiveStepDownMM } from '../../cam/feeds'
@@ -317,13 +317,14 @@ export function LengthInput({ id, valueMM, onChangeMM, minMM, maxMM, stepMM = 0.
   className?: string
 }) {
   const units = useWorkpieceStore((s) => s.units)
+  const bounds = displayFieldBounds(units, { min: minMM, max: maxMM, step: stepMM })
   return (
     <NumericInput
       id={id}
       value={fromMM(valueMM, units)}
-      min={minMM === undefined ? undefined : fromMM(minMM, units)}
-      max={maxMM === undefined ? undefined : fromMM(maxMM, units)}
-      step={units === 'in' ? inchStepFor(stepMM) : stepMM}
+      min={bounds.min}
+      max={bounds.max}
+      step={bounds.step}
       unit={units}
       onChange={(v) => onChangeMM(toMM(v, units))}
       className={className ?? FIELD_CLS}

@@ -74,3 +74,22 @@ export function isPartialFraction(raw: string): boolean {
 export function isExpression(raw: string): boolean {
   return raw.trimStart().startsWith('=')
 }
+
+/**
+ * Whether leaving a field (blur, or Enter) should write its text back.
+ *
+ * NOT when the user typed nothing. The text a field opens with is its value FORMATTED —
+ * rounded for display (4 places, or 2 for an angle) and in inch mode converted too — so
+ * parsing it back gives a slightly different number: tabbing through a 6 mm depth in inch
+ * mode wrote 5.99948 mm, a 0.05 mm chip load came back 0.0508, and a shape turned to
+ * 37.4821° was turned again by −0.0021° on a click in and out of Angle. Each was a real
+ * edit — operations gone stale, an undo step — for nothing the user did.
+ *
+ * But YES when the text is back where it started after the field published values live on
+ * the way (NumericInput sends each valid keystroke): the last of those is in the store, and
+ * only the commit puts the field's own value back over it.
+ */
+export function shouldCommitDraft(draft: string | null, seeded: string | null, publishedLive = false): boolean {
+  if (draft === null) return false
+  return publishedLive || draft !== seeded
+}

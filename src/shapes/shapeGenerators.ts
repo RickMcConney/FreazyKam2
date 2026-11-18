@@ -863,7 +863,9 @@ function dragParams(
       const k = radius / Math.max(1, config.ratchet.outerDia / 2)
       return {
         type: 'ratchet', cx, cy, ...config.ratchet,
-        outerDia: 2 * radius, toothDepth: config.ratchet.toothDepth * k, tipRadius: config.ratchet.tipRadius * k,
+        // A tool config saved before tipRadius existed has none: the tool's default, not NaN.
+        outerDia: 2 * radius, toothDepth: config.ratchet.toothDepth * k,
+        tipRadius: (config.ratchet.tipRadius ?? DEFAULT_SHAPE_CONFIG.ratchet.tipRadius) * k,
         pawlLength: config.ratchet.pawlLength * k, pawlWidth: config.ratchet.pawlWidth * k,
       }
     }
@@ -1113,7 +1115,9 @@ export function scaleShapeParams(
       const ncx = ax + sx * (p.cx - ax), ncy = ay + sy * (p.cy - ay)
       return {
         ...p, cx: ncx, cy: ncy,
-        outerDia: p.outerDia * asx, toothDepth: p.toothDepth * asx, tipRadius: p.tipRadius * asx,
+        // A ratchet saved before tipRadius existed has none and is drawn with sharp tips
+        // (the generator reads it as 0) — scaled, it must stay 0, not become NaN.
+        outerDia: p.outerDia * asx, toothDepth: p.toothDepth * asx, tipRadius: (p.tipRadius ?? 0) * asx,
         pawlLength: p.pawlLength * asx, pawlWidth: p.pawlWidth * asx,
       }
     }
