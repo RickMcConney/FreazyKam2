@@ -12,6 +12,7 @@
 
 import { Download, ExternalLink, X } from 'lucide-react'
 import relayHtml from '../../controller/relay.html?raw'
+import { downloadText } from '../io/download'
 import { controllerOrigin, RELAY_FILE_NAME, RELAY_LEGACY_FILE_NAME, RELAY_PATH } from '../machine/relayClient'
 
 interface Props {
@@ -20,14 +21,9 @@ interface Props {
 }
 
 export function downloadRelay(name: string = RELAY_FILE_NAME) {
-  const url = URL.createObjectURL(new Blob([relayHtml], { type: 'text/html' }))
-  const a = document.createElement('a')
-  a.href = url
   // The name is load-bearing: FreazyKam opens /flash/freazyKam.html, and FluidNC v3
   // serves only its not-found page, 404.htm, inline.
-  a.download = name
-  a.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  downloadText(relayHtml, name, 'text/html')
 }
 
 const numCls = 'flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-semibold flex items-center justify-center'

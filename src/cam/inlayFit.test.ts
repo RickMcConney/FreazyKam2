@@ -268,3 +268,31 @@ describe('the audit catches a plug that does not fit', () => {
     expect(r.interference.areaMM2, inlayFitSummary(r)).toBeGreaterThan(20)
   })
 })
+
+// A TAPER — the same cone as a V-bit, rolled onto a ball at the tip. Its cone extended meets
+// the axis vConeOffsetMM below the ball (2.4 mm for this one), which is what every one of
+// these failed on: the plug traced with the BALL on the line stood off·tanθ inside it all
+// the way up its wall (a gap round every edge, 1.3 mm deep), and a hole grown by the tool's
+// radius rather than its cone came out the same amount too wide. See plugTrace.
+describe('a taper inlay seats as a V-bit one does', () => {
+  const TAPER: Tool = {
+    id: 'tp', name: '10° taper 1mm tip', type: 'taper', diameterMM: 1.0, fluteCount: 2,
+    rpm: 18000, xyFeedMmMin: 1200, zFeedMmMin: 300, maxDepthMM: 25, vbitAngleDeg: 10,
+  }
+  // A taper's stored angle is per side; the operation's is included.
+  const taperFit = (groups: InlayFitGroup[]) => auditInlayFit({
+    groups, roughTool: ENDMILL, wallTool: TAPER, params: { ...PARAMS, angleDeg: 20 }, cellMM: 0.15,
+  })
+
+  it('plain square', { timeout: 30000 }, async () => {
+    expectFits(await taperFit([{ boundaryD: rect(40, 40, 50, 50) }]))
+  })
+
+  it('plain circle', { timeout: 30000 }, async () => {
+    expectFits(await taperFit([{ boundaryD: circle(65, 65, 25) }]))
+  })
+
+  it('square with a round island', { timeout: 30000 }, async () => {
+    expectFits(await taperFit([{ boundaryD: rect(40, 40, 60, 60), islandDs: [circle(70, 70, 12)] }]))
+  })
+})

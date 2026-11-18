@@ -5,6 +5,7 @@ import type { Tool } from '../store/toolStore'
 import type { PostProcessorProfile } from '../store/postProcessorStore'
 import { machineMotionLimits } from '../store/workpieceStore'
 import type { MotionLimits } from '../sim/motionPlanner'
+import { hms } from '../util/time'
 
 /**
  * How long each operation runs, in seconds, keyed by op id (review2 F9).
@@ -50,10 +51,7 @@ export function opRunTimesS(
 /** A run time as the app writes it everywhere: `~1h 5m`, `~3m 12s`, `~40s`, or `—`. */
 export function fmtDuration(s: number): string {
   if (s <= 0) return '—'
-  const t = Math.round(s)
-  const h = Math.floor(t / 3600)
-  const m = Math.floor((t % 3600) / 60)
-  const sec = t % 60
+  const { h, m, s: sec } = hms(Math.round(s))
   if (h > 0) return `~${h}h ${m}m`
   if (m > 0) return `~${m}m ${sec}s`
   return `~${sec}s`

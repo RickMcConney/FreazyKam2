@@ -1,7 +1,7 @@
 import { flattenPath, ensureWinding, signedArea, rotatePolylineNear, arcFitPolyline, splitSelfIntersecting, requireClosedSubpaths, isOpenSubpath, type Pt2 } from './pathFlattener'
 import { inflatePathsD, JoinType, EndType } from 'clipper2-ts'
 import { zPasses, arcLengths, interpPt, stripClosingDuplicate, pushAll } from './geom'
-import { designPathAtT, nearestArcLen, polylinePassWithTabs, withBridges, holdTopZ, distToPolyline } from './profile'
+import { designPathAtT, nearestArcLen, polylinePassWithTabs, withBridges, holdTopZ, distToPolyline, tabClearRadiusMM } from './profile'
 import type { BridgeSet } from './bridges'
 import type { MotionSegment } from '../store/toolpathStore'
 import type { Tool } from '../store/toolStore'
@@ -285,7 +285,9 @@ export function generateTrochoidal(
         const pos = tabPosAll[ti]
         if (!pos || distToPolyline(pos, rawPts, !isOpen) > tabNearest[ti] + 1e-3) continue
         const tabZ = holdTopZ(0, params.depthMM, tab.heightMM, params.stockBottomZMM)
-        const half = tab.lengthMM / 2 + tool.diameterMM / 2
+        // The tool's radius at the tab's top, as profile sizes it — a taper's stored
+        // diameter is its TIP, so the stored diameter left its tabs too narrow.
+        const half = tab.lengthMM / 2 + tabClearRadiusMM(tool, tab, Math.max(0, tabZ + params.depthMM))
         const center = nearestArcLen(closed, lens, pos[0], pos[1])
         tabRanges.push({ start: center - half - l, end: center + half + l, tabZ })
         const centerExact = nearestArcLen(closedExact, exactLens.lens, pos[0], pos[1])

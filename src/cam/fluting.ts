@@ -26,6 +26,7 @@ import type { MotionSegment } from '../store/toolpathStore'
 import type { Tool } from '../store/toolStore'
 import { flattenPath, isOpenSubpath, type Pt2 } from './pathFlattener'
 import { zPasses, arcLengths } from './geom'
+import { clamp } from '../util/num'
 
 export interface FluteBreakpoint {
   /** Position along the path, 0 = its start, 1 = its end. */
@@ -57,8 +58,8 @@ const THIN_TOL_MM = 0.002
 
 /** The breakpoints sorted by t, clamped into the unit square, with ends at t = 0 and t = 1. */
 export function normalizeProfile(profile: FluteBreakpoint[]): FluteBreakpoint[] {
-  const clamp = (v: number) => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0)
-  const pts = profile.map((p) => ({ t: clamp(p.t), depth: clamp(p.depth) })).sort((a, b) => a.t - b.t)
+  const unit = (v: number) => (Number.isFinite(v) ? clamp(v, 0, 1) : 0)
+  const pts = profile.map((p) => ({ t: unit(p.t), depth: unit(p.depth) })).sort((a, b) => a.t - b.t)
   if (pts.length === 0) return [{ t: 0, depth: 1 }, { t: 1, depth: 1 }]
   if (pts[0].t > 0) pts.unshift({ t: 0, depth: pts[0].depth })
   if (pts[pts.length - 1].t < 1) pts.push({ t: 1, depth: pts[pts.length - 1].depth })

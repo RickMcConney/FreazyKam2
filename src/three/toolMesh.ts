@@ -171,7 +171,7 @@ function flutedGeometry(
 }
 
 // The angle a flute's crest has turned through at height h above the tip.
-function flutePhase(helix: FluteHelix, twist: number, upcutLen: number): (h: number) => number {
+export function flutePhase(helix: FluteHelix, twist: number, upcutLen: number): (h: number) => number {
   switch (helix) {
     case 'straight': return () => 0
     case 'down': return h => -h * twist

@@ -22,8 +22,7 @@ import { buildExportPreflight } from '../cam/exportPreflight'
 import { buildGcodeInputs } from '../io/gcodeExport'
 import { buildProjectData } from '../io/projectSave'
 import { hasUnsavedWork, loadProject, newProject } from '../io/projectLoad'
-import { importSvgText, completeDxfImport, importImageDataUrl } from '../io/importFile'
-import { importDxf } from '../importers/dxfImporter'
+import { importSvgText, completeDxfImport, importImageDataUrl, parseDxfForImport } from '../io/importFile'
 import { reorderedFor, groupedByTool, sameOrder } from '../panels/operationsOrder'
 import { isOpenPath } from '../panels/machine/containment'
 import type { ImportedPath } from '../importers/svgImporter'
@@ -320,10 +319,11 @@ export const commands: Record<string, Command> = {
       const units = p.units as 'mm' | 'cm' | 'in' | 'ft' | 'm' | undefined
       // A DXF that does not say its units would open the units dialog — with nobody there
       // to answer it. Ask the caller instead.
-      if (!units && importDxf(text, name).needsUnitsPrompt) {
+      const parsed = units ? undefined : parseDxfForImport(text, name)
+      if (parsed?.needsUnitsPrompt) {
         throw new Error('This DXF does not say what units it is in. Ask the user, then call again with units (mm, cm, in, ft or m).')
       }
-      r = completeDxfImport(text, name, units)
+      r = completeDxfImport(text, name, units, parsed)
     }
     if (r.pathIds.length === 0) throw new Error(`Nothing imported: ${r.problem ?? 'no usable paths'}.`)
     return { imported: pathsById(r.pathIds).map((x) => pathSummary(x, false)), ...(r.problem ? { warning: r.problem } : {}) }

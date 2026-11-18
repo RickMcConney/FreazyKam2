@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 import type Konva from 'konva'
-import { collectSnapTargets, equalSpacingSnap, snapAxisDelta } from './objectSnap'
+import { collectSnapTargets } from './objectSnap'
+import { resolveMoveSnap, resolveResizePoint, resizeScale, scaledBox } from './gestureMath'
 import { runPlan } from '../store/constraints'
 import { bakePathsStep, usePathsStore } from '../store/pathsStore'
 import { useUIStore } from '../store/uiStore'
@@ -12,6 +13,7 @@ import { MOVE_THRESHOLD_PX, OBJECT_SNAP_PX, snapOptions, type CanvasMode, type G
 import type { useSelectionInfo } from './useSelectionInfo'
 import { edgeSkew } from './edgeSkew'
 import { screenToCNC, snapPoint, type Viewport } from './viewport'
+import { idSet } from './idSet'
 
 /** Moving, resizing, skewing and rotating the selection: press, live preview, bake. */
 export function useTransformGestures(
@@ -121,34 +123,14 @@ export function useTransformGestures(
         if (Math.abs(dx) > Math.abs(dy)) finalDy = 0
         else finalDx = 0
       }
-      // Object snap first (bbox edges/centers to other shapes' edges/centers),
-      // then grid snap only on the axes that didn't object-snap.
+      // Alignment, equal spacing and grid, in that order of precedence — see resolveMoveSnap.
       const ib = m.initBbox
-      const snapOn = useUIStore.getState().snapEnabled
-      const tolMM = OBJECT_SNAP_PX / vp.scale
-      let ox = snapOn ? snapAxisDelta([ib.minX + finalDx, ib.maxX + finalDx, ib.cx + finalDx], m.snapTargets.xs, tolMM) : null
-      let oy = snapOn ? snapAxisDelta([ib.minY + finalDy, ib.maxY + finalDy, ib.cy + finalDy], m.snapTargets.ys, tolMM) : null
-      // Equal spacing competes with alignment on each axis, and the nearer one wins —
-      // both are measured from where the cursor has the box, before either is applied.
-      const at = { minX: ib.minX + finalDx, maxX: ib.maxX + finalDx, minY: ib.minY + finalDy, maxY: ib.maxY + finalDy }
-      const ex = snapOn ? equalSpacingSnap(at, m.snapTargets.boxes, 'x', tolMM) : null
-      const ey = snapOn ? equalSpacingSnap(at, m.snapTargets.boxes, 'y', tolMM) : null
-      const useEx = !!ex && (!ox || ex.dist < Math.abs(ox.correction) - 1e-9)
-      const useEy = !!ey && (!oy || ey.dist < Math.abs(oy.correction) - 1e-9)
-      if (useEx) ox = null
-      if (useEy) oy = null
-      if (ox) finalDx += ox.correction
-      if (oy) finalDy += oy.correction
-      if (useEx) finalDx += ex!.correction
-      if (useEy) finalDy += ey!.correction
-      const gridSnapped = snapCNC({ x: ib.minX + finalDx, y: ib.minY + finalDy })
-      if (!ox && !useEx) finalDx = gridSnapped.x - ib.minX
-      if (!oy && !useEy) finalDy = gridSnapped.y - ib.minY
-      const gaps = [...(useEx ? ex!.marks : []), ...(useEy ? ey!.marks : [])]
-      setSnapGuides(ox || oy || gaps.length > 0
-        ? { x: ox?.guide, y: oy?.guide, ...(gaps.length > 0 ? { gaps } : {}) }
-        : null)
-      setLiveTransform({ kind: 'translate', pathIds: new Set(m.pathIds), dx: finalDx, dy: finalDy })
+      const snap = resolveMoveSnap(ib, finalDx, finalDy, m.snapTargets, OBJECT_SNAP_PX / vp.scale,
+        useUIStore.getState().snapEnabled, snapCNC)
+      finalDx = snap.dx
+      finalDy = snap.dy
+      setSnapGuides(snap.guides)
+      setLiveTransform({ kind: 'translate', pathIds: idSet(m.pathIds), dx: finalDx, dy: finalDy })
       setLiveBBox({ minX: ib.minX + finalDx, minY: ib.minY + finalDy, width: ib.width, height: ib.height })
       // The Constrain tool's second point riding along: the dimension being made
       // is redrawn from this, so the numbers on it are the ones mouseup stores.
@@ -164,7 +146,7 @@ export function useTransformGestures(
       const plan = constraintPlanRef.current
       setFollowTransforms(plan
         ? runPlan(plan, { dx: finalDx, dy: finalDy }).map((mv) => ({
-          kind: 'translate' as const, pathIds: new Set(mv.pathIds), dx: mv.dx, dy: mv.dy,
+          kind: 'translate' as const, pathIds: idSet(mv.pathIds), dx: mv.dx, dy: mv.dy,
         }))
         : null)
     }
@@ -195,49 +177,16 @@ export function useTransformGestures(
       const { kx, ky } = edgeSkew(handle, anchor, initHandle, m.startCNC, cncMouse,
         (d) => snap ? snapPoint({ x: d, y: d }, vp, units, { x: 0, y: 0 }).x : d)
       setSnapGuides(null)
-      setLiveTransform({ kind: 'skew', pathIds: new Set(pathIds), kx, ky, ax: anchor.x, ay: anchor.y })
+      setLiveTransform({ kind: 'skew', pathIds: idSet(pathIds), kx, ky, ax: anchor.x, ay: anchor.y })
       return
     }
 
     const snapOn = useUIStore.getState().snapEnabled && !(shiftHeld && isCorner)
-    const tolMM = OBJECT_SNAP_PX / vp.scale
-    // Edge handles only move one axis; the other is the bbox mid-line and must not snap.
-    const ox = snapOn && handle !== 't' && handle !== 'b' ? snapAxisDelta([cncMouse.x], m.snapTargets.xs, tolMM) : null
-    const oy = snapOn && handle !== 'l' && handle !== 'r' ? snapAxisDelta([cncMouse.y], m.snapTargets.ys, tolMM) : null
-    const gridSnapped = snapCNC(cncMouse)
-    const snappedMouse = {
-      x: ox ? cncMouse.x + ox.correction : gridSnapped.x,
-      y: oy ? cncMouse.y + oy.correction : gridSnapped.y,
-    }
-    setSnapGuides(ox || oy ? { x: ox?.guide, y: oy?.guide } : null)
-
-    const dhx = initHandle.x - anchor.x
-    const dhy = initHandle.y - anchor.y
-    const newHx = snappedMouse.x - anchor.x
-    const newHy = snappedMouse.y - anchor.y
-
-    let sx = dhx !== 0 ? newHx / dhx : 1
-    let sy = dhy !== 0 ? newHy / dhy : 1
-
-    // Edge handles constrain one axis
-    if (handle === 't' || handle === 'b') sx = 1
-    if (handle === 'l' || handle === 'r') sy = 1
-
-    // Uniform scale for corners with Shift
-    if (shiftHeld && !['t','b','l','r'].includes(handle)) {
-      const s = Math.sign(sx) * Math.hypot(newHx, newHy) / Math.hypot(dhx, dhy)
-      sx = s; sy = Math.sign(sy) * Math.abs(s)
-    }
-
-    // Prevent degenerate scales
-    if (Math.abs(sx) < 0.001) sx = Math.sign(sx) * 0.001
-    if (Math.abs(sy) < 0.001) sy = Math.sign(sy) * 0.001
-
-    setLiveTransform({ kind: 'scale', pathIds: new Set(pathIds), sx, sy, ax: anchor.x, ay: anchor.y })
-    const ib = m.initBbox
-    const x1 = anchor.x + (ib.minX - anchor.x) * sx, x2 = anchor.x + (ib.maxX - anchor.x) * sx
-    const y1 = anchor.y + (ib.minY - anchor.y) * sy, y2 = anchor.y + (ib.maxY - anchor.y) * sy
-    setLiveBBox({ minX: Math.min(x1, x2), minY: Math.min(y1, y2), width: Math.abs(x2 - x1), height: Math.abs(y2 - y1) })
+    const { point, guides } = resolveResizePoint(handle, cncMouse, m.snapTargets, OBJECT_SNAP_PX / vp.scale, snapOn, snapCNC)
+    setSnapGuides(guides)
+    const { sx, sy } = resizeScale(handle, anchor, initHandle, point, shiftHeld)
+    setLiveTransform({ kind: 'scale', pathIds: idSet(pathIds), sx, sy, ax: anchor.x, ay: anchor.y })
+    setLiveBBox(scaledBox(m.initBbox, anchor, sx, sy))
   }, [snapCNC, setLiveTransform, setLiveBBox])
 
   const onMoveRotate = useCallback((m: Extract<CanvasMode, { type: 'rotate' }>, cncMouse: { x: number; y: number }) => {
@@ -245,7 +194,7 @@ export function useTransformGestures(
     const currentAngle = Math.atan2(cncMouse.y - m.center.y, cncMouse.x - m.center.x) * 180 / Math.PI
     let delta = currentAngle - m.initAngle
     if (useUIStore.getState().snapEnabled) delta = Math.round(delta / 5) * 5
-    setLiveTransform({ kind: 'rotate', pathIds: new Set(m.pathIds), angle: delta, cx: m.center.x, cy: m.center.y })
+    setLiveTransform({ kind: 'rotate', pathIds: idSet(m.pathIds), angle: delta, cx: m.center.x, cy: m.center.y })
     setLiveRotationAngle(delta)
   }, [setLiveTransform, setLiveRotationAngle])
 

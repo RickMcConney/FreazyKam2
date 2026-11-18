@@ -54,7 +54,9 @@
 
 import {
   type Pt, clamp, ellipseRing, boolRings, roundConcave, roundConvex, inflateRings, ringToD,
+  rotateRingAbout,
 } from './polyOps'
+import { convexHull } from '../cam/geom'
 
 export interface RatchetSpec {
   cx: number; cy: number
@@ -185,8 +187,7 @@ function onFace(f: number, r: number, off: number): Pt {
   return [r * Math.cos(f) + off * tx, r * Math.sin(f) + off * ty]
 }
 
-const rotateAbout = (ring: Pt[], [cx, cy]: Pt, a: number): Pt[] =>
-  ring.map(([x, y]) => [cx + (x - cx) * Math.cos(a) - (y - cy) * Math.sin(a), cy + (x - cx) * Math.sin(a) + (y - cy) * Math.cos(a)] as Pt)
+const rotateAbout = rotateRingAbout
 
 /**
  * How far the pawl on face `f` has to swing about its pivot before every part
@@ -361,22 +362,8 @@ function cutWheel(g: G): Pt[][] {
   return roundConvex(roundConcave([wheelRing(g)], g.toolR), g.tipRad)
 }
 
-/** Convex hull, CCW (monotone chain). */
-function hull(pts: Pt[]): Pt[] {
-  const ps = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1])
-  const cross = (o: Pt, a: Pt, b: Pt) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
-  const lower: Pt[] = [], upper: Pt[] = []
-  for (const p of ps) {
-    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop()
-    lower.push(p)
-  }
-  for (let i = ps.length - 1; i >= 0; i--) {
-    const p = ps[i]
-    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop()
-    upper.push(p)
-  }
-  return [...lower.slice(0, -1), ...upper.slice(0, -1)]
-}
+/** Convex hull, CCW (geom's monotone chain; a pawl always has more than two points). */
+const hull = (pts: Pt[]): Pt[] => convexHull(pts)
 
 /**
  * One pawl on face angle `f`: the hull of a flat nose end and the round boss

@@ -12,7 +12,7 @@
 // drawn on top of each other.
 
 import type { Pt2 } from './pathFlattener'
-import { arcLengths } from './geom'
+import { arcLengths, polylineLength, polylinesLength } from './geom'
 
 // A vertex is a corner when the outline turns by more than this there. A flattened curve
 // turns by only a few degrees per vertex at 0.05 mm, so this finds the drawn corners and
@@ -94,6 +94,31 @@ export function tabTAt(subpaths: Pt2[][], x: number, y: number, lengthMM: number
   const runs = subpaths.map(measure)
   const totalLen = runs.reduce((a, r) => a + r.len, 0)
   if (totalLen < 1e-6) return null
+  const { k: bestK, s: bestS } = nearestOn(subpaths, x, y)
+  let start = 0
+  for (let k = 0; k < bestK; k++) start += runs[k].len
+  const local = offCorners(bestS, runs[bestK], lengthMM / 2 + CORNER_CLEARANCE_MM)
+  return (start + local) / totalLen
+}
+
+/**
+ * The nearest point on the outline to (x, y), as `t` — exactly where the pointer is, with
+ * no corner rule: a DRAGGED tab goes where it is put. The same projection `tabTAt` starts
+ * from, so a drag and a click agree everywhere off a corner. Null for an outline with no
+ * length.
+ */
+export function tabTNearest(subpaths: Pt2[][], x: number, y: number): number | null {
+  const lens = subpaths.map(polylineLength)
+  const totalLen = lens.reduce((a, l) => a + l, 0)
+  if (totalLen < 1e-6) return null
+  const { k: bestK, s: bestS } = nearestOn(subpaths, x, y)
+  let start = 0
+  for (let k = 0; k < bestK; k++) start += lens[k]
+  return (start + bestS) / totalLen
+}
+
+// Which subpath (k) the point nearest (x, y) is on, and how far along it (s, mm).
+function nearestOn(subpaths: Pt2[][], x: number, y: number): { k: number; s: number } {
   let best = Infinity, bestK = 0, bestS = 0
   subpaths.forEach((pts, k) => {
     let cum = 0
@@ -107,10 +132,7 @@ export function tabTAt(subpaths: Pt2[][], x: number, y: number, lengthMM: number
       cum += l
     }
   })
-  let start = 0
-  for (let k = 0; k < bestK; k++) start += runs[k].len
-  const local = offCorners(bestS, runs[bestK], lengthMM / 2 + CORNER_CLEARANCE_MM)
-  return (start + local) / totalLen
+  return { k: bestK, s: bestS }
 }
 
 /**
@@ -118,8 +140,7 @@ export function tabTAt(subpaths: Pt2[][], x: number, y: number, lengthMM: number
  * outline, and the direction of travel there. Null for an outline with no length.
  */
 export function tabPointAt(subpaths: Pt2[][], t: number): { x: number; y: number; tx: number; ty: number } | null {
-  let total = 0
-  for (const p of subpaths) for (let i = 1; i < p.length; i++) total += Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1])
+  const total = polylinesLength(subpaths)
   if (total < 1e-9) return null
   let left = Math.max(0, Math.min(1, t)) * total
   let last: { x: number; y: number; tx: number; ty: number } | null = null

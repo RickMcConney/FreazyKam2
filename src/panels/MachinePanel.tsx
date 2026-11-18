@@ -87,9 +87,6 @@ export default function MachinePanel({ fill = false }: { fill?: boolean }) {
   // the matching form opens with editOp so its parameters can be amended.
   const [editOpId, setEditOpId] = useState<string | null>(null)
   const editOp = useToolpathStore((s) => s.operations.find((o) => o.id === editOpId)) ?? null
-
-  useEffect(() => () => { setMachineFormActive(false); setTabsFormActive(false) }, [setMachineFormActive, setTabsFormActive])
-  useEffect(() => { setTabsFormActive(activeForm === 'tabs') }, [activeForm, setTabsFormActive])
   // Editing an EXISTING generator chip (boolean/offset/pattern): the form
   // opens with the event's inputs and amends the chip on apply.
   const [editBool, setEditBool] = useState<BooleanEditCtx | null>(null)

@@ -11,8 +11,8 @@
 // toolpath stage). Winding of the input loops is preserved, so the caller picks
 // climb/conventional upstream and we never flip it.
 
-import { stripClosingDuplicate, pointInPolygon, ringPerimeter } from './geom'
-import { signedArea, ptSegDist, type Pt2 } from './pathFlattener'
+import { stripClosingDuplicate, pointInPolygon, ringPerimeter, distToRing, centroidOfRing } from './geom'
+import { signedArea, type Pt2 } from './pathFlattener'
 
 // Resample a closed loop to exactly `n` points equally spaced by arc length.
 // The first sample is the point whose direction from `center` is nearest
@@ -82,14 +82,7 @@ function spiralSampleCount(loops: Pt2[][], chordToleranceMM: number): number {
   return Math.max(48, Math.min(1024, n))
 }
 
-function distToBoundary(px: number, py: number, poly: Pt2[]): number {
-  let best = Infinity
-  for (let i = 0; i < poly.length; i++) {
-    const a = poly[i], b = poly[(i + 1) % poly.length]
-    best = Math.min(best, ptSegDist(px, py, a[0], a[1], b[0], b[1]))
-  }
-  return best
-}
+const distToBoundary = distToRing
 
 // Inscribed circle (pole of inaccessibility): the interior point farthest from
 // the loop boundary, and that distance. Grid search with one refinement pass —
@@ -281,18 +274,4 @@ function roundSharpCorners(pts: Pt2[], iterations: number, maxCutMM: number): Pt
   return cur
 }
 
-function centroidOf(loop: Pt2[]): Pt2 {
-  const ring = stripClosingDuplicate(loop)
-  let area2 = 0, cx = 0, cy = 0
-  for (let i = 0; i < ring.length; i++) {
-    const [x0, y0] = ring[i]
-    const [x1, y1] = ring[(i + 1) % ring.length]
-    const cross = x0 * y1 - x1 * y0
-    area2 += cross; cx += (x0 + x1) * cross; cy += (y0 + y1) * cross
-  }
-  if (Math.abs(area2) < 1e-9) {
-    const s = ring.reduce((acc, p) => [acc[0] + p[0], acc[1] + p[1]] as Pt2, [0, 0] as Pt2)
-    return [s[0] / ring.length, s[1] / ring.length]
-  }
-  return [cx / (3 * area2), cy / (3 * area2)]
-}
+const centroidOf = (loop: Pt2[]): Pt2 => centroidOfRing(stripClosingDuplicate(loop), 1e-9)

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { planBridges, clampToBridges, normalizeBridges, type BridgeSet, type BridgeLine, type Join } from './bridges'
+import { tabRampReachMM } from './tabRamp'
 import { generateProfile, polylinePassWithTabs, holdTopZ } from './profile'
 import { generateTrochoidal } from './trochoidal'
 import { arcLengths, pointInPolygon } from './geom'
@@ -378,4 +379,65 @@ describe('a tab or strip stands its height above the STOCK\'s bottom, whatever t
     // A strip taller than the stock is held at the surface.
     expect(holdTopZ(0, 20, 25, STOCK_BOTTOM)).toBe(0)
   })
+})
+
+describe('planBridges — a join to a star stops at the star, never runs through its arms', () => {
+  // Four 5-point stars from a real nest (32 of them on a 600 × 280 sheet). Their nearest
+  // squarely-faced point is often the FAR side of a neighbour's arm: the old check sampled
+  // three points along the strip for "inside the part it joins", and a strip through two
+  // arms could have all three fall in the gaps — 13 of 121 strips on the sheet did.
+  const STARS = [
+      "M407.0958,42.6273 L415.3248,66.3011 L440.3828,66.8117 L420.4106,81.9535 L427.6683,105.9429 L407.0958,91.6273 L386.5233,105.9429 L393.781,81.9535 L373.8088,66.8117 L398.8668,66.3011 Z",
+      "M463.2491,92.6324 L471.4781,116.3062 L496.5361,116.8168 L476.5639,131.9586 L483.8216,155.948 L463.2491,141.6324 L442.6766,155.948 L449.9343,131.9586 L429.9621,116.8168 L455.0201,116.3062 Z",
+      "M466.938,21.7235 L475.167,45.3973 L500.225,45.9079 L480.2528,61.0497 L487.5105,85.0391 L466.938,70.7235 L446.3655,85.0391 L453.6232,61.0497 L433.651,45.9079 L458.709,45.3973 Z",
+      "M528.8295,4.0988 L537.0585,27.7726 L562.1165,28.2832 L542.1443,43.425 L549.402,67.4144 L528.8295,53.0988 L508.257,67.4144 L515.5147,43.425 L495.5425,28.2832 L520.6005,27.7726 Z"
+  ]
+  const parts = STARS.map((d, i) => ({ id: 's' + i, d }))
+  const rings = STARS.map((d) => flattenPath(d, 0.05)[0])
+  for (const count of [2, 3, 4, 6]) {
+    it(`with ${count} per part, no strip passes through any star between its ends`, () => {
+      const joins = planBridges(parts, { widthMM: 600, heightMM: 280 }, { count, widthMM: 4, toolRadiusMM: 3.175 })
+      expect(joins.length).toBeGreaterThan(0)
+      const through = joins.filter(({ line: l }) => {
+        const len = Math.hypot(l.x2 - l.x1, l.y2 - l.y1)
+        for (let a = 1.5; a <= len - 1.5; a += 0.1) {
+          const x = l.x1 + ((l.x2 - l.x1) * a) / len, y = l.y1 + ((l.y2 - l.y1) * a) / len
+          if (rings.some((r) => pointInPolygon(x, y, r))) return true
+        }
+        return false
+      })
+      expect(through.map((j) => j.line)).toEqual([])
+    })
+  }
+})
+
+describe('clampToBridges — a pass never starts with a rapid into a strip or its ramp', () => {
+  // A profile starts each depth pass with a rapid down its kerf to the pass above. Where a
+  // ring's start lies under a strip or inside the reach of the ramp over one, the passes
+  // before left stock there (held at the strip top, or raised by the ramp), and that G0
+  // dropped the tool into it: 2 mm at full speed, eight times on a sheet of stars. This is
+  // one of those stars, its strips and its settings (a 1/4" end mill 12 mm deep through
+  // 3 mm stock, 4 mm steps, ramped in and over the strips). No rapid may go down below the
+  // strip top anywhere near a strip, and the strips must still be held.
+  const STAR = "M162.8085,4.0988 L171.0375,27.7726 L196.0955,28.2832 L176.1233,43.425 L183.381,67.4144 L162.8085,53.0988 L142.236,67.4144 L149.4937,43.425 L129.5215,28.2832 L154.5795,27.7726 Z"
+  const B = set([{"x1":165.8039,"y1":15.7619,"x2":185.6397,"y2":8.867},{"x1":102.1075,"y1":29.7332,"x2":121.9433,"y2":22.8383},{"x1":148.012,"y1":28.9064,"x2":148.012,"y2":7.9064},{"x1":158.2923,"y1":82.4386,"x2":138.4564,"y2":75.5437},{"x1":211.007,"y1":67.6432,"x2":190.9067,"y2":61.5621},{"x1":117.7401,"y1":55.6937,"x2":130.4271,"y2":72.4281},{"x1":178.9726,"y1":28.9343,"x2":178.9726,"y2":7.9343},{"x1":210.7233,"y1":45.7114,"x2":210.7233,"y2":24.7114},{"x1":170.2387,"y1":57.0519,"x2":138.6295,"y2":98.7447}], 4, 2)
+  const EM = { ...EM6, diameterMM: 6.35 }
+  for (const tabRampDeg of [0, 30]) {
+    it(`on a star whose passes start beside a strip (ramp ${tabRampDeg}°)`, () => {
+      const segs = generateProfile(STAR, EM, {
+        side: 'outside', depthMM: 12, stepDownMM: 4, direction: 'climb', safeHeightMM: 3, rampIn: true,
+        startNear: {"x":127.166,"y":193.64}, bridges: B, tabRampDeg, stockBottomZMM: -3,
+      })
+      const top = -3 + B.heightMM
+      const reach = B.widthMM / 2 + EM.diameterMM / 2 + (tabRampDeg ? tabRampReachMM(top + 12, { deg: tabRampDeg, kneeMM: 2 }) : 0)
+      const nearStrip = (x: number, y: number) => B.lines.some((l) => {
+        const dx = l.x2 - l.x1, dy = l.y2 - l.y1, L2 = dx * dx + dy * dy
+        const t = Math.max(0, Math.min(1, ((x - l.x1) * dx + (y - l.y1) * dy) / L2))
+        return Math.hypot(x - l.x1 - t * dx, y - l.y1 - t * dy) < reach
+      })
+      const bad = segs.filter((s, i) => i > 0 && s.rapid && s.z < segs[i - 1].z && s.z < top - 1e-9 && nearStrip(s.x, s.y))
+      expect(bad).toEqual([])
+      expect(intrusions(segs, B, EM.diameterMM / 2, 3)).toEqual([])
+    })
+  }
 })

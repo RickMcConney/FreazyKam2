@@ -5,8 +5,9 @@ import { useUIStore } from '../../store/uiStore'
 import { usePathsStore, type ImportedPath } from '../../store/pathsStore'
 import { useToolpathStore, pathIdsOf, type MotionSegment } from '../../store/toolpathStore'
 import { useToolStore } from '../../store/toolStore'
-import { maxCutRadiusMM } from '../../cam/geom'
-import { toolpathRuns } from '../toolpathRuns'
+import { maxCutRadiusMM, toolRadiusAtHeight } from '../../cam/geom'
+import { toolpathRuns, swathRuns, type RunCmd } from '../toolpathRuns'
+import type { Tool } from '../../store/toolStore'
 
 // Amber for a TOOLPATH's source paths: it reads against both the blue selection and the
 // toolpath colours, in either theme. A hovered PATH glows the selection's own blue — it is
@@ -49,6 +50,40 @@ function movesOf(segs: MotionSegment[]): MoveRun[] {
   return runs
 }
 
+// The swath, per segments array and per (tool, surface) it was measured for: a V-carve's
+// depth-dependent widths are worked out once per hover target, not on every redraw.
+interface SwathGroup { toolId: string | null; widths: { width: number; path: Path2D; discs: [number, number][] }[] }
+const swaths = new WeakMap<MotionSegment[], { key: string; tools: readonly Tool[]; groups: SwathGroup[] }>()
+function swathOf(segs: MotionSegment[], tools: readonly Tool[], toolFor: (id: string | null) => Tool | undefined, surfaceZ: number, key: string): SwathGroup[] {
+  const hit = swaths.get(segs)
+  if (hit && hit.key === key && hit.tools === tools) return hit.groups
+  // How wide the tool cuts at z: its radius that far above its tip, the surface being the
+  // op's own start (a carve into a pocket floor is measured from the floor). Above the
+  // surface it cuts nothing, so the glow is its centreline alone there.
+  const widthAt = (id: string | null, z: number) => {
+    const tool = toolFor(id)
+    if (!tool) return 0
+    return Math.min(2 * maxCutRadiusMM(tool), 2 * toolRadiusAtHeight(tool, Math.max(0, surfaceZ - z)))
+  }
+  const toPath = (cmds: RunCmd[]) => {
+    const path = new Path2D()
+    const discs: [number, number][] = []
+    for (const c of cmds) {
+      if (c.k === 'M') path.moveTo(c.x, c.y)
+      else if (c.k === 'L') path.lineTo(c.x, c.y)
+      else if (c.k === 'D') discs.push([c.x, c.y])
+      else path.arc(c.cx, c.cy, c.r, c.a0, c.a1, c.anticlockwise)
+    }
+    return { path, discs }
+  }
+  const groups = swathRuns(segs, widthAt).map((r) => ({
+    toolId: r.toolId,
+    widths: [...r.byWidth].map(([width, cmds]) => ({ width, ...toPath(cmds) })),
+  }))
+  swaths.set(segs, { key, tools, groups })
+  return groups
+}
+
 /**
  * The TOOLPATH of whatever the pointer is over in the Toolpaths list (`uiStore.hoverOpIds`)
  * — a row, a tool run or a whole sheet folder — so a toolpath can be found on a crowded
@@ -75,7 +110,7 @@ export const HoverHighlightLayer = memo(function HoverHighlightLayer({ viewport 
   const { hitPaths, ownPaths, segRuns } = useMemo(() => {
     const hitPaths: ImportedPath[] = []
     const ownPaths: ImportedPath[] = []
-    const segRuns: { segs: MotionSegment[]; toolId: string }[] = []
+    const segRuns: { segs: MotionSegment[]; toolId: string; surfaceZ: number }[] = []
     if (hoverOpIds.length === 0 && hoverPathIds.length === 0) return { hitPaths, ownPaths, segRuns }
     const byId = new Map(paths.map((p) => [p.id, p]))
     const want = new Set(hoverOpIds)
@@ -86,7 +121,7 @@ export const HoverHighlightLayer = memo(function HoverHighlightLayer({ viewport 
       // A HIDDEN op's toolpath is not drawn, so hovering it must not draw it either — the
       // pointer is still on the row when its eye is clicked, and the glow read as the hide
       // not working. It lights its source paths, like an op with no toolpath.
-      if (op.visible && op.segments.length > 0) { segRuns.push({ segs: op.segments, toolId: op.toolId }); continue }
+      if (op.visible && op.segments.length > 0) { segRuns.push({ segs: op.segments, toolId: op.toolId, surfaceZ: op.generatedWith?.startZMM ?? 0 }); continue }
       for (const id of pathIdsOf(op)) {
         const p = byId.get(id)
         if (p && !seen.has(p.id)) { seen.add(p.id); hitPaths.push(p) }
@@ -118,34 +153,39 @@ export const HoverHighlightLayer = memo(function HoverHighlightLayer({ viewport 
         }
         glow(ownPaths.map(path2dOf), PATH_GLOW)
         glow(ps, GLOW)
-        // A toolpath's glow is THE WIDTH OF ITS BIT (`maxCutRadiusMM`: a taper's widest cut,
-        // not its tip), so what lights up is the swath the tool sweeps. Never thinner than
-        // the plain glow's centreline, or a fine engraving bit vanishes at low zoom.
+        // A toolpath's glow is THE SWATH ITS BIT CUTS: at each move, the width the tool cuts
+        // at that depth (`swathRuns`) — a straight-walled bit's own width, a V-bit's only as
+        // wide as the carve, never wider than the bit (`maxCutRadiusMM`: a taper's widest
+        // cut, not its tip). Never thinner than the plain glow's centreline, or a fine
+        // engraving vanishes at low zoom. The centreline is drawn over it, crisp.
         const toolById = new Map(tools.map((t) => [t.id, t]))
-        for (const { segs, toolId } of segRuns) {
-          for (const run of movesOf(segs)) {
-            const tool = toolById.get(run.toolId ?? toolId)
-            const width = tool ? 2 * maxCutRadiusMM(tool) : 9 * px
-            c.strokeStyle = GLOW
-            c.globalAlpha = 0.35
-            c.lineWidth = Math.max(width, 3 * px)
-            c.stroke(run.path)
-            c.globalAlpha = 1
-            c.lineWidth = 2 * px
-            c.stroke(run.path)
-            // A plunge — a drilled hole, a straight-down entry — is the bit's disc, the
-            // same swath glow as a cut, ringed at its edge as a cut has its centreline.
-            if (run.plunges.length) {
-              const r = Math.max(width, 3 * px) / 2
-              const discs = new Path2D()
-              for (const [x, y] of run.plunges) { discs.moveTo(x + r, y); discs.arc(x, y, r, 0, 2 * Math.PI) }
-              c.fillStyle = GLOW
+        for (const { segs, toolId, surfaceZ } of segRuns) {
+          const toolFor = (id: string | null) => toolById.get(id ?? toolId)
+          // Rebuilt when the toolpath, its tool, its surface or the tool library changes.
+          for (const group of swathOf(segs, tools, toolFor, surfaceZ, `${surfaceZ}|${toolId}`)) {
+            for (const { width, path, discs } of group.widths) {
+              const w = Math.max(width, 3 * px)
+              c.strokeStyle = GLOW
               c.globalAlpha = 0.35
-              c.fill(discs)
-              c.globalAlpha = 1
-              c.stroke(discs)
+              c.lineWidth = w
+              c.stroke(path)
+              // A plunge — a drilled hole, a straight-down entry — is the bit's disc at the
+              // depth it reaches, the same swath glow as a cut, ringed at its edge.
+              if (discs.length) {
+                const r = w / 2
+                const d2 = new Path2D()
+                for (const [x, y] of discs) { d2.moveTo(x + r, y); d2.arc(x, y, r, 0, 2 * Math.PI) }
+                c.fillStyle = GLOW
+                c.fill(d2)
+                c.globalAlpha = 1
+                c.lineWidth = 2 * px
+                c.stroke(d2)
+              }
             }
           }
+          c.globalAlpha = 1
+          c.lineWidth = 2 * px
+          for (const run of movesOf(segs)) c.stroke(run.path)
         }
         c.restore()
       }} />

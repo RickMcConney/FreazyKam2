@@ -8,9 +8,10 @@
 // at the end of every second row while stepping over at depth at the other end. The cut
 // geometry was right and the machine spent half the job in the air.
 import { describe, it, expect } from 'vitest'
-import { isTravelSafe, insetRing, type TravelSafetyObstacles } from './shared'
+import { isTravelSafe, insetRing, MICRO_LIFT_MM, type TravelSafetyObstacles } from './shared'
 import { buildPocketClearance } from './clearance'
-import { generatePocket, type PocketParams } from '../pocket'
+import { generatePocket, linkLevel, type PocketParams } from '../pocket'
+import type { MotionSegment } from '../../store/toolpathStore'
 import { planRasterPocket } from './raster'
 import type { Pt2 } from '../pathFlattener'
 import type { Tool } from '../../store/toolStore'
@@ -64,10 +65,11 @@ describe('a raster pocket of a plain rectangle', () => {
   it('never returns to safe height between two rows', () => {
     const segs = generatePocket(rect, TOOL, params())
     expect(segs.filter(s => !s.rapid).length).toBeGreaterThan(40) // it did cut the pocket
-    // depth 4 at 2 mm/pass is two levels, and each spends exactly two segments up high:
-    // the approach over its first row, and the retract at the end. Every row-to-row link
-    // in between is a cut. This was 28 before — one lift per row at the right-hand wall.
-    expect(atSafeHeight(segs)).toBe(4)
+    // depth 4 at 2 mm/pass is two levels, and the whole op spends exactly two segments up
+    // high: the approach over the first row, and the retract at the end. Every row-to-row
+    // link is a cut, and the hand-over between the levels is a micro-lift (see "between
+    // depth levels" below). This was 28 before — one lift per row at the right-hand wall.
+    expect(atSafeHeight(segs)).toBe(2)
   })
 
   it('holds at every angle and stepover, not just the one that was reported', () => {
@@ -76,7 +78,7 @@ describe('a raster pocket of a plain rectangle', () => {
     for (const angle of [0, 15, 30, 45, 60, 75, 90, 120, 135]) {
       for (const stepoverPercent of [30, 45, 60]) {
         const segs = generatePocket(rect, TOOL, params({ angle, stepoverPercent }))
-        expect(`${angle}deg ${stepoverPercent}%: ${atSafeHeight(segs)}`).toBe(`${angle}deg ${stepoverPercent}%: 4`)
+        expect(`${angle}deg ${stepoverPercent}%: ${atSafeHeight(segs)}`).toBe(`${angle}deg ${stepoverPercent}%: 2`)
       }
     }
   })
@@ -89,7 +91,7 @@ describe('a raster pocket of a plain rectangle', () => {
     // the ring's own, the box pre-filter dropped the only containment ring as unreachable,
     // and the scan reported the move unsafe with no live ring left to test. 60 segments up
     // high before the fix.
-    expect(atSafeHeight(generatePocket(rect, TOOL, params({ angle: 45 })))).toBe(4)
+    expect(atSafeHeight(generatePocket(rect, TOOL, params({ angle: 45 })))).toBe(2)
   })
 })
 
@@ -140,9 +142,10 @@ describe('a raster pocket around an island', () => {
   })
 
   it('retracts only to hand over to the finishing contours', () => {
-    // Two depth levels, two hand-overs each. Before the fix this was 32.
+    // Two depth levels, two hand-overs each, plus the approach and the final retract; the
+    // move from one level to the next is a micro-lift. Before the fix this was 32.
     const segs = generatePocket(rect, TOOL, islandParams({ angle: 0 }))
-    expect(segs.filter(s => s.z >= SAFE_Z).length).toBe(8)
+    expect(segs.filter(s => s.z >= SAFE_Z).length).toBe(6)
   })
 })
 
@@ -348,3 +351,67 @@ describe('hybrid never cuts through an island to reach the next one', () => {
 //
 // The other five strategies still go the old way. TravelSafetyObstacles.field is the seam:
 // give a strategy's plan a field and isTravelSafe uses it, with no other change.
+
+describe('between depth levels', () => {
+  // Each level opens by hovering at safe height over its own fixed start. Between two
+  // levels of one region the floor just cut lies under every point the tool may stand on,
+  // so a straight move the design clears rides MICRO_LIFT_MM over it instead.
+  const rect = 'M 10 10 L 70 10 L 70 50 L 10 50 Z'
+  const wall: Pt2[] = [[0, 0], [100, 0], [100, 60], [0, 60]]
+  const clear: TravelSafetyObstacles = { edgeObstacles: [], field: { field: buildPocketClearance(wall, []), clearanceMM: 3 } }
+  // An island standing across the straight line from the end of one level to the next start.
+  const blocked: TravelSafetyObstacles = {
+    edgeObstacles: [], field: { field: buildPocketClearance(wall, [[[38, 10], [42, 10], [42, 50], [38, 50]]]), clearanceMM: 3 },
+  }
+  // A level as every strategy emits it from no incoming position: hover, descend, cut.
+  const level = (): MotionSegment[] => [
+    { x: 60, y: 20, z: SAFE_Z, rapid: true },
+    { x: 60, y: 20, z: -4, rapid: false },
+    { x: 60, y: 40, z: -4, rapid: false },
+  ]
+
+  it('rides 0.5 mm over the floor just cut instead of going to safe height', () => {
+    const segs = generatePocket(rect, TOOL, params({ depthMM: 6 }))
+    expect(segs.filter(s => s.z >= SAFE_Z).length).toBe(2)
+    for (const floor of [-2, -4]) {
+      const hop = segs.filter(s => s.travel && Math.abs(s.z - (floor + MICRO_LIFT_MM)) < 1e-9)
+      expect(hop.length).toBeGreaterThanOrEqual(2)
+    }
+  })
+
+  it('replaces the hover with a lift and a travel to the next level\'s start', () => {
+    const segs = level()
+    linkLevel(segs, 0, [20, 30], -2, SAFE_Z, clear)
+    expect(segs.slice(0, 3)).toEqual([
+      { x: 20, y: 30, z: -1.5, rapid: false, travel: true },
+      { x: 60, y: 20, z: -1.5, rapid: false, travel: true },
+      { x: 60, y: 20, z: -4, rapid: false },
+    ])
+  })
+
+  it('still retracts to safe height when the straight move is not clear', () => {
+    const segs = level()
+    linkLevel(segs, 0, [20, 30], -2, SAFE_Z, blocked)
+    expect(segs.slice(0, 2)).toEqual([
+      { x: 20, y: 30, z: SAFE_Z, rapid: true },
+      { x: 60, y: 20, z: SAFE_Z, rapid: true },
+    ])
+  })
+
+  it('still retracts into the first level of a region, over stock nothing has cut', () => {
+    const segs = level()
+    linkLevel(segs, 0, [20, 30], null, SAFE_Z, clear)
+    expect(segs[0]).toEqual({ x: 20, y: 30, z: SAFE_Z, rapid: true })
+    expect(segs[1]).toEqual({ x: 60, y: 20, z: SAFE_Z, rapid: true })
+  })
+
+  it('crosses to another region at safe height, never at a micro-lift over its uncut stock', () => {
+    // Two pockets in one path: the move from the first one's last level to the second's
+    // first is over stock nothing has cut. A micro-lift there would hang 0.5 mm over the
+    // STOCK TOP and drag the cutter through it on the way.
+    const two = 'M 10 10 L 40 10 L 40 40 L 10 40 Z M 60 10 L 90 10 L 90 40 L 60 40 Z'
+    const segs = generatePocket(two, TOOL, params({ depthMM: 4 }))
+    const highestTravel = Math.max(...segs.filter(s => s.travel).map(s => s.z))
+    expect(highestTravel).toBeCloseTo(-2 + MICRO_LIFT_MM, 9)
+  })
+})

@@ -171,7 +171,11 @@ export type AbsCmd =
 // Parse SVG d string → absolute commands (H/V expanded to L)
 export function parseD(d: string): AbsCmd[] {
   const result: AbsCmd[] = []
-  const tokens = d.match(/[a-zA-Z][^a-zA-Z]*/g) ?? []
+  // Split at COMMAND letters only. Splitting at any letter took the exponent of a number in
+  // exponent form (`6.1e-15`, `1e1`) for a command: the number lost its exponent, the
+  // point lost its y, and the rest of the command's pairs were dropped. SVG allows
+  // exponents and some exporters write them.
+  const tokens = d.match(/[MmLlHhVvCcSsQqTtAaZz][^MmLlHhVvCcSsQqTtAaZz]*/g) ?? []
   let cx = 0, cy = 0, mx = 0, my = 0
 
   for (const tok of tokens) {
@@ -799,6 +803,35 @@ export function arcFitPolyline(pts: Pt2[], tol: number, maxSpan = Infinity, nois
   return result
 }
 
+// Arc-fit `pts`, then thin each straight span between arcs with Douglas–Peucker at the
+// same tolerance. Order matters: thinning first could starve a tight arc of points and
+// trip the fitter's sharp-corner guard, losing the arc. Each span is thinned against an
+// ANCHOR — the point the tool already stands on (pts[0], or the end of the last arc or
+// span) — so a collinear run reduces to its endpoints and arcs pass through intact. Like
+// arcFitPolyline, pts[0] is the current position and is not in the result. The G-code
+// writer's reconstruction and a profile's fine fit both cut through this one walk.
+export function fitAndThin(pts: Pt2[], tol: number, maxSpan = Infinity, noiseMM = 0): ArcFitSeg[] {
+  const out: ArcFitSeg[] = []
+  let anchor: Pt2 = pts[0]
+  let run: Pt2[] = []
+  const flush = () => {
+    if (run.length === 0) return
+    const thin = douglasPeucker([anchor, ...run], tol)
+    for (let k = 1; k < thin.length; k++) out.push({ x: thin[k][0], y: thin[k][1] })
+    anchor = run[run.length - 1]
+    run = []
+  }
+  for (const s of arcFitPolyline(pts, tol, maxSpan, noiseMM)) {
+    if (s.arc) {
+      flush()
+      out.push(s)
+      anchor = [s.x, s.y]
+    } else run.push([s.x, s.y])
+  }
+  flush()
+  return out
+}
+
 // Iterative Ramer-Douglas-Peucker simplification.
 // Reduces a dense polyline to the minimum set of points that deviate no more
 // than `tol` from the original curve. Runs in O(n log n) average.
@@ -827,7 +860,7 @@ export function douglasPeucker(pts: Pt2[], tol: number): Pt2[] {
 
 
 // Compute signed area via shoelace (positive = CCW in Y-up system)
-export function signedArea(pts: Pt2[]): number {
+export function signedArea(pts: readonly Pt2[]): number {
   let area = 0
   for (let i = 0; i < pts.length; i++) {
     const j = (i + 1) % pts.length

@@ -2,9 +2,8 @@
 // Paths are flattened to polylines, operated on, then converted back to SVG d strings.
 
 import polygonClipping from 'polygon-clipping'
-import { flattenPath, signedArea } from '../cam/pathFlattener'
-import { pointInPolygon } from '../cam/geom'
-import type { Pt2 } from '../cam/pathFlattener'
+import { flattenPath } from '../cam/pathFlattener'
+import { classifySubpaths, stripClosingDuplicate } from '../cam/geom'
 
 type Pair = [number, number]
 type Ring = Pair[]
@@ -13,62 +12,16 @@ type GeoMultiPoly = GeoPolygon[]
 
 export type BooleanOpType = 'union' | 'intersect' | 'subtract'
 
-function ringFromPts(pts: Pt2[]): Ring | null {
-  let ring: Ring = pts.map(([x, y]) => [x, y])
-  // Remove closing duplicate if present
-  if (ring.length > 1) {
-    const [x0, y0] = ring[0]
-    const [xl, yl] = ring[ring.length - 1]
-    if (Math.abs(x0 - xl) < 1e-6 && Math.abs(y0 - yl) < 1e-6) ring = ring.slice(0, -1)
-  }
-  return ring.length >= 3 ? ring : null
-}
-
 function dToMultiPoly(d: string): GeoMultiPoly {
-  const subpaths = flattenPath(d, 0.05)
-  const rings: Ring[] = []
-  for (const sp of subpaths) {
-    const r = ringFromPts(sp)
-    if (r) rings.push(r)
-  }
+  const rings = flattenPath(d, 0.05).map(stripClosingDuplicate).filter((r) => r.length >= 3)
   if (rings.length === 0) return []
-
-  // Group rings: outer rings + holes.
-  // In CNC Y-up space, CCW = positive area = outer ring, CW = negative = hole.
-  // For polygon-clipping we need to group holes under their containing outer ring.
-  // Simple approach: each ring that is "outer" (or whose sign doesn't obviously indicate a hole)
-  // becomes its own single-ring Polygon. Holes are appended to the nearest outer polygon.
-  const polygons: GeoPolygon[] = []
-  const outerRings: { ring: Ring; area: number; polyIdx: number }[] = []
-
-  for (const ring of rings) {
-    const area = signedArea(ring)
-    if (area > 0) {
-      // CCW = outer ring
-      const polyIdx = polygons.length
-      polygons.push([ring])
-      outerRings.push({ ring, area, polyIdx })
-    } else {
-      // CW = hole — find smallest outer ring that contains this hole
-      let bestIdx = -1
-      let bestArea = Infinity
-      const [hx, hy] = ring[0]
-      for (const { ring: outer, area: oa, polyIdx } of outerRings) {
-        if (oa < bestArea && pointInPolygon(hx, hy, outer)) {
-          bestArea = oa
-          bestIdx = polyIdx
-        }
-      }
-      if (bestIdx >= 0) {
-        polygons[bestIdx].push(ring)
-      } else {
-        // No outer ring found — treat as outer (reversed)
-        polygons.push([ring])
-      }
-    }
-  }
-
-  return polygons
+  // Outer rings and holes by NESTING, not by winding. Telling them apart by sign (CCW outer,
+  // CW hole) is right for the app's own shapes and wrong for a font, which winds the other
+  // way — Roboto's O is −99 outside, +52 in its counter — so the counter read as a second
+  // solid and the outline as a hole with nowhere to go, and every boolean on text came back
+  // with its counters filled in. classifySubpaths reads the even-odd structure from the
+  // rings themselves (an island in a hole is solid again), as the pocket does.
+  return classifySubpaths(rings).map(({ outer, holes }) => [outer, ...holes].map((r) => r.map(([x, y]) => [x, y] as Pair)))
 }
 
 function multiPolyToD(mp: GeoMultiPoly): string {

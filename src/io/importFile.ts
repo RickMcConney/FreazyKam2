@@ -1,5 +1,5 @@
 import { importSvg } from '../importers/svgImporter'
-import { importDxf, describeSkipped, type DxfUnitsChoice } from '../importers/dxfImporter'
+import { importDxf, describeSkipped, type DxfUnitsChoice, type DxfImportResult } from '../importers/dxfImporter'
 import { importStl } from '../importers/stlImporter'
 import { getMultiBBox, translateD } from '../canvas/selectionUtils'
 import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
@@ -12,7 +12,7 @@ import { useToolpathStore, GCODE_IMPORT_TOOL_ID, type GcodeOperation, type Motio
 import { useTimelineStore } from '../timeline/timelineStore'
 import { serializeOp } from '../timeline/events'
 import { uid } from '../uid'
-import { round4 } from '../util/num'
+import { centredRectD } from '../util/rectD'
 
 // Shared file-import entry point used by both the toolbar Import button and
 // drag-and-drop onto the canvas. Handles every supported format; anything else
@@ -83,7 +83,7 @@ export function importImageDataUrl(src: string, fileName: string): Promise<TextI
       // Center on the workpiece
       const cx = widthMM / 2, cy = heightMM / 2
       const hw = imgW / 2, hh = imgH / 2
-      const d = `M${round4(cx - hw)},${round4(cy - hh)} L${round4(cx + hw)},${round4(cy - hh)} L${round4(cx + hw)},${round4(cy + hh)} L${round4(cx - hw)},${round4(cy + hh)} Z`
+      const d = centredRectD(cx, cy, hw, hh)
       const id = uid('img')
       usePathsStore.getState().addPaths([{
         id,
@@ -107,10 +107,23 @@ export function importImageDataUrl(src: string, fileName: string): Promise<TextI
 // Finish a DXF import once units are known — either straight from the file's
 // $INSUNITS or from the units-prompt dialog (DxfUnitsDialog) after the user
 // picks. Exported for that dialog.
-export function completeDxfImport(text: string, fileName: string, units?: DxfUnitsChoice): TextImportResult {
-  useUIStore.getState().setPendingDxfImport(null)
+// `parsed`: the file already run through importDxf with no units override and centred on
+// the stock, as `importFile` does to learn whether it must ask for the units. Handing it
+// over saves parsing and expanding the whole file a second time when it need not ask.
+const stockCentre = () => {
   const { widthMM, heightMM } = useWorkpieceStore.getState()
-  const result = importDxf(text, fileName, units, { x: widthMM / 2, y: heightMM / 2 })
+  return { x: widthMM / 2, y: heightMM / 2 }
+}
+
+/** The DXF parsed as an import with no units override would parse it — pass the result to
+ *  `completeDxfImport` unless it `needsUnitsPrompt`, and the file is parsed only once. */
+export function parseDxfForImport(text: string, fileName: string): DxfImportResult {
+  return importDxf(text, fileName, undefined, stockCentre())
+}
+
+export function completeDxfImport(text: string, fileName: string, units?: DxfUnitsChoice, parsed?: DxfImportResult): TextImportResult {
+  useUIStore.getState().setPendingDxfImport(null)
+  const result = parsed && !units ? parsed : importDxf(text, fileName, units, stockCentre())
   if (result.paths.length > 0) {
     const store = usePathsStore.getState()
     store.addPaths(result.paths, { source: 'import', label: `Import DXF (${fileName})` })
@@ -248,11 +261,13 @@ export function importFile(file: File): void {
     reader.onload = (ev) => {
       const text = ev.target?.result as string
       const fileName = file.name.replace(/\.dxf$/i, '')
-      const result = importDxf(text, fileName)
+      // Parsed ONCE, centred as the import will be: when the file states its units this is
+      // the import, and only a file that needs asking is parsed again with the answer.
+      const result = parseDxfForImport(text, fileName)
       if (result.needsUnitsPrompt) {
         useUIStore.getState().setPendingDxfImport({ text, name: fileName })
       } else {
-        completeDxfImport(text, fileName)
+        completeDxfImport(text, fileName, undefined, result)
       }
     }
     reader.onerror = readFailed

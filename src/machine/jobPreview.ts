@@ -6,6 +6,7 @@
 import { parseGcode } from '../sim/gcodeParser'
 import type { MotionSegment } from '../store/toolpathStore'
 import { MAX_GCODE_LINE } from '../cam/gcode'
+import { arcAngles } from '../cam/geom'
 
 /**
  * Lines a controller may refuse as too long — Grbl's limit is 80, and FluidNC in the
@@ -127,11 +128,7 @@ export function segmentCuts(segmentLists: MotionSegment[][], dx: number, dy: num
 function arcPoints(px: number, py: number, x: number, y: number, cx: number, cy: number, cw: boolean): [number, number][] {
   const r = Math.hypot(px - cx, py - cy)
   if (r < 1e-3) return [[x, y]]
-  const a0 = Math.atan2(py - cy, px - cx)
-  let a1 = Math.atan2(y - cy, x - cx)
-  if (Math.abs(px - x) < 1e-3 && Math.abs(py - y) < 1e-3) a1 = a0 + (cw ? -2 : 2) * Math.PI
-  else if (cw) { if (a1 >= a0) a1 -= 2 * Math.PI }
-  else if (a1 <= a0) a1 += 2 * Math.PI
+  const { a0, a1 } = arcAngles(px, py, x, y, cx, cy, cw)
   const n = Math.max(4, Math.ceil(Math.abs(a1 - a0) / (5 * Math.PI / 180)))
   const out: [number, number][] = []
   for (let k = 1; k < n; k++) {

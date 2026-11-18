@@ -41,7 +41,7 @@
 // treats it as a hole rather than as a second outer boundary — but it is a
 // PATH, not a region: it wants its own op, not a pocket.
 
-import { pointInPolygon, ptSegDistSq } from '../cam/geom'
+import { pointInPolygon, distToRing } from '../cam/geom'
 import {
   type Pt, clamp, roundRectRing, ellipseRing,
   boolRings, inflateRings, roundConcave, roundConvex, ringToD,
@@ -106,14 +106,6 @@ const GROOVE_CORNER = 10  // smallest radius the groove is allowed to turn on
 
 // ─── Placement ────────────────────────────────────────────────────────────────
 
-/** Min distance from a point to a closed polyline. */
-function distToRing(px: number, py: number, ring: Pt[]): number {
-  let best = Infinity
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    best = Math.min(best, ptSegDistSq(px, py, ring[j][0], ring[j][1], ring[i][0], ring[i][1]))
-  }
-  return Math.sqrt(best)
-}
 
 /**
  * Slide a feature along its search direction until every point of it sits inside

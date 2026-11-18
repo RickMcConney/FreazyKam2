@@ -5,7 +5,7 @@ import { PATH_COLOR } from '../colors'
 import { colorByLayer } from './layers'
 import { uid } from '../uid'
 import { getMultiBBox, translateD } from '../canvas/selectionUtils'
-import { parseD, stringifyD, applyMat, type Mat6 } from './svgImporter'
+import { parseD, stringifyD, applyMat, matMul as mul, IDENTITY, type Mat6 } from './svgImporter'
 import { douglasPeucker } from '../cam/pathFlattener'
 import { round4 } from '../util/num'
 
@@ -395,15 +395,8 @@ function stitchEdges(edges: Edge[], tol = 0.001): string[] {
 // plane tilted out of the XY plane, which has no honest flat outline: it is skipped and
 // reported, not flattened.
 
-const IDENTITY: Mat6 = [1, 0, 0, 1, 0, 0]
 const OCS_FLIP: Mat6 = [-1, 0, 0, 1, 0, 0]
-// m1 ∘ m2 — m2 applied first.
-function mul(m1: Mat6, m2: Mat6): Mat6 {
-  const [a1, b1, c1, d1, e1, f1] = m1
-  const [a2, b2, c2, d2, e2, f2] = m2
-  return [a1 * a2 + c1 * b2, b1 * a2 + d1 * b2, a1 * c2 + c1 * d2, b1 * c2 + d1 * d2,
-    a1 * e2 + c1 * f2 + e1, b1 * e2 + d1 * f2 + f1]
-}
+// `mul(m1, m2)` is svgImporter's matMul: m1 ∘ m2, m2 applied first.
 const translate = (x: number, y: number): Mat6 => [1, 0, 0, 1, x, y]
 const isIdentity = (m: Mat6) => m.every((v, i) => Math.abs(v - IDENTITY[i]) < 1e-12)
 // Rotation, uniform scale and mirror keep a circular arc circular.

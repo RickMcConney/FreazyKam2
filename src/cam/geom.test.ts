@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { zPasses, pointInPolygon, pointOnRing, arcLengths, interpPt, stripClosingDuplicate, ptSegDistSq, toolRadiusAtHeight,
-  toolProfileHeightMM, maxCutRadiusMM, fluteHelixFromName, includedAngleDeg, isVCutter, vProfileHeightMM, vRadiusAtHeightMM } from './geom'
+  toolProfileHeightMM, maxCutRadiusMM, fluteHelixFromName, includedAngleDeg, isVCutter, vProfileHeightMM, vRadiusAtHeightMM,
+  arcAngles, closestOnRing } from './geom'
 import type { Pt2 } from './pathFlattener'
 import type { Tool } from '../store/toolStore'
 
@@ -302,5 +303,48 @@ describe('fluteHelixFromName', () => {
     for (const n of ['1/4" End Mill', '60° V-Bit', '', '1/4 Upcut Spiral', 'Upshear 1/8', 'Super O-flute']) {
       expect(fluteHelixFromName(n)).toBe('up')
     }
+  })
+})
+
+describe('arcAngles — the one reading of a G2/G3 sweep', () => {
+  const sweep = (r: ReturnType<typeof arcAngles>) => r.a1 - r.a0
+  it('a CCW quarter from +X to +Y sweeps +90°', () => {
+    expect(sweep(arcAngles(10, 0, 0, 10, 0, 0, false))).toBeCloseTo(Math.PI / 2, 12)
+  })
+  it('a CW arc over the same two points goes the long way: −270°', () => {
+    expect(sweep(arcAngles(10, 0, 0, 10, 0, 0, true))).toBeCloseTo(-3 * Math.PI / 2, 12)
+  })
+  it('a CW quarter from +Y to +X sweeps −90°, across the ±180° seam too', () => {
+    expect(sweep(arcAngles(0, 10, 10, 0, 0, 0, true))).toBeCloseTo(-Math.PI / 2, 12)
+    expect(sweep(arcAngles(-10, 0.001, -10, -0.001, 0, 0, false))).toBeCloseTo(0.0002, 6)
+  })
+  it('end on start within 1 µm is a full circle in the sweep direction', () => {
+    const ccw = arcAngles(10, 0, 10.0004, 0.0004, 0, 0, false)
+    expect(ccw.full).toBe(true)
+    expect(sweep(ccw)).toBe(2 * Math.PI)
+    expect(sweep(arcAngles(10, 0, 10, 0, 0, 0, true))).toBe(-2 * Math.PI)
+  })
+  it("the parser's reading still makes an EXACTLY closed arc a full turn either way, as a controller does", () => {
+    expect(sweep(arcAngles(10, 0, 10, 0, 0, 0, true, false))).toBe(-2 * Math.PI)
+    expect(sweep(arcAngles(10, 0, 10, 0, 0, 0, false, false))).toBe(2 * Math.PI)
+  })
+  it("the parser's reading (no coincidence rule) keeps a near-closed arc short, never a full turn", () => {
+    const r = arcAngles(10, 0, 10 * Math.cos(-0.00005), 10 * Math.sin(-0.00005), 0, 0, true, false)
+    expect(r.full).toBe(false)
+    expect(sweep(r)).toBeCloseTo(-0.00005, 9)
+  })
+})
+
+describe('closestOnRing — the nearest point of a closed ring, edge and parameter', () => {
+  const SQ: Pt2[] = [[0, 0], [10, 0], [10, 10], [0, 10]]
+  it('projects onto the nearest edge, including the implicit closing one', () => {
+    expect(closestOnRing(SQ, 4, -3)).toMatchObject({ idx: 0, x: 4, y: 0, distSq: 9 })
+    const c = closestOnRing(SQ, -2, 3)
+    expect(c.idx).toBe(3)
+    expect(c.x).toBe(0); expect(c.y).toBe(3)
+    expect(c.t).toBeCloseTo(0.7, 12)
+  })
+  it('clamps to a vertex beyond an edge end, and ties keep the earlier edge', () => {
+    expect(closestOnRing(SQ, 12, -2)).toMatchObject({ idx: 0, t: 1, x: 10, y: 0, distSq: 8 })
   })
 })

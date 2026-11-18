@@ -10,6 +10,7 @@ import { useWorkpieceStore } from '../store/workpieceStore'
 import { useToolStore } from '../store/toolStore'
 import { usePostProcessorStore } from '../store/postProcessorStore'
 import { claimTabId, type TabClaim } from './tabClaim'
+import { projectJson } from './projectJson'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Crash / tab-discard recovery.
@@ -293,14 +294,6 @@ let lastHash = ''
 /** `lastHash` for a document that has been emptied — see the flush below. */
 const EMPTY = '::empty'
 
-function fingerprint(s: string): string {
-  let h = 0x811c9dc5
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i)
-    h = Math.imul(h, 0x01000193)
-  }
-  return `${s.length}:${(h >>> 0).toString(36)}`
-}
 
 export function armAutosave() {
   armed = true
@@ -337,11 +330,16 @@ async function flush() {
     // structured clone would throw on anything non-cloneable that ever ends up
     // on a path, and a string is exactly the .fkam bytes — same format, no
     // second serialization path to keep in step.
-    const json = JSON.stringify(data)
+    //
+    // Each path's JSON (and its fingerprint) is kept on the path object (`projectJson`),
+    // so an STL or photo path — its bytes are base64 on the path — is stringified and
+    // hashed once, not after every drag release. The string is still exactly
+    // JSON.stringify(data).
+    const { json, hash: payloadHash } = projectJson(data)
     const tl = useTimelineStore.getState()
     // `dirty` is part of the identity: a save changes nothing in the payload but
     // must still be recorded, or a saved project stays on offer as unsaved work.
-    const hash = `${fingerprint(json)}:${tl.cursor !== tl.savedSeq}`
+    const hash = `${payloadHash}:${tl.cursor !== tl.savedSeq}`
     if (hash === lastHash) return
     const rec: SnapshotRecord = {
       savedAt: Date.now(),

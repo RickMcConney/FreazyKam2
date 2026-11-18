@@ -4,6 +4,7 @@ import { JoinType } from 'clipper2-ts'
 import { buildPocketClearance } from './clearance'
 import type { MotionSegment } from '../../store/toolpathStore'
 import { type PocketPlan, type PocketPlanner, type TravelSafetyObstacles, POCKET_FLATTEN_TOL_MM, compoundFinishRings, emitCutTransition, emitRampDescent, growIslands, insetRing, isTravelSafe, offsetRingPieces, rampLeadIn, SweptArea } from './shared'
+import { GridFrame, cellForCount } from './grid'
 
 // ─── Raster utilities ──────────────────────────────────────────────────────────
 
@@ -127,11 +128,7 @@ const LIFT_PENALTY = 1.25
 // exactly the (i, r) order the old full scan did, and the winner and its tie-breaks are
 // unchanged.
 class EndpointGrid {
-  private readonly cell: number
-  private readonly minX: number
-  private readonly minY: number
-  private readonly cols: number
-  private readonly rows: number
+  private readonly g: GridFrame
   private readonly buckets: number[][]
   private readonly xs: Float64Array
   private readonly ys: Float64Array
@@ -152,49 +149,30 @@ class EndpointGrid {
       if (y > maxY) maxY = y
     }
     // Aim for roughly one point per cell; guard the degenerate all-coincident case.
-    const span = Math.max(maxX - minX, maxY - minY)
-    this.cell = span > 0 ? Math.max(span / Math.max(1, Math.ceil(Math.sqrt(n))), 1e-6) : 1
-    this.minX = minX; this.minY = minY
-    this.cols = Math.max(1, Math.floor((maxX - minX) / this.cell) + 1)
-    this.rows = Math.max(1, Math.floor((maxY - minY) / this.cell) + 1)
-    this.buckets = Array.from({ length: this.cols * this.rows }, () => [] as number[])
-    for (let i = 0; i < n; i++) this.buckets[this.cellIndex(this.xs[i], this.ys[i])].push(i)
-  }
-
-  private col(x: number): number {
-    return Math.min(this.cols - 1, Math.max(0, Math.floor((x - this.minX) / this.cell)))
-  }
-  private row(y: number): number {
-    return Math.min(this.rows - 1, Math.max(0, Math.floor((y - this.minY) / this.cell)))
-  }
-  private cellIndex(x: number, y: number): number {
-    return this.row(y) * this.cols + this.col(x)
+    const g = this.g = new GridFrame(minX, minY, maxX, maxY, cellForCount(Math.max(maxX - minX, maxY - minY), n))
+    this.buckets = Array.from({ length: g.cols * g.rows }, () => [] as number[])
+    for (let i = 0; i < n; i++) this.buckets[g.row(this.ys[i]) * g.cols + g.col(this.xs[i])].push(i)
   }
 
   remove(id: number) { this.alive[id] = 0 }
 
   /** Distance to the closest live point, or Infinity when none are left. */
   nearestDist(x: number, y: number): number {
-    const cx = this.col(x), cy = this.row(y)
+    const g = this.g
+    const cx = g.col(x), cy = g.row(y)
     let best = Infinity
-    const maxRing = Math.max(this.cols, this.rows)
-    for (let r = 0; r <= maxRing; r++) {
+    const visit = (cell: number) => {
+      for (const id of this.buckets[cell]) {
+        if (!this.alive[id]) continue
+        const d = Math.hypot(this.xs[id] - x, this.ys[id] - y)
+        if (d < best) best = d
+      }
+    }
+    for (let r = 0, maxRing = g.maxRing; r <= maxRing; r++) {
       // A point in ring r sits at least (r-1) cells away, so once that exceeds the best
       // distance found no further ring can improve on it.
-      if (best < Infinity && (r - 1) * this.cell > best) break
-      const y0 = Math.max(0, cy - r), y1 = Math.min(this.rows - 1, cy + r)
-      for (let j = y0; j <= y1; j++) {
-        const onYEdge = j === cy - r || j === cy + r
-        const x0 = Math.max(0, cx - r), x1 = Math.min(this.cols - 1, cx + r)
-        for (let i = x0; i <= x1; i++) {
-          if (!onYEdge && i !== cx - r && i !== cx + r) continue
-          for (const id of this.buckets[j * this.cols + i]) {
-            if (!this.alive[id]) continue
-            const d = Math.hypot(this.xs[id] - x, this.ys[id] - y)
-            if (d < best) best = d
-          }
-        }
-      }
+      if (best < Infinity && (r - 1) * g.cell > best) break
+      g.forRing(cx, cy, r, visit)
     }
     return best
   }
@@ -202,11 +180,12 @@ class EndpointGrid {
   /** Live point ids within `radius`, ascending — i.e. in (scanline, end) order. */
   within(x: number, y: number, radius: number): number[] {
     const out: number[] = []
-    const c0 = this.col(x - radius), c1 = this.col(x + radius)
-    const r0 = this.row(y - radius), r1 = this.row(y + radius)
+    const g = this.g
+    const c0 = g.col(x - radius), c1 = g.col(x + radius)
+    const r0 = g.row(y - radius), r1 = g.row(y + radius)
     for (let j = r0; j <= r1; j++) {
       for (let i = c0; i <= c1; i++) {
-        for (const id of this.buckets[j * this.cols + i]) {
+        for (const id of this.buckets[j * g.cols + i]) {
           if (!this.alive[id]) continue
           if (Math.hypot(this.xs[id] - x, this.ys[id] - y) <= radius) out.push(id)
         }

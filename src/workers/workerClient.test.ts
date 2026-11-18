@@ -224,3 +224,20 @@ describe('a failed job keeps its error type across the worker boundary', () => {
     expect([e.name, e.message]).toEqual(['CommonLinePlanningError', 'crossing'])
   })
 })
+
+describe('a cancel that stopped every worker leaves one warm for the next Generate', () => {
+  it('spawns one idle replacement shortly after, and the next job runs on it', async () => {
+    const pool = makeFakePool()
+    const p = run('op1', 'generateProfile').catch((e) => e)
+    expect(pool.workers.length).toBe(1)
+    cancelAllWork()
+    expect(isWorkCancelled(await p)).toBe(true)
+    expect(pool.workers[0].terminated).toBe(true)
+    await new Promise((r) => setTimeout(r, 5))
+    expect(pool.workers.length).toBe(2)
+    expect(pool.workers[1].posted).toEqual([])
+    void run('op2', 'generateProfile')
+    expect(pool.workers.length).toBe(2)
+    expect(pool.workers[1].posted.map((m) => m.fn)).toEqual(['generateProfile'])
+  })
+})

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { tabPositions } from './tabPlacement'
+import { tabPositions, tabPointAt, tabTAt, tabTNearest } from './tabPlacement'
 import { flattenPath } from './pathFlattener'
 import { designPathAtT } from './profile'
 
@@ -55,5 +55,33 @@ describe('tab placement', () => {
     const [x, y] = designPathAtT(sp, tabPositions(sp, 1, 5)[0])!
     expect(x).toBeCloseTo(2, 6)
     expect(y).toBeCloseTo(40, 6)
+  })
+})
+
+describe('the drawn tab marker and a dragged tab read t as the cut does', () => {
+  // A closed square whose closing point repeats its first: the zero-length last edge is
+  // what a flattened `Z` onto a duplicate vertex leaves.
+  const DUP: [number, number][][] = [[[0, 0], [40, 0], [40, 40], [0, 40], [0, 0], [0, 0]]]
+  it('a tab near the end of the outline lies on the closing side with ITS direction, not a zero tangent', () => {
+    const at = tabPointAt(DUP, 0.999)!
+    const cut = designPathAtT(DUP, 0.999)!
+    expect(at.x).toBeCloseTo(cut[0], 9)
+    expect(at.y).toBeCloseTo(cut[1], 9)
+    expect(at.tx).toBeCloseTo(0, 12)
+    expect(at.ty).toBeCloseTo(-1, 12)
+  })
+  it('a duplicated first point does not give the marker at t = 0 a zero (NaN) direction', () => {
+    const at = tabPointAt([[[0, 0], [0, 0], [40, 0], [40, 40], [0, 40], [0, 0]]], 0)!
+    expect(at).toEqual({ x: 0, y: 0, tx: 1, ty: 0 })
+  })
+  it('a drag lands exactly under the pointer, a corner included; a click is moved off the corner', () => {
+    const sq: [number, number][][] = [[[0, 0], [40, 0], [40, 40], [0, 40], [0, 0]]]
+    expect(tabTNearest(sq, 40.5, -0.5)).toBeCloseTo(40 / 160, 12)
+    const click = tabTAt(sq, 40.5, -0.5, 6)!
+    expect(Math.abs(click - 40 / 160) * 160).toBeGreaterThanOrEqual(3 + 1 - 1e-9)
+  })
+  it('off a corner a drag and a click put the tab at the same t', () => {
+    const sq: [number, number][][] = [[[0, 0], [40, 0], [40, 40], [0, 40], [0, 0]]]
+    expect(tabTNearest(sq, 20, 3)).toBeCloseTo(tabTAt(sq, 20, 3, 6)!, 12)
   })
 })

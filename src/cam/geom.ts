@@ -1,7 +1,7 @@
 // Shared CAM geometry helpers. Canonical home for utilities that were once
 // duplicated across the per-operation modules (see tofix.md R2).
 
-import { signedArea, sharesVertex, ptSegDistSq, type Pt2 } from './pathFlattener'
+import { signedArea, sharesVertex, ptSegDistSq, ptSegDist, type Pt2 } from './pathFlattener'
 import type { Tool } from '../store/toolStore'
 
 // ─── Tool profile ─────────────────────────────────────────────────────────────
@@ -296,6 +296,20 @@ export function ringsBBox(rings: Iterable<Iterable<readonly number[]>>): { minX:
   return isFinite(minX) ? { minX, minY, maxX, maxY } : null
 }
 
+/** Length of an OPEN polyline (no closing edge), summed point to point in order. */
+export function polylineLength(pts: readonly (readonly number[])[]): number {
+  let len = 0
+  for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])
+  return len
+}
+
+/** Total length of several open polylines — what a tab's `t` is a fraction of. */
+export function polylinesLength(polys: readonly (readonly (readonly number[])[])[]): number {
+  let len = 0
+  for (const p of polys) for (let i = 1; i < p.length; i++) len += Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1])
+  return len
+}
+
 // Perimeter of a closed ring (implicit closing edge).
 export function ringPerimeter(ring: Pt2[]): number {
   let p = 0
@@ -318,6 +332,88 @@ export function interpPt(pts: Pt2[], lens: number[], s: number): Pt2 {
 }
 
 // Drop a duplicated closing vertex (last == first within epsilon).
+// The start and end angles of a G2/G3 arc from (px, py) to (ex, ey) about (cx, cy), with
+// `a1` unwrapped so a1 − a0 is the signed sweep: negative for CW, positive for CCW, never
+// zero. End on start (within 1 µm) is a FULL circle when `fullIfCoincident` — how the
+// G-code writer, the 2D and 3D toolpath views and the job preview all read a MotionSegment
+// arc, so they cannot disagree on one. The simulator's parser passes false: it takes the
+// controller's reading of the exact angles.
+export function arcAngles(
+  px: number, py: number, ex: number, ey: number, cx: number, cy: number, cw: boolean, fullIfCoincident = true,
+): { a0: number; a1: number; full: boolean } {
+  const a0 = Math.atan2(py - cy, px - cx)
+  let a1 = Math.atan2(ey - cy, ex - cx)
+  const full = fullIfCoincident && Math.abs(px - ex) < 0.001 && Math.abs(py - ey) < 0.001
+  if (full) a1 = a0 + (cw ? -2 * Math.PI : 2 * Math.PI)
+  else if (cw) { if (a1 >= a0) a1 -= 2 * Math.PI }
+  else { if (a1 <= a0) a1 += 2 * Math.PI }
+  return { a0, a1, full }
+}
+
+/** The convex hull of `pts`, CCW, without a closing point (Andrew's monotone chain). Fewer
+ *  than three points come back sorted, as they are. */
+export function convexHull<P extends readonly [number, number] | Pt2>(pts: readonly P[]): P[] {
+  const p = [...pts].sort((a, b) => a[0] - b[0] || a[1] - b[1])
+  if (p.length < 3) return p
+  const cross = (o: P, a: P, b: P) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+  const lower: P[] = [], upper: P[] = []
+  for (const q of p) { while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], q) <= 0) lower.pop(); lower.push(q) }
+  for (let i = p.length - 1; i >= 0; i--) { const q = p[i]; while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], q) <= 0) upper.pop(); upper.push(q) }
+  return [...lower.slice(0, -1), ...upper.slice(0, -1)]
+}
+
+/** Area-weighted centroid of a ring (implicit closing edge). A ring whose doubled area is
+ *  under `degenerateEps` has no area to weigh, so its vertex mean stands in. NEVER use it to
+ *  stand for a shape in a containment test — use interiorPoint (see the root CLAUDE.md). */
+export function centroidOfRing(pts: Pt2[], degenerateEps = 1e-8): Pt2 {
+  let area2 = 0
+  let cx = 0
+  let cy = 0
+  for (let i = 0; i < pts.length; i++) {
+    const [x0, y0] = pts[i]
+    const [x1, y1] = pts[(i + 1) % pts.length]
+    const cross = x0 * y1 - x1 * y0
+    area2 += cross
+    cx += (x0 + x1) * cross
+    cy += (y0 + y1) * cross
+  }
+  if (Math.abs(area2) < degenerateEps) {
+    const sum = pts.reduce((acc, p) => [acc[0] + p[0], acc[1] + p[1]] as Pt2, [0, 0] as Pt2)
+    return [sum[0] / pts.length, sum[1] / pts.length]
+  }
+  return [cx / (3 * area2), cy / (3 * area2)]
+}
+
+/** Distance from (px, py) to the nearest point of closed `ring` (implicit closing edge).
+ *  Edge by edge as ptSegDist measures it, so the morph's inscribed-circle search reads the
+ *  same distances it always did (a sqrt of the squared minimum differs in the last ulp). */
+export function distToRing(px: number, py: number, ring: readonly (readonly number[])[]): number {
+  let best = Infinity
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i + 1) % ring.length]
+    best = Math.min(best, ptSegDist(px, py, a[0], a[1], b[0], b[1]))
+  }
+  return best
+}
+
+// The point of closed `ring` nearest (px, py): on edge `idx` (ring[idx] → ring[idx + 1],
+// wrapping) at parameter `t` ∈ [0, 1], squared distance `distSq`. A degenerate edge is
+// read at its start; ties keep the earliest edge.
+export function closestOnRing(ring: Pt2[], px: number, py: number): { idx: number; t: number; x: number; y: number; distSq: number } {
+  let idx = 0, bt = 0, bx = ring[0][0], by = ring[0][1], bestD = Infinity
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i + 1) % ring.length]
+    const dx = b[0] - a[0], dy = b[1] - a[1]
+    const l2 = dx * dx + dy * dy
+    let t = l2 > 1e-12 ? ((px - a[0]) * dx + (py - a[1]) * dy) / l2 : 0
+    t = t < 0 ? 0 : t > 1 ? 1 : t
+    const qx = a[0] + t * dx, qy = a[1] + t * dy
+    const d = (px - qx) ** 2 + (py - qy) ** 2
+    if (d < bestD) { bestD = d; idx = i; bt = t; bx = qx; by = qy }
+  }
+  return { idx, t: bt, x: bx, y: by, distSq: bestD }
+}
+
 export function stripClosingDuplicate(pts: Pt2[]): Pt2[] {
   if (pts.length > 1 && Math.hypot(pts[pts.length - 1][0] - pts[0][0], pts[pts.length - 1][1] - pts[0][1]) < 1e-6) {
     return pts.slice(0, -1)
@@ -348,6 +444,17 @@ function centroidY(pts: Pt2[]): number { return pts.reduce((s, p) => s + p[1], 0
 // Method: scan horizontal lines across the shape, collect their crossings with every ring,
 // and take the midpoint of the widest even-odd interior span found. Even-odd across all
 // rings at once means the point lands in solid material, never in a hole.
+/** Where the horizontal line at `y` crosses closed `ring`, appended to `out` (unsorted).
+ *  The half-open edge rule is pointInPolygon's, so a vertex exactly on the line is counted
+ *  once rather than twice — the rule every even-odd scan must share with it. */
+export function ringCrossingsAtY(ring: readonly (readonly number[])[], y: number, out: number[]): void {
+  for (let a = 0, b = ring.length - 1; a < ring.length; b = a++) {
+    const xa = ring[a][0], ya = ring[a][1]
+    const xb = ring[b][0], yb = ring[b][1]
+    if ((ya > y) !== (yb > y)) out.push(xa + ((y - ya) / (yb - ya)) * (xb - xa))
+  }
+}
+
 export function interiorPoint(rings: Pt2[][]): Pt2 | null {
   const solid = rings.filter((r) => r.length >= 3)
   if (solid.length === 0) return null
@@ -361,15 +468,7 @@ export function interiorPoint(rings: Pt2[][]): Pt2 | null {
   for (let i = 1; i <= LINES; i++) {
     const y = minY + ((maxY - minY) * i) / (LINES + 1)
     const xs: number[] = []
-    for (const ring of solid) {
-      for (let a = 0, b = ring.length - 1; a < ring.length; b = a++) {
-        const [xa, ya] = ring[a]
-        const [xb, yb] = ring[b]
-        // Same half-open edge rule as pointInPolygon, so a vertex exactly on the scan line
-        // is counted once rather than twice.
-        if ((ya > y) !== (yb > y)) xs.push(xa + ((y - ya) / (yb - ya)) * (xb - xa))
-      }
-    }
+    for (const ring of solid) ringCrossingsAtY(ring, y, xs)
     if (xs.length < 2) continue
     xs.sort((p, q) => p - q)
     // Crossings pair up into interior spans: [0,1] is inside, [1,2] is outside, …

@@ -15,7 +15,7 @@ import { usePathsStore } from '../store/pathsStore'
 import { getCurrentSegIdx, interpolatePos, segFraction, segTool, type SimSegment } from '../sim/gcodeParser'
 import { flattenPath } from '../cam/pathFlattener'
 import { modelPreviewTrim } from '../cam/profile3d'
-import { cornerRadiusMM, fluteHelixFromName, includedAngleDeg, isVCutter, maxCutRadiusMM, type FluteHelix } from '../cam/geom'
+import { arcAngles, cornerRadiusMM, fluteHelixFromName, includedAngleDeg, isVCutter, maxCutRadiusMM, type FluteHelix } from '../cam/geom'
 import { getBBox } from '../canvas/selectionUtils'
 import { THREE_BG_COLOR_THREE, MATERIAL_COLORS } from '../colors'
 import { HeightfieldMaterial } from './HeightfieldMaterial'
@@ -29,6 +29,7 @@ import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
 import { decodeStlMesh, type StlMesh } from '../importers/stlImporter'
 import { placeStlModel } from '../cam/stlPlacement'
 import type { StlModelBounds } from '../importers/stlImporter'
+import { toolMeshParams } from './toolMeshParams'
 
 // Time constant of the Follow Tool camera low-pass, in ms — the time the target
 // takes to close ~63% of its distance to the tool. Larger is calmer and laggier.
@@ -334,25 +335,10 @@ export default function ThreeView() {
         // Rebuild tool mesh if the current segment uses a different tool type/size
         const activeSeg = sim.segments[segIdx]
         if (activeSeg) {
-          const ts = segTool(activeSeg, sim.toolStates)
-          let tType = 'flat', tDiam = ts.toolDiameterMM, tAngle = 60
-          const tTip = ts.toolTipRadiusMM ? ts.toolTipRadiusMM * 2 : 0
-          if (ts.toolVbitHalfAngleTan) {
-            tType  = tTip > 0 ? 'taper' : 'vbit'
-            tAngle = Math.atan(ts.toolVbitHalfAngleTan) * (180 / Math.PI) * 2
-          } else if (ts.toolBallNose) {
-            tType = 'ball'
-          } else if (ts.toolCornerRadiusMM) {
-            tType = 'bull'
-          } else if (ts.toolDrill) {
-            tType = 'drill'
-          }
-          // The tip is part of the shape, so it belongs in the key — without it a
-          // taper and a V-bit of the same diameter and angle share a mesh.
-          const key = `${tType}|${tDiam}|${tAngle}|${ts.fluteCount}|${tTip}|${ts.toolCornerRadiusMM ?? 0}|${ts.toolHelix ?? 'up'}`
-          if (key !== refs.activeToolKey) {
-            buildToolIndicatorForParams(refs, tType, tDiam, tAngle, ts.fluteCount, tTip, ts.toolCornerRadiusMM ?? 0, ts.toolHelix)
-            refs.activeToolKey = key
+          const tp = toolMeshParams(segTool(activeSeg, sim.toolStates))
+          if (tp.key !== refs.activeToolKey) {
+            buildToolIndicatorForParams(refs, tp.type, tp.diamMM, tp.angleDeg, tp.fluteCount, tp.tipDiaMM, tp.cornerMM, tp.helix)
+            refs.activeToolKey = tp.key
           }
         }
 
@@ -757,22 +743,7 @@ function buildToolIndicator(refs: SceneRefs) {
 
   for (const seg of segments) {
     if (!seg.rapid) {
-      const ts = segTool(seg, toolStates)
-      diamMM = ts.toolDiameterMM
-      fluteCount = ts.fluteCount
-      helix = ts.toolHelix ?? 'up'
-      tipDiaMM = ts.toolTipRadiusMM ? ts.toolTipRadiusMM * 2 : 0
-      if (ts.toolVbitHalfAngleTan) {
-        toolType = tipDiaMM > 0 ? 'taper' : 'vbit'
-        vbitAngleDeg = Math.atan(ts.toolVbitHalfAngleTan) * (180 / Math.PI) * 2
-      } else if (ts.toolBallNose) {
-        toolType = 'ball'
-      } else if (ts.toolCornerRadiusMM) {
-        toolType = 'bull'
-        cornerMM = ts.toolCornerRadiusMM
-      } else if (ts.toolDrill) {
-        toolType = 'drill'
-      }
+      ;({ type: toolType, diamMM, angleDeg: vbitAngleDeg, fluteCount, tipDiaMM, cornerMM, helix } = toolMeshParams(segTool(seg, toolStates)))
       break
     }
   }
@@ -982,12 +953,7 @@ function arcSweep3D(
 ): { r: number; a0: number; a1: number; steps: number } | null {
   const r = Math.hypot(px - arcCx, py - arcCy)
   if (r < 0.001) return null
-  const a0 = Math.atan2(py - arcCy, px - arcCx)
-  let a1 = Math.atan2(ey - arcCy, ex - arcCx)
-  const isFullCircle = Math.abs(px - ex) < 0.001 && Math.abs(py - ey) < 0.001
-  if (isFullCircle) a1 = a0 + (cw ? -2 * Math.PI : 2 * Math.PI)
-  else if (cw) { if (a1 >= a0) a1 -= 2 * Math.PI }
-  else { if (a1 <= a0) a1 += 2 * Math.PI }
+  const { a0, a1 } = arcAngles(px, py, ex, ey, arcCx, arcCy, cw)
   const steps = Math.max(8, Math.ceil(Math.abs(a1 - a0) / (5 * Math.PI / 180)))
   return { r, a0, a1, steps }
 }

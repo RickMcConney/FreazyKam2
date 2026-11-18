@@ -15,11 +15,12 @@
 //
 // Pure, no DOM: the caller decodes the picture (io/imageLuminance.ts) on the main thread.
 
-import { ptSegDist, type Pt2 } from '../cam/pathFlattener'
+import { ptSegDist, signedArea, type Pt2 } from '../cam/pathFlattener'
 import type { PhotoImage } from '../cam/photoVcarve'
 import type { RectInfo } from '../canvas/selectionUtils'
 import { traceIsolines } from '../cam/marchingSquares'
 import { round4 } from '../util/num'
+import { lerpPt as lerp } from '../util/vec2'
 import { inflatePathsD, unionD, differenceD, intersectD, areaD, FillRule, JoinType, EndType, ClipperD, PolyTreeD, PolyPathD, ClipType } from 'clipper2-ts'
 import { interiorPoint, pointInPolygon, ringsBBox } from '../cam/geom'
 
@@ -170,12 +171,6 @@ export function autoThreshold(lum: Uint8Array, trace: 'dark' | 'light'): number 
   return trace === 'dark' ? t1 : t2
 }
 
-function ringArea(r: Pt2[]): number {
-  let a = 0
-  for (let i = 0, j = r.length - 1; i < r.length; j = i++) a += r[j][0] * r[i][1] - r[i][0] * r[j][1]
-  return a / 2
-}
-
 const distToSeg = (p: Pt2, a: Pt2, b: Pt2): number => ptSegDist(p[0], p[1], a[0], a[1], b[0], b[1])
 
 // Open Douglas–Peucker over pts[i0..i1], marking the kept indices.
@@ -268,7 +263,6 @@ type Mapper = (p: Pt2) => Pt2
 /** One edge of a written outline: a cubic Bézier, or a straight line when `c` is null. */
 export interface Seg { p0: Pt2; c: [Pt2, Pt2] | null; p1: Pt2 }
 
-const lerp = (a: Pt2, b: Pt2, t: number): Pt2 => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
 
 export function segPoint(g: Seg, t: number): Pt2 {
   if (!g.c) return lerp(g.p0, g.p1, t)
@@ -689,13 +683,16 @@ export function traceImage(img: PhotoImage, rect: RectInfo, params: TraceParams)
   if (params.mode !== 'centerline' && thresholds.length > 1) {
     closeTones(T, w, h, gw, thresholds.map((t) => dark ? 255.5 - t : t - 0.5).sort((a, b) => a - b), params.minSpeckMM / Math.sqrt(sx * sy))
   }
+  // Pixel (column, row) → CNC mm, through the picture's placement (turned with it).
+  const cos = Math.cos(rect.rotationDeg * Math.PI / 180), sin = Math.sin(rect.rotationDeg * Math.PI / 180)
+  const map: Mapper = ([x, y]) => {
+    const u = (x + 0.5) * sx
+    const v = rect.heightMM - (y + 0.5) * sy
+    return [rect.p0.x + u * cos - v * sin, rect.p0.y + u * sin + v * cos]
+  }
   if (params.mode === 'centerline') {
     return traceCenterlines(T, w, h, gw, dark ? 255.5 - thresholds[0] : thresholds[0] - 0.5,
-      minAreaPx, tolPx, cornerDeg, ([x, y]) => {
-        const u = (x + 0.5) * sx, v = rect.heightMM - (y + 0.5) * sy
-        const c = Math.cos(rect.rotationDeg * Math.PI / 180), si = Math.sin(rect.rotationDeg * Math.PI / 180)
-        return [rect.p0.x + u * c - v * si, rect.p0.y + u * si + v * c]
-      }, thresholds, s)
+      minAreaPx, tolPx, cornerDeg, map, thresholds, s)
   }
   // …and, on a multi-tone trace, OPENS each tone's own BAND (the tone minus the tones
   // inside it): any part narrower than twice this is shaved off. A drawn line's
@@ -709,12 +706,6 @@ export function traceImage(img: PhotoImage, rect: RectInfo, params: TraceParams)
   // a region far wider than any sliver.
   const thickenPx = thicken / Math.sqrt(sx * sy)
   const openPx = thresholds.length > 1 ? Math.max(2 * s, thickenPx / 2) : 0
-  const cos = Math.cos(rect.rotationDeg * Math.PI / 180), sin = Math.sin(rect.rotationDeg * Math.PI / 180)
-  const map: Mapper = ([x, y]) => {
-    const u = (x + 0.5) * sx
-    const v = rect.heightMM - (y + 0.5) * sy
-    return [rect.p0.x + u * cos - v * sin, rect.p0.y + u * sin + v * cos]
-  }
   const identity: Mapper = (p) => p
 
   type CP = { x: number; y: number }[]
@@ -782,7 +773,7 @@ export function traceImage(img: PhotoImage, rect: RectInfo, params: TraceParams)
       // traceIsolines closes each loop by repeating its first point.
       const ring = loop.length > 1 && loop[0][0] === loop[loop.length - 1][0] && loop[0][1] === loop[loop.length - 1][1]
         ? loop.slice(0, -1) : loop
-      if (Math.abs(ringArea(ring)) < minAreaPx || ring.length < 3) { specks++; continue }
+      if (Math.abs(signedArea(ring)) < minAreaPx || ring.length < 3) { specks++; continue }
       kept.push(ring)
     }
     if (ds.length + kept.length > MAX_TRACE_LOOPS) {
@@ -905,7 +896,7 @@ export function traceImage(img: PhotoImage, rect: RectInfo, params: TraceParams)
       sample(ringsSegs)
     }
     // Largest first, so an outline comes before the holes and details inside it.
-    const area = (segs: Seg[]) => Math.abs(ringArea(segs.map((g) => g.p0)))
+    const area = (segs: Seg[]) => Math.abs(signedArea(segs.map((g) => g.p0)))
     const order = [...ringsSegs].sort((a, b) => area(b) - area(a))
     for (const segs of order) { ds.push(segsToD(segs, identity)); levels.push(li + 1) }
   })

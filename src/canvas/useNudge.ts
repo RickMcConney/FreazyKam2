@@ -7,6 +7,7 @@ import { originWorldXY } from './layers/WorkpieceLayer'
 import { nextStepPoint, nudgeStopDelta, snapAxisDelta, type SnapTargets } from './objectSnap'
 import type { BBox } from './selectionUtils'
 import { beginMoveSession, type Gesture } from './useGesture'
+import { idSet } from './idSet'
 
 export function useNudge({ modeRef, setLiveTransform, setFollowTransforms, setSnapGuides, setLiveBBox }: Gesture) {
   // ARROW KEYS NUDGE THE SELECTION — 1 mm (0.1" in inch mode), Shift ×10, Alt ÷10.
@@ -100,7 +101,7 @@ export function useNudge({ modeRef, setLiveTransform, setFollowTransforms, setSn
       p.dx = Math.round(stepAxis(0, p.dx) * 1e6) / 1e6
       p.dy = Math.round(stepAxis(1, p.dy) * 1e6) / 1e6
 
-      setLiveTransform({ kind: 'translate', pathIds: new Set(p.ids), dx: p.dx, dy: p.dy })
+      setLiveTransform({ kind: 'translate', pathIds: idSet(p.ids), dx: p.dx, dy: p.dy })
       if (p.bbox) {
         const b = p.bbox
         setLiveBBox({ minX: b.minX + p.dx, minY: b.minY + p.dy, width: b.width, height: b.height })
@@ -111,7 +112,7 @@ export function useNudge({ modeRef, setLiveTransform, setFollowTransforms, setSn
       }
       setFollowTransforms(p.plan
         ? runPlan(p.plan, { dx: p.dx, dy: p.dy }).map((mv) => ({
-          kind: 'translate' as const, pathIds: new Set(mv.pathIds), dx: mv.dx, dy: mv.dy,
+          kind: 'translate' as const, pathIds: idSet(mv.pathIds), dx: mv.dx, dy: mv.dy,
         }))
         : null)
       window.clearTimeout(p.timer)

@@ -24,7 +24,7 @@
 import polygonClipping, { type MultiPolygon, type Ring } from 'polygon-clipping'
 import { inflatePathsD, JoinType, EndType } from 'clipper2-ts'
 import { classifySubpaths, interiorPoint, pointInPolygon, maxCutRadiusMM, ringsBBox } from './geom'
-import { flattenPath, splitSelfIntersecting, ensureWinding, type Pt2 } from './pathFlattener'
+import { flattenPath, splitSelfIntersecting, ensureWinding, signedArea, type Pt2 } from './pathFlattener'
 import type { AnyOperation, CutSide } from '../store/toolpathStore'
 import type { Tool } from '../store/toolStore'
 import type { ImportedPath } from '../store/pathsStore'
@@ -73,13 +73,7 @@ function areaOfD(d: string): MultiPolygon {
 
 function areaOf(mp: MultiPolygon): number {
   let total = 0
-  for (const poly of mp) for (const ring of poly) {
-    let a = 0
-    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-      a += (ring[j][0] * ring[i][1]) - (ring[i][0] * ring[j][1])
-    }
-    total += Math.abs(a) / 2
-  }
+  for (const poly of mp) for (const ring of poly) total += Math.abs(signedArea(ring as Pt2[]))
   return total
 }
 

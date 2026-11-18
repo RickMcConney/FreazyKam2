@@ -92,7 +92,7 @@ import {
 import { seatHub, spokeWindows, pinRing, pinRingHoles, type HubFit, type PinRing } from './spokedWheel'
 import { getTreatableCorners, applyCornerTreatments } from '../tools/cornerTreatment'
 import { ptSegDist } from '../cam/pathFlattener'
-import { arcLengths } from '../cam/geom'
+import { arcLengths, polylineLength } from '../cam/geom'
 
 export type EscapementType = 'recoil' | 'deadbeat'
 
@@ -656,10 +656,7 @@ function locusAt(
  */
 function deadFace(spec: EscapementSpec): { total: number; landing: number; impulse: number } {
   const whole = (side: Side) => {
-    const f = actingProfile(spec, side)
-    let s = 0
-    for (let i = 1; i < f.length; i++) s += Math.hypot(f[i][0] - f[i - 1][0], f[i][1] - f[i - 1][1])
-    return s
+    return polylineLength(actingProfile(spec, side))
   }
   if (spec.escType !== 'deadbeat') {
     const { rho } = frame(spec)
@@ -909,8 +906,7 @@ function roundLockCorner(pts: Pt[], corner: number, g: number): { pts: Pt[]; cor
   // warns against: it only ever bites where there is no dead face worth the name
   // — `noLock` already says so — far below the lock `fullLandingLockDeg` quotes,
   // and `cornerBlunt` is untouched, so that figure stays a fixed point.
-  let run = 0
-  for (let i = 1; i <= corner; i++) run += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])
+  const run = polylineLength(pts.slice(0, corner + 1))
   if (g / tan > 0.9 * run) g = 0.9 * run * tan
   if (!(g > 0.01)) return { pts, corner }
   const t = g / tan
@@ -2554,8 +2550,7 @@ function computeEscapementDims(spec: EscapementSpec): EscapementDims {
   const impulseAngleDeg = (Math.asin(clamp(Math.abs((chord[0] * mid[0] + chord[1] * mid[1]) / len), 0, 1)) * 180) / Math.PI
 
   const face = actingProfile(spec, 'entry')
-  let faceWidth = 0
-  for (let i = 1; i < face.length; i++) faceWidth += Math.hypot(face[i][0] - face[i - 1][0], face[i][1] - face[i - 1][1])
+  const faceWidth = polylineLength(face)
 
   const dive = rho * halfSwing(spec)
   // Tooth thickness WHERE IT LEAVES THE GULLET — at the top of the fill, which is

@@ -11,7 +11,7 @@
 // SPOKE 2.5·m is the width, WEB 1.5·m is 0.6·spokeW, and HUB 2·m is 0.8·spokeW —
 // so this is a rename of the gear's own rules, not a new set of them.
 
-import { type Pt, clamp, arcInto, roundConvex, ellipseRing } from './polyOps'
+import { type Pt, clamp, arcInto, roundConvex, ellipseRing, rotateRing } from './polyOps'
 
 /** Daylight left between two spokes where they meet the hub, radians. */
 const SPOKE_GAP = 0.15
@@ -156,8 +156,7 @@ export function spokeWindows(n: number, rimInner: number, hubOuter: number, spok
   const out: Pt[][] = []
   for (let i = 0; i < n; i++) {
     const turn = i * step + offset
-    const c = Math.cos(turn), sn = Math.sin(turn)
-    for (const r of first) out.push(turn === 0 ? r : r.map(([x, y]) => [x * c - y * sn, x * sn + y * c] as Pt))
+    for (const r of first) out.push(turn === 0 ? r : rotateRing(r, turn))
   }
   return out
 }

@@ -94,6 +94,7 @@ let workerFactory: () => WorkerLike =
   () => new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' }) as unknown as WorkerLike
 
 export function __setWorkerFactoryForTests(f: (() => WorkerLike) | null): void {
+  warmEpoch++
   workerFactory = f ?? (() => new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' }) as unknown as WorkerLike)
   for (const s of slots) s.worker.terminate()
   slots.length = 0
@@ -176,6 +177,23 @@ function pump(): void {
 
 export const WORK_CANCELLED = 'Generation cancelled'
 
+// A cancel that terminated every worker (all were busy, which is what a Stop or an undo in
+// the middle of a big Generate looks like) leaves the pool EMPTY, and the next Generate then
+// waits for a whole module graph to load before anything runs. So one replacement is spawned
+// once the page is idle — not on the spot, which would land the load in the same frame as
+// the undo it follows — and only if the pool is still empty by then.
+function keepOneWarm(): void {
+  if (slots.length > 0) return
+  const later = typeof requestIdleCallback === 'function'
+    ? (cb: () => void) => { requestIdleCallback(cb, { timeout: 2000 }) }
+    : (cb: () => void) => { setTimeout(cb, 0) }
+  const epoch = warmEpoch
+  later(() => { if (epoch === warmEpoch && slots.length === 0) { spawn(); pump() } })
+}
+// Bumped when the pool is reset (tests swap the worker factory), so a warm-up still pending
+// from before does not spawn into the new pool.
+let warmEpoch = 0
+
 /** True for the rejection cancelAllWork hands to in-flight jobs. */
 export function isWorkCancelled(e: unknown): boolean {
   return e instanceof Error && e.message === WORK_CANCELLED
@@ -201,6 +219,7 @@ export function cancelAllWork(): number {
     emitProgress({ opId: job.key, fn: job.fn, frac: 1, done: true })
     job.reject(new Error(WORK_CANCELLED))
   }
+  if (cancelled.length > 0) keepOneWarm()
   return cancelled.length
 }
 
@@ -229,6 +248,7 @@ export function cancelWork(key: string): number {
     job.reject(new Error(WORK_CANCELLED))
   }
   pump()
+  if (cancelled.length > 0) keepOneWarm()
   return cancelled.length
 }
 

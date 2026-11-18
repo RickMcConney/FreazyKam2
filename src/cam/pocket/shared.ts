@@ -5,7 +5,8 @@
 import {  signedArea, ensureWinding, douglasPeucker, type Pt2 } from '../pathFlattener'
 import { perfLog } from '../../debug'
 import { inflatePathsD, differenceD, intersectD, JoinType, EndType, FillRule } from 'clipper2-ts'
-import {  arcLengths, interpPt, ringPerimeter, stripClosingDuplicate, pointInPolygon, pointOnRing, ptSegDistSq, interiorPoint } from '../geom'
+import { GridFrame, cellForCount } from './grid'
+import { arcLengths, interpPt, ringPerimeter, closestOnRing, ringsBBox, stripClosingDuplicate, pointInPolygon, pointOnRing, ptSegDistSq, interiorPoint } from '../geom'
 import { toCP, fromCP } from '../clipperAdapters'
 import type { ClearanceField } from './clearance'
 import type { MotionSegment } from '../../store/toolpathStore'
@@ -235,15 +236,8 @@ const ringBBoxCache = new WeakMap<Pt2[], [number, number, number, number]>()
 function ringBBox(poly: Pt2[]): [number, number, number, number] {
   const hit = ringBBoxCache.get(poly)
   if (hit) return hit
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-  for (let i = 0; i < poly.length; i++) {
-    const [x, y] = poly[i]
-    if (x < minX) minX = x
-    if (x > maxX) maxX = x
-    if (y < minY) minY = y
-    if (y > maxY) maxY = y
-  }
-  const box: [number, number, number, number] = [minX, minY, maxX, maxY]
+  const b = ringsBBox([poly])
+  const box: [number, number, number, number] = b ? [b.minX, b.minY, b.maxX, b.maxY] : [Infinity, Infinity, -Infinity, -Infinity]
   ringBBoxCache.set(poly, box)
   return box
 }
@@ -649,54 +643,6 @@ export function emitCutTransition(
   segs.push({ x: to[0], y: to[1], z, rapid: false })
 }
 
-export function centroidOfRing(pts: Pt2[]): Pt2 {
-  let area2 = 0
-  let cx = 0
-  let cy = 0
-  for (let i = 0; i < pts.length; i++) {
-    const [x0, y0] = pts[i]
-    const [x1, y1] = pts[(i + 1) % pts.length]
-    const cross = x0 * y1 - x1 * y0
-    area2 += cross
-    cx += (x0 + x1) * cross
-    cy += (y0 + y1) * cross
-  }
-  if (Math.abs(area2) < 1e-8) {
-    const sum = pts.reduce((acc, p) => [acc[0] + p[0], acc[1] + p[1]] as Pt2, [0, 0])
-    return [sum[0] / pts.length, sum[1] / pts.length]
-  }
-  return [cx / (3 * area2), cy / (3 * area2)]
-}
-
-export function emitHelicalRamp(
-  center: Pt2,
-  radius: number,
-  fromZ: number,
-  toZ: number,
-  wantCCW: boolean,
-  segs: MotionSegment[],
-  safeZ = 5,
-): Pt2 {
-  const turns = Math.max(1, Math.ceil(Math.abs(toZ - fromZ) / 1.5))
-  const stepsPerTurn = 28
-  const totalSteps = turns * stepsPerTurn
-  const dir = wantCCW ? 1 : -1
-  const start: Pt2 = [center[0] + radius, center[1]]
-
-  segs.push({ x: start[0], y: start[1], z: safeZ, rapid: true })
-  segs.push({ x: start[0], y: start[1], z: fromZ, rapid: true })
-
-  let last: Pt2 = start
-  for (let i = 1; i <= totalSteps; i++) {
-    const t = i / totalSteps
-    const a = dir * t * turns * 2 * Math.PI
-    last = [center[0] + Math.cos(a) * radius, center[1] + Math.sin(a) * radius]
-    segs.push({ x: last[0], y: last[1], z: fromZ + (toZ - fromZ) * t, rapid: false, feedScale: 0.45 })
-  }
-
-  return last
-}
-
 /** Steepest descent a helical bore may take — FreeCAD Adaptive's default helix angle. */
 export const HELIX_MAX_RAMP_DEG = 5
 
@@ -975,20 +921,11 @@ function ringPointAtArc(ring: Pt2[], cum: number[], total: number, s: number): P
 /** Arc length of the closest point on the ring to (px,py) — projected onto the EDGES, not
  *  snapped to a vertex. */
 function nearestArcOnRing(ring: Pt2[], cum: number[], px: number, py: number): number {
-  let bestS = 0
-  let bestD = Infinity
-  for (let i = 0; i < ring.length; i++) {
-    const j = (i + 1) % ring.length
-    const ax = ring[i][0], ay = ring[i][1]
-    const dx = ring[j][0] - ax, dy = ring[j][1] - ay
-    const l2 = dx * dx + dy * dy
-    let t = l2 > 1e-12 ? ((px - ax) * dx + (py - ay) * dy) / l2 : 0
-    t = t < 0 ? 0 : t > 1 ? 1 : t
-    const qx = ax + t * dx, qy = ay + t * dy
-    const d = (px - qx) ** 2 + (py - qy) ** 2
-    if (d < bestD) { bestD = d; bestS = cum[i] + t * Math.sqrt(l2) }
-  }
-  return bestS
+  if (ring.length === 0) return 0
+  const { idx, t } = closestOnRing(ring, px, py)
+  const a = ring[idx], b = ring[(idx + 1) % ring.length]
+  const dx = b[0] - a[0], dy = b[1] - a[1]
+  return cum[idx] + t * Math.sqrt(dx * dx + dy * dy)
 }
 
 /** `ring` rotated to begin at arc length `s`, SPLITTING the edge when `s` lands mid-edge.
@@ -1486,11 +1423,7 @@ export function restCleanupRings(
 // holds nothing closer than (r-1) cells and the search can stop the moment that exceeds the
 // best distance found.
 class SegmentGrid {
-  private readonly cell: number
-  private readonly minX: number
-  private readonly minY: number
-  private readonly cols: number
-  private readonly rows: number
+  private readonly g: GridFrame
   private readonly buckets: number[][]
   private readonly segs: readonly [Pt2, Pt2][]
 
@@ -1503,42 +1436,31 @@ class SegmentGrid {
       if (a[1] < minY) minY = a[1]; if (a[1] > maxY) maxY = a[1]
       if (b[1] < minY) minY = b[1]; if (b[1] > maxY) maxY = b[1]
     }
-    const span = Math.max(maxX - minX, maxY - minY)
-    this.cell = span > 0 ? Math.max(span / Math.max(1, Math.ceil(Math.sqrt(segs.length))), 1e-6) : 1
-    this.minX = minX; this.minY = minY
-    this.cols = Math.max(1, Math.floor((maxX - minX) / this.cell) + 1)
-    this.rows = Math.max(1, Math.floor((maxY - minY) / this.cell) + 1)
-    this.buckets = Array.from({ length: this.cols * this.rows }, () => [] as number[])
+    const g = this.g = new GridFrame(minX, minY, maxX, maxY, cellForCount(Math.max(maxX - minX, maxY - minY), segs.length))
+    this.buckets = Array.from({ length: g.cols * g.rows }, () => [] as number[])
     for (let i = 0; i < segs.length; i++) {
       const [a, b] = segs[i]
-      const c0 = this.col(Math.min(a[0], b[0])), c1 = this.col(Math.max(a[0], b[0]))
-      const r0 = this.row(Math.min(a[1], b[1])), r1 = this.row(Math.max(a[1], b[1]))
-      for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) this.buckets[r * this.cols + c].push(i)
+      const c0 = g.col(Math.min(a[0], b[0])), c1 = g.col(Math.max(a[0], b[0]))
+      const r0 = g.row(Math.min(a[1], b[1])), r1 = g.row(Math.max(a[1], b[1]))
+      for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) this.buckets[r * g.cols + c].push(i)
     }
   }
 
-  private col(x: number) { return Math.min(this.cols - 1, Math.max(0, Math.floor((x - this.minX) / this.cell))) }
-  private row(y: number) { return Math.min(this.rows - 1, Math.max(0, Math.floor((y - this.minY) / this.cell))) }
-
   nearestDistSq(x: number, y: number): number {
-    const cx = this.col(x), cy = this.row(y)
+    const g = this.g
+    const cx = g.col(x), cy = g.row(y)
     let best = Infinity
-    const maxRing = Math.max(this.cols, this.rows)
-    for (let r = 0; r <= maxRing; r++) {
-      if (best < Infinity) { const reach = (r - 1) * this.cell; if (reach > 0 && reach * reach > best) break }
-      const y0 = Math.max(0, cy - r), y1 = Math.min(this.rows - 1, cy + r)
-      for (let j = y0; j <= y1; j++) {
-        const onYEdge = j === cy - r || j === cy + r
-        const x0 = Math.max(0, cx - r), x1 = Math.min(this.cols - 1, cx + r)
-        for (let i = x0; i <= x1; i++) {
-          if (!onYEdge && i !== cx - r && i !== cx + r) continue
-          for (const id of this.buckets[j * this.cols + i]) {
-            const [a, b] = this.segs[id]
-            const d = ptSegDistSq(x, y, a[0], a[1], b[0], b[1])
-            if (d < best) best = d
-          }
-        }
+    const visit = (cell: number) => {
+      for (const id of this.buckets[cell]) {
+        const [a, b] = this.segs[id]
+        const d = ptSegDistSq(x, y, a[0], a[1], b[0], b[1])
+        if (d < best) best = d
       }
+    }
+    for (let r = 0, maxRing = g.maxRing; r <= maxRing; r++) {
+      // Squared compare: an item in ring r is at least (r − 1) cells away.
+      if (best < Infinity) { const reach = (r - 1) * g.cell; if (reach > 0 && reach * reach > best) break }
+      g.forRing(cx, cy, r, visit)
     }
     return best
   }

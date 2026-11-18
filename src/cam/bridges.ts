@@ -42,7 +42,7 @@ import { flattenPath, ptSegDist } from './pathFlattener'
 import { pointInPolygon, arcLengths } from './geom'
 import type { MotionSegment } from '../store/toolpathStore'
 import { cellOfPoint, cellOffset, cellKey, type Cell } from './sheets'
-import { tabRampShape, type TabRamp, type RampShape } from './tabRamp'
+import { tabRampShape, tabRampReachMM, type TabRamp, type RampShape } from './tabRamp'
 
 /** One strip: its centreline from (x1, y1) to (x2, y2). `manual`: placed or moved BY HAND
  *  (click-to-place, a drag) — Apply re-lays the network round it and never replaces it. */
@@ -410,6 +410,36 @@ export function planBridges(
       return false
     }
 
+    // Whether the strip p→q crosses an outline of part `a` or `b` anywhere but at its own two
+    // ends — the strip starts ON a's outline and ends ON b's, so a crossing within `END_MM`
+    // of an end is that end. The foot found by `nearest` is the nearest point of b's that
+    // FACES the strip, which on a star can be the far side of an arm: the strip then runs in
+    // through b's near arm and out again before it lands. Sampling three points along it
+    // (below) missed that whenever all three fell between the arms.
+    const END_MM = 1e-3
+    const crossesOwn = (px: number, py: number, qx: number, qy: number, a: number, b: number) => {
+      const len = Math.hypot(qx - px, qy - py)
+      if (len <= 2 * END_MM) return false
+      const rx = qx - px, ry = qy - py
+      const i0 = Math.floor(Math.min(px, qx) / CELL), i1 = Math.floor(Math.max(px, qx) / CELL)
+      const j0 = Math.floor(Math.min(py, qy) / CELL), j1 = Math.floor(Math.max(py, qy) / CELL)
+      for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
+        for (const si of grid.get(cellKeyOf(i, j)) ?? []) {
+          const sg = segs[si]
+          if (sg.owner !== a && sg.owner !== b) continue
+          const sx = sg.bx - sg.ax, sy = sg.by - sg.ay
+          const den = rx * sy - ry * sx
+          if (Math.abs(den) < 1e-12) continue
+          const t = ((sg.ax - px) * sy - (sg.ay - py) * sx) / den
+          const u = ((sg.ax - px) * ry - (sg.ay - py) * rx) / den
+          if (u < 0 || u > 1) continue
+          const along = t * len
+          if (along > END_MM && along < len - END_MM) return true
+        }
+      }
+      return false
+    }
+
     // Candidate joins: square samples along each part's OUTER outline. A hole is skipped — a
     // join from its edge would run across the hole, whose inside cut does not lift, so the
     // strip would be cut through.
@@ -470,6 +500,7 @@ export function planBridges(
             // Nor through either of the two it joins: `crosses` skips their outlines (the strip
             // starts and ends on them), so a foot on a triangle's FAR edge, reached through its
             // slanted near one, passed as a join across the gap. Its inside must be in neither.
+            if (q.d > 1e-6 && crossesOwn(sx, sy, q.x, q.y, k, q.owner)) continue
             if (q.d > 1e-6 && [0.25, 0.5, 0.75].some((f) => {
               const mx = sx + f * (q.x - sx), my = sy + f * (q.y - sy)
               return insidePart(p, mx, my) || (q.owner >= 0 && insidePart(sheetParts[q.owner], mx, my))
@@ -641,7 +672,15 @@ export function placeBridges(
 
 // A strip grown by the cutter, in its own frame: `along` from `lo` to `hi` from the origin
 // in the direction (ux, uy), `across` within ±`half`.
-type Box = { ox: number; oy: number; ux: number; uy: number; lo: number; hi: number; half: number }
+type Box = {
+  ox: number; oy: number; ux: number; uy: number; lo: number; hi: number; half: number
+  // Its world-axis bounding box, slack by BOX_SLACK: a move whose own box misses it cannot
+  // clip it, so the exact test is skipped (a pure filter — the output is unchanged).
+  x0: number; y0: number; x1: number; y1: number
+}
+const BOX_SLACK = 1e-6
+const missesBox = (bx: Box, ax: number, ay: number, cx: number, cy: number) =>
+  Math.max(ax, cx) < bx.x0 || Math.min(ax, cx) > bx.x1 || Math.max(ay, cy) < bx.y0 || Math.min(ay, cy) > bx.y1
 const local = (b: Box, x: number, y: number): [number, number] =>
   [(x - b.ox) * b.ux + (y - b.oy) * b.uy, -(x - b.ox) * b.uy + (y - b.oy) * b.ux]
 // The part of move a→b inside box `b`, as [u0, u1] along the move, or null.
@@ -657,14 +696,18 @@ const insideBox = (bx: Box, x: number, y: number) => {
 // Liang–Barsky: the part of segment a→b inside the box, as [u0, u1] along it, or null.
 function clip(ax: number, ay: number, bx: number, by: number, x0: number, x1: number, y0: number, y1: number): [number, number] | null {
   const dx = bx - ax, dy = by - ay
-  let u0 = 0, u1 = 1
-  for (const [p, q] of [[-dx, ax - x0], [dx, x1 - ax], [-dy, ay - y0], [dy, y1 - ay]] as const) {
-    if (p === 0) { if (q < 0) return null; continue }
-    const r = q / p
-    if (p < 0) { if (r > u1) return null; if (r > u0) u0 = r }
-    else { if (r < u0) return null; if (r < u1) u1 = r }
-  }
-  return u1 - u0 > 1e-12 ? [u0, u1] : null
+  const lim: [number, number] = [0, 1]
+  // The four edges in the order the array form took them, without an array per call.
+  if (!clipEdge(-dx, ax - x0, lim) || !clipEdge(dx, x1 - ax, lim) || !clipEdge(-dy, ay - y0, lim) || !clipEdge(dy, y1 - ay, lim)) return null
+  return lim[1] - lim[0] > 1e-12 ? lim : null
+}
+// One Liang–Barsky edge on [u0, u1] (in `lim`); false when the segment misses the box.
+function clipEdge(p: number, q: number, lim: [number, number]): boolean {
+  if (p === 0) return q >= 0
+  const r = q / p
+  if (p < 0) { if (r > lim[1]) return false; if (r > lim[0]) lim[0] = r }
+  else { if (r < lim[0]) return false; if (r < lim[1]) lim[1] = r }
+  return true
 }
 
 /**
@@ -680,12 +723,36 @@ function clip(ax: number, ay: number, bx: number, by: number, x0: number, x1: nu
  */
 export function clampToBridges(segs: MotionSegment[], set: BridgeSet, clearMM: number, topZ: number, ramp?: TabRamp): MotionSegment[] {
   const half = set.widthMM / 2 + clearMM
+  // Everything the cut can reach — every point, and every arc's whole circle — so a strip
+  // nowhere near this toolpath is dropped before any move is tested against it. A sheet's
+  // set holds every strip on it; one part's toolpath meets a few.
+  const ext = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity }
+  for (const s of segs) {
+    if (s.x < ext.x0) ext.x0 = s.x
+    if (s.x > ext.x1) ext.x1 = s.x
+    if (s.y < ext.y0) ext.y0 = s.y
+    if (s.y > ext.y1) ext.y1 = s.y
+    if (s.arc) {
+      const r = Math.hypot(s.x - s.arc.cx, s.y - s.arc.cy)
+      ext.x0 = Math.min(ext.x0, s.arc.cx - r); ext.x1 = Math.max(ext.x1, s.arc.cx + r)
+      ext.y0 = Math.min(ext.y0, s.arc.cy - r); ext.y1 = Math.max(ext.y1, s.arc.cy + r)
+    }
+  }
   const boxes = set.lines.flatMap((l): Box[] => {
     const len = Math.hypot(l.x2 - l.x1, l.y2 - l.y1)
     if (len < 1e-9) return []
     const ux = (l.x2 - l.x1) / len, uy = (l.y2 - l.y1) / len
-    return [{ ox: l.x1, oy: l.y1, ux, uy, lo: -clearMM, hi: len + clearMM, half }]
-  })
+    const lo = -clearMM, hi = len + clearMM
+    // World corners of the box: origin + along·u + across·n, n = (−uy, ux).
+    const xs = [lo, hi].flatMap((a) => [-half, half].map((c) => l.x1 + a * ux - c * uy))
+    const ys = [lo, hi].flatMap((a) => [-half, half].map((c) => l.y1 + a * uy + c * ux))
+    const b: Box = {
+      ox: l.x1, oy: l.y1, ux, uy, lo, hi, half,
+      x0: Math.min(...xs) - BOX_SLACK, y0: Math.min(...ys) - BOX_SLACK, x1: Math.max(...xs) + BOX_SLACK, y1: Math.max(...ys) + BOX_SLACK,
+    }
+    return [b]
+  }).filter((b) => !missesBox(b, ext.x0, ext.y0, ext.x1, ext.y1))
+  if (boxes.length === 0) return segs.slice()
   const out: MotionSegment[] = []
   // The points the clamp put at the strip top — where a ramp spreads out from.
   const held = new Set<MotionSegment>()
@@ -702,7 +769,43 @@ export function clampToBridges(segs: MotionSegment[], set: BridgeSet, clearMM: n
     }
     prev = s
   }
-  return ramp && held.size ? rampOverStrips(out, held, topZ, ramp) : out
+  const final = ramp && held.size ? rampOverStrips(out, held, topZ, ramp) : out
+  return held.size ? holdRapidsOverStrips(final, boxes, topZ, ramp) : final
+}
+
+/**
+ * A RAPID MAY ONLY GO DOWN THROUGH GROUND THE PASSES CLEARED. A profile starts each depth
+ * pass with a rapid down its own kerf to the pass above, then ramps — air, as long as
+ * every earlier pass cut that kerf to its depth. Near a strip they did not: the clamp held
+ * them at the strip top over it, and a ramp held them above their depth for its whole
+ * reach either side, leaving a wedge of stock. Where a ring's start lay there, the tool
+ * stood on the strip or its ramp and the G0 dropped it 2–3 mm into that stock at full speed
+ * (the simulator's red G0 marks, on a sheet of stars). So within a strip's reach — the
+ * strip grown by the ramp's length — a rapid that would go down below the top goes no lower
+ * than where the tool already stands; the feed move after it takes the tool down, cutting,
+ * as any descent into stock must. The deepest pass so far is the one standing lowest there,
+ * so where the tool stands is the most the kerf has been cleared to.
+ */
+function holdRapidsOverStrips(segs: MotionSegment[], boxes: Box[], topZ: number, ramp?: TabRamp): MotionSegment[] {
+  let zMin = Infinity
+  for (const s of segs) if (s.z < zMin) zMin = s.z
+  const reach = ramp ? tabRampReachMM(topZ - zMin, ramp) : 0
+  const near = (x: number, y: number) => boxes.some((b) => {
+    const [p, q] = local(b, x, y)
+    return p > b.lo - reach && p < b.hi + reach && Math.abs(q) < b.half + reach
+  })
+  const out: MotionSegment[] = []
+  for (const s of segs) {
+    const last = out[out.length - 1]
+    if (last && s.rapid && s.z < last.z && s.z < topZ && near(s.x, s.y)) {
+      // Straight down where the tool stands: nothing to do. Anywhere else: across at its height.
+      if (Math.abs(s.x - last.x) < 1e-9 && Math.abs(s.y - last.y) < 1e-9) continue
+      out.push({ ...s, z: last.z })
+      continue
+    }
+    out.push(s)
+  }
+  return out
 }
 
 /**
@@ -798,7 +901,8 @@ function rampRun(segs: MotionSegment[], i: number, j: number, held: Set<MotionSe
 }
 
 function touches(a: MotionSegment, b: MotionSegment, boxes: Box[]): boolean {
-  return boxes.some((bx) => clipBox(bx, a.x, a.y, b.x, b.y) !== null || (a.x === b.x && a.y === b.y && insideBox(bx, a.x, a.y)))
+  return boxes.some((bx) => !missesBox(bx, a.x, a.y, b.x, b.y)
+    && (clipBox(bx, a.x, a.y, b.x, b.y) !== null || (a.x === b.x && a.y === b.y && insideBox(bx, a.x, a.y))))
 }
 
 // One straight move a→b, raised to `topZ` over the stretches of it inside any box.
@@ -806,6 +910,7 @@ function raiseMove(a: MotionSegment, b: MotionSegment, boxes: Box[], topZ: numbe
   const { arc: _arc, ...base } = b
   const spans: [number, number][] = []
   for (const bx of boxes) {
+    if (missesBox(bx, a.x, a.y, b.x, b.y)) continue
     if (a.x === b.x && a.y === b.y) {
       if (insideBox(bx, a.x, a.y)) spans.push([0, 1])
     } else {

@@ -3,9 +3,9 @@ import { morphChainToSpiral } from '../spiralMorph'
 import { solveField, type FieldGrid } from '../spiralField'
 import { traceIsolines } from '../marchingSquares'
 import {  JoinType } from 'clipper2-ts'
-import {   stripClosingDuplicate, pointInPolygon, interiorPoint, ringPerimeter } from '../geom'
+import { stripClosingDuplicate, pointInPolygon, interiorPoint, ringPerimeter, closestOnRing, centroidOfRing } from '../geom'
 import type { MotionSegment } from '../../store/toolpathStore'
-import { type PocketPlan, type PocketPlanner, _timed, centroidOfRing, compoundFinishRings, emitRampDescent, emitSpiralHelixEntry, growIslands, growRing, insetRing, rampLeadIn, setGap } from './shared'
+import { type PocketPlan, type PocketPlanner, _timed, compoundFinishRings, emitRampDescent, emitSpiralHelixEntry, growIslands, growRing, insetRing, rampLeadIn, setGap } from './shared'
 
 // ─── Spiral geometry: loop forest, chains, region clamping ───────────────────────
 //
@@ -94,19 +94,9 @@ export function forestToChains(roots: LoopNode[], maxGap = Infinity): SpiralChai
 }
 
 export function nearestPointOnRing(px: number, py: number, ring: Pt2[]): Pt2 {
-  let best: Pt2 = ring[0]
-  let bestD = Infinity
-  for (let i = 0; i < ring.length; i++) {
-    const a = ring[i], b = ring[(i + 1) % ring.length]
-    const dx = b[0] - a[0], dy = b[1] - a[1]
-    const l2 = dx * dx + dy * dy
-    let t = l2 > 1e-12 ? ((px - a[0]) * dx + (py - a[1]) * dy) / l2 : 0
-    t = t < 0 ? 0 : t > 1 ? 1 : t
-    const qx = a[0] + t * dx, qy = a[1] + t * dy
-    const d = (px - qx) ** 2 + (py - qy) ** 2
-    if (d < bestD) { bestD = d; best = [qx, qy] }
-  }
-  return best
+  const c = closestOnRing(ring, px, py)
+  // An empty search (no edges) hands back the ring's first point itself, as it always did.
+  return c.distSq === Infinity ? ring[0] : [c.x, c.y]
 }
 
 // Largest helix radius at `p` that keeps a bored circle clear of every keep-out ring

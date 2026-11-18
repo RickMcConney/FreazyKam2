@@ -3,6 +3,7 @@ import type { Tab } from '../store/tabStore'
 import { generateTrochoidal } from './trochoidal'
 import type { TrochoidalParams } from './trochoidal'
 import type { Tool } from '../store/toolStore'
+import { toolRadiusAtHeight } from './geom'
 
 const EM6: Tool = {
   id: 'em6', name: '6mm End Mill', type: 'endmill', diameterMM: 6, fluteCount: 2,
@@ -188,5 +189,27 @@ describe('generateTrochoidal — a tab is held only on the loop it was placed on
     const deepest = Math.min(...cuts(segs).map((s) => s.z))
     expect(cuts(segs).filter((s) => s.x > 110 && s.z > deepest + 1e-9 && s.z < 0).length).toBe(0)
     expect(cuts(segs).some((s) => s.x < 50 && Math.abs(s.z - (deepest + 2)) < 1e-9)).toBe(true)
+  })
+})
+
+describe('generateTrochoidal — a tab is held for the width the tool cuts at its top', () => {
+  // A taper's stored diameter is its TIP; at a tab's top it cuts much wider. Sizing the
+  // hold by the stored diameter left the tab's ends cut away by the cone, so the hold must
+  // come out exactly as long as an end mill's of the width the taper cuts there.
+  const SQ = 'M 0 0 L 60 0 L 60 60 L 0 60 Z'
+  const tab = { id: 't1', pathId: 'p', t: 0.125, lengthMM: 10, heightMM: 5 } as Tab
+  const TAPER: Tool = { ...EM6, id: 'tp', name: 'Taper', type: 'taper', diameterMM: 1, vbitAngleDeg: 15, maxDepthMM: 20 }
+  const heldX = (tool: Tool) => {
+    const segs = cuts(generateTrochoidal(SQ, tool, params({ side: 'outside', depthMM: 10, stepDownMM: 10 }), [tab]))
+    const tabZ = -10 + 5
+    const xs = segs.filter((s) => Math.abs(s.z - tabZ) < 1e-9 && s.y < 30).map((s) => s.x)
+    return Math.max(...xs) - Math.min(...xs)
+  }
+  it('a taper holds as long a stretch as an end mill of its cutting diameter at the tab top', () => {
+    const r = toolRadiusAtHeight(TAPER, 5)
+    expect(r).toBeGreaterThan(1.5)  // the cone, not the 0.5 mm tip
+    const em: Tool = { ...EM6, diameterMM: 2 * r }
+    // Loop sampling moves the held ends by microns; the stored-diameter bug was 1.3 mm.
+    expect(Math.abs(heldX(TAPER) - heldX(em))).toBeLessThan(0.05)
   })
 })

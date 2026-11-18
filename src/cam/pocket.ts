@@ -21,6 +21,7 @@ import type { Tool } from '../store/toolStore'
 import {
   _perfReset, _perfLog, _timed, closedPath, cutPathsAtDepth, emitLinkedContourRings, offsetRing,
   offsetRingPieces, assignHoles, splitAtToolWaist, restCleanupRings, POCKET_FLATTEN_TOL_MM,
+  isTravelSafe, MICRO_LIFT_MM, type TravelSafetyObstacles,
   type PocketParams, type PocketPlanner, type PocketStrategy,
 } from './pocket/shared'
 import { planRasterPocket } from './pocket/raster'
@@ -162,6 +163,15 @@ export function generatePocket(
       ...regions[bi].holes,
       ...islands.filter(isl => isl.some(([x, y]) => pointInPolygon(x, y, boundary))),
     ]
+    // An island that ENCLOSES the boundary has no vertex inside it and fails the test above,
+    // but it covers the whole region: there is nothing here to cut. Dropped, it took the
+    // opposite meaning — keep nothing — and the area it was there to protect was machined
+    // away. The inlay socket of a thin-stroked 'O' is exactly that: its counter, grown by the
+    // V-bit's half-width, is bigger than the floor inset from the outer wall, so the floor
+    // pocket cleared the counter the plug's hole was meant to land on. Only the whole-region
+    // case: an island merely CROSSING the boundary still goes the old way, since handing it
+    // over would put a hole across the region's own wall (see above).
+    if (islands.some(isl => boundary.every(([x, y]) => pointInPolygon(x, y, isl)))) continue
 
     let plan = _timed('plan', () => PLANNERS[strategy](boundary, localIslands, tool, params,
       subProgress(bLo, bLo + bSpan * PLAN_SHARE, 'Planning')))
@@ -188,8 +198,9 @@ export function generatePocket(
 
     // Every depth level cuts an IDENTICAL 2D path. Each level is emitted with no incoming
     // position, so ring order, start vertices and the links between them are chosen from
-    // the same starting reference every time, and the tool is retracted to safe Z between
-    // levels rather than carried over. Two things fall out of that: the operator sees the
+    // the same starting reference every time, and the tool goes back to that fixed start
+    // between levels (micro-lifted over the floor just cut when the move is clear — see
+    // linkLevel — else via safe Z) rather than carrying its position over. Two things fall out of that: the operator sees the
     // same pattern repeated at each depth instead of a different one per level, and — the
     // reason it is done this way — what the path COVERS is the same at every level, so
     // rest detection is a property of the pocket rather than of the level. Carrying the
@@ -205,10 +216,12 @@ export function generatePocket(
       // The surface the level descends from: the previous level, or the operation's own
       // start surface for the first one (stock top unless it begins in an existing pocket).
       const prevZ = zi === 0 ? startZ : zLevels[zi - 1]
-      // Clear of the work before repositioning to this level's fixed start point.
-      if (lastPos) segs.push({ x: lastPos[0], y: lastPos[1], z: safeZ, rapid: true })
+      // Clear of the work before repositioning to this level's fixed start point — a full
+      // retract, or a micro-lift over the level just cut when the move is clear (below).
+      const levelFrom = lastPos
       const segStart = segs.length
       lastPos = _timed('emitCuts', () => plan.emitCuts(z, prevZ, null, segs)) ?? lastPos
+      if (levelFrom) linkLevel(segs, segStart, levelFrom, zi > 0 ? prevZ : null, safeZ, plan.travelObstacles)
       if (plan.selfFinishing) continue
 
       const roughed = segs.length > segStart
@@ -252,6 +265,33 @@ export function generatePocket(
   const result = _timed('simplifyMotion', () => simplifyMotion(segs, 0.01))
   _perfLog(strategy)
   return result
+}
+
+// The move from where one depth level ended to where the next one starts. Every level is
+// emitted from no incoming position, so it opens by hovering at safe height over its start
+// (the strategy's own approach: one or more rapids at safeZ, then its descent). Between two
+// levels of the SAME region the floor at `prevZ` was cut everywhere the tool can stand —
+// roughing, rest and wall pass — so a straight move the design clears (`isTravelSafe`, the
+// same test every link at depth uses) can ride MICRO_LIFT_MM over that floor instead of
+// going to safe height and back: the hover prefix is replaced by the lift and a travel move,
+// and the level's descent then starts 0.5 mm above `prevZ` rather than from safeZ. The
+// level's path itself is untouched, so every level still cuts the identical pattern.
+// `prevZ` null (the first level of a region, after another region or nothing) always
+// retracts: the ground between two regions is uncut stock.
+export function linkLevel(
+  segs: MotionSegment[], levelStart: number, from: Pt2, prevZ: number | null,
+  safeZ: number, obstacles: TravelSafetyObstacles,
+) {
+  const retract: MotionSegment = { x: from[0], y: from[1], z: safeZ, rapid: true }
+  let k = levelStart
+  while (k < segs.length && segs[k].rapid && segs[k].z === safeZ) k++
+  const liftZ = prevZ === null ? safeZ : Math.min(safeZ, prevZ + MICRO_LIFT_MM)
+  if (prevZ === null || k === levelStart || liftZ >= safeZ) { segs.splice(levelStart, 0, retract); return }
+  const start: Pt2 = [segs[k - 1].x, segs[k - 1].y]
+  if (!isTravelSafe(from, start, obstacles)) { segs.splice(levelStart, 0, retract); return }
+  segs.splice(levelStart, k - levelStart,
+    { x: from[0], y: from[1], z: liftZ, rapid: false, travel: true },
+    { x: start[0], y: start[1], z: liftZ, rapid: false, travel: true })
 }
 
 // Collapse collinear runs of motion: within each maximal run of consecutive segments

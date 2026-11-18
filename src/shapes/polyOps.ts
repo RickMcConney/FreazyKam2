@@ -213,8 +213,7 @@ export function repeatSector(ring: Pt[], n: number, cutAngle = -Math.PI / n, mir
   // and the ring comes back CCW whichever way it went in (emitters set their own winding).
   const out: Pt[] = []
   for (let i = 0; i < n; i++) {
-    const c = Math.cos(i * wedge), sn = Math.sin(i * wedge)
-    for (const [x, y] of sector) out.push([x * c - y * sn, x * sn + y * c])
+    for (const p of rotateRing(sector, i * wedge)) out.push(p)
   }
   return out
 }
@@ -230,5 +229,34 @@ const SECTOR_SIMPLIFY_MM = 0.005
  *  ring that is a hole inside the one before it. */
 export function ringToD(ring: Pt[], wantCCW: boolean): string {
   const r = signedArea(ring) < 0 === wantCCW ? ring.slice().reverse() : ring
-  return 'M' + r.map(([x, y]) => `${fmt(x)},${fmt(y)}`).join(' L') + ' Z'
+  return polylineToD(r, true)
+}
+
+/** `ring` turned by `a` radians about the origin (CCW-positive, CNC Y-up). */
+export function rotateRing(ring: readonly Pt[], a: number): Pt[] {
+  const c = Math.cos(a), s = Math.sin(a)
+  return ring.map(([x, y]) => [x * c - y * s, x * s + y * c] as Pt)
+}
+
+/** `ring` turned by `a` radians about (cx, cy). */
+export function rotateRingAbout(ring: readonly Pt[], [cx, cy]: Pt, a: number): Pt[] {
+  const c = Math.cos(a), s = Math.sin(a)
+  return ring.map(([x, y]) => [cx + (x - cx) * c - (y - cy) * s, cy + (x - cx) * s + (y - cy) * c] as Pt)
+}
+
+/** Every ring moved by (dx, dy). */
+export function translateRings(rings: readonly (readonly Pt[])[], dx: number, dy: number): Pt[][] {
+  return rings.map((r) => r.map(([x, y]) => [x + dx, y + dy] as Pt))
+}
+
+/** Every ring mirrored in the X axis (y → −y); winding reverses, so fix it on emission. */
+export function mirrorRingsY(rings: readonly (readonly Pt[])[]): Pt[][] {
+  return rings.map((r) => r.map(([x, y]) => [x, -y] as Pt))
+}
+
+/** Points as a d-string at 4 decimals (`fmt4`), as given — no winding fixed. `closed` adds
+ *  the `Z`. The one writer of point lists to `d`, so every generator's paths carry the same
+ *  number format. */
+export function polylineToD(pts: readonly (readonly number[])[], closed: boolean): string {
+  return 'M' + pts.map(([x, y]) => `${fmt(x)},${fmt(y)}`).join(' L') + (closed ? ' Z' : '')
 }

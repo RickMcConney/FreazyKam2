@@ -41,7 +41,7 @@
 // those are not per-frame events.
 
 import { vRadiusAtHeightMM } from '../cam/geom'
-import { aimChipLoad } from '../cam/feeds'
+import { aimChipLoad, CHIP_RUBBING_RATIO, CHIP_HEAVY_RATIO } from '../cam/feeds'
 import type { Material } from '../store/workpieceStore'
 import { segTool, toolTypeOf, feedDiameterOf, type SimSegment, type ToolState } from './gcodeParser'
 
@@ -60,15 +60,15 @@ export interface HeatSpec {
 export const HEAT_NEUTRAL = 0
 
 /**
- * The heat band of a chip `ratio` × the aimed chip. The rubbing edge (0.75) and the
- * heavy edge (1.4) are the gauge's; below 0.75 it is graded, because how far short of
+ * The heat band of a chip `ratio` × the aimed chip. The rubbing and heavy edges are the
+ * gauge's own (CHIP_RUBBING_RATIO, CHIP_HEAVY_RATIO); below the rubbing edge it is graded, because how far short of
  * the chip a cut falls is the whole question the map is there to answer.
  */
 export function heatBand(ratio: number): number {
   if (ratio < 0.35) return 1
   if (ratio < 0.55) return 2
-  if (ratio < 0.75) return 3
-  if (ratio <= 1.4) return 4
+  if (ratio < CHIP_RUBBING_RATIO) return 3
+  if (ratio <= CHIP_HEAVY_RATIO) return 4
   return 5
 }
 

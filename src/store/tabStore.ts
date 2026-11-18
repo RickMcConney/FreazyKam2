@@ -2,8 +2,10 @@ import { create } from 'zustand'
 import { tabOutline } from '../cam/stlOutline'
 import type { StlModelBounds } from '../importers/svgImporter'
 import { tabPositions } from '../cam/tabPlacement'
+import { polylinesLength } from '../cam/geom'
 import { useTimelineStore } from '../timeline/timelineStore'
 import { uid } from '../uid'
+import { clamp } from '../util/num'
 
 export interface Tab {
   id: string
@@ -60,8 +62,7 @@ export const useTabStore = create<TabState>()((set, get) => ({
     const newTabs = paths.flatMap((p) => {
       const kept = get().tabs.filter((t) => t.pathId === p.id && t.manual).map((t) => ({ ...t, lengthMM, heightMM }))
       const polys = tabOutline(p)
-      let len = 0
-      for (const r of polys) for (let i = 1; i < r.length; i++) len += Math.hypot(r[i][0] - r[i - 1][0], r[i][1] - r[i - 1][1])
+      const len = polylinesLength(polys)
       const near = (a: number, b: number) => { const dt = Math.abs(a - b); return Math.min(dt, 1 - dt) * len < lengthMM }
       const even = tabsAlong(p.id, count, polys, lengthMM, heightMM).filter((t) => !kept.some((k) => near(k.t, t.t)))
       return [...kept, ...even].map((t) => (batchId ? { ...t, batchId } : t))
@@ -109,7 +110,7 @@ export const useTabStore = create<TabState>()((set, get) => ({
   },
 
   updateTabT: (id, t) => {
-    const clamped = Math.max(0, Math.min(1, t))
+    const clamped = clamp(t, 0, 1)
     set((s) => ({ tabs: s.tabs.map((tab) => tab.id === id ? { ...tab, t: clamped, manual: true } : tab) }))
     const tab = get().tabs.find((x) => x.id === id)
     const tl = useTimelineStore.getState()

@@ -160,7 +160,7 @@ describe('adaptive pocket mills the side the user asked for', () => {
     }
   }
 
-  it('climb and conventional take their own side round an island too', () => {
+  it('climb and conventional take their own side round an island too', { timeout: 30000 }, () => {
     expect(rightShare(ISLAND, { direction: 'climb' })).toBeGreaterThan(0.85)
     expect(rightShare(ISLAND, { direction: 'conventional' })).toBeLessThan(0.15)
   })

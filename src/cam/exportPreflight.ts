@@ -7,7 +7,7 @@ import { useToolpathStore, nothingToCut, type AnyOperation } from '../store/tool
 import { useToolStore } from '../store/toolStore'
 import { usePostProcessorStore } from '../store/postProcessorStore'
 import { useWorkpieceStore, fmtLen, zDatumOffsetMM, machineMotionLimits, MATERIAL_INFO, type Material } from '../store/workpieceStore'
-import { feedsForTool, aimChipLoad, toolChipCeilingMM } from './feeds'
+import { feedsForTool, aimChipLoad, toolChipCeilingMM, CHIP_RUBBING_RATIO, CHIP_HEAVY_RATIO } from './feeds'
 import { feedDiameterMM } from './geom'
 import { generateGcodeWithOps, initialToolId } from './gcode'
 import { movesToDrawing, toMachine } from './machineFrame'
@@ -171,9 +171,24 @@ export function buildExportPreflight(): ExportPreflight {
   // Run-time estimate: generate the G-code and run it through the same parser the
   // simulator uses, timed by the machine's planner (acceleration, cornering, max rates).
   // Tool-change pauses are not in it.
-  const program = doneOps.length > 0 ? generateGcodeWithOps(operations, toolsById, 'estimate', profile) : null
+  //
+  // ONE PROGRAM PER SHEET when there is more than one — what the machine is actually sent,
+  // each starting at its sheet's corner — built and parsed ONCE and used by the estimate,
+  // the slowed-cut check and the rapid check alike. Building a combined program as well
+  // put every op through the writer and the parser twice, and priced a transit between
+  // sheets that never happens.
+  const sheetOps = tilePrograms ?? sheetLayoutNow().map((cell) => opsOnCell(stored, cell, stock))
+  const multi = sheetsWithCuts > 1
+  const program = doneOps.length > 0 && !multi ? generateGcodeWithOps(operations, toolsById, 'estimate', profile) : null
   const parsed = program ? parseGcode(program.gcode, undefined, machineMotionLimits()) : null
-  const estimatedTimeS = parsed ? parsed.totalTimeS : 0
+  const perSheet = doneOps.length > 0 && multi
+    ? sheetOps.map((onCell) => {
+      if (!onCell.some(reachesProgram)) return null
+      const prog = generateGcodeWithOps(onCell, toolsById, 'estimate', profile)
+      return { prog, parsed: parseGcode(prog.gcode, undefined, machineMotionLimits()) }
+    })
+    : null
+  const estimatedTimeS = parsed ? parsed.totalTimeS : (perSheet ?? []).reduce((t, s) => t + (s ? s.parsed.totalTimeS : 0), 0)
 
   const warnings: PreflightWarning[] = []
 
@@ -346,8 +361,8 @@ export function buildExportPreflight(): ExportPreflight {
     const aimFz = aimChipLoad(t.type, feedDiameterMM(t), material, machineRigidity, toolChipCeilingMM(t))
     if (aimFz <= 0) continue
     const ratio = (f.xyFeedMmMin / (f.rpm * flutes)) / aimFz
-    if (ratio > 1.4) heavyTools.push(t.name)
-    else if (ratio < 0.75) rubbingTools.push(t.name)
+    if (ratio > CHIP_HEAVY_RATIO) heavyTools.push(t.name)
+    else if (ratio < CHIP_RUBBING_RATIO) rubbingTools.push(t.name)
   }
   if (heavyTools.length > 0) {
     warnings.push({
@@ -368,8 +383,11 @@ export function buildExportPreflight(): ExportPreflight {
 
   // Chip load lost to the machine SLOWING DOWN: the programmed feed is right, but on a
   // corner-heavy cut the machine never reaches it, and the spindle doesn't slow with it.
-  if (parsed && program) {
-    const slowed = slowedCuts(parsed, program.opStarts, zDatumOffsetMM(zOrigin, thicknessMM), material, machineRigidity)
+  if ((parsed && program) || perSheet) {
+    const runs = parsed && program
+      ? [{ parsed, opStarts: program.opStarts }]
+      : (perSheet ?? []).flatMap((s) => (s ? [{ parsed: s.parsed, opStarts: s.prog.opStarts }] : []))
+    const slowed = slowedCutsAcross(runs, zDatumOffsetMM(zOrigin, thicknessMM), material, machineRigidity)
     if (slowed.length > 0) {
       const plastic = MATERIAL_INFO[material].kind === 'plastic'
       const list = slowed.slice(0, 4).map((o) => {
@@ -399,12 +417,12 @@ export function buildExportPreflight(): ExportPreflight {
     const org = originWorldXY(origin, widthMM, heightMM)
     const hits: { opId: string; depthMM: number; x: number; y: number; sheet: number }[] = []
     // One program per sheet — or per tile, on a tiled job.
-    const programs = tilePrograms ?? sheetLayoutNow().map((cell) => opsOnCell(stored, cell, stock))
+    const programs = sheetOps
     programs.forEach((onCell, k) => {
       if (!onCell.some(reachesProgram)) return
-      const single = sheetsWithCuts <= 1 && parsed && program
-      const prog = single ? program : generateGcodeWithOps(onCell, toolsById, 'estimate', profile)
-      const p = single ? parsed : parseGcode(prog.gcode)
+      const built = perSheet ? perSheet[k] : parsed && program ? { prog: program, parsed } : null
+      if (!built) return
+      const { prog, parsed: p } = built
       // The check wants TOP-referenced Z, as the simulator holds it.
       // ...and on the drawing's axes, which the stock box is in (cam/machineFrame.ts).
       const segs = zOff || xDir !== 'right' ? p.segments.map((g) => ({ ...g, z: g.z - zOff, prevZ: g.prevZ - zOff })) : p.segments
@@ -512,7 +530,7 @@ const SLOWED_SHARE = 0.15
  * than the chip-load gauge's "rubbing" band, BECAUSE THE MACHINE SLOWS DOWN — moves whose
  * programmed feed is already too slow are the plain low-chip warning's business, not this.
  * Judged exactly as the simulator's gauge judges a move: in the material, not descending,
- * not a drill, against 0.75 × the aimed chip.
+ * not a drill, against CHIP_RUBBING_RATIO × the aimed chip.
  */
 export function slowedCuts(
   parsed: ParsedGcode,
@@ -521,9 +539,38 @@ export function slowedCuts(
   material: Material,
   rigidity: number,
 ): { opId: string; fraction: number }[] {
-  if (opStarts.length === 0) return []
+  return slowedCutsAcross([{ parsed, opStarts }], zOffMM, material, rigidity)
+}
+
+/** `slowedCuts` over several programs at once — one per sheet or tile — summing each
+ *  operation's judged and slowed length over all of them (a tiled op is cut in pieces). */
+export function slowedCutsAcross(
+  programs: { parsed: ParsedGcode; opStarts: { opId: string; line: number }[] }[],
+  zOffMM: number,
+  material: Material,
+  rigidity: number,
+): { opId: string; fraction: number }[] {
   const judged = new Map<string, number>()
   const slow = new Map<string, number>()
+  for (const { parsed, opStarts } of programs) if (opStarts.length > 0) slowedTotals(parsed, opStarts, zOffMM, material, rigidity, judged, slow)
+  const out: { opId: string; fraction: number }[] = []
+  for (const { opStarts } of programs) for (const { opId } of opStarts) {
+    const total = judged.get(opId) ?? 0
+    const fraction = total > 0 ? (slow.get(opId) ?? 0) / total : 0
+    if (fraction >= SLOWED_SHARE && !out.some((o) => o.opId === opId)) out.push({ opId, fraction })
+  }
+  return out
+}
+
+function slowedTotals(
+  parsed: ParsedGcode,
+  opStarts: { opId: string; line: number }[],
+  zOffMM: number,
+  material: Material,
+  rigidity: number,
+  judged: Map<string, number>,
+  slow: Map<string, number>,
+): void {
   let k = 0
   for (const seg of parsed.segments) {
     while (k + 1 < opStarts.length && seg.lineIdx >= opStarts[k + 1].line) k++
@@ -534,7 +581,7 @@ export function slowedCuts(
     const type = toolTypeOf(ts)
     if (type === 'drill' || !(ts.spindleRpm > 0) || !(ts.fluteCount > 0)) continue
     const perSec = (ts.spindleRpm * ts.fluteCount) / 60
-    const vRub = 0.75 * aimChipLoad(type, feedDiameterOf(ts), material, rigidity, ts.toolChipCeilingMM) * perSec
+    const vRub = CHIP_RUBBING_RATIO * aimChipLoad(type, feedDiameterOf(ts), material, rigidity, ts.toolChipCeilingMM) * perSec
     if (seg.feedRateMmMin / 60 < vRub) continue
     const L = Math.hypot(seg.x - seg.prevX, seg.y - seg.prevY, seg.z - seg.prevZ)
     const id = opStarts[k].opId
@@ -542,11 +589,4 @@ export function slowedCuts(
     const tr = { v0: seg.v0!, vc: seg.vc!, v1: seg.v1!, acc: seg.acc, durationS: seg.durationS }
     slow.set(id, (slow.get(id) ?? 0) + lengthBelowSpeed(tr, L, vRub))
   }
-  const out: { opId: string; fraction: number }[] = []
-  for (const { opId } of opStarts) {
-    const total = judged.get(opId) ?? 0
-    const fraction = total > 0 ? (slow.get(opId) ?? 0) / total : 0
-    if (fraction >= SLOWED_SHARE && !out.some((o) => o.opId === opId)) out.push({ opId, fraction })
-  }
-  return out
 }

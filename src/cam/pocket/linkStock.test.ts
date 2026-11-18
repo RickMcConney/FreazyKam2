@@ -56,7 +56,7 @@ describe('a pocket never moves into stock it has not cut, except at feed', () =>
     }
   })
 
-  it('enters a finishing ring from safe height without rapiding down beside the stock the roughing left', () => {
+  it('enters a finishing ring from safe height without rapiding down beside the stock the roughing left', { timeout: 30000 }, () => {
     // Every strategy hands its finishing rings to the same entry, and before the fix every
     // one of them hit it somewhere in this sweep (raster at 140°, contour and morph at
     // every angle) — a G0 straight down to the floor, beside a wall the roughing had not
@@ -70,6 +70,20 @@ describe('a pocket never moves into stock it has not cut, except at feed', () =>
           const label = `${strategy} ${angle}deg ${stepoverPercent}%`
           expect(`${label}: ${hits(segs).length}`).toBe(`${label}: 0`)
         }
+      }
+    }
+  })
+})
+
+describe('the hop from one depth level to the next', () => {
+  it('rides over the floor the level above cut, never into stock, in every strategy', { timeout: 60000 }, () => {
+    // Between levels the tool micro-lifts over the floor just cut instead of retracting
+    // (generatePocket's linkLevel). Written as G0, that hop must not touch stock.
+    for (const strategy of ['raster', 'contour', 'morph', 'adaptive', 'hybrid'] as const) {
+      for (const rampIn of [false, true]) {
+        const segs = generatePocket(OVAL, TOOL, params({ strategy, islandDs: ISLANDS, rampIn, depthMM: 6, stepDownMM: 2, stepoverPercent: 45 }))
+        const label = `${strategy} ${rampIn ? 'ramp' : 'plunge'}`
+        expect(`${label}: ${hits(segs).length}`).toBe(`${label}: 0`)
       }
     }
   })

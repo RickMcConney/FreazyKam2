@@ -162,8 +162,14 @@ export function minChipLoad(toolType: ToolType, diameterMM: number, material: Ma
   return targetChipLoad(toolType, diameterMM, material, ceilingMM) * MIN_CHIP_FRACTION[MATERIAL_INFO[material].kind]
 }
 
-// The simulator and the export preflight call a chip under 0.75× the aim "rubbing".
-// Auto feeds never thins below 0.8× the aim, so its own output never trips them.
+/** The chip-load gauge's two edges, as fractions of the aimed chip: under RUBBING the cut
+ *  rubs (too hot), over HEAVY the chips are too large. The simulator's gauge, its heat
+ *  map and the export check all judge by these — one pair, so they cannot drift apart. */
+export const CHIP_RUBBING_RATIO = 0.75
+export const CHIP_HEAVY_RATIO = 1.4
+
+// Auto feeds never thins below 0.8× the aim, above CHIP_RUBBING_RATIO, so its own output
+// never trips the rubbing judgement.
 const RUBBING_MARGIN = 0.8
 
 interface FeedCalcInput {

@@ -1,6 +1,7 @@
 
 import type { ToolType } from '../store/toolStore'
-import { fluteHelixFromName, type FluteHelix } from '../cam/geom'
+import { arcAngles, fluteHelixFromName, type FluteHelix } from '../cam/geom'
+import { hms } from '../util/time'
 import { wordMatcher, codeOf, isProbeG, takesAxisArgs, isCannedG } from './gcodeWords'
 import { planMotion, trapezoidAt, FALLBACK_RAPID_MM_MIN, type MotionLimits, type PlanBlock, type Trapezoid } from './motionPlanner'
 
@@ -201,11 +202,8 @@ function arcToSegments(
   const r = Math.hypot(ii, jj)
   if (r < 0.001) return []
 
-  let a0 = Math.atan2(y0 - cy, x0 - cx)
-  let a1 = Math.atan2(y1 - cy, x1 - cx)
-
-  if (cw) { if (a1 >= a0) a1 -= 2 * Math.PI }
-  else { if (a1 <= a0) a1 += 2 * Math.PI }
+  // The controller's reading: exact angles, no near-coincident full-circle rule.
+  const { a0, a1 } = arcAngles(x0, y0, x1, y1, cx, cy, cw, false)
 
   const sweep = Math.abs(a1 - a0)
   // Chord count from sagitta tolerance, not a fixed angular step. The
@@ -680,7 +678,7 @@ export function interpolatePos(
 /** The simulation clock: `hh:mm:ss`, hours always shown — a job running past the hour
  *  read as `75:12` in minutes, and a fixed width keeps the readout from jumping. */
 export function formatSimTime(s: number): string {
-  const t = Math.max(0, Math.floor(s))
+  const { h, m, s: sec } = hms(Math.max(0, Math.floor(s)))
   const two = (n: number) => n.toString().padStart(2, '0')
-  return `${two(Math.floor(t / 3600))}:${two(Math.floor((t % 3600) / 60))}:${two(t % 60)}`
+  return `${two(h)}:${two(m)}:${two(sec)}`
 }

@@ -33,7 +33,10 @@
 //
 // Straight segments only: a curve arrives as its flattening. CNC mm; winding is free.
 
-import { ptSegDist, type Pt2 } from './pathFlattener'
+import { signedArea, type Pt2 } from './pathFlattener'
+import { ringsBBox, pointOnRing, pointInPolygon } from './geom'
+import { dot, cross, dist, lerpPt as lerp } from '../util/vec2'
+import { clamp } from '../util/num'
 
 /** The most two borders may differ by and still be one physical line, whatever the user's tolerance. */
 export const MAX_PHYSICAL_COINCIDENCE_MM = 1e-3
@@ -122,39 +125,20 @@ export function requireValid(p: CommonLinePlan): CommonLinePlan {
 const sub = (a: Pt2, b: Pt2): Pt2 => [a[0] - b[0], a[1] - b[1]]
 const add = (a: Pt2, b: Pt2): Pt2 => [a[0] + b[0], a[1] + b[1]]
 const mul = (a: Pt2, k: number): Pt2 => [a[0] * k, a[1] * k]
-const dot = (a: Pt2, b: Pt2): number => a[0] * b[0] + a[1] * b[1]
-const cross = (a: Pt2, b: Pt2): number => a[0] * b[1] - a[1] * b[0]
 const len = (a: Pt2): number => Math.hypot(a[0], a[1])
-const dist = (a: Pt2, b: Pt2): number => Math.hypot(a[0] - b[0], a[1] - b[1])
-const lerp = (a: Pt2, b: Pt2, t: number): Pt2 => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
 const near = (a: Pt2, b: Pt2, tol: number): boolean => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 <= tol * tol
-const clamp01 = (v: number): number => Math.max(0, Math.min(1, v))
+const clamp01 = (v: number): number => clamp(v, 0, 1)
 const mod = (i: number, n: number): number => ((i % n) + n) % n
-
-function signedArea(pts: readonly Pt2[]): number {
-  let a = 0
-  for (let i = 0; i < pts.length; i++) a += cross(pts[i], pts[(i + 1) % pts.length])
-  return a * 0.5
-}
 
 type Location = 'inside' | 'boundary' | 'outside'
 
 function locate(p: Pt2, poly: readonly Pt2[], tol: number): Location {
   if (poly.length < 3) return 'outside'
-  let inside = false
-  let prev = poly[poly.length - 1]
-  for (const cur of poly) {
-    if (pointSegDist(p, prev, cur) <= tol) return 'boundary'
-    if ((cur[1] > p[1]) !== (prev[1] > p[1])) {
-      const xAtY = prev[0] + ((p[1] - prev[1]) * (cur[0] - prev[0])) / (cur[1] - prev[1])
-      if (xAtY > p[0]) inside = !inside
-    }
-    prev = cur
-  }
-  return inside ? 'inside' : 'outside'
+  const ring = poly as Pt2[]
+  if (pointOnRing(p[0], p[1], ring, tol)) return 'boundary'
+  return pointInPolygon(p[0], p[1], ring) ? 'inside' : 'outside'
 }
 
-const pointSegDist = (p: Pt2, a: Pt2, b: Pt2): number => ptSegDist(p[0], p[1], a[0], a[1], b[0], b[1])
 
 // ─── Tolerances ───────────────────────────────────────────────────────────────
 
@@ -283,9 +267,8 @@ const segmentBounds = (s: { start: Pt2; end: Pt2 }): Bounds => [
 ]
 
 function ringBounds(r: Ring): Bounds {
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
-  for (const [x, y] of r.points) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y) }
-  return [x0, y0, x1, y1]
+  const b = ringsBBox([r.points])
+  return b ? [b.minX, b.minY, b.maxX, b.maxY] : [Infinity, Infinity, -Infinity, -Infinity]
 }
 
 const boundsMayContact = (a: Bounds, b: Bounds, tol: number): boolean =>
@@ -539,20 +522,36 @@ function compareStrings(a: string[], b: string[]): number {
 }
 
 function coalesceShared(segments: CommonLineSegment[], tol: number): CommonLineSegment[] {
+  // The merges happen in exactly the order a scan restarted from (0, 1) after every merge
+  // would make them — the first mergeable pair in (i, j) order each time — without the
+  // restart. After a merge at row i only the MERGED item is new, so the only pairs that
+  // can have become mergeable are (p, i) for p < i, and row i itself; every other pair
+  // was already tested and nothing about either side has changed. That was O(k·n²) for
+  // k merges; this is O(n² + k·n), with the same merges in the same order.
   const out = [...segments]
-  let changed = true
-  while (changed) {
-    changed = false
-    outer: for (let i = 0; i < out.length; i++) {
-      for (let j = i + 1; j < out.length; j++) {
-        const merged = canMerge(out[i], out[j], tol)
-        if (!merged) continue
-        out[i] = merged
-        out.splice(j, 1)
-        changed = true
-        break outer
-      }
+  let i = 0
+  while (i < out.length) {
+    let merged = false
+    for (let j = i + 1; j < out.length; j++) {
+      const m = canMerge(out[i], out[j], tol)
+      if (!m) continue
+      out[i] = m
+      out.splice(j, 1)
+      merged = true
+      break
     }
+    if (!merged) { i++; continue }
+    let k = i
+    for (;;) {
+      let p = 0
+      let m: CommonLineSegment | null = null
+      for (; p < k; p++) if ((m = canMerge(out[p], out[k], tol))) break
+      if (!m) break
+      out[p] = m
+      out.splice(k, 1)
+      k = p
+    }
+    i = k
   }
   return out.sort((a, b) =>
     compareStrings(a.ownerIds, b.ownerIds) ||

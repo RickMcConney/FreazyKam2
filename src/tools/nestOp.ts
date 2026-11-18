@@ -46,7 +46,7 @@ import { cellOffset, nestCell } from '../cam/sheets'
 // it takes rings and gives back transforms.
 
 import { flattenPath, type Pt2 } from '../cam/pathFlattener'
-import { interiorPoint, ringsBBox } from '../cam/geom'
+import { interiorPoint, ringsBBox, ringCrossingsAtY } from '../cam/geom'
 import { snapToGap } from './nestSnap'
 
 // ─── Public types ─────────────────────────────────────────────────────────────
@@ -268,16 +268,8 @@ interface Mask {
   cells: number
 }
 
-/** Where a horizontal line at `y` crosses a closed ring. */
-function ringCrossings(ring: Pt2[], y: number, out: number[]): void {
-  for (let a = 0, b = ring.length - 1; a < ring.length; b = a++) {
-    const ya = ring[a][1], yb = ring[b][1]
-    // Same half-open rule as pointInPolygon, so a vertex on the line counts once.
-    if ((ya > y) !== (yb > y)) {
-      out.push(ring[a][0] + ((y - ya) / (yb - ya)) * (ring[b][0] - ring[a][0]))
-    }
-  }
-}
+/** Where a horizontal line at `y` crosses a closed ring (geom's, pointInPolygon's rule). */
+const ringCrossings = ringCrossingsAtY
 
 /**
  * Subpaths that carry geometry, with non-finite points dropped.

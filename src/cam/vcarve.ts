@@ -23,6 +23,7 @@ import { flattenPath, splitSelfIntersecting, requireClosedSubpaths, type Pt2 } f
 import { addNote } from './notes'
 import type { MotionSegment } from '../store/toolpathStore'
 import type { Tool } from '../store/toolStore'
+import { GridFrame, cellForCount } from './pocket/grid'
 
 const SCALE = 100 // 1 mm → 100 integer units; gives 0.01 mm precision for JSPoly
 
@@ -47,11 +48,11 @@ interface TPoint { x: number; y: number; r: number }
 
 // ─── PriorityQueue (min-heap) ─────────────────────────────────────────────────
 
-class PriorityQueue {
-  private values: { val: string; priority: number }[] = []
+class PriorityQueue<V = string> {
+  private values: { val: V; priority: number }[] = []
   get size() { return this.values.length }
 
-  enqueue(val: string, priority: number) {
+  enqueue(val: V, priority: number) {
     this.values.push({ val, priority })
     this._bubbleUp()
   }
@@ -95,40 +96,71 @@ class PriorityQueue {
 
 // ─── Graph utilities (ported from vcarve.js) ──────────────────────────────────
 
-// Walk the predecessor chain back from `target` to `start`. Returns null when
-// the chain breaks before reaching `start` — the caller steps along the path
-// from its own current node, so a partial path (one that doesn't begin at
-// `start`) would silently cut a straight line from the tool's real position to
-// somewhere in the middle of the skeleton. Dijkstra only calls this for nodes
-// it actually reached, so this is a guard, not an expected outcome.
-function reconstructPath(predecessors: Map<string, string>, start: string, target: string): string[] | null {
-  const path: string[] = []
-  let cur: string | undefined = target
-  while (cur !== undefined) {
-    path.unshift(cur)
-    if (cur === start) return path
-    cur = predecessors.get(cur)
-  }
-  return null
+// The graph as numbers, built once per graph (it is never changed after buildGraph), so a
+// search runs on typed arrays instead of string-keyed Maps. A traversal runs one search per
+// hop — thousands on a large traced region — and the Maps were most of its time. Nodes are
+// numbered in the graph's own key order and each node's edges kept in their order, and the
+// queue compares priorities only, so the search visits, ties and returns exactly as before.
+interface GraphIndex {
+  ids: string[]
+  index: Map<string, number>
+  start: Int32Array      // edges of node i are [start[i], start[i + 1])
+  to: Int32Array
+  w: Float64Array
+  dist: Float64Array
+  pred: Int32Array
+  seen: Int32Array       // dist/pred of node i are valid when seen[i] === stamp
+  stamp: number
+}
+const graphIndexes = new WeakMap<Graph, GraphIndex>()
+function indexOf(graph: Graph): GraphIndex {
+  const hit = graphIndexes.get(graph)
+  if (hit) return hit
+  const ids = Object.keys(graph)
+  const index = new Map(ids.map((id, i) => [id, i]))
+  const start = new Int32Array(ids.length + 1)
+  let m = 0
+  for (let i = 0; i < ids.length; i++) { start[i] = m; m += graph[ids[i]].length }
+  start[ids.length] = m
+  const to = new Int32Array(m), w = new Float64Array(m)
+  for (let i = 0, e = 0; i < ids.length; i++) for (const { node, weight } of graph[ids[i]]) { to[e] = index.get(node)!; w[e++] = weight }
+  const gi: GraphIndex = { ids, index, start, to, w, dist: new Float64Array(ids.length), pred: new Int32Array(ids.length), seen: new Int32Array(ids.length), stamp: 0 }
+  graphIndexes.set(graph, gi)
+  return gi
 }
 
 function dijkstraToAnyTarget(graph: Graph, startNode: string, targetSet: Set<string>) {
-  const distances = new Map<string, number>()
-  const predecessors = new Map<string, string>()
-  const pq = new PriorityQueue()
-  distances.set(startNode, 0)
-  pq.enqueue(startNode, 0)
+  const g = indexOf(graph)
+  const s = g.index.get(startNode)
+  if (s === undefined) {
+    // Not a node of the graph: only a start that is itself a target is reachable.
+    return targetSet.has(startNode)
+      ? { path: [startNode] as string[] | null, distance: 0, targetId: startNode as string | null }
+      : { path: null as string[] | null, distance: Infinity, targetId: null as string | null }
+  }
+  const stamp = ++g.stamp
+  const { dist, pred, seen, ids, start, to, w } = g
+  const at = (i: number) => (seen[i] === stamp ? dist[i] : Infinity)
+  const pq = new PriorityQueue<number>()
+  seen[s] = stamp; dist[s] = 0; pred[s] = -1
+  pq.enqueue(s, 0)
 
   while (pq.size) {
     const { val: cur, priority: curDist } = pq.dequeue()!
-    if (targetSet.has(cur)) {
-      return { path: reconstructPath(predecessors, startNode, cur), distance: distances.get(cur)!, targetId: cur }
+    if (targetSet.has(ids[cur])) {
+      // Walk the predecessor chain back to the start. Every reached node but the start has a
+      // predecessor, so the chain always ends there.
+      const path: string[] = []
+      for (let c = cur; c !== -1; c = pred[c]) path.push(ids[c])
+      path.reverse()
+      return { path: path as string[] | null, distance: dist[cur], targetId: ids[cur] as string | null }
     }
-    if (curDist > (distances.get(cur) ?? Infinity)) continue
-    for (const { node, weight } of (graph[cur] ?? [])) {
-      const nd = curDist + weight
-      if (nd < (distances.get(node) ?? Infinity)) {
-        distances.set(node, nd); predecessors.set(node, cur); pq.enqueue(node, nd)
+    if (curDist > at(cur)) continue
+    for (let e = start[cur]; e < start[cur + 1]; e++) {
+      const node = to[e]
+      const nd = curDist + w[e]
+      if (nd < at(node)) {
+        seen[node] = stamp; dist[node] = nd; pred[node] = cur; pq.enqueue(node, nd)
       }
     }
   }
@@ -180,30 +212,63 @@ function findNearestNode(nodeMap: Map<string, GraphNode>, refX: number, refY: nu
   return start
 }
 
-function findClosestUnvisited(cur: GraphNode, nodeMap: Map<string, GraphNode>): GraphNode | null {
-  let min = Infinity, target: GraphNode | null = null
-  nodeMap.forEach(p => {
-    if (!p.visited && p.id !== cur.id) {
-      const d = Math.hypot(p.x - cur.x, p.y - cur.y)
-      if (d < min) { min = d; target = p }
+// The unvisited node nearest a point, found on a grid instead of by scanning every node:
+// once a traversal runs out of leaves it asks this on EVERY hop, and the full scan was most
+// of a large region's traversal. Same answer as findClosestUnvisited — the nearest by the
+// same distance, ties to the node first in nodeMap order. Visited nodes are dropped from
+// their cell as the search meets them (nothing is un-visited within one traversal).
+class UnvisitedGrid {
+  private readonly g: GridFrame
+  private readonly buckets: number[][]
+  constructor(private readonly nodes: GraphNode[]) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const p of nodes) { if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x; if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y }
+    this.g = new GridFrame(minX, minY, maxX, maxY, cellForCount(Math.max(maxX - minX, maxY - minY), nodes.length))
+    this.buckets = Array.from({ length: this.g.cols * this.g.rows }, () => [] as number[])
+    nodes.forEach((p, i) => this.buckets[this.g.row(p.y) * this.g.cols + this.g.col(p.x)].push(i))
+  }
+  closest(cur: GraphNode): GraphNode | null {
+    const g = this.g
+    const cx = g.col(cur.x), cy = g.row(cur.y)
+    let best = Infinity, bestI = -1
+    const visit = (cell: number) => {
+      const b = this.buckets[cell]
+      let w = 0
+      for (let k = 0; k < b.length; k++) {
+        const i = b[k], p = this.nodes[i]
+        if (p.visited) continue
+        b[w++] = i
+        if (p.id === cur.id) continue
+        const d = Math.hypot(p.x - cur.x, p.y - cur.y)
+        if (d < best || (d === best && i < bestI)) { best = d; bestI = i }
+      }
+      b.length = w
     }
-  })
-  return target
+    for (let r = 0, maxRing = g.maxRing; r <= maxRing; r++) {
+      // Anything in ring r is at least (r − 1) cells away: strictly farther, so no tie either.
+      if (bestI >= 0 && (r - 1) * g.cell > best) break
+      g.forRing(cx, cy, r, visit)
+    }
+    return bestI >= 0 ? this.nodes[bestI] : null
+  }
 }
 
-function findTargetNodes(nodeMap: Map<string, GraphNode>, cur: GraphNode): GraphNode[] {
+
+// `leaves` is every node of degree 1, in nodeMap order — degree never changes during a
+// traversal, so it is listed once instead of rescanning every node at every hop.
+function findTargetNodes(leaves: GraphNode[], unvisited: UnvisitedGrid, cur: GraphNode): GraphNode[] {
   const targets: GraphNode[] = []
-  nodeMap.forEach(p => { if (!p.visited && p.connections.size === 1) targets.push(p) })
+  for (const p of leaves) if (!p.visited) targets.push(p)
   if (targets.length === 0) {
-    const fallback = findClosestUnvisited(cur, nodeMap)
+    const fallback = unvisited.closest(cur)
     if (fallback) targets.push(fallback)
   }
   return targets
 }
 
-function findClosestTarget(curId: string, nodeMap: Map<string, GraphNode>, graph: Graph) {
+function findClosestTarget(curId: string, nodeMap: Map<string, GraphNode>, graph: Graph, leaves: GraphNode[], unvisited: UnvisitedGrid) {
   const curNode = nodeMap.get(curId)!
-  const targets = findTargetNodes(nodeMap, curNode)
+  const targets = findTargetNodes(leaves, unvisited, curNode)
   if (!targets.length) return { target: null, path: null }
 
   const targetSet = new Set(targets.map(t => t.id))
@@ -256,6 +321,9 @@ function findPossiblePath(
   startNode: GraphNode,
 ): { toolpath: TPoint[]; travelDistance: number } {
   nodeMap.forEach(n => { n.visited = false })
+  const leaves: GraphNode[] = []
+  nodeMap.forEach(n => { if (n.connections.size === 1) leaves.push(n) })
+  const unvisited = new UnvisitedGrid([...nodeMap.values()])
 
   const toolpath: TPoint[] = []
   const traversed = new Set<string>()
@@ -265,7 +333,7 @@ function findPossiblePath(
   node.visited = true
   toolpath.push({ x: node.x, y: node.y, r: node.r })
 
-  let result = findClosestTarget(node.id, nodeMap, graph)
+  let result = findClosestTarget(node.id, nodeMap, graph, leaves, unvisited)
 
   while (result.target && result.path && result.path.length > 1) {
     const path = result.path
@@ -279,7 +347,7 @@ function findPossiblePath(
       prevId = path[i]
       node = next
     }
-    result = findClosestTarget(node.id, nodeMap, graph)
+    result = findClosestTarget(node.id, nodeMap, graph, leaves, unvisited)
   }
 
   // Second pass: cover any edges not yet traversed (handles loops/cycles).
@@ -291,9 +359,21 @@ function findPossiblePath(
     })
   })
 
+  // The nodes with an untraversed edge, kept up to date as edges are taken rather than
+  // rebuilt from every untraversed edge on each step (O(E²) over the sweep).
+  const endpoints = new Set<string>()
+  const openAt = new Map<string, number>()
+  const open = (id: string) => { openAt.set(id, (openAt.get(id) ?? 0) + 1); endpoints.add(id) }
+  const close = (id: string) => { const c = openAt.get(id)! - 1; openAt.set(id, c); if (c === 0) endpoints.delete(id) }
+  for (const { from, to } of untraversed.values()) { open(from); open(to) }
+  const take = (ek: string) => {
+    const e = untraversed.get(ek)
+    if (!e) return
+    untraversed.delete(ek)
+    close(e.from); close(e.to)
+  }
+
   while (untraversed.size > 0) {
-    const endpoints = new Set<string>()
-    for (const { from, to } of untraversed.values()) { endpoints.add(from); endpoints.add(to) }
 
     if (!endpoints.has(node.id)) {
       const nav = dijkstraToAnyTarget(graph, node.id, endpoints)
@@ -302,7 +382,7 @@ function findPossiblePath(
         const nxt = nodeMap.get(nav.path[i])!
         const ek = makeEdgeKey(nav.path[i - 1], nav.path[i])
         toolpath.push({ x: nxt.x, y: nxt.y, r: nxt.r })
-        traversed.add(ek); untraversed.delete(ek)
+        traversed.add(ek); take(ek)
         travel += Math.hypot(nxt.x - node.x, nxt.y - node.y)
         node = nxt
       }
@@ -314,7 +394,7 @@ function findPossiblePath(
       if (untraversed.has(ek)) {
         const far = nodeMap.get(connId)!
         toolpath.push({ x: far.x, y: far.y, r: far.r })
-        traversed.add(ek); untraversed.delete(ek)
+        traversed.add(ek); take(ek)
         travel += Math.hypot(far.x - node.x, far.y - node.y)
         node = far
         advanced = true

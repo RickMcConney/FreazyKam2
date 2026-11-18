@@ -1,7 +1,7 @@
-import { flattenPath, ensureWinding, signedArea, rotatePolylineNear, arcFitPolyline, douglasPeucker, ARC_FIT_MAX_SPAN, splitSelfIntersecting, isOpenSubpath, type Pt2 } from './pathFlattener'
+import { flattenPath, ensureWinding, signedArea, rotatePolylineNear, arcFitPolyline, ARC_FIT_MAX_SPAN, splitSelfIntersecting, isOpenSubpath, fitAndThin, type Pt2 } from './pathFlattener'
 import { inflatePathsD, JoinType, EndType } from 'clipper2-ts'
 import { roundInsideCorners } from './cornerRounding'
-import { zPasses, arcLengths, interpPt, stripClosingDuplicate, toolRadiusAtHeight, feedDiameterMM, pushAll, ptSegDistSq } from './geom'
+import { zPasses, arcLengths, interpPt, polylineLength, stripClosingDuplicate, toolRadiusAtHeight, feedDiameterMM, pushAll, ptSegDistSq } from './geom'
 import type { MotionSegment } from '../store/toolpathStore'
 import type { Tool, CuttingDirection } from '../store/toolStore'
 import type { CutSide } from '../store/toolpathStore'
@@ -118,13 +118,13 @@ function fitCircle(pts: Pt2[]): { cx: number; cy: number; r: number } | null {
   return { cx, cy, r }
 }
 
-// Evaluate XY at arc-length fraction t across all subpaths (matches TabLayer's evalPathAtT convention).
+// Evaluate XY at arc-length fraction t across all subpaths — the same t TabLayer draws through
+// tabPointAt (cam/tabPlacement).
 export function designPathAtT(subpaths: Pt2[][], t: number): [number, number] | null {
   let totalLen = 0
   const segs: { pts: Pt2[]; startLen: number; segLen: number }[] = []
   for (const sp of subpaths) {
-    let len = 0
-    for (let i = 1; i < sp.length; i++) len += Math.hypot(sp[i][0] - sp[i - 1][0], sp[i][1] - sp[i - 1][1])
+    const len = polylineLength(sp)
     segs.push({ pts: sp, startLen: totalLen, segLen: len })
     totalLen += len
   }
@@ -493,25 +493,9 @@ export function generateProfile(
   const FINE_FIT_TOL_MM = 0.01
   const fitPass = (pts: Pt2[], z: number): MotionSegment[] => {
     if (!fineFit) return fitPassCoarse(pts, z)
-    const out: MotionSegment[] = []
-    let anchor: Pt2 = pts[0]
-    let run: Pt2[] = []
-    const flush = () => {
-      if (run.length === 0) return
-      const thin = douglasPeucker([anchor, ...run], FINE_FIT_TOL_MM)
-      for (let k = 1; k < thin.length; k++) out.push({ x: thin[k][0], y: thin[k][1], z, rapid: false, exact: true })
-      anchor = run[run.length - 1]
-      run = []
-    }
-    for (const s of arcFitPolyline(pts, FINE_FIT_TOL_MM, ARC_FIT_MAX_SPAN)) {
-      if (s.arc) {
-        flush()
-        out.push({ x: s.x, y: s.y, z, rapid: false, arc: s.arc, exact: true })
-        anchor = [s.x, s.y]
-      } else run.push([s.x, s.y])
-    }
-    flush()
-    return out
+    return fitAndThin(pts, FINE_FIT_TOL_MM, ARC_FIT_MAX_SPAN).map((s) => (s.arc
+      ? { x: s.x, y: s.y, z, rapid: false, arc: s.arc, exact: true }
+      : { x: s.x, y: s.y, z, rapid: false, exact: true }))
   }
 
   // Climb with an M3 (CW) spindle puts the material on the RIGHT of travel:
@@ -694,10 +678,7 @@ export function emitProfilePath(segs: MotionSegment[], rawPts: Pt2[], isOpen: bo
           pushAll(segs, polylinePassWithTabs(cleanPts, zDepth, cleanRanges, cleanLens))
           // Full cut from pts[0] to far end
           if (activeRanges.length === 0) {
-            const arcSegs = arcFitPolyline(pts, 0.1, ARC_FIT_MAX_SPAN)
-            for (const s of arcSegs) {
-              segs.push({ x: s.x, y: s.y, z: zDepth, rapid: false, ...(s.arc ? { arc: s.arc } : {}) })
-            }
+            pushAll(segs, fitPassCoarse(pts, zDepth))
           } else {
             const effectiveRanges = forward
               ? activeRanges
@@ -709,10 +690,7 @@ export function emitProfilePath(segs: MotionSegment[], rawPts: Pt2[], isOpen: bo
           const mainPts = forward ? mainFwdPts : mainBwdPts
           const mainLens = forward ? mainFwdLens : mainBwdLens
           if (activeRanges.length === 0) {
-            const arcSegs = arcFitPolyline(mainPts, 0.1, ARC_FIT_MAX_SPAN)
-            for (const s of arcSegs) {
-              segs.push({ x: s.x, y: s.y, z: zDepth, rapid: false, ...(s.arc ? { arc: s.arc } : {}) })
-            }
+            pushAll(segs, fitPassCoarse(mainPts, zDepth))
           } else {
             const mainTabRanges = forward
               ? activeRanges.map(tr => ({ start: tr.start - rampDist, end: tr.end - rampDist, tabZ: tr.tabZ })).filter(tr => tr.end + reach(tr) > 0 && tr.start - reach(tr) < mainTotal)
@@ -745,10 +723,7 @@ export function emitProfilePath(segs: MotionSegment[], rawPts: Pt2[], isOpen: bo
         }, zDepth)
         segs.push({ x: pts[0][0], y: pts[0][1], z: startHold, rapid: false })
         if (activeRanges.length === 0) {
-          const arcSegs = arcFitPolyline(pts, 0.1, ARC_FIT_MAX_SPAN)
-          for (const s of arcSegs) {
-            segs.push({ x: s.x, y: s.y, z: zDepth, rapid: false, ...(s.arc ? { arc: s.arc } : {}) })
-          }
+          pushAll(segs, fitPassCoarse(pts, zDepth))
         } else {
           // For backward passes, mirror tab arc-length positions relative to path total
           const effectiveRanges = forward

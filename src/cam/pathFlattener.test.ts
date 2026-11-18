@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { flattenPath, pathExtents, arcFitPolyline, splitSelfIntersecting, signedArea, type Pt2 } from './pathFlattener'
+import { flattenPath, pathExtents, arcFitPolyline, splitSelfIntersecting, signedArea, parseD, type Pt2 } from './pathFlattener'
 
 const allFinite = (rings: [number, number][][]) => rings.every((r) => r.every(([x, y]) => Number.isFinite(x) && Number.isFinite(y)))
 
@@ -242,5 +242,17 @@ describe('arcFitPolyline — a circle that wobbles a few microns, as a waterline
       expect(Math.hypot(a.arc!.cx, a.arc!.cy)).toBeLessThan(0.05)
       expect(a.arc!.cw).toBe(true)
     }
+  })
+})
+
+describe('parseD — a number in exponent form is one number, not a number and a command', () => {
+  it('reads 6.1e-15 and 1e1 as the numbers they are, and keeps every point after them', () => {
+    expect(parseD('M 0 0 L 6.1e-15 10 L 1e1 1E1 L -5 5 Z')).toEqual([
+      { t: 'M', x: 0, y: 0 }, { t: 'L', x: 6.1e-15, y: 10 }, { t: 'L', x: 10, y: 10 },
+      { t: 'L', x: -5, y: 5 }, { t: 'Z' },
+    ])
+  })
+  it('a relative path with signed exponents and no separators reads the same as written out', () => {
+    expect(parseD('m1e1,0l-1e1,1.5e+1z')).toEqual(parseD('M 10 0 L 0 15 Z'))
   })
 })

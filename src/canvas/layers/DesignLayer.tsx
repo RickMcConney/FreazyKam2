@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback, memo } from 'react'
+import { useEffect, useState, useMemo, useCallback, useRef, memo } from 'react'
 import type Konva from 'konva'
 import { Group, Path, Shape, Image as KonvaImage, Text as KonvaText } from 'react-konva'
 import type { Viewport } from '../viewport'
@@ -7,7 +7,7 @@ import { useUIStore } from '../../store/uiStore'
 import { canvasTheme } from '../../theme'
 import type { LiveTransform } from '../types'
 import type { ImportedPath } from '../../store/pathsStore'
-import { getBBox, extractRectInfo } from '../selectionUtils'
+import { getBBox, extractRectInfo, translateD } from '../selectionUtils'
 import { decodeStlMesh } from '../../importers/stlImporter'
 import { placeStlModel } from '../../cam/stlPlacement'
 import { buildHeightMap } from '../../cam/profile3d'
@@ -220,14 +220,19 @@ const StlPath = memo(function StlPath({ p, isSelected, liveTransform, followTran
   const lt = transformFor(p.id, liveTransform, followTransforms)
   const [hmCanvas, setHmCanvas] = useState<HTMLCanvasElement | null>(null)
 
-  // Build height map on a deferred timer so the first render isn't blocked
+  // The picture depends on the model and the outline's SHAPE, not on where it stands: a
+  // move (a new `d`, translated) draws the same pixels at a new place, so it is keyed on
+  // the outline moved to the origin and rebuilt only for a turn, a resize or a new model.
+  // Built on a deferred timer so the first render isn't blocked; the old picture stays up
+  // until the new one is ready rather than blanking after every gesture.
+  const bb0 = getBBox(p.d)
+  const shapeKey = bb0 ? translateD(p.d, -bb0.minX, -bb0.minY) : p.d
   useEffect(() => {
-    setHmCanvas(null)
     const timer = setTimeout(() => {
       setHmCanvas(buildHeightMapCanvas(p))
     }, 0)
     return () => clearTimeout(timer)
-  }, [p.id, p.d]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [p.id, p.stlSrc, p.stlModelBounds, shapeKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const attrs = liveTransformToNodeAttrs(lt)
   const strokeWidth = liveStrokeWidth(lt, attrs, isSelected, scale)
@@ -359,15 +364,26 @@ export const DesignLayer = memo(function DesignLayer({ viewport, liveTransform, 
   // that — rebuilt when a gesture starts or ends, not per frame.
   const transforms = useMemo(() => [...(followTransforms ?? []), ...(liveTransform ? [liveTransform] : [])],
     [followTransforms, liveTransform])
+  // The gestures hand out the SAME Set for the same id list every frame (canvas/idSet), so
+  // the key is worked out again only when what is moving, or what is shown, changes — not
+  // on every mouse move of a select-all drag over a big nest.
+  const keyCache = useRef<{ sets: Set<string>[]; shown: ImportedPath[]; key: string } | null>(null)
   let movingKey = ''
   if (transforms.length > 0) {
-    const parts: string[] = []
-    for (const p of shown) {
-      if (p.imageSrc || p.stlSrc) continue
-      const k = transforms.findIndex((t) => t.pathIds.has(p.id))
-      if (k >= 0) parts.push(`${k}:${p.id}`)
+    const sets = transforms.map((t) => t.pathIds)
+    const c = keyCache.current
+    if (c && c.shown === shown && c.sets.length === sets.length && c.sets.every((s, i) => s === sets[i])) {
+      movingKey = c.key
+    } else {
+      const parts: string[] = []
+      for (const p of shown) {
+        if (p.imageSrc || p.stlSrc) continue
+        const k = transforms.findIndex((t) => t.pathIds.has(p.id))
+        if (k >= 0) parts.push(`${k}:${p.id}`)
+      }
+      movingKey = parts.join(',')
+      keyCache.current = { sets, shown, key: movingKey }
     }
-    movingKey = parts.join(',')
   }
 
   const batches = useMemo(() => {

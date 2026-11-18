@@ -244,10 +244,11 @@ export function stringifyD(cmds: AbsCmd[]): string {
 
 // ── 2D affine matrix [a,b,c,d,e,f]: x'=ax+cy+e, y'=bx+dy+f ─────────────────
 export type Mat6 = [number, number, number, number, number, number]
-const IDENTITY: Mat6 = [1, 0, 0, 1, 0, 0]
+export const IDENTITY: Mat6 = [1, 0, 0, 1, 0, 0]
 
-// Compose M1(M2(p)) — M2 is applied first, M1 second
-function matMul(M1: Mat6, M2: Mat6): Mat6 {
+// Compose M1(M2(p)) — M2 is applied first, M1 second. The DXF importer composes its
+// INSERT transforms through this too.
+export function matMul(M1: Mat6, M2: Mat6): Mat6 {
   const [a1,b1,c1,d1,e1,f1] = M1
   const [a2,b2,c2,d2,e2,f2] = M2
   return [

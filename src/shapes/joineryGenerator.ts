@@ -25,8 +25,9 @@
 // Everything is in CNC mm, Y-up; parts are emitted CCW (outlines) like every other
 // generated shape.
 
-import { boolRings, inflateRings, roundConcave, roundConvex, ellipseRing, ringToD, ccw, clamp, type Pt } from './polyOps'
+import { boolRings, inflateRings, roundConcave, roundConvex, ellipseRing, ringToD, ccw, clamp, translateRings, type Pt } from './polyOps'
 import { signedArea } from '../cam/pathFlattener'
+import { ringsBBox } from '../cam/geom'
 
 export type JointRelief = 'dogbone' | 'tbone' | 'none'
 
@@ -135,17 +136,14 @@ export function relieveCorners(rings: Pt[][], toolDia: number, relief: JointReli
  *  so a shape keeps the same parts while a number is typed through a bad value. */
 const plainRect = (a: number, b: number): Pt[][] => [[[0, 0], [Math.max(0.1, a), 0], [Math.max(0.1, a), Math.max(0.1, b)], [0, Math.max(0.1, b)]]]
 
-const placeRings = (rings: Pt[][], dx: number, dy: number): Pt[][] =>
-  rings.map((r) => r.map(([x, y]) => [x + dx, y + dy] as Pt))
+const placeRings = translateRings
 
 const ringsToD = (rings: Pt[][]) => rings.map((r) => ringToD(r, true)).join(' ')
 
+// ringsBBox in this file's corner names; an empty set is the inverted infinite box.
 function bbox(rings: Pt[][]) {
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
-  for (const r of rings) for (const [x, y] of r) {
-    x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y)
-  }
-  return { x0, y0, x1, y1 }
+  const b = ringsBBox(rings)
+  return b ? { x0: b.minX, y0: b.minY, x1: b.maxX, y1: b.maxY } : { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity }
 }
 
 /**

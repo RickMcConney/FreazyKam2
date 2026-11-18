@@ -7,8 +7,8 @@ import { useWorkpieceStore, zDatumOffsetMM, MM_PER_INCH as MM_PER_IN } from '../
 import { SPINDLE_INFO, spindleDialLabel } from '../store/spindle'
 import { originWorldXY } from '../canvas/layers/WorkpieceLayer'
 import { feedsForTool, toolChipCeilingMM } from './feeds'
-import { cornerRadiusMM, includedAngleDeg, isVCutter, maxCutRadiusMM } from './geom'
-import { arcFitPolyline, douglasPeucker, ARC_FIT_MAX_SPAN, type Pt2 } from './pathFlattener'
+import { arcAngles, cornerRadiusMM, includedAngleDeg, isVCutter, maxCutRadiusMM } from './geom'
+import { ARC_FIT_MAX_SPAN, fitAndThin, type Pt2 } from './pathFlattener'
 import { lineSpacingMM } from './photoVcarve'
 import { asciiFileName } from '../io/filename'
 import { downloadText } from '../io/download'
@@ -136,7 +136,7 @@ export function commentLines(text: string, style: PostProcessorProfile['commentS
   // RS274 parenthesis comments don't nest: the first ')' closes the comment, so any
   // '(' or ')' inside the text (tool names, the spindle-dial note, …) would break
   // parsing. Swap them for brackets so the line stays a single valid comment.
-  const body = style === 'parenthesis' ? text.replace(/[()]/g, (m) => (m === '(' ? '[' : ']')) : text
+  const body = style === 'parenthesis' ? parenSafe(text) : text
   const wrap = (t: string) => (style === 'semicolon' ? `; ${t}` : `(${t})`)
   const width = max - wrap('').length
   // A comment that fits is left exactly as written, spacing and all.
@@ -174,8 +174,19 @@ function num4(n: number): string {
   return String(+n.toFixed(4))
 }
 
+// RS274 parenthesis comments don't nest: the first ')' closes the comment, so any '(' or
+// ')' inside comment text becomes a bracket.
+function parenSafe(text: string): string {
+  return text.replace(/[()]/g, (m) => (m === '(' ? '[' : ']'))
+}
+
+// A tool name or message on one line: trimmed, every run of whitespace one space.
+function oneLine(text: string): string {
+  return text.trim().replace(/\s+/g, ' ')
+}
+
 function commentLine(text: string, style: PostProcessorProfile['commentStyle']): string {
-  const body = style === 'parenthesis' ? text.replace(/[()]/g, (m) => (m === '(' ? '[' : ']')) : text
+  const body = style === 'parenthesis' ? parenSafe(text) : text
   return style === 'semicolon' ? `; ${body}` : `(${body})`
 }
 
@@ -218,7 +229,7 @@ export function stockSimHeader(
     const head = `ToolDef ${i + 1}: ${toolDefFields(tool, k)}`
     // NAME runs to the end of the line, so it is the part that gives way to the limit.
     const room = MAX_GCODE_LINE - commentLine(`${head} NAME=`, style).length
-    const name = tool.name.trim().replace(/\s+/g, ' ').slice(0, Math.max(0, room)).trim()
+    const name = oneLine(tool.name).slice(0, Math.max(0, room)).trim()
     out.push(commentLine(name ? `${head} NAME=${name}` : head, style))
   })
   return out
@@ -233,7 +244,7 @@ export function stockSimHeader(
 // skip them as ordinary comments. MSG is for what the operator must DO (the tool change the
 // M0 is waiting on); PRINT is progress (which operation is starting).
 function controllerMessage(kind: 'MSG' | 'PRINT', text: string, prefix = ''): string {
-  let body = text.trim().replace(/\s+/g, ' ').replace(/[()]/g, (m) => (m === '(' ? '[' : ']'))
+  let body = parenSafe(oneLine(text))
   if (kind === 'PRINT') body = body.replace(/[#%]/g, '')
   const head = `${prefix}(${kind}, `
   return `${head}${body.slice(0, Math.max(0, MAX_GCODE_LINE - head.length - 1)).trim()})`
@@ -252,8 +263,7 @@ function controllerMessage(kind: 'MSG' | 'PRINT', text: string, prefix = ''): st
 function tagToolChangeM0(line: string, n: number, tool: Tool, style: PostProcessorProfile['commentStyle']): string {
   if (line.includes('{tool}')) {
     const room = MAX_GCODE_LINE - line.replace('{tool}', `T${n} `).length
-    const name = tool.name.trim().replace(/\s+/g, ' ').slice(0, Math.max(0, room)).trim()
-      .replace(/[()]/g, (m) => (m === '(' ? '[' : ']'))
+    const name = parenSafe(oneLine(tool.name).slice(0, Math.max(0, room)).trim())
     return line.replace('{tool}', () => `T${n}${name ? ` ${name}` : ''}`)
   }
   if (!/^\s*M0?0\s*$/i.test(line) || (style !== 'semicolon' && style !== 'parenthesis')) return line
@@ -263,7 +273,7 @@ function tagToolChangeM0(line: string, n: number, tool: Tool, style: PostProcess
   const frame = style === 'parenthesis'
     ? controllerMessage('MSG', `T${n}${tail}`, `${bare} `)
     : `${bare} ${commentLine(`T${n}${tail}`, style)}`
-  const name = tool.name.trim().replace(/\s+/g, ' ').slice(0, Math.max(0, MAX_GCODE_LINE - frame.length - 1)).trim()
+  const name = oneLine(tool.name).slice(0, Math.max(0, MAX_GCODE_LINE - frame.length - 1)).trim()
   const text = `T${n}${name ? ` ${name}` : ''}${tail}`
   return style === 'parenthesis' ? controllerMessage('MSG', text, `${bare} `) : `${bare} ${commentLine(text, style)}`
 }
@@ -421,30 +431,12 @@ function reconstructArcs(segments: MotionSegment[], fit: ArcFit = DEFAULT_ARC_FI
     const pts: Pt2[] = [[segments[start - 1].x, segments[start - 1].y]]
     for (let k = start; k < e; k++) pts.push([segments[k].x, segments[k].y])
 
-    // Walk the arc-fit result; RDP-thin each maximal straight span (line moves
-    // between arcs), anchored at the prior emitted point so collinear runs reduce
-    // to their endpoints while arcs are passed through intact.
-    let anchor: Pt2 = pts[0]
-    let lineRun: Pt2[] = []
-    const flushLine = () => {
-      if (lineRun.length === 0) return
-      const simplified = douglasPeucker([anchor, ...lineRun], fit.tolMM)
-      for (let k = 1; k < simplified.length; k++) {
-        out.push({ x: simplified[k][0], y: simplified[k][1], z: z0, rapid: false })
-      }
-      anchor = lineRun[lineRun.length - 1]
-      lineRun = []
+    // Arcs through intact, each straight span between them RDP-thinned (fitAndThin).
+    for (const seg of fitAndThin(pts, fit.tolMM, ARC_FIT_MAX_SPAN, fit.noiseMM)) {
+      out.push(seg.arc
+        ? { x: seg.x, y: seg.y, z: z0, rapid: false, arc: seg.arc }
+        : { x: seg.x, y: seg.y, z: z0, rapid: false })
     }
-    for (const seg of arcFitPolyline(pts, fit.tolMM, ARC_FIT_MAX_SPAN, fit.noiseMM)) {
-      if (seg.arc) {
-        flushLine()
-        out.push({ x: seg.x, y: seg.y, z: z0, rapid: false, arc: seg.arc })
-        anchor = [seg.x, seg.y]
-      } else {
-        lineRun.push([seg.x, seg.y])
-      }
-    }
-    flushLine()
     i = e
   }
   return out
@@ -767,12 +759,7 @@ export function generateGcodeWithOps(
         // Interpolating between them lands on both ends exactly.
         const r0 = Math.hypot(prevX - cx, prevY - cy)
         const r1 = Math.hypot(seg.x - cx, seg.y - cy)
-        let a0 = Math.atan2(prevY - cy, prevX - cx)
-        let a1 = Math.atan2(seg.y - cy, seg.x - cx)
-        const isFullCircle = Math.abs(prevX - seg.x) < 0.001 && Math.abs(prevY - seg.y) < 0.001
-        if (isFullCircle) a1 = a0 + (cw ? -2 * Math.PI : 2 * Math.PI)
-        else if (cw) { if (a1 >= a0) a1 -= 2 * Math.PI }
-        else { if (a1 <= a0) a1 += 2 * Math.PI }
+        const { a0, a1, full: isFullCircle } = arcAngles(prevX, prevY, seg.x, seg.y, cx, cy, cw)
         const steps = Math.max(4, Math.ceil(Math.abs(a1 - a0) / (5 * Math.PI / 180)))
         // Same feed selection as the G2/G3 branch above: a helical entry
         // (ramp/helical drill) must run at plunge feed even when expanded to

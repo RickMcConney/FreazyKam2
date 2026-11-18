@@ -11,6 +11,7 @@ import { usePathsStore } from '../../store/pathsStore'
 import { useWorkpieceStore, fmtLen, lenValue } from '../../store/workpieceStore'
 import { extractRectInfo } from '../../canvas/selectionUtils'
 import { grooveWidthMM, lineSpacingMM } from '../../cam/photoVcarve'
+import { includedAngleDeg } from '../../cam/geom'
 import { PHOTO_VCARVE_TOOL_TYPES, photoVcarveFormDefaults, norm180 } from './opDefaults'
 
 interface PhotoVCarveFormState {
@@ -71,8 +72,10 @@ export function PhotoVCarveForm({ onClose, editOp }: { onClose: () => void; edit
 
   const selectedTool = tools.find((t) => t.id === form.toolId)
   const selectedPath = paths.find((p) => p.id === form.pathId)
-  // The angle is a property of the grind, not of the operation — same as V-Carve.
-  const angleDeg = selectedTool?.vbitAngleDeg ?? 60
+  // The angle is a property of the grind, not of the operation — same as V-Carve. Read
+  // through includedAngleDeg, the one place a V-bit's included and a taper's per-side
+  // angle meet (the generator refuses a taper today, but the form must not decide that).
+  const angleDeg = selectedTool ? includedAngleDeg(selectedTool) : 60
   // Derived, not chosen: the deepest groove's width. Shown so the operator can see what
   // the depth just bought them in resolution.
   const spacingMM = lineSpacingMM(form.maxDepthMM, angleDeg)

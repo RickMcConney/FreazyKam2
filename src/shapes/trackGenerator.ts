@@ -79,7 +79,8 @@
 // somebody else — a track scaled to 90% is a very good drawing of something that
 // connects to nothing.
 
-import { type Pt, arcInto, boolRings, ccw, clamp, ellipseRing, fmt, ringToD, roundConcave } from './polyOps'
+import { type Pt, arcInto, boolRings, ccw, clamp, ellipseRing, mirrorRingsY, polylineToD, ringToD, roundConcave, translateRings } from './polyOps'
+import { pointInPolygon, ringsBBox } from '../cam/geom'
 
 export type TrackKind = 'straight' | 'curve' | 'turnout'
 /** Which side a turnout's branch leaves on. A mirror would do it, but a
@@ -538,13 +539,7 @@ function grooveLines(s: TrackSpec): Pt[][] {
  *  winding agree and the cheaper of the two will do. */
 function inRings(p: Pt, rings: Pt[][]): boolean {
   let inside = false
-  for (const r of rings) {
-    for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
-      const [xi, yi] = r[i]
-      const [xj, yj] = r[j]
-      if ((yi > p[1]) !== (yj > p[1]) && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) inside = !inside
-    }
-  }
+  for (const r of rings) if (pointInPolygon(p[0], p[1], r)) inside = !inside
   return inside
 }
 
@@ -654,20 +649,14 @@ function treadLines(s: TrackSpec): Pt[][] {
 
 // ─── Emission ─────────────────────────────────────────────────────────────────
 
-function shiftRings(rings: Pt[][], dx: number, dy: number): Pt[][] {
-  return rings.map((r) => r.map(([x, y]) => [x + dx, y + dy] as Pt))
-}
+const shiftRings = translateRings
 
 /** A right-hand turnout is the left-hand one flipped, and that is the whole of
  *  the difference — flipping at the end rather than signing every angle is what
  *  keeps the two hands from ever disagreeing. Winding is fixed on emission. */
-function mirrorRings(rings: Pt[][]): Pt[][] {
-  return rings.map((r) => r.map(([x, y]) => [x, -y] as Pt))
-}
+const mirrorRings = mirrorRingsY
 
-function polyToD(pts: Pt[]): string {
-  return 'M' + pts.map(([x, y]) => `${fmt(x)},${fmt(y)}`).join(' L')
-}
+const polyToD = (pts: Pt[]): string => polylineToD(pts, false)
 
 export interface TrackPart { key: string; d: string }
 
@@ -681,15 +670,7 @@ export function generateTrackParts(s: TrackSpec): TrackPart[] {
   const outline = flip ? mirrorRings(outlineRings(s)) : outlineRings(s)
   if (outline.length === 0) return []
 
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
-  for (const ring of outline) {
-    for (const [x, y] of ring) {
-      if (x < minX) minX = x
-      if (x > maxX) maxX = x
-      if (y < minY) minY = y
-      if (y > maxY) maxY = y
-    }
-  }
+  const { minX, minY, maxX, maxY } = ringsBBox(outline)!   // outline is non-empty
   const dx = s.cx - (minX + maxX) / 2
   const dy = s.cy - (minY + maxY) / 2
 

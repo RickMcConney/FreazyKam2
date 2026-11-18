@@ -14,6 +14,7 @@ import { regenerateAffected } from '../../cam/regenerate'
 import type { Pt2 } from '../../cam/pathFlattener'
 import { drawFrame, nativeCtx, overlaps } from '../batchDraw'
 import { pointInPolygon } from '../../cam/geom'
+import { tabPointAt, tabTNearest } from '../../cam/tabPlacement'
 
 interface TabVisual {
   id: string
@@ -41,87 +42,17 @@ export function outsideSide(outline: Pt2[][], x: number, y: number, tx: number, 
 
 // FLATTENING AT 0.05 mm IS NOT SOMETHING TO DO IN A RENDER — the stage re-renders on every
 // mouse move. `tabOutline` (cam/stlOutline) caches the flattened outline per `d` string, and
-// an STL model's silhouette per model and box.
-function evalPathAtT(subpaths: Pt2[][], t: number): { x: number; y: number; tx: number; ty: number } | null {
-  if (subpaths.length === 0) return null
-
-  let totalLen = 0
-  const segments: { pts: Pt2[]; startLen: number; segLen: number }[] = []
-
-  for (const sp of subpaths) {
-    let len = 0
-    for (let i = 1; i < sp.length; i++) {
-      len += Math.hypot(sp[i][0] - sp[i - 1][0], sp[i][1] - sp[i - 1][1])
-    }
-    segments.push({ pts: sp, startLen: totalLen, segLen: len })
-    totalLen += len
-  }
-
-  if (totalLen < 1e-6) return null
-  const target = t * totalLen
-
-  for (const seg of segments) {
-    if (target > seg.startLen + seg.segLen && seg !== segments[segments.length - 1]) continue
-    let cumLen = seg.startLen
-    for (let i = 1; i < seg.pts.length; i++) {
-      const dx = seg.pts[i][0] - seg.pts[i - 1][0]
-      const dy = seg.pts[i][1] - seg.pts[i - 1][1]
-      const edgeLen = Math.hypot(dx, dy)
-      if (cumLen + edgeLen >= target || i === seg.pts.length - 1) {
-        const u = edgeLen > 1e-10 ? Math.min(1, (target - cumLen) / edgeLen) : 0
-        const x = seg.pts[i - 1][0] + u * dx
-        const y = seg.pts[i - 1][1] + u * dy
-        const mag = Math.max(edgeLen, 1e-10)
-        return { x, y, tx: dx / mag, ty: dy / mag }
-      }
-      cumLen += edgeLen
-    }
-  }
-  return null
-}
-
-// Given a CNC-space point, return the arc-length t (0..1) of the nearest point on the path.
-function nearestTOnPath(subpaths: Pt2[][], cx: number, cy: number): number {
-
-  let totalLen = 0
-  const edges: { x0: number; y0: number; x1: number; y1: number; startLen: number; edgeLen: number }[] = []
-
-  for (const sp of subpaths) {
-    for (let i = 1; i < sp.length; i++) {
-      const x0 = sp[i - 1][0], y0 = sp[i - 1][1]
-      const x1 = sp[i][0], y1 = sp[i][1]
-      const edgeLen = Math.hypot(x1 - x0, y1 - y0)
-      if (edgeLen < 1e-10) continue
-      edges.push({ x0, y0, x1, y1, startLen: totalLen, edgeLen })
-      totalLen += edgeLen
-    }
-  }
-
-  if (totalLen < 1e-6 || edges.length === 0) return 0
-
-  let bestDist = Infinity
-  let bestArcLen = 0
-
-  for (const edge of edges) {
-    const dx = edge.x1 - edge.x0
-    const dy = edge.y1 - edge.y0
-    const len2 = edge.edgeLen * edge.edgeLen
-    const u = Math.max(0, Math.min(1, ((cx - edge.x0) * dx + (cy - edge.y0) * dy) / len2))
-    const px = edge.x0 + u * dx
-    const py = edge.y0 + u * dy
-    const dist = Math.hypot(cx - px, cy - py)
-    if (dist < bestDist) {
-      bestDist = dist
-      bestArcLen = edge.startLen + u * edge.edgeLen
-    }
-  }
-
-  return bestArcLen / totalLen
-}
+// an STL model's silhouette per model and box. Where a tab's `t` lands, and where a drag
+// puts it, are cam/tabPlacement's (`tabPointAt`, `tabTNearest`) — the same functions the
+// cut and click-to-place read, so the marker cannot disagree with them.
 
 interface Props {
   viewport: Viewport
 }
+
+// Each tab's marker, keyed on the tab object (tabs are replaced, never mutated) and checked
+// against the outline it was placed on (tabOutline caches that per `d`).
+const visualCache = new WeakMap<object, { outline: Pt2[][]; v: TabVisual }>()
 
 // A TAB IS DRAWN AT A SIZE YOU CAN GRAB, NOT AT ITS HEIGHT. Its length along the path is
 // real — that is where it holds the part — but never under TAB_MIN_LEN_PX on screen; across
@@ -293,9 +224,16 @@ export const TabLayer = memo(function TabLayer({ viewport }: Props) {
       for (const tab of byPath.get(path.id) ?? []) {
         // A model's tabs sit on its silhouette, every other path's on its own outline.
         const outline = tabOutline(path)
-        const pos = evalPathAtT(outline, tab.t)
+        // A tab's marker is worked out once per tab OBJECT and outline: a drag writes the
+        // store on every move, but replaces only the dragged tab, so every other tab — on
+        // a nest, hundreds — is reused rather than walked and point-tested again.
+        const hit = visualCache.get(tab)
+        if (hit && hit.outline === outline && hit.v.pathId === path.id) { out.push(hit.v); continue }
+        const pos = tabPointAt(outline, tab.t)
         if (!pos) continue
-        out.push({ id: tab.id, pathId: path.id, outline, x: pos.x, y: pos.y, tx: pos.tx, ty: pos.ty, lengthMM: tab.lengthMM, heightMM: tab.heightMM, outSide: outsideSide(outline, pos.x, pos.y, pos.tx, pos.ty) })
+        const v: TabVisual = { id: tab.id, pathId: path.id, outline, x: pos.x, y: pos.y, tx: pos.tx, ty: pos.ty, lengthMM: tab.lengthMM, heightMM: tab.heightMM, outSide: outsideSide(outline, pos.x, pos.y, pos.tx, pos.ty) }
+        visualCache.set(tab, { outline, v })
+        out.push(v)
       }
     }
     return out
@@ -350,7 +288,7 @@ export const TabLayer = memo(function TabLayer({ viewport }: Props) {
                 const pos = stage.getPointerPosition()
                 if (!pos) return
                 const cnc = screenToCNC(pos.x, pos.y, viewportRef.current)
-                updateTabT(v.id, nearestTOnPath(outline, cnc.x, cnc.y))
+                updateTabT(v.id, tabTNearest(outline, cnc.x, cnc.y) ?? 0)
               }
 
               // Once, however it ends: on the stage, off it (the window's mouseup — Konva

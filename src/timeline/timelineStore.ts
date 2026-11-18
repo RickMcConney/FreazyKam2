@@ -10,7 +10,7 @@ import { useConstraintsStore } from '../store/constraintsStore'
 import type { Constraint } from '../store/constraints'
 import { useUIStore } from '../store/uiStore'
 import { useWorkpieceStore } from '../store/workpieceStore'
-import type { WorkpieceEventChanges } from './events'
+import { pickWorkpieceDoc, WORKPIECE_DOC_KEYS, type WorkpieceEventChanges } from './events'
 import { consolidateSteps, getBBox } from '../canvas/selectionUtils'
 import { evictHistorySegments } from './historyBudget'
 
@@ -60,8 +60,7 @@ interface Snapshot {
 const stateAt: (Snapshot | undefined)[] = [{ paths: [], operations: [], tabs: [], constraints: [] }]
 
 function captureWorkpiece(): Required<WorkpieceEventChanges> {
-  const { widthMM, heightMM, thicknessMM, units, origin, zOrigin, material, doubleSided, tiling, bridges } = useWorkpieceStore.getState()
-  return { widthMM, heightMM, thicknessMM, units, origin, zOrigin, material, doubleSided, tiling, bridges }
+  return pickWorkpieceDoc(useWorkpieceStore.getState())
 }
 
 function captureSnapshot(): Snapshot {
@@ -176,9 +175,7 @@ function installCursorMirror(): void {
   useTabStore.subscribe((s, p) => { if (s.tabs !== p.tabs) noteWrite('tabs', p.tabs) })
   useConstraintsStore.subscribe((s, p) => { if (s.constraints !== p.constraints) noteWrite('constraints', p.constraints) })
   useWorkpieceStore.subscribe((s, p) => {
-    const { widthMM, heightMM, thicknessMM, units, origin, zOrigin, material, doubleSided, tiling, bridges } = p
-    const before = { widthMM, heightMM, thicknessMM, units, origin, zOrigin, material, doubleSided, tiling, bridges }
-    if ((Object.keys(before) as (keyof typeof before)[]).some((k) => s[k] !== before[k])) noteWrite('workpiece', before)
+    if (WORKPIECE_DOC_KEYS.some((k) => s[k] !== p[k])) noteWrite('workpiece', pickWorkpieceDoc(p))
   })
 }
 queueMicrotask(installCursorMirror)

@@ -49,7 +49,8 @@ import {
 } from './polyOps'
 import { seatHub, spokeWindows, pinRing, pinRingHoles, type HubFit, type PinRing } from './spokedWheel'
 import { generateTextD, isFontLoaded, SINGLE_LINE_FONT_FAMILY } from './textGenerator'
-import { flattenPath } from '../cam/pathFlattener'
+import { flattenPath, douglasPeucker } from '../cam/pathFlattener'
+import { ringsBBox } from '../cam/geom'
 
 export interface GearSpec {
   cx: number; cy: number
@@ -599,7 +600,7 @@ function toothProfile(m: number, z: number, alpha: number, backlash: number): { 
   // Douglas–Peucker on the CHORD, not a stride: the trochoid's curvature is all
   // at the bottom, so dropping every other point thins the tight part and the
   // straight part alike.
-  const kept = simplify(out.map((q) => [q.r * Math.cos(q.a), q.r * Math.sin(q.a)] as Pt), FLANK_TOL)
+  const kept = douglasPeucker(out.map((q) => [q.r * Math.cos(q.a), q.r * Math.sin(q.a)] as Pt), FLANK_TOL)
   const thin = kept.map((p) => ({ r: Math.hypot(p[0], p[1]), a: Math.atan2(p[1], p[0]) }))
 
   for (const q of flankPoints(Math.max(formR, rb), ra, rb, psi)) {
@@ -610,27 +611,6 @@ function toothProfile(m: number, z: number, alpha: number, backlash: number): { 
   return thin
 }
 
-/** Douglas–Peucker, keeping the ends. */
-function simplify(pts: Pt[], tol: number): Pt[] {
-  if (pts.length < 3) return pts
-  const keep = new Uint8Array(pts.length)
-  keep[0] = 1; keep[pts.length - 1] = 1
-  const stack: [number, number][] = [[0, pts.length - 1]]
-  while (stack.length > 0) {
-    const [i, j] = stack.pop()!
-    if (j <= i + 1) continue
-    const a = pts[i], b = pts[j]
-    const dx = b[0] - a[0], dy = b[1] - a[1]
-    const n = Math.hypot(dx, dy) || 1
-    let worst = -1, at = -1
-    for (let k = i + 1; k < j; k++) {
-      const d = Math.abs((pts[k][0] - a[0]) * dy - (pts[k][1] - a[1]) * dx) / n
-      if (d > worst) { worst = d; at = k }
-    }
-    if (worst > tol) { keep[at] = 1; stack.push([i, at], [at, j]) }
-  }
-  return pts.filter((_, i) => keep[i] === 1)
-}
 
 /** The toothed outline, CCW, centred on the origin. */
 function toothedRing(m: number, z: number, alpha: number, backlash: number): Pt[] {
@@ -1175,17 +1155,8 @@ const LABEL_BORE_CLEAR = 1.6
 
 /** Ink extents of a `d` string, in the same space as the path. */
 function inkBox(d: string): { x0: number; y0: number; w: number; h: number } | null {
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
-  for (const poly of flattenPath(d, 0.02)) {
-    for (const [x, y] of poly) {
-      if (x < x0) x0 = x
-      if (x > x1) x1 = x
-      if (y < y0) y0 = y
-      if (y > y1) y1 = y
-    }
-  }
-  if (!isFinite(x0)) return null
-  return { x0, y0, w: x1 - x0, h: y1 - y0 }
+  const b = ringsBBox(flattenPath(d, 0.02))
+  return b ? { x0: b.minX, y0: b.minY, w: b.maxX - b.minX, h: b.maxY - b.minY } : null
 }
 
 /**

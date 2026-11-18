@@ -8,7 +8,7 @@ import { useUIStore } from '../store/uiStore'
 import { useWorkpieceStore, MATERIAL_INFO, MM_PER_INCH as MM_PER_IN, feedValue, feedUnit } from '../store/workpieceStore'
 import { spindleDialLabel } from '../store/spindle'
 import type { ToolType } from '../store/toolStore'
-import { targetChipLoad, aimChipLoad } from '../cam/feeds'
+import { targetChipLoad, aimChipLoad, CHIP_RUBBING_RATIO, CHIP_HEAVY_RATIO } from '../cam/feeds'
 import { getCurrentSegIdx, interpolatePos, segTool, segFeedAt, toolTypeOf, feedDiameterOf, formatSimTime, messagesReached } from './gcodeParser'
 
 const SPEEDS: SimSpeed[] = [1, 5, 20, 100]
@@ -35,8 +35,8 @@ const CHIP_STATUS = {
 function chipStatus(actual: number | null, target: number): keyof typeof CHIP_STATUS {
   if (actual === null || target <= 0) return 'none'
   const r = actual / target
-  if (r < 0.75) return 'rubbing'
-  if (r > 1.4) return 'heavy'
+  if (r < CHIP_RUBBING_RATIO) return 'rubbing'
+  if (r > CHIP_HEAVY_RATIO) return 'heavy'
   return 'good'
 }
 

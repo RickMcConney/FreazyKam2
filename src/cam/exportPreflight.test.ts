@@ -5,6 +5,7 @@
 // quiet on a clean job, since a report that always warns is one nobody reads.
 import { describe, it, expect, beforeEach } from 'vitest'
 import { buildExportPreflight } from './exportPreflight'
+import { SHEET_GAP_MM } from './sheets'
 import { aimChipLoad } from './feeds'
 import { useToolpathStore, type AnyOperation, type MotionSegment } from '../store/toolpathStore'
 import { useToolStore, type Tool } from '../store/toolStore'
@@ -365,4 +366,28 @@ it('notes when the file will be written in different units than the display', ()
   usePostProcessorStore.setState({ activeId: inch.id })
   setOps(op())
   expect(texts()).toContain('info: Display units (mm) differ from the post-processor output units (in). The file will be in in.')
+})
+
+describe('a job on more than one sheet is judged one sheet program at a time', () => {
+  // Each sheet is its own file, starting at that sheet's corner. Moved one sheet pitch right
+  // (the 200 mm stock plus SHEET_GAP_MM), a square lies at the same place on the second sheet.
+  const shifted = (s: MotionSegment[], dx: number) => s.map((m) => ({ ...m, x: m.x + dx }))
+
+  it('estimates the sum of its sheet programs, with no transit between sheets', () => {
+    setOps(op({ segments: square(10, 10, 50, 40) }))
+    const a = buildExportPreflight().job.estimatedTimeS
+    setOps(op({ segments: square(20, 20, 80, 60) }))
+    const b = buildExportPreflight().job.estimatedTimeS
+    setOps(op({ segments: square(10, 10, 50, 40) }), op({ segments: shifted(square(20, 20, 80, 60), 200 + SHEET_GAP_MM) }))
+    const both = buildExportPreflight()
+    expect(both.job.sheetsWithCuts).toBe(2)
+    expect(both.job.estimatedTimeS).toBeCloseTo(a + b, 6)
+  })
+
+  it('still finds a slow, cornered cut on the second sheet', () => {
+    useWorkpieceStore.setState({ accelXYMmS2: 200, accelZMmS2: 50, junctionDeviationMM: 0.01 })
+    useToolStore.setState({ tools: [toolAtChipLoad(1, { rpm: 8000 })] })
+    setOps(op({ segments: square(10, 10, 190, 90) }), op({ segments: shifted(square(10, 10, 16, 16), 200 + SHEET_GAP_MM) }))
+    expect(has(/^warn: The machine slows below a cutting chip on part of 1 operation \(Pocket 2 \d+% of the cut\)/)).toBe(true)
+  })
 })

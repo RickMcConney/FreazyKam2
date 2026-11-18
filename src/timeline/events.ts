@@ -80,6 +80,23 @@ export interface WorkpieceEventChanges {
   bridges?: BridgeSet | null
 }
 
+/** Every DOCUMENT field of the stock — the ones undo restores and the cursor mirror watches.
+ *  One list, so a new document field cannot reach one of them and not the other. The type
+ *  below fails to compile if a field of WorkpieceEventChanges is missing from it. */
+export const WORKPIECE_DOC_KEYS = [
+  'widthMM', 'heightMM', 'thicknessMM', 'units', 'origin', 'zOrigin', 'material', 'doubleSided', 'tiling', 'bridges',
+] as const satisfies readonly (keyof WorkpieceEventChanges)[]
+type MissingDocKey = Exclude<keyof WorkpieceEventChanges, (typeof WORKPIECE_DOC_KEYS)[number]>
+const _allDocKeys: MissingDocKey extends never ? true : never = true
+void _allDocKeys
+
+/** The document fields of a workpiece state, in WORKPIECE_DOC_KEYS order. */
+export function pickWorkpieceDoc(s: Required<WorkpieceEventChanges>): Required<WorkpieceEventChanges> {
+  const out = {} as Record<string, unknown>
+  for (const k of WORKPIECE_DOC_KEYS) out[k] = s[k]
+  return out as Required<WorkpieceEventChanges>
+}
+
 export interface TimelineEventBase {
   seq: number               // 1-based, monotonic; seq === index + 1
   id: string                // uid('ev')
