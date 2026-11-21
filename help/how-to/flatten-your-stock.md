@@ -11,4 +11,6 @@ Use **Surface** to face the top of a slab.
 The form shows the area it covers: the whole stock. The result is only as flat as your
 machine is trammed.
 
+![The Surface form with a 1/4 inch end mill at 60% stepover and 45°, and diagonal passes covering the whole stock](../../docs/images/05-surface.png)
+
 **Related:** [Set your work origin](set-your-work-origin.md) (bottom-of-stock Z suits slabs)

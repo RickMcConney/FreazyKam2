@@ -41,3 +41,11 @@ input[type="number"]::-webkit-outer-spin-button {
 input[type="number"] {
   -moz-appearance: textfield;
 }
+
+/* Help mode (help/HelpMode.tsx): the question-mark cursor everywhere — over the canvas too,
+   whose inline cursor style this has to beat — except on the mode's own controls. */
+body.help-mode, body.help-mode * { cursor: help !important; }
+body.help-mode [data-help-ui], body.help-mode [data-help-ui] * { cursor: pointer !important; }
+/* A disabled control gets no mouse events, so in help mode it lets them through to what is
+   behind it, and HelpMode finds it by its box (helpAt). */
+body.help-mode :disabled { pointer-events: none; }

@@ -83,8 +83,6 @@ export interface CopyPathsOptions {
   copyBatch?: string
   /** Id prefix for the new paths: `path-dup`, `path-paste`. */
   pathIdPrefix: string
-  /** Name for a copy; unchanged when omitted. */
-  rename?: (name: string) => string
   /**
    * What a copy whose recipe could NOT come with it records.
    *
@@ -140,7 +138,9 @@ export function copyPaths(
     const copy: ImportedPath = {
       ...p,
       id: newIdOf.get(p.id)!,
-      name: opts.rename ? opts.rename(p.name) : p.name,
+      // A copy keeps its original's name: it reads as what it is a copy OF, in the
+      // paths list as on its chip — no " copy" suffix.
+      name: p.name,
       groupId: reissue(p.groupId, 'shape-group'),
       clockId: reissue(p.clockId, 'clock'),
       // Every level is remapped, so copies come out nested exactly as the originals are —

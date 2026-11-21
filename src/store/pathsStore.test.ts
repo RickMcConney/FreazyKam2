@@ -516,12 +516,12 @@ describe('duplicateSelected', () => {
     await step()
     // The hidden operand comes too — a duplicated boolean is a real one — but is not selected.
     expect(S().paths).toHaveLength(4)
-    const copy = S().paths.find((p) => p.name === 'res copy')!
+    const copy = S().paths.find((p) => p.name === 'res' && p.id !== 'res')!
     expect(S().selectedIds).toEqual([copy.id])
     // Up and to the right — CNC Y is up.
     const b = getBBox(copy.d)!
     expect([b.minX, b.minY]).toEqual([25, 5])
-    const opCopy = S().paths.find((p) => p.name === 'op copy')!
+    const opCopy = S().paths.find((p) => p.name === 'op' && p.id !== 'op')!
     expect(opCopy.hidden).toBe(true)
     expect(copy.definition).toMatchObject({ kind: 'boolean', sourceIds: [opCopy.id] })
   })
@@ -823,7 +823,8 @@ describe('duplicatePaths — the stamp tool\'s click (Cmd+D)', () => {
     await load({ paths: [path('a'), path('b', { d: rectD(50, 0, 10, 10) })], selected: ['b'] })
     S().duplicatePaths(['a'], { dx: 30, dy: -12 })
     await step()
-    const copy = S().paths.find((p) => p.name === 'a copy')!
+    const copy = S().paths.find((p) => p.name === 'a' && p.id !== 'a')!
+    expect(copy.name).toBe('a')   // a copy keeps its original's name — no " copy" suffix
     const b = getBBox(copy.d)!
     expect([b.minX, b.minY]).toEqual([30, -12])
     expect(S().selectedIds).toEqual([copy.id])
@@ -834,17 +835,17 @@ describe('duplicatePaths — the stamp tool\'s click (Cmd+D)', () => {
     const before = events()
     S().duplicatePaths(['a'], { dx: 20, dy: 0 }); await step()
     S().duplicatePaths(['a'], { dx: 40, dy: 0 }); await step()
-    expect(S().paths.filter((p) => p.name === 'a copy')).toHaveLength(2)
+    expect(S().paths.filter((p) => p.id !== 'a')).toHaveLength(2)
     expect(events()).toBe(before + 2)
     await undo()
-    expect(S().paths.filter((p) => p.name === 'a copy')).toHaveLength(1)
+    expect(S().paths.filter((p) => p.id !== 'a')).toHaveLength(1)
   })
 
   it('every copy one click makes shares one copyBatch, and the next click gets a new one', async () => {
     await load({ paths: [path('a'), path('b')] })
     S().duplicatePaths(['a', 'b'], { dx: 20, dy: 0 }); await step()
     S().duplicatePaths(['a', 'b'], { dx: 40, dy: 0 }); await step()
-    const batches = S().paths.filter((p) => p.name.endsWith('copy')).map((p) => p.copyBatch)
+    const batches = S().paths.filter((p) => p.id !== 'a' && p.id !== 'b').map((p) => p.copyBatch)
     expect(batches[0]).toBeDefined()
     expect(batches[1]).toBe(batches[0])
     expect(batches[2]).toBe(batches[3])

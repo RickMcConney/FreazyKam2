@@ -16,6 +16,8 @@ hairline gap. An end mill as the finishing tool gives flat walls instead of slop
    plug.
 7. Click **Generate Female Toolpath**.
 
+![The Inlay form set to Female beside the word TEST, with the socket toolpaths filling the letters](../../docs/images/06-inlay-female.png)
+
 ## Cut the plug
 
 1. Open **Inlay** again with the same design selected.

@@ -23,6 +23,13 @@ Getting this wrong is the classic beginner's mistake: a part cut *centerline* in
 *outside* comes out one tool radius undersized all round, and the error is invisible on
 the canvas.
 
+![The Edit Profile form beside a hexagon cut Outside with a 1/8 inch end mill: the orange toolpath runs one tool radius outside the white outline, 12 mm deep in 2 mm step-downs](images/05-profile.png)
+
+*An outside profile. The toolpath (orange) runs a tool radius outside the line, so the
+part comes out the size it was drawn.*
+
+<!-- FULL APP · 1600 px wide. -->
+
 Other fields:
 
 - **Stock allowance** leaves material on the wall. **Negative cuts past the line**, which
@@ -70,6 +77,13 @@ in the Objects strip, and any profile cut on that path honours it.
 | **Count** | How many, spaced evenly around the path |
 | **Length** | How far along the path each one runs |
 | **Height** | How much material is left under the cutter |
+
+![The Tabs form beside a hexagon with four orange tabs, 4 mm long and 2 mm high, set on each path; the form lists them by how far along the path each sits](images/05-tabs.png)
+
+*Four tabs on a hexagon. **Current Tabs** lists them by how far along the path each one
+sits; the bin removes one. **Click to Place** puts a tab wherever you click an outline.*
+
+<!-- FULL APP · 1600 px wide. -->
 
 Drag any tab along the path to move it. Put them on straight runs rather than corners,
 away from anything delicate, and where you don't mind cleaning up — the tab has to be
@@ -216,6 +230,13 @@ along the path instead of ploughing straight down it. The full width still gets 
 the tool is only ever engaged over a small arc. Use it in hard material, on a light
 machine, or wherever a full-width slot would be too much.
 
+![The New Trochoidal form beside a hexagon cut Outside with a 1/4 inch end mill: a band of small orange loops runs round the outside of the outline](images/05-trochoidal-form.png)
+
+*Trochoidal round the outside of a part. The line under Loop Amplitude and Step / Loop
+says how wide the loops cut and how far each one moves on.*
+
+<!-- FULL APP · 1600 px wide. -->
+
 | Field | Meaning |
 |---|---|
 | **Cut side** | Inside, outside, or centerline |
@@ -260,6 +281,13 @@ Cuts a hole with an **end mill** by spiralling down it, rather than plunging. Ta
 diameter from a circular path, which means it can make a hole no drill in your library
 matches — and it clears chips as it goes.
 
+![The New Drill form in Helical mode beside three 40 mm circles, each filled with a green spiral toolpath; the form lists each hole's diameter and its toolpath diameter](images/05-drill-helical.png)
+
+*Three 40 mm holes, Helical, with a 1/8″ end mill. Each path in the list shows the hole's
+size and the size of the circle the tool's centre follows.*
+
+<!-- FULL APP · 1600 px wide. -->
+
 > **Drilling measures depth from the surface it starts on**, like every other operation.
 > For a 5 mm deep hole in the floor of a 3 mm pocket, set the start to that pocket's floor
 > and the depth to `5` — the field is the depth of the hole itself. The bottom of that hole
@@ -276,6 +304,13 @@ workpiece rather than a path you select.
 
 Use a large flat cutter, take a light cut, and remember the result is only as flat as
 your machine is trammed.
+
+![The New Surface form — 1/4 inch end mill, 60% stepover, 45°, 0.2 mm deep — with diagonal facing passes filling the whole 600 × 280 mm stock](images/05-surface.png)
+
+*A 0.2 mm skim over the whole stock. The box at the top of the form says what it covers;
+there is nothing to select.*
+
+<!-- FULL APP · 1600 px wide. -->
 
 ---
 

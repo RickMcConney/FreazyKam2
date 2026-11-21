@@ -2,7 +2,7 @@
 
 V-carving makes letters look hand-carved, with sharp corners and pointed serifs.
 
-1. Add your text with **Text** in the Draw tab, or import it.
+1. Add your text with [**Text**](add-text.md) in the Draw tab, or import it.
 2. Select the letters.
 3. Under **CAM Operations**, click **V-Carve**.
 4. Pick a **V-bit** or **taper** (best for very fine letters).
@@ -19,6 +19,6 @@ The cut hit **Max Depth**. Raise it.
 ## "Could not compute V-Carve"?
 
 A letter is open or crosses itself. Try another font, or merge letters with
-[Boolean → Union](use-path-tools.md#combine-shapes-boolean).
+[Boolean → Union](combine-shapes.md).
 
 **Related:** [How V-carving works](../explanation/v-carving.md)

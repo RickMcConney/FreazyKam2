@@ -15,6 +15,7 @@ import { TabsIcon, AlongPathIcon, FlutingIcon } from './pathToolIcons'
 import { Circle, CircleDot, Target, Layers, Star, SquaresUnite, SquareSquare, LayoutGrid, Blocks, VectorSquare, FlipHorizontal2, Columns3, Box, RefreshCw, PencilSparkles, Image as ImageIcon, CopyPlus } from 'lucide-react'
 import { useUIStore } from '../store/uiStore'
 import { SelectionKindsBar } from './machine/SelectionKindsBar'
+import { helpAttr } from '../help/helpTopics'
 
 // Exported for reuse (TimelinePanel chips use the same per-op icons as this menu)
 export const InlayIcon = ({ size = 24 }: { size?: number }) => (
@@ -50,7 +51,7 @@ function AddOperationMenu({ onSelect }: { onSelect: (t: OpType) => void }) {
           ['doublesided', 'Double-Sided', 'Cut both faces of a board: dowel holes to flip it on, and a sheet for side B', <FlipHorizontal2 size={ICON.md} />],
           ['tiling', 'Tiling', 'Cut a board longer than the machine in tiles, sliding it along between them on dowel pins', <Columns3 size={ICON.md} />],
         ] as [OpType, string, string, React.ReactNode][]).map(([type, name, desc, icon]) => (
-          <button key={type} onClick={() => onSelect(type)} title={desc} className={opBtnCls}>
+          <button key={type} {...helpAttr(type)} onClick={() => onSelect(type)} title={desc} className={opBtnCls}>
             <span style={{ color: OP_TYPE_COLORS[type] }}>{icon}</span>
             <span className="text-label text-gray-500 dark:text-neutral-400">{name}</span>
           </button>
@@ -70,7 +71,7 @@ function AddOperationMenu({ onSelect }: { onSelect: (t: OpType) => void }) {
           // The stamp (Ctrl/⌘+D): its form explains it and starts it — see DuplicateForm.
           ['duplicate', 'Duplicate', 'Copies of the selection follow the mouse — click to place each one (Ctrl/⌘+D)', <CopyPlus size={ICON.md} />],
         ] as [OpType, string, string, React.ReactNode][]).map(([type, name, desc, icon]) => (
-          <button key={type} onClick={() => onSelect(type)} title={desc} className={opBtnCls}>
+          <button key={type} {...helpAttr(type)} onClick={() => onSelect(type)} title={desc} className={opBtnCls}>
             <span style={{ color: OP_TYPE_COLORS[type as string] ?? '#94a3b8' }}>{icon}</span>
             <span className="text-label text-gray-500 dark:text-neutral-400">{name}</span>
           </button>
@@ -174,6 +175,8 @@ export default function MachinePanel({ fill = false }: { fill?: boolean }) {
   return (
     <div className={fill ? 'flex-1 overflow-y-auto' : ''}>
       <SelectionKindsBar />
+      {/* An open form explains its own operation in help mode; the menu, the Draw tab. */}
+      <div className="contents" {...helpAttr(activeForm && activeForm !== 'menu' ? activeForm : 'draw-tab')}>
       {activeForm === 'menu' ? (
         <AddOperationMenu onSelect={openForm} />
       ) : activeForm === 'profile' ? (
@@ -219,6 +222,7 @@ export default function MachinePanel({ fill = false }: { fill?: boolean }) {
       ) : activeForm === 'tiling' ? (
         <TilingForm onClose={closeForm} />
       ) : null}
+      </div>
     </div>
   )
 }

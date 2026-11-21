@@ -133,6 +133,7 @@ Covers the whole stock. No selection needed.
 | Stepover | 10–90 % |
 | Glue Gap | Space left under the plug |
 | Clearance | Slack around the plug, −1 to +1 mm |
+| V-Bit Floor Step | Spacing of the V-bit's passes in corners the end mill can't reach. The note under it gives the height of the ridges left, and warns when they're taller than the glue gap |
 | Generate | **Female** (socket) or **Male** (plug) |
 | Invert | Shown for nested designs. Which part is the plug |
 | Ramp In | 2× dia, 50 % feed |
@@ -228,4 +229,5 @@ No Generate button: the pin holes are drilled automatically, first in every tile
 | **Pattern** | Mode: linear (Rows, Cols, X Gap, Y Gap) · circular (Count, Radius, Start°, End°, Rotate items) | Apply Pattern |
 | **Tabs** | Several paths: Hold With: Joined by strips · Tabs on each path. Tabs: Count · Height · Length. Strips: Joins Per Part · Height · Width | Apply Tabs (Apply Tabs to N Paths) · Place Strips / Re-place Strips · Remove Strips |
 | **Corners** | Corner Treatment: Outer Round · Inner Round · Chamfer · Dogbone · None · Radius (**Tool Radius** for Dogbone) | Apply to All Corners / Apply to N Selected Corners |
+| **Duplicate** | No fields: copies of the selection follow the mouse, each click places one, Esc finishes (Ctrl+D) | Start Duplicating / Stop Duplicating |
 | **Nest** | Shared lines (+ end mill) · Part Gap · Edge Margin · Rotation Step: None · 90° · 45° · 15° · Pack From: Left Edge · Bottom Edge · Fill stock with copies (+ Parts, Copy toolpaths) · Nest inside holes · Avoid other paths | Nest on Stock (Fill Stock when filling; Update Nest from a Nest chip) |

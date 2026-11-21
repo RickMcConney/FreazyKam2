@@ -245,7 +245,8 @@ export function usePenTool(g: Gesture, { viewportRef }: CanvasView, getFlat: Fla
       newNode.outHandle = livePen.handle
       newNode.inHandle = { x: m.anchorCNC.x - dx, y: m.anchorCNC.y - dy }
     } else if (ct !== 'linear' && (altDownRef.current || shiftDownRef.current)) {
-      // Shift (or Alt) held: mark incoming segment as linear (corner). Only affects the segment
+      // Shift held: mark incoming segment as linear (corner). Shift is the documented key — it is
+      // on every keyboard and no OS takes it; Alt still works for anyone used to it. Only affects the segment
       // ending at this node — the outgoing segment uses normal curve logic.
       newNode.corner = true
     }

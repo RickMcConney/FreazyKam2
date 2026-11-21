@@ -1063,7 +1063,7 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
     const copySet = withHiddenSources(selectedIds, s.paths)
     const { paths: newPaths, tabs, constraints, newIdOf } = copyPaths(
       copySet, useTabStore.getState().tabs, useConstraintsStore.getState().constraints,
-      { offsetMM, pathIdPrefix: 'path-dup', rename: (n) => `${n} copy`, lostRecipe: 'copied-from', copyBatch: uid('dup') },
+      { offsetMM, pathIdPrefix: 'path-dup', lostRecipe: 'copied-from', copyBatch: uid('dup') },
     )
     // Installed raw, inside this one edit, so a single undo takes them back with the paths.
     // Holding tabs travel now — Duplicate used to leave them on the original only, which

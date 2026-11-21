@@ -126,6 +126,9 @@ interface UIState {
   clockEditId: string | null
   setupPanelOpen: boolean
   helpOpen: boolean
+  /** "What's this?" help mode (help/HelpMode.tsx): the next click on a control opens its help page instead of acting. */
+  helpMode: boolean
+  setHelpMode: (on: boolean) => void
   // The escapement's readout, in a window big enough to read it. Non-modal and
   // live: it follows whichever escapement the panels are editing and stays up
   // until it is closed, which is the point — the numbers are what a parameter is
@@ -325,6 +328,7 @@ export const useUIStore = create<UIState>()(
   clockAnimPathId: null,
   clockLinkPathId: null,
   helpOpen: false,
+  helpMode: false,
   escapementInfoOpen: false,
   clockInfoOpen: false,
   clockDraft: null,
@@ -391,6 +395,7 @@ export const useUIStore = create<UIState>()(
     activeTile: 0,
   }),
   setHelpOpen: (open) => set({ helpOpen: open }),
+  setHelpMode: (on) => set({ helpMode: on }),
   setEscapementInfoOpen: (open) => set({ escapementInfoOpen: open }),
   setClockInfoOpen: (open) => set({ clockInfoOpen: open }),
   setClockDraft: (spec) => set({ clockDraft: spec }),

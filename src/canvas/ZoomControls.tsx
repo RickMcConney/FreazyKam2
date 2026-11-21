@@ -1,6 +1,7 @@
 import { Maximize2, ZoomIn, ZoomOut } from 'lucide-react'
 import { usePathsStore } from '../store/pathsStore'
 import { ICON } from '../theme'
+import { helpAttr } from '../help/helpTopics'
 
 // One click of the zoom buttons. Coarser than a wheel notch (1.12) on purpose: a button
 // is pressed a few times, not spun, so a notch-sized step would feel like nothing moved.
@@ -24,7 +25,7 @@ export function ZoomControls({ zoomBy, fitToWorkpiece, zoomToActualSize, realPx 
   // trackpad over the canvas is awkward; they do the same thing the wheel does, anchored on
   // the selected part (or the centre of the view) rather than on the cursor.
   return (
-    <div className="absolute bottom-3 right-3 flex flex-col gap-1.5">
+    <div className="absolute bottom-3 right-3 flex flex-col gap-1.5" {...helpAttr('zoom')}>
       <button onClick={() => zoomBy(ZOOM_BUTTON_STEP)} title={hasSelection ? 'Zoom in on the selection' : 'Zoom in'} className={ZOOM_BTN_CLASS}>
         <ZoomIn size={ICON.md} />
       </button>
@@ -35,7 +36,7 @@ export function ZoomControls({ zoomBy, fitToWorkpiece, zoomToActualSize, realPx 
         <ZoomOut size={ICON.md} />
       </button>
       {/* Text rather than an icon: "1:1" says what it does, where a ruler glyph would not. */}
-      <button onClick={zoomToActualSize}
+      <button onClick={zoomToActualSize} {...helpAttr('actual-size')}
         title={realPx === null ? 'Actual size — calibrate this screen first' : 'Actual size — parts at their real size on this screen'}
         className={`${ZOOM_BTN_CLASS} font-mono text-[11px] leading-[18px] font-semibold`}>
         1:1

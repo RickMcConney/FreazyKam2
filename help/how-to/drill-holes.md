@@ -25,6 +25,8 @@ Makes any size hole by spiralling down.
 
 The form lists each hole's Ø and the toolpath Ø.
 
+![Three 40 mm circles drilled Helical with a 1/8 inch end mill: green spirals fill each hole, and the form lists each hole's size and toolpath size](../../docs/images/05-drill-helical.png)
+
 ## Hole in a pocket floor
 
 Set **Start** to that pocket's floor, and **Depth** to the hole's own depth.

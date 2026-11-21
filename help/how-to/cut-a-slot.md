@@ -19,4 +19,4 @@ than ploughing straight through.
 7. Tick **Finishing pass** to clean the walls.
 8. Click **Generate Toolpath**.
 
-**Related:** [All Trochoidal settings](../reference/operations.md#trochoidal)
+**Related:** [Cut with loops (Trochoidal)](cut-with-loops.md) · [All Trochoidal settings](../reference/operations.md#trochoidal)

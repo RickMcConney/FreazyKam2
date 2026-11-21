@@ -10,6 +10,8 @@ Fill with paint and sand the face to reveal the image.
 5. Check the line count the form shows.
 6. Click **Generate Toolpath**.
 
+![A portrait carved as diagonal V-grooves with a 60° V-bit, the form showing 0 to 1 mm deep and 216 lines](../../docs/images/06-photo-vcarve.png)
+
 ## More detail or more contrast?
 
 | Want | Do |

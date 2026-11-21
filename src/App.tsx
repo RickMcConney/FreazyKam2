@@ -28,18 +28,20 @@ import { useSimStore } from './store/simStore'
 import { installSimAutoReload } from './sim/simAutoReload'
 import { installRegistrationSync } from './tools/registrationOps'
 import { installPathClipboard } from './io/pathClipboard'
+import { HelpMode, HelpModeBanner } from './help/HelpMode'
+import { helpAttr, type HelpTopic } from './help/helpTopics'
 import { installAutosave, armAutosave, readSnapshot, clearSnapshot, applySnapshot, pruneSnapshots, tabWasDiscarded } from './io/autosave'
 
 const CanvasStage = lazy(() => import('./canvas/CanvasStage'))
 const ThreeView = lazy(() => import('./three/ThreeView'))
 const TimelinePanel = lazy(() => import('./panels/TimelinePanel'))
 
-const WORKSPACE_TABS: { id: WorkspaceTab; label: string }[] = [
-  { id: '2d', label: '2D View' },
-  { id: '3d', label: '3D View' },
-  { id: 'tools', label: 'Tool Library' },
-  { id: 'postprocessor', label: 'Post-Processor' },
-  { id: 'machine', label: 'Machine' },
+const WORKSPACE_TABS: { id: WorkspaceTab; label: string; help: HelpTopic }[] = [
+  { id: '2d', label: '2D View', help: 'view-2d' },
+  { id: '3d', label: '3D View', help: 'view-3d' },
+  { id: 'tools', label: 'Tool Library', help: 'tool-library' },
+  { id: 'postprocessor', label: 'Post-Processor', help: 'post-processor' },
+  { id: 'machine', label: 'Machine', help: 'machine-tab' },
 ]
 
 function MainWorkspace() {
@@ -56,6 +58,7 @@ function MainWorkspace() {
         {WORKSPACE_TABS.map((tab) => (
           <button
             key={tab.id}
+            {...helpAttr(tab.help)}
             onClick={() => setWorkspaceTab(tab.id)}
             className={[
               'px-4 py-1.5 text-body border-r border-gray-300 dark:border-neutral-700 transition-colors',
@@ -77,6 +80,7 @@ function MainWorkspace() {
       <div className="flex-1 flex flex-col overflow-hidden bg-[#eceef1] dark:bg-neutral-900">
         {/* Canvas + overlays */}
         <div className="flex-1 relative overflow-hidden">
+          <HelpModeBanner />
           {workspaceTab === '2d' && (
             <Suspense fallback={<div className="w-full h-full flex items-center justify-center text-gray-600 dark:text-neutral-400 text-sm">Loading canvas…</div>}>
               <CanvasStage />
@@ -88,15 +92,17 @@ function MainWorkspace() {
               <ThreeView />
             </Suspense>
           )}
-          {workspaceTab === 'tools' && <ToolLibraryPanel />}
-          {workspaceTab === 'postprocessor' && <PostProcessorPanel />}
-          {workspaceTab === 'machine' && <MachineControlPanel />}
+          {workspaceTab === 'tools' && <div className="contents" {...helpAttr('tool-library')}><ToolLibraryPanel /></div>}
+          {workspaceTab === 'postprocessor' && <div className="contents" {...helpAttr('post-processor')}><PostProcessorPanel /></div>}
+          {workspaceTab === 'machine' && <div className="contents" {...helpAttr('machine-tab')}><MachineControlPanel /></div>}
         </div>
 
         {workspaceTab === '2d' && (
-          <Suspense fallback={null}>
-            <TimelinePanel />
-          </Suspense>
+          <div className="contents" {...helpAttr('objects-strip')}>
+            <Suspense fallback={null}>
+              <TimelinePanel />
+            </Suspense>
+          </div>
         )}
       </div>
     </main>
@@ -368,8 +374,9 @@ export default function App() {
         <Sidebar />
         <MainWorkspace />
       </div>
-      <StatusBar />
+      <div className="contents" {...helpAttr('status-bar')}><StatusBar /></div>
       <SaveDialog />
+      <HelpMode />
       {/* Floats over everything and takes no focus — it is a readout being
           watched while a spinner is held down, not a dialog. */}
       <EscapementInfoPanel />

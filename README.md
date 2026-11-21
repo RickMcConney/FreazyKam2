@@ -207,7 +207,7 @@ Depths are always measured *from* the start surface, and the tool-reach and past
 | `Ctrl/Cmd+N` | New project |
 | `Ctrl/Cmd+Z` | Undo |
 | `Ctrl/Cmd+Y` / `Ctrl/Cmd+Shift+Z` | Redo |
-| `Ctrl/Cmd+D` | Duplicate selected |
+| `Ctrl/Cmd+D` | Duplicate: copies of the selection follow the mouse, click to place each one, Esc to finish |
 | `Ctrl/Cmd+C` / `Ctrl/Cmd+V` | Copy / paste paths, including between projects |
 | `Ctrl/Cmd+G` / `Ctrl/Cmd+Shift+G` | Group / ungroup selected |
 | `Delete` / `Backspace` | Delete selected |

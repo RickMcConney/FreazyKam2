@@ -14,6 +14,8 @@ export function CanvasHints({ connecting, hoveredEditNode, hoverSegIdx, penClosi
   skewLocked: boolean
 }) {
   const activeTool = useUIStore((s) => s.activeTool)
+  // Help mode's own tip takes this spot (HelpModeBanner); a click there is not a tool click.
+  const helpMode = useUIStore((s) => s.helpMode)
   const nodeEditPathId = useUIStore((s) => s.nodeEditPathId)
   const clockLinkPathId = useUIStore((s) => s.clockLinkPathId)
   const cornerPickPathId = useUIStore((s) => s.cornerPickPathId)
@@ -23,6 +25,7 @@ export function CanvasHints({ connecting, hoveredEditNode, hoverSegIdx, penClosi
   const moveLocked = useUIStore((s) => s.moveLocked)
   const selectedIds = usePathsStore((s) => s.selectedIds)
 
+  if (helpMode) return null
   return (
     <>
       {/* Linkage arranging indicator */}

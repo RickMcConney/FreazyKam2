@@ -16,7 +16,7 @@ Also listed in the app under the **?** button.
 |---|---|
 | Ctrl+Z / Ctrl+Y | Undo / Redo |
 | Ctrl+C / Ctrl+V / Ctrl+X | Copy / Paste / Cut (works between projects) |
-| Ctrl+D | Duplicate |
+| Ctrl+D | Duplicate: copies follow the mouse, click to place each one, Esc or Ctrl+D to finish |
 | Ctrl+G | Group |
 | Ctrl+Shift+G | Ungroup |
 | Delete, Backspace | Delete selected |
@@ -30,7 +30,10 @@ Also listed in the app under the **?** button.
 | Scroll | Zoom |
 | Middle-drag, or Space + drag | Pan |
 | S | Snap to grid on/off |
+| L | Lock dragging on/off: parts can still be selected, but not dragged, resized or rotated by mistake |
+| M | Measure tool: click two points to measure between them |
 | C | Constrain tool |
+| ? | Help mode: click any button or panel to open its help page. Esc to cancel |
 
 ## Selecting
 
@@ -58,7 +61,7 @@ Also listed in the app under the **?** button.
 |---|---|
 | Click | Place point |
 | Drag (Bezier) | Pull handles |
-| Alt-click | Straight segment |
+| Shift-click | Straight segment |
 | Click first point | Close |
 | Esc | Finish open |
 | Ctrl+Z | Remove last point |

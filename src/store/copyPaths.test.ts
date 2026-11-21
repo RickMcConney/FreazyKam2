@@ -8,7 +8,7 @@ const path = (p: Partial<ImportedPath> & { id: string }): ImportedPath => ({
   name: p.id, d: 'M0,0 L10,0 L10,10 Z', visible: true, color: '#888', ...p,
 })
 
-const DUPLICATE = { offsetMM: 5, pathIdPrefix: 'path-dup', rename: (n: string) => `${n} copy`, lostRecipe: 'copied-from' } as const
+const DUPLICATE = { offsetMM: 5, pathIdPrefix: 'path-dup', lostRecipe: 'copied-from' } as const
 const PASTE = { offsetMM: 0, pathIdPrefix: 'path-paste', lostRecipe: 'drop' } as const
 
 describe('withHiddenSources', () => {
@@ -107,10 +107,10 @@ describe('copyPaths', () => {
     expect(c2.to.id).toBe(out.newIdOf.get('a'))
   })
 
-  it('names and nudges a duplicate, and leaves a zero-offset paste where it was drawn', () => {
+  it('keeps the original\'s name on a duplicate and nudges it, and leaves a zero-offset paste where it was drawn', () => {
     const p = path({ id: 'a', shapeParams: { type: 'circle', cx: 10, cy: 10, radius: 5 } })
     const dup = copyPaths([p], [], [], DUPLICATE).paths[0]
-    expect(dup.name).toBe('a copy')
+    expect(dup.name).toBe('a')
     expect(dup.d).not.toBe(p.d)
     if (dup.shapeParams?.type !== 'circle') throw new Error('lost the params')
     expect(dup.shapeParams.cx).toBe(15)

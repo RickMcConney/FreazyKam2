@@ -17,6 +17,8 @@ Use **Profile** to cut along a line.
 6. Set **Depth**. To cut through, go slightly deeper than the stock (12.5 mm for 12 mm).
 7. Click **Generate Toolpath**.
 
+![The Profile form with an outside cut on a hexagon: the orange toolpath runs just outside the white outline](../../docs/images/05-profile.png)
+
 ## Fine-tune the fit
 
 **Stock allowance** leaves extra material. A **negative** allowance cuts past the line for

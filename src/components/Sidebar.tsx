@@ -16,10 +16,11 @@ import ClockPanel from '../panels/draw/ClockPanel'
 import WorkpiecePanel from '../panels/WorkpiecePanel'
 import GcodeViewer from '../panels/GcodeViewer'
 import SdCardPanel from '../panels/SdCardPanel'
+import { helpAttr, type HelpTopic } from '../help/helpTopics'
 
-const TABS: { id: SidebarTab; label: string; icon: React.ReactNode }[] = [
-  { id: 'draw', label: 'Draw', icon: <DraftingCompass size={ICON.md} /> },
-  { id: 'paths', label: 'Paths', icon: <Route size={ICON.md} /> },
+const TABS: { id: SidebarTab; label: string; icon: React.ReactNode; help: HelpTopic }[] = [
+  { id: 'draw', label: 'Draw', icon: <DraftingCompass size={ICON.md} />, help: 'draw-tab' },
+  { id: 'paths', label: 'Paths', icon: <Route size={ICON.md} />, help: 'paths-tab' },
 ]
 
 function TabContent({ tab, machineFormActive, shapesPanelOpen, clockPanelOpen }: {
@@ -46,7 +47,7 @@ function PathsTab() {
   const setView = useUIStore((s) => s.setPathsView)
   const opCount = useToolpathStore((s) => s.operations.length)
   const seg = (id: 'paths' | 'toolpaths', label: string, title: string) => (
-    <button key={id} onClick={() => setView(id)} title={title}
+    <button key={id} {...helpAttr(id === 'paths' ? 'paths-list' : 'toolpaths-list')} onClick={() => setView(id)} title={title}
       className={['flex-1 px-2 py-1 text-body rounded transition-colors',
         view === id ? 'bg-white dark:bg-neutral-700 text-gray-800 dark:text-neutral-100 shadow-sm font-medium'
           : 'text-gray-600 dark:text-neutral-400 hover:text-gray-800 dark:hover:text-neutral-200'].join(' ')}>
@@ -59,7 +60,7 @@ function PathsTab() {
         {seg('paths', 'Paths', 'Everything drawn in the document')}
         {seg('toolpaths', `Toolpaths${opCount ? ` · ${opCount}` : ''}`, 'The program — every toolpath in the order the machine cuts it, with its time')}
       </div>
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 min-h-0" {...helpAttr(view === 'toolpaths' ? 'toolpaths-list' : 'paths-list')}>
         {view === 'toolpaths' ? <ToolpathsPanel /> : <PathsPanel />}
       </div>
     </div>
@@ -146,7 +147,7 @@ export default function Sidebar() {
       ) : setupPanelOpen ? (
         /* Setup fills the sidebar so stock / origin / material edits are visible
            live in the 2D or 3D view while the panel stays open. */
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-hidden" {...helpAttr('setup')}>
           <div className="flex items-center justify-between px-3 py-2 border-b border-gray-300 dark:border-neutral-700 flex-shrink-0">
             <span className="text-sm font-semibold text-gray-700 dark:text-neutral-300">Setup</span>
             <button
@@ -168,6 +169,7 @@ export default function Sidebar() {
             {TABS.map((tab) => (
               <button
                 key={tab.id}
+                {...helpAttr(tab.help)}
                 onClick={() => { setSidebarTab(tab.id); useUIStore.getState().setReturnToToolpaths(false); if (tab.id === 'draw') { setMachineFormActive(false); setShapesPanelOpen(false); setClockPanelOpen(false) } }}
                 title={tab.label}
                 className={[
@@ -186,6 +188,7 @@ export default function Sidebar() {
                 stock (Tools / Post-Processor) so edits are always visible live;
                 stay on 3D if already there. */}
             <button
+              {...helpAttr('setup')}
               onClick={() => {
                 const tab = useUIStore.getState().workspaceTab
                 if (tab !== '2d' && tab !== '3d') setWorkspaceTab('2d')
@@ -221,7 +224,7 @@ export default function Sidebar() {
 
           {/* Properties panel — hidden while the machine form or the clock
               designer fills the sidebar */}
-          {showProps && <PropertiesPanel />}
+          {showProps && <div className="contents" {...helpAttr('properties')}><PropertiesPanel /></div>}
           {/* SITS WHERE THE PROPERTIES PANEL SITS — directly under the tools
               above it, growing DOWNWARD into the free space, which is why it
               carries that panel's three classes verbatim. As `flex-initial` it

@@ -145,6 +145,8 @@ details.toc-group > ul.toc { padding-left: 10px; }
 .prose a:hover { text-decoration-thickness: 2px; }
 
 .prose img {
+  /* width/height attributes give the box its shape before it loads; these keep it in the column. */
+  max-width: 100%; height: auto;
   display: block; margin: 22px auto;
   border: 1px solid var(--line-firm); border-radius: var(--radius);
   box-shadow: var(--shadow); background: var(--bg-soft);

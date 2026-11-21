@@ -88,6 +88,13 @@ the depth range you choose decides how many lines there are:
 The form shows the resulting groove width range and line count as you change the depths,
 so you can trade the two off directly rather than guessing.
 
+![The New Photo V-Carve form beside a portrait carved as diagonal grooves: 60° V-bit, 45° angle, 0 to 1 mm deep, line spacing 1.15 mm from depth, 216 lines](images/06-photo-vcarve.png)
+
+*A portrait at 0–1 mm with a 60° V-bit. The line spacing (1.15 mm, 216 lines) follows
+from the depth; the note under it gives the groove widths.*
+
+<!-- FULL APP · 1600 px wide. -->
+
 ---
 
 ## Inlay
@@ -136,6 +143,14 @@ You generate the two halves **separately**, from the same drawing:
 | **Clearance** | Slack around the plug so it isn't a press fit |
 | **Invert** | Which half of a nested drawing is the plug |
 | **Mirror** | Male only — see below |
+
+![The New Inlay form set to Female beside the word TEST in a serif font: 1/8 inch end mill roughing, 60° V-bit finishing, 1 mm deep, with the socket toolpaths filling the letters](images/06-inlay-female.png)
+
+*The socket half of a lettering inlay. The amber note under **V-Bit Floor Step** is the
+form checking its own numbers: here the ridges the V-bit leaves in the corners are taller
+than the glue gap, so the plug may sit on them.*
+
+<!-- FULL APP · 1600 px wide. -->
 
 **Lettering is cut by size.** Small text, whose strokes the V-bit spans from edge to edge at
 the inlay depth, is V-carved straight into a socket of exactly the strokes' shape. Large

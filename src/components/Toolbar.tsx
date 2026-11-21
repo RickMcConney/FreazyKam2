@@ -27,6 +27,7 @@ import HelpPanel from '../panels/HelpPanel'
 import { McpButton } from '../panels/McpPanel'
 import { SimulateIcon } from '../panels/pathToolIcons'
 import { closeSimulation } from '../sim/closeSimulation'
+import { helpAttr, type HelpTopic } from '../help/helpTopics'
 
 function ToolbarButton({
   icon,
@@ -34,15 +35,19 @@ function ToolbarButton({
   onClick,
   active,
   disabled,
+  help,
 }: {
   icon: React.ReactNode
   label: string
   onClick?: () => void
   active?: boolean
   disabled?: boolean
+  /** What help mode opens for this button (help/helpTopics.ts). */
+  help?: HelpTopic
 }) {
   return (
     <button
+      {...(help ? helpAttr(help) : {})}
       title={label}
       onClick={onClick}
       disabled={disabled}
@@ -64,11 +69,13 @@ function Sep() {
 }
 
 // A two-position pill: `right` says which half is lit.
-function PillToggle({ left, rightLabel, right, title, onClick, width }: {
+function PillToggle({ left, rightLabel, right, title, onClick, width, help }: {
   left: string; rightLabel: string; right: boolean; title: string; onClick: () => void; width: string
+  help: HelpTopic
 }) {
   return (
     <div
+      {...helpAttr(help)}
       title={title}
       onClick={onClick}
       className={`relative flex items-center cursor-pointer select-none rounded-full h-7 ${width} bg-gray-300 dark:bg-neutral-700 flex-shrink-0`}
@@ -96,7 +103,7 @@ function UnitToggle() {
   const setUnits = useWorkpieceStore((s) => s.setUnits)
   const isIn = units === 'in'
   return (
-    <PillToggle left="mm" rightLabel="in" right={isIn} width="w-14"
+    <PillToggle left="mm" rightLabel="in" right={isIn} width="w-14" help="units"
       title={`Units: ${units} — click to switch`}
       onClick={() => setUnits(isIn ? 'mm' : 'in')} />
   )
@@ -111,7 +118,7 @@ function FeedTimeToggle() {
   const perSec = ft === 's'
   const u = units === 'in' ? 'in' : 'mm'
   return (
-    <PillToggle left="/min" rightLabel="/s" right={perSec} width="w-16"
+    <PillToggle left="/min" rightLabel="/s" right={perSec} width="w-16" help="feed-time"
       title={`Feeds shown in ${u}/${perSec ? 's' : 'min'} — click to switch. Display only: the G-code is always per minute.`}
       onClick={() => setFeedTime(perSec ? 'min' : 's')} />
   )
@@ -157,6 +164,7 @@ function ProjectNameEditor() {
 
   return (
     <button
+      {...helpAttr('project-file')}
       onClick={startEdit}
       title="Click to rename project"
       className="ml-3 text-gray-700 dark:text-neutral-300 text-sm truncate max-w-52 hover:text-gray-900 dark:hover:text-neutral-100 hover:underline text-left"
@@ -181,7 +189,8 @@ export default function Toolbar() {
   const nodeEditRedo = useUIStore((s) => s.nodeEditRedo)
   const nodeEditCanUndo = useUIStore((s) => s.nodeEditCanUndo)
   const nodeEditCanRedo = useUIStore((s) => s.nodeEditCanRedo)
-  const setHelpOpen = useUIStore((s) => s.setHelpOpen)
+  const helpMode = useUIStore((s) => s.helpMode)
+  const setHelpMode = useUIStore((s) => s.setHelpMode)
   const mainUndo = useTimelineStore((s) => s.undo)
   const mainRedo = useTimelineStore((s) => s.redo)
   // THE CURSOR, NOT canUndo(). Those are functions reading get(); selected as functions they
@@ -248,16 +257,19 @@ export default function Toolbar() {
         <ToolbarButton
           icon={<FilePlus size={ICON.md} />}
           label="New Project (Ctrl+N)"
+          help="project-file"
           onClick={requestNewProject}
         />
         <ToolbarButton
           icon={<FolderOpen size={ICON.md} />}
           label="Open Project (Ctrl+O)"
+          help="project-file"
           onClick={() => void openProjectFile()}
         />
         <ToolbarButton
           icon={<Save size={ICON.md} />}
           label="Save Project As… (Ctrl+S)"
+          help="project-file"
           onClick={() => void triggerProjectSave()}
         />
         
@@ -276,11 +288,13 @@ export default function Toolbar() {
         <ToolbarButton
           icon={<Import size={ICON.md} />}
           label="Import File (SVG, DXF, STL, Image, or G-code)"
+          help="import"
           onClick={() => importRef.current?.click()}
         />
         <ToolbarButton
           icon={<FileCog size={ICON.md} />}
           label={hasToolpaths ? 'Export G-code' : 'Export G-code (no toolpaths)'}
+          help="export-gcode"
           onClick={() => setPreflight(buildExportPreflight())}
         />
         {/* Geometry OUT, for another tool. Copying paths between two projects of
@@ -289,31 +303,34 @@ export default function Toolbar() {
         <ToolbarButton
           icon={<Share size={ICON.md} />}
           label="Export SVG or DXF (selected paths, or all)"
+          help="export-drawing"
           onClick={() => useSaveDialogStore.getState().openSaveDialog('drawing')}
         />
         <Sep />
 
 
         {/* History */}
-        <ToolbarButton icon={<Undo2 size={ICON.md} />} label="Undo (Ctrl+Z)" onClick={undo} disabled={undoDisabled} />
-        <ToolbarButton icon={<Redo2 size={ICON.md} />} label="Redo (Ctrl+Y)" onClick={redo} disabled={redoDisabled} />
+        <ToolbarButton icon={<Undo2 size={ICON.md} />} label="Undo (Ctrl+Z)" help="undo-redo" onClick={undo} disabled={undoDisabled} />
+        <ToolbarButton icon={<Redo2 size={ICON.md} />} label="Redo (Ctrl+Y)" help="undo-redo" onClick={redo} disabled={redoDisabled} />
         <Sep />
 
         {simOpen ? (
           <ToolbarButton
             icon={<CircleStop size={ICON.md} className="text-red-600 dark:text-red-400" />}
             label="Stop simulation"
+            help="simulate"
             onClick={closeSimulation}
           />
         ) : (
           <ToolbarButton
             icon={<SimulateIcon size={ICON.md} className={hasToolpaths ? 'text-green-600 dark:text-green-400' : undefined} />}
             label={hasToolpaths ? 'Simulate G-code' : 'Simulate G-code (no toolpaths)'}
+            help="simulate"
             onClick={handleSimulate}
             disabled={!hasToolpaths}
           />
         )}
-        <SheetPicker />
+        <span className="contents" {...helpAttr('sheets')}><SheetPicker /></span>
         <Sep />
 
 
@@ -344,6 +361,7 @@ export default function Toolbar() {
           <ToolbarButton
             icon={<Magnet size={ICON.md} />}
             label={`Snap to Grid (S) — ${snapEnabled ? 'On' : 'Off'}`}
+            help="snap"
             onClick={toggleSnap}
             active={snapEnabled}
           />
@@ -354,22 +372,31 @@ export default function Toolbar() {
               ? 'Dragging Locked (L) — no dragging, resizing or rotating on the canvas; parts move only by Shift-drag, arrow keys or typed values'
               : 'Lock Dragging (L) — stop parts being dragged, resized or rotated by mistake'}
             onClick={toggleMoveLock}
+            help="lock-dragging"
             active={moveLocked}
           />
           {/* Measure (canvas/measure). */}
           <ToolbarButton
             icon={<Ruler size={ICON.md} />}
             label="Measure (M) — click two points to measure between them"
+            help="measure"
             onClick={() => useUIStore.getState().setActiveTool(measuring ? 'select' : 'measure')}
             active={measuring}
           />
           <ToolbarButton
             icon={darkMode ? <Sun size={ICON.md} /> : <Moon size={ICON.md} />}
             label={darkMode ? 'Switch to Light Theme' : 'Switch to Dark Theme'}
+            help="theme"
             onClick={toggleDarkMode}
           />
-          <McpButton />
-          <ToolbarButton icon={<HelpCircle size={ICON.md} />} label="Help" onClick={() => setHelpOpen(true)} />
+          <span className="contents" {...helpAttr('mcp')}><McpButton /></span>
+          {/* Help mode: the next click on any control opens its help page (help/HelpMode.tsx).
+              The mode's own control, so it gets through while the mode is on — and turns it off. */}
+          <span className="contents" data-help-ui>
+            <ToolbarButton icon={<HelpCircle size={ICON.md} />}
+              label={helpMode ? 'Leave help mode (Esc)' : 'Help (?) — then click any button or panel to read about it'}
+              active={helpMode} onClick={() => setHelpMode(!helpMode)} />
+          </span>
         </div>
       </div>
 

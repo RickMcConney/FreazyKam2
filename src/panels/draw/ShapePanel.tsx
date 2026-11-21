@@ -19,6 +19,7 @@ import { trackDims, BRIO } from '../../shapes/trackGenerator'
 import { BOARD_EDGE_LABEL, BOARD_HANDLE_LABELS, BOARD_HANDLE_HAS_INSET, BOARD_HANDLE_DEFAULTS } from '../../shapes/cuttingBoardGenerator'
 import { loadFont, isFontLoaded, SINGLE_LINE_FONT_FAMILY } from '../../shapes/textGenerator'
 import { PATH_COLOR } from '../../colors'
+import { helpAttr } from '../../help/helpTopics'
 import { NumericInput } from '../../components/NumericInput'
 import FontSelect from '../../components/FontSelect'
 import { NumInput, PlainInput, Select, Check, UnitSpacer, SliderValue, inputCls, labelCls, toolBtnCls, toolBtnState } from './shared'
@@ -818,7 +819,7 @@ export default function ShapePanel({ fill = false }: { fill?: boolean }) {
   // ── Full-panel shapes selector ─────────────────────────────────────────────
   if (fill) {
     return (
-      <div className="flex flex-col flex-1 overflow-hidden">
+      <div className="flex flex-col flex-1 overflow-hidden" {...helpAttr('shape')}>
         <div className="flex items-center justify-between px-3 py-2 border-b border-gray-300 dark:border-neutral-700 flex-shrink-0">
           <span className="text-body font-semibold text-gray-700 dark:text-neutral-300">Shapes</span>
           <button
@@ -865,10 +866,11 @@ export default function ShapePanel({ fill = false }: { fill?: boolean }) {
 
   // ── Normal draw tool row ───────────────────────────────────────────────────
   return (
-    <div className="px-3 py-2 space-y-2 border-b border-gray-300 dark:border-neutral-700">
+    <div className="px-3 py-2 space-y-2 border-b border-gray-300 dark:border-neutral-700" {...helpAttr('shape')}>
       <p className="text-label font-semibold text-gray-600 dark:text-neutral-400 uppercase tracking-wider">Draw</p>
       <div className="grid grid-cols-3 gap-1">
         <button
+          {...helpAttr('pen')}
           onClick={() => setActiveTool(activeTool === 'pen' ? 'select' : 'pen')}
           title="Pen Tool — click to add points, drag for curves"
           className={toolBtnCls(activeTool === 'pen')}
@@ -877,6 +879,7 @@ export default function ShapePanel({ fill = false }: { fill?: boolean }) {
           <span className="text-label text-gray-500 dark:text-neutral-400">Pen</span>
         </button>
         <button
+          {...helpAttr('text')}
           onClick={() => setActiveTool(activeTool === 'text' ? 'select' : 'text')}
           title="Text Tool"
           className={toolBtnCls(activeTool === 'text')}
@@ -948,7 +951,7 @@ export default function ShapePanel({ fill = false }: { fill?: boolean }) {
               </button>
             ))}
           </div>
-          <p className="text-label text-gray-600 dark:text-neutral-400">Alt: toggle linear / curve</p>
+          <p className="text-label text-gray-600 dark:text-neutral-400">Shift-click: straight segment</p>
         </div>
       )}
     </div>

@@ -7,9 +7,11 @@
    - **Closed:** click the first point.
    - **Open:** press **Esc**.
 
+![The Pen tool in Bezier mode with three points placed on the stock and a dashed line to the cursor, labelled 98.49 mm](../../docs/images/02-pen-tool.png)
+
 | Key | Does |
 |---|---|
-| **Alt**-click | Makes the next segment straight |
+| **Shift**-click | Makes the segment to this point straight |
 | **Ctrl+Z** | Removes the last point |
 | Drag (Bezier mode) | Pulls out curve handles |
 

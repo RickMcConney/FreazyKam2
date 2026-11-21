@@ -13,6 +13,7 @@ import { majorStepMM, minorStepMM, formatRulerLabel } from '../canvas/gridUtils'
 import { useRealScale, scaleLabel } from '../canvas/screenScale'
 import { useMachineStore } from '../machine/machineStore'
 import { useAppUpdate } from '../pwa/updateStore'
+import { helpAttr } from '../help/helpTopics'
 
 function modeLabel(activeTool: string, nodeEditPathId: string | null): string {
   if (nodeEditPathId) return 'Edit Points'
@@ -185,6 +186,7 @@ export default function StatusBar() {
             className="font-mono hover:text-gray-900 dark:hover:text-neutral-100"
             title={realPx === null ? 'Calibrate this screen so the 1:1 button shows parts at real size' : 'Zoom against real size on this screen — click to recalibrate'}
             onClick={() => setScreenCalibrationOpen(true)}
+            {...helpAttr('actual-size')}
           >
             {realPx === null ? 'Calibrate screen' : <>Scale: <span className="inline-block min-w-[5ch] text-right">{scaleLabel(viewScale, realPx)}</span></>}
           </button>

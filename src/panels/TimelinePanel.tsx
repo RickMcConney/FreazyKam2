@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronDown, ChevronUp,
   Shapes, Wrench, Square, Squircle, Circle, Ellipse, Hexagon,
-  Star, Heart, Shield, Orbit, Grid3x3, Cog, Snail, Type, PenTool, Copy, Import, SquaresUnite,
+  Star, Heart, Shield, Orbit, Grid3x3, Cog, Snail, Type, PenTool, Import, SquaresUnite,
   SquareSquare, PencilSparkles, LayoutGrid, Target, CircleDot, Layers, Box, RefreshCw, FileCode,
   X, Image as ImageIcon, Weight, Clock, VectorSquare, Group, TrainTrack,
   RulerDimensionLine, Webhook, Blocks, Package, Columns3, FlipHorizontal2,
@@ -102,6 +102,9 @@ interface ObjectChip {
   constraintIds?: string[]
   /** The generated path whose form this chip reopens, if it has one. */
   editPathId?: string
+  /** What its × deletes when that is more than `pathIds`: a copied boolean's hidden
+   *  operands, which have no chip of their own and must not be left behind. */
+  deleteIds?: string[]
 }
 
 // How a path is drawn and named in the strip, matching how the same thing is
@@ -115,7 +118,9 @@ function pathVisual(p: ImportedPath): { label: string; Icon: ChipIcon; color?: s
     if (def.kind === 'trace') return { label: 'Trace', Icon: PencilSparkles, color: OP_TYPE_COLORS.trace }
     if (def.kind === 'along') return { label: 'Text on Path', Icon: AlongPathIcon }
     if (def.kind === 'fill') return { label: 'Nest', Icon: Blocks, color: OP_TYPE_COLORS.nest }
-    if (def.kind === 'duplicate') return { label: p.name, Icon: Copy }
+    // A DUPLICATE reads as what it is a copy OF — a copied circle is a Circle, as a copied
+    // boolean is a Boolean — so it falls through to the shape's own icon and name. The
+    // definition is history (where it was copied from), not a kind of object.
   }
   if (p.shapeParams) {
     return {
@@ -264,6 +269,11 @@ export function buildChips(
       // Counted over what is ON SCREEN: a copied boolean brings its hidden operands along,
       // and one boolean with two operands is still one thing copied.
       const things = new Set(members.filter((m) => !m.hidden).map((m) => outerGroupOf(m) ?? m.groupId ?? m.id))
+      // Those hidden operands are the copy's machinery (they keep it a re-editable boolean),
+      // not things the user made, so they get NO chip of their own — they belong to the
+      // chip of what was copied, whose × takes them with it (`deleteIds`, below). The
+      // ORIGINAL's operands keep their chips: the user drew those.
+      if (p.hidden && things.size > 0) continue
       if (things.size > 1) {
         if (seenDef.has(`copy:${batch}`)) continue
         seenDef.add(`copy:${batch}`)
@@ -326,6 +336,29 @@ export function buildChips(
         editPathId: undefined,
       })
       out.push(...attachedChips(p, tabChips))
+    }
+  }
+
+  // A copy's hidden operands go with the chip of the copy they belong to: deleting it
+  // must not strand invisible paths that no longer have a chip to reach them by.
+  const hiddenOfBatch = new Map<string, string[]>()
+  for (const p of paths) {
+    if (p.hidden && p.copyBatch && !jobPathIds.has(p.id)) {
+      const l = hiddenOfBatch.get(p.copyBatch)
+      if (l) l.push(p.id); else hiddenOfBatch.set(p.copyBatch, [p.id])
+    }
+  }
+  if (hiddenOfBatch.size > 0) {
+    const byId = new Map(paths.map((p) => [p.id, p]))
+    for (const chip of out) {
+      if (chip.family !== 'path') continue
+      const extra = new Set<string>()
+      for (const id of chip.pathIds) {
+        const b = byId.get(id)?.copyBatch
+        if (b && !byId.get(id)!.hidden) for (const h of hiddenOfBatch.get(b) ?? []) extra.add(h)
+      }
+      for (const id of chip.pathIds) extra.delete(id)
+      if (extra.size > 0) chip.deleteIds = [...chip.pathIds, ...extra]
     }
   }
 
@@ -659,7 +692,7 @@ export default function TimelinePanel() {
     // Deleting the chip releases the whole chain and leaves every part exactly
     // where it stands — nothing is cut differently, so nothing regenerates.
     if (chip.constraintIds) return () => useConstraintsStore.getState().deleteConstraints(chip.constraintIds!)
-    return () => usePathsStore.getState().applyPathEdit({ deleteIds: chip.pathIds, label: `Delete ${chip.label}` })
+    return () => usePathsStore.getState().applyPathEdit({ deleteIds: chip.deleteIds ?? chip.pathIds, label: `Delete ${chip.label}` })
   }
 
   // Plain vertical wheel scrolls the strip horizontally — no need to aim for

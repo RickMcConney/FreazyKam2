@@ -197,7 +197,33 @@ interface Rendered {
  * a contributor note rather than a page — the guide's `images/README.md` is the
  * screenshot-capture rules — so it goes to the file on GitHub instead.
  */
-function renderBody(page: DocPage, published: Set<string>, site: DocSite): Rendered {
+/**
+ * A PNG's or JPEG's pixel size, read from its header — or null for anything else.
+ *
+ * Written onto each <img> so the browser reserves its box before it loads. Without it a
+ * lazy screenshot is 0 px tall until it loads, so a link to a section (help mode sends
+ * readers straight to one) lands on the right spot, the screenshots just above it load,
+ * and the section is pushed down out of view — the reader arrives at some earlier part of
+ * a long page. With the boxes reserved nothing moves.
+ */
+function imageSize(abs: string): { w: number; h: number } | null {
+  if (!existsSync(abs)) return null
+  const b = readFileSync(abs)
+  if (b.length > 24 && b.readUInt32BE(0) === 0x89504e47) return { w: b.readUInt32BE(16), h: b.readUInt32BE(20) }
+  if (b.length > 4 && b[0] === 0xff && b[1] === 0xd8) {
+    // Walk the JPEG segments to the start-of-frame marker, which carries the size.
+    let i = 2
+    while (i + 9 < b.length) {
+      if (b[i] !== 0xff) return null
+      const m = b[i + 1]
+      if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return { h: b.readUInt16BE(i + 5), w: b.readUInt16BE(i + 7) }
+      i += 2 + b.readUInt16BE(i + 2)
+    }
+  }
+  return null
+}
+
+function renderBody(page: DocPage, published: Set<string>, site: DocSite, root: string): Rendered {
   // The capture notes ("<!-- FULL APP · 1600 px wide -->") are instructions for whoever
   // recaptures a screenshot, not content.
   const src = page.markdown.replace(/<!--[\s\S]*?-->/g, '')
@@ -240,8 +266,12 @@ function renderBody(page: DocPage, published: Set<string>, site: DocSite): Rende
     return `${attr}="${toOut(target)}${hash ? `#${hash}` : ''}"`
   })
 
-  // Every screenshot is below the fold of its own page.
-  html = html.replace(/<img /g, '<img loading="lazy" decoding="async" ')
+  // Every screenshot is below the fold of its own page — and gets its size, so loading it
+  // late moves nothing (imageSize).
+  html = html.replace(/<img src="([^"]+)"/g, (_m, src: string) => {
+    const size = isAbsolute(src) ? null : imageSize(join(root, site.dir, posix.dirname(page.src), decodeURIComponent(src)))
+    return `<img loading="lazy" decoding="async"${size ? ` width="${size.w}" height="${size.h}"` : ''} src="${src}"`
+  })
 
   return { html, headings }
 }
@@ -478,7 +508,7 @@ export function buildDocs(root: string, site: DocSite = GUIDE): Map<string, stri
   const pages = collectPages(root, site)
   const rendered = new Map<string, Rendered>()
   const published = new Set(pages.map((p) => p.out))
-  for (const p of pages) rendered.set(p.out, renderBody(p, published, site))
+  for (const p of pages) rendered.set(p.out, renderBody(p, published, site, root))
   linkAudit(root, site, pages, rendered)
 
   const out = new Map<string, string>()

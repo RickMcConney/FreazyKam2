@@ -254,7 +254,7 @@ part *and* pinned to the stock in the same direction.
 
 - **Click** places a point.
 - **Click-drag** in Bezier mode pulls out curve handles.
-- **Alt-click** makes the incoming segment straight, whatever mode you're in.
+- **Shift-click** makes the incoming segment straight, whatever mode you're in.
 - **Click near the first point** closes the path.
 - **Escape** finishes it open — two points minimum.
 - **Ctrl+Z** takes back the last point placed, without leaving the tool.
@@ -271,6 +271,13 @@ Five curve modes sit under the tool, and they change what the *same set of point
 
 Except in Bezier mode you don't drag handles at all; you place points and the curve
 follows. Change mode after the fact and the same points give a different path.
+
+![The Pen tool in Bezier mode: three points placed on the stock, and a dashed line from the last one to the cursor with its length, 98.49 mm](images/02-pen-tool.png)
+
+*Drawing with the pen. The curve types sit under the tool in the sidebar, and the dashed
+line to the cursor shows how long the next segment will be.*
+
+<!-- FULL APP · 1600 px wide. -->
 
 ---
 
@@ -317,6 +324,7 @@ than undoing and redoing.
 | **Pattern** | Linear grid or circular array | One path or group |
 | **Tabs** | Holding tabs on a profile cut — covered in [chapter 5](05-pockets.md#holding-tabs) | An existing profile operation |
 | **Corners** | Applies a corner treatment to the corners you pick | One path |
+| **Duplicate** | Stamps copies of the selection wherever you click (Ctrl/⌘+D) | One or more paths |
 | **Trace** | Turns a picture into paths — its own section, [below](#tracing-a-picture) | An imported image |
 
 ### Boolean
@@ -389,6 +397,42 @@ original's orientation.*
 
 <!-- FULL APP · 1600 px wide. -->
 
+### Duplicate
+
+Select what you want copied and click **Duplicate**, or press **Ctrl/⌘+D**. Copies of the
+selection follow the mouse, held by their centre, and each click places one. Keep
+clicking to place as many as you need. Press **Esc**, **Ctrl/⌘+D** again, or pick
+another tool to finish.
+
+![The Draw tab with Duplicate at the end of the Path Tools row, and a 12-sided polygon with rounded notches on the canvas](images/02-duplicate-button.png)
+
+*Duplicate is the last button in the **Path Tools** row. With nothing selected the form asks
+for a selection; with one, it starts placing copies straight away.*
+
+<!-- FULL APP · 1600 px wide. -->
+
+The copy snaps the way a dragged part does: corner onto corner, edges and centres into
+line with other parts, equal spacing, then the grid. It snaps to the original too, so
+butting a copy against the part it came from is one click. That's how a row of
+hexagons tiles edge to edge without any measuring.
+
+![Duplicating a polygon: the original selected on the left, a dashed blue copy following the mouse to its right, lined up with it along a dotted guide, and the Duplicate form open in the sidebar](images/02-duplicate.png)
+
+*Placing a copy. The dashed copy follows the mouse; the dotted line shows it has snapped
+into line with the original's bottom edge. Click to place it, Esc to finish.*
+
+<!-- FULL APP · 1600 px wide. -->
+
+Each copy is the real thing, not a flattened outline. A duplicated gear keeps its module
+and tooth count, a duplicated boolean is still a boolean you can reopen and switch from
+union to subtract, and a group's copy is a group of its own. Holding tabs come with the
+path, and a constraint comes along when both of its parts were copied. A copy keeps its
+original's name.
+
+Every click is one undo step. In the Objects strip, a click that copied one thing gives
+it its own chip, a Circle or a Boolean like the original. A click that copied several
+things is one **Copy ×N** chip.
+
 ### Corners
 
 **Corners** is the one worth knowing about before you need it. It offers **Outer Round**,
@@ -445,6 +489,14 @@ trace stays as it was.
 
 After the first trace the picture is hidden so the paths can be seen. **Show Image**,
 under the button, puts it back to compare against.
+
+![The Edit Trace form beside the traced hippo: Dark Areas, Outlines, 2 tones, threshold 112 from the histogram, Smoothing 85, Ignore Specks Under 2.03 mm, Thicken Lines +1 mm, with the black-and-white preview below and the traced outlines on the stock](images/02-trace-outlines.png)
+
+*The hippo traced as outlines, lines thickened 1 mm. The threshold slider sits over the
+picture's histogram, and **Auto** set it at 112. The preview under the settings shows the
+trace in black and white.*
+
+<!-- FULL APP · 1600 px wide. -->
 
 **A speck takes the colour around it.** A light fleck in a dark area is filled in; a dark
 fleck in a light area goes. JPEG noise, dust on a scan and the odd stray pixel all

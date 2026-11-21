@@ -17,6 +17,19 @@ Tabs are small bridges of wood that keep a part from flying loose on the last pa
 
 Any **Profile** on this outline now leaves the tabs.
 
+![The Tabs form beside a hexagon with four orange tabs on its outline, listed under Current Tabs](../../docs/images/05-tabs.png)
+
+## Place them by hand
+
+1. Click **Click to Place** in the Tabs form.
+2. Click on an outline to put a tab there.
+3. Drag a tab to move it. **Shift-click** one to delete it.
+
+## Remove them
+
+Click the bin beside a tab under **Current Tabs** to remove that one, or **Remove N Tabs**
+for all of them.
+
 ## Several parts at once
 
 Select them all (drag a box), then **Apply Tabs to N Paths**. Every part gets the same

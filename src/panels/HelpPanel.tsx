@@ -41,6 +41,7 @@ const SHORTCUTS: Section[] = [
       { keys: ['L'], desc: 'Lock dragging — parts move only by Shift-drag, handles, arrow keys or typed values; a drag on a part draws a selection box' },
       { keys: ['Shift+drag part'], desc: 'Move a part (works while dragging is locked)' },
       { keys: ['C'], desc: 'Constrain tool — hold one part relative to another' },
+      { keys: ['?'], desc: 'Help mode — click any button or panel to open its help page; Esc to cancel' },
     ],
   },
   {
@@ -101,7 +102,7 @@ const FEATURES = [
   },
   {
     title: 'Path tools',
-    desc: 'Under CAM Operations, the Path Tools row reshapes geometry rather than cutting it: Boolean (union, intersect, subtract), Offset (a rectangle, rounded rect, sign, circle, ellipse, polygon, star, heart, slot or shield stays that shape with new parameters; any other outline is offset exactly, or with Keep shape scaled to an average gap), Pattern (linear or circular array), Tabs (holding tabs) and Corners (round, chamfer, dogbone).',
+    desc: 'Under CAM Operations, the Path Tools row reshapes geometry rather than cutting it: Boolean (union, intersect, subtract), Offset (a rectangle, rounded rect, sign, circle, ellipse, polygon, star, heart, slot or shield stays that shape with new parameters; any other outline is offset exactly, or with Keep shape scaled to an average gap), Pattern (linear or circular array), Tabs (holding tabs), Corners (round, chamfer, dogbone) and Duplicate (copies of the selection follow the mouse and each click places one, snapping corner to corner and edge to edge so copies butt together; Esc to finish, or Ctrl+D).',
   },
   {
     title: 'Objects strip',

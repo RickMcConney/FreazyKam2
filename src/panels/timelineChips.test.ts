@@ -80,6 +80,17 @@ describe('the object strip', () => {
     expect(chips[1].label).toBe('Offset')
   })
 
+  // A copy reads as what it is a copy OF, the way a copied boolean still reads Boolean.
+  it('labels a duplicated shape as that shape, not as a copy', () => {
+    const shapeParams = { type: 'circle', cx: 0, cy: 0, r: 5 } as unknown as ImportedPath['shapeParams']
+    const chips = buildChips([
+      path({ id: 'src', name: 'Circle', shapeParams }),
+      path({ id: 'dup', name: 'Circle copy', shapeParams, definition: { id: 'd2', kind: 'duplicate', sourceId: 'src', offsetMM: 5 } }),
+    ], [])
+    expect(chips[1].label).toBe(chips[0].label)
+    expect(chips[1].Icon).toBe(chips[0].Icon)
+  })
+
   // One Apply of a pattern is ONE set of parameters to go back and change, so
   // the copies it made are one chip — the same reasoning as a batch of
   // operations. Copies from a DUPLICATE are not grouped: each is its own object
@@ -346,5 +357,28 @@ describe('the strip gives each Duplicate click one chip', () => {
       path({ id: 'res', copyBatch: 'k1' }),
     ], [])
     expect(chips.some((c) => c.key === 'copy:k1')).toBe(false)
+  })
+
+  it('a duplicated boolean is ONE chip — its hidden operand copies have none of their own', () => {
+    const chips = buildChips([
+      path({ id: 'op1', hidden: true, copyBatch: 'k1' }), path({ id: 'op2', hidden: true, copyBatch: 'k1' }),
+      path({ id: 'res', copyBatch: 'k1' }),
+    ], [])
+    expect(chips.map((c) => c.key)).toEqual(['res'])
+    expect(chips[0].pathIds).toEqual(['res'])
+  })
+
+  it('deleting a duplicated boolean\'s chip takes its hidden operand copies with it', () => {
+    const chips = buildChips([
+      path({ id: 'op1', hidden: true, copyBatch: 'k1' }), path({ id: 'op2', hidden: true, copyBatch: 'k1' }),
+      path({ id: 'res', copyBatch: 'k1' }),
+    ], [])
+    expect(chips[0].deleteIds?.slice().sort()).toEqual(['op1', 'op2', 'res'])
+  })
+
+  it('the ORIGINAL boolean\'s hidden operands keep their chips — the user drew them', () => {
+    const chips = buildChips([path({ id: 'op1', hidden: true }), path({ id: 'op2', hidden: true }), path({ id: 'res' })], [])
+    expect(chips.map((c) => c.key)).toEqual(['op1', 'op2', 'res'])
+    expect(chips.every((c) => c.deleteIds === undefined)).toBe(true)
   })
 })
