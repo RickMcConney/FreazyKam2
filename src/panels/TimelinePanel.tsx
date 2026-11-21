@@ -252,6 +252,29 @@ export function buildChips(
       })
       continue
     }
+    // ONE CHIP PER DUPLICATE CLICK (ImportedPath.copyBatch). Stamping a selection of
+    // three shapes made three chips per click, and a few clicks buried the strip in
+    // copies that were each one decision. So a click that copied SEVERAL things is one
+    // chip standing for all of them; a click that copied ONE thing falls through to
+    // that thing's own chip, so a stamped gear still reopens as a gear. Asked before
+    // the user group and the shape group, which would otherwise split it.
+    if (p.copyBatch) {
+      const batch = p.copyBatch
+      const members = paths.filter((q) => q.copyBatch === batch && !jobPathIds.has(q.id))
+      // Counted over what is ON SCREEN: a copied boolean brings its hidden operands along,
+      // and one boolean with two operands is still one thing copied.
+      const things = new Set(members.filter((m) => !m.hidden).map((m) => outerGroupOf(m) ?? m.groupId ?? m.id))
+      if (things.size > 1) {
+        if (seenDef.has(`copy:${batch}`)) continue
+        seenDef.add(`copy:${batch}`)
+        out.push({
+          key: `copy:${batch}`, ...pathVisual(p), label: `Copy ×${things.size}`,
+          family: 'path', pathIds: members.map((m) => m.id),
+        })
+        for (const m of members) out.push(...attachedChips(m, tabChips))
+        continue
+      }
+    }
     // A user group is ONE thing — that is what grouping means — so it is one
     // chip standing for every member, at the position of the first. Its members'
     // own chips go while it lasts and come back when it is ungrouped.

@@ -113,6 +113,8 @@ interface PathsState {
   rewriteGeneratedRaw: (edit: { updates?: { id: string; d: string; name?: string; shapeParams?: ShapeParams | null; definition?: PathDefinition; clockSpec?: ClockSpec; fields?: Omit<ImportedPath, 'id'> }[]; add?: ImportedPath[]; deleteIds?: string[] }) => void
   updateShapeParams: (id: string, params: ShapeParams) => void
   duplicateSelected: (offsetMM?: number) => void
+  /** Copies of `ids` moved by `offset`, selected — the stamp tool's click. Same copy as Duplicate. */
+  duplicatePaths: (ids: string[], offset: number | { dx: number; dy: number }) => void
   splitPath: (id: string, subDs: string[]) => void
   showPath: (id: string) => void
   replacePaths: (paths: ImportedPath[]) => void
@@ -1045,19 +1047,23 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
     })
   },
 
-  duplicateSelected: (offsetMM = 5) => {
+  duplicateSelected: (offsetMM = 5) => get().duplicatePaths(get().selectedIds, offsetMM),
+
+  duplicatePaths: (ids, offsetMM) => {
     const s = get()
-    if (s.selectedIds.length === 0) return
+    const live = new Set(s.paths.map((p) => p.id))
+    const selectedIds = ids.filter((id) => live.has(id))
+    if (selectedIds.length === 0) return
 
     // THE SAME COPY PASTE MAKES (store/copyPaths) — ids reissued consistently, recipes kept
     // when their ingredients come too, the nudge through placement or params, corner
     // recipes moved. The selection takes the HIDDEN paths it is generated from along, so a
     // duplicated boolean is a real one; a recipe that cannot come records where the copy was
     // copied FROM, since the original is in this document.
-    const copySet = withHiddenSources(s.selectedIds, s.paths)
+    const copySet = withHiddenSources(selectedIds, s.paths)
     const { paths: newPaths, tabs, constraints, newIdOf } = copyPaths(
       copySet, useTabStore.getState().tabs, useConstraintsStore.getState().constraints,
-      { offsetMM, pathIdPrefix: 'path-dup', rename: (n) => `${n} copy`, lostRecipe: 'copied-from' },
+      { offsetMM, pathIdPrefix: 'path-dup', rename: (n) => `${n} copy`, lostRecipe: 'copied-from', copyBatch: uid('dup') },
     )
     // Installed raw, inside this one edit, so a single undo takes them back with the paths.
     // Holding tabs travel now — Duplicate used to leave them on the original only, which
@@ -1075,7 +1081,7 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
       // Only the copies of what was actually SELECTED: an operand dragged along
       // is hidden, and selecting something invisible leaves the panel describing
       // a thing that is not on screen.
-      selectedIds: s.selectedIds.flatMap((id) => {
+      selectedIds: selectedIds.flatMap((id) => {
         const made = newIdOf.get(id)
         return made ? [made] : []
       }),

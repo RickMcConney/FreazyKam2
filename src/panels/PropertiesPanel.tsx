@@ -14,6 +14,7 @@ import { spirographLoops, SPIRO_RATIO_RANGE, scaleShapeParams, isScaleLocked, ty
 import { loadFont, isFontLoaded, SINGLE_LINE_FONT_FAMILY } from '../shapes/textGenerator'
 import { carriedPinion, gearDims, gearHubOf, gearLabel, gearMesh, gearRimW, gearRotationSense, gearSpokeW, pinionDims, pinionLabel, TOOTH_LABEL_SIZE } from '../shapes/gearGenerator'
 import { hubGrownWhy } from '../shapes/spokedWheel'
+import { holdShapeDefaults } from '../shapes/shapeDefaults'
 import { camDims } from '../shapes/camGenerator'
 import { BoxFields, FingerJointFields, DovetailFields, BowtieFields } from './draw/JointFields'
 import { ratchetDims } from '../shapes/ratchetGenerator'
@@ -306,6 +307,7 @@ const ShapeParamsEditor = memo(function ShapeParamsEditor({ id, params, units, f
               const ratio = spirographLoops(parseFloat(e.target.value))
               updateLive({ ...params, ratio, p: Math.min(params.p, ratio) })
             }}
+            onPointerDown={holdShapeDefaults}
             onPointerUp={() => regenerateAffectedMany(groupIds())}
             onKeyUp={() => regenerateAffectedMany(groupIds())}
             className="flex-1 w-0 accent-blue-500"
@@ -317,6 +319,7 @@ const ShapeParamsEditor = memo(function ShapeParamsEditor({ id, params, units, f
           <input
             type="range" min={0} max={spirographLoops(params.ratio)} step={0.01} value={params.p}
             onChange={(e) => updateLive({ ...params, p: parseFloat(e.target.value) })}
+            onPointerDown={holdShapeDefaults}
             onPointerUp={() => regenerateAffectedMany(groupIds())}
             onKeyUp={() => regenerateAffectedMany(groupIds())}
             className="flex-1 w-0 accent-blue-500"
@@ -351,6 +354,7 @@ const ShapeParamsEditor = memo(function ShapeParamsEditor({ id, params, units, f
           <input
             type="range" min={0} max={1} step={0.05} value={params.loops}
             onChange={(e) => updateLive({ ...params, loops: parseFloat(e.target.value) })}
+            onPointerDown={holdShapeDefaults}
             onPointerUp={() => regenerateAffectedMany(groupIds())}
             onKeyUp={() => regenerateAffectedMany(groupIds())}
             className="flex-1 w-0 accent-blue-500"

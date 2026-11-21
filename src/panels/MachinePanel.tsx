@@ -1,4 +1,4 @@
-import { ProfileForm, TrochoidalForm, FlutingForm, PocketForm, DrillForm, VCarveForm, PhotoVCarveForm, InlayForm, Profile3dForm, SurfaceForm, BooleanForm, OffsetForm, PatternForm, NestForm, TabsForm, NodeEditForm, TraceForm, AlongPathForm, DoubleSidedForm, TilingForm } from './machine'
+import { ProfileForm, TrochoidalForm, FlutingForm, PocketForm, DrillForm, VCarveForm, PhotoVCarveForm, InlayForm, Profile3dForm, SurfaceForm, BooleanForm, OffsetForm, PatternForm, NestForm, TabsForm, NodeEditForm, TraceForm, AlongPathForm, DuplicateForm, DoubleSidedForm, TilingForm } from './machine'
 import { useShallow } from 'zustand/react/shallow'
 import { useState, useEffect } from 'react'
 import { useToolpathStore } from '../store/toolpathStore'
@@ -12,7 +12,7 @@ import type { AlongEditCtx } from './machine/AlongPathForm'
 import { OP_TYPE_COLORS } from '../colors'
 import { ICON } from '../theme'
 import { TabsIcon, AlongPathIcon, FlutingIcon } from './pathToolIcons'
-import { Circle, CircleDot, Target, Layers, Star, SquaresUnite, SquareSquare, LayoutGrid, Blocks, VectorSquare, FlipHorizontal2, Columns3, Box, RefreshCw, PencilSparkles, Image as ImageIcon } from 'lucide-react'
+import { Circle, CircleDot, Target, Layers, Star, SquaresUnite, SquareSquare, LayoutGrid, Blocks, VectorSquare, FlipHorizontal2, Columns3, Box, RefreshCw, PencilSparkles, Image as ImageIcon, CopyPlus } from 'lucide-react'
 import { useUIStore } from '../store/uiStore'
 import { SelectionKindsBar } from './machine/SelectionKindsBar'
 
@@ -26,7 +26,7 @@ export const InlayIcon = ({ size = 24 }: { size?: number }) => (
 
 // ─── Operation type selector ──────────────────────────────────────────────────
 
-type OpType = 'profile' | 'trochoidal' | 'fluting' | 'pocket' | 'drill' | 'surface' | 'vcarve' | 'photovcarve' | 'inlay' | 'profile3d' | 'boolean' | 'offset' | 'pattern' | 'nest' | 'tabs' | 'nodeedit' | 'trace' | 'along' | 'doublesided' | 'tiling'
+type OpType = 'profile' | 'trochoidal' | 'fluting' | 'pocket' | 'drill' | 'surface' | 'vcarve' | 'photovcarve' | 'inlay' | 'profile3d' | 'boolean' | 'offset' | 'pattern' | 'nest' | 'tabs' | 'nodeedit' | 'trace' | 'along' | 'duplicate' | 'doublesided' | 'tiling'
 type FormState = null | 'menu' | OpType
 
 const opBtnCls = 'flex flex-col items-center gap-0.5 py-1.5 rounded text-body transition-colors border border-gray-400 dark:border-neutral-600 hover:bg-gray-100 dark:hover:bg-neutral-700'
@@ -67,6 +67,8 @@ function AddOperationMenu({ onSelect }: { onSelect: (t: OpType) => void }) {
           ['nodeedit', 'Corners', 'Apply corner treatments: round, chamfer, dogbone', <VectorSquare size={ICON.md} />],
           ['trace', 'Trace', 'Turn an imported picture into vector outlines', <PencilSparkles size={ICON.md} />],
           ['along', 'Along Path', 'Lay text along a path — round a circle, along a curve', <AlongPathIcon size={ICON.md} />],
+          // The stamp (Ctrl/⌘+D): its form explains it and starts it — see DuplicateForm.
+          ['duplicate', 'Duplicate', 'Copies of the selection follow the mouse — click to place each one (Ctrl/⌘+D)', <CopyPlus size={ICON.md} />],
         ] as [OpType, string, string, React.ReactNode][]).map(([type, name, desc, icon]) => (
           <button key={type} onClick={() => onSelect(type)} title={desc} className={opBtnCls}>
             <span style={{ color: OP_TYPE_COLORS[type as string] ?? '#94a3b8' }}>{icon}</span>
@@ -206,6 +208,8 @@ export default function MachinePanel({ fill = false }: { fill?: boolean }) {
         <TraceForm key={editTrace?.defId ?? 'new'} onClose={closeForm} editCtx={editTrace ?? undefined} />
       ) : activeForm === 'along' ? (
         <AlongPathForm key={editAlong?.pathId ?? 'new'} onClose={closeForm} editCtx={editAlong ?? undefined} />
+      ) : activeForm === 'duplicate' ? (
+        <DuplicateForm onClose={closeForm} />
       ) : activeForm === 'tabs' ? (
         <TabsForm onClose={closeForm} />
       ) : activeForm === 'nodeedit' ? (

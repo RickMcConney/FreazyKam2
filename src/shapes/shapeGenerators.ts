@@ -960,6 +960,24 @@ export function shapeParamsFromConfig(
   }
 }
 
+/** The tool defaults with `params` written into its shape's entry — the inverse of
+ *  `shapeParamsFromConfig`, so the next shape of that type is placed like this one.
+ *  Only the keys the defaults HAVE are taken: position is not a default, and a
+ *  shape can carry figures no hand-drawn one should inherit (a clock wheel's
+ *  arbor pins). Optional keys a saved config may lack are named outright. */
+export function defaultsFromParams(config: ShapeToolConfig, params: ShapeParams): ShapeToolConfig {
+  const type = params.type
+  const keys = new Set([
+    ...Object.keys(DEFAULT_SHAPE_CONFIG[type]),
+    ...Object.keys(config[type] ?? {}),
+    ...(type === 'gear' ? ['spokeWidth', 'rimWidth'] : []),
+  ])
+  const src = params as unknown as Record<string, unknown>
+  const next: Record<string, unknown> = { ...(config[type] ?? DEFAULT_SHAPE_CONFIG[type]) }
+  for (const k of keys) if (src[k] !== undefined) next[k] = src[k]
+  return { ...config, [type]: next }
+}
+
 // Translate shape params by (dx, dy) — keeps params in sync with canvas moves
 export function translateShapeParams(p: ShapeParams, dx: number, dy: number): ShapeParams {
   switch (p.type) {

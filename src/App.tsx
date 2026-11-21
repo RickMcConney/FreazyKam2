@@ -142,7 +142,9 @@ function useKeyboardShortcuts() {
         useTimelineStore.getState().redo()
         return
       }
-      if (mod && e.key === 'd') { e.preventDefault(); usePathsStore.getState().duplicateSelected(); return }
+      // Duplicate is a STAMP: copies follow the cursor and each click places one (useStampTool);
+      // Cmd+D again, Esc or another tool ends it.
+      if (mod && e.key === 'd') { e.preventDefault(); useUIStore.getState().toggleStamp(usePathsStore.getState().selectedIds); return }
       // Group / Ungroup. Shift+G arrives as 'G' on most layouts, so both are tested.
       if (mod && (e.key === 'g' || e.key === 'G')) {
         e.preventDefault()

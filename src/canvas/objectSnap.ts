@@ -1,3 +1,4 @@
+import { parseD } from '../cam/pathFlattener'
 import { getBBox } from './selectionUtils'
 
 // Object snapping: while dragging a selection, its bbox edges/centers snap to
@@ -6,7 +7,118 @@ import { getBBox } from './selectionUtils'
 // only scans a small number array per axis.
 
 /** `boxes`: every other shape's box, for the equal-spacing snap (the stock is not one). */
-export interface SnapTargets { xs: number[]; ys: number[]; boxes: Box[] }
+export interface SnapTargets {
+  xs: number[]; ys: number[]; boxes: Box[]
+  /** Every other shape's CORNERS (path vertices), for the vertex snap — see snapVertexDelta. */
+  vertices?: VertexIndex
+  /** The MOVING shape's own corners, where its drag started (or at the origin, for the
+   *  shape tool's hover). Absent = no vertex snap. */
+  moving?: Pt[]
+}
+
+type Pt = { x: number; y: number }
+
+// ─── Vertex snap ──────────────────────────────────────────────────────────────
+//
+// A CORNER ONTO A CORNER. Box alignment lines up edges of BOUNDING BOXES, which is
+// all it takes to butt two rectangles but never puts two hexagons edge to edge — a
+// honeycomb's neighbour stands half a width over and three-quarters of a height up,
+// where no box edge is. Two polygons share an edge exactly when two of their corners
+// coincide, so snapping the moving shape's nearest corner onto another shape's
+// corner is the whole of edge-to-edge (and end-to-end) placement, for any polygon.
+//
+// The corners are path VERTICES — segment end points — so a curve offers its anchor
+// points too (a circle's four quadrant points), which is what someone aiming at one
+// expects. A path with more than MAX_VERTS_PER_PATH of them (a trace, a text
+// outline, a gear's flanks) offers none: it would swamp the index with points nobody
+// aims at, and that is the case where edge-to-edge means nothing anyway.
+
+const MAX_VERTS_PER_PATH = 400
+/** Moving corners past this and the vertex snap is skipped: per frame it is cheap,
+ *  but a selection that big is a nest being shuffled, not a part being fitted. */
+export const MAX_MOVING_VERTS = 1000
+
+/** The segment end points of `d`, one per vertex (a closing point that repeats the
+ *  start is dropped). */
+export function pathVertices(d: string): Pt[] {
+  const out: Pt[] = []
+  let start: Pt | null = null
+  for (const c of parseD(d)) {
+    if (c.t === 'Z') continue
+    if (!('x' in c)) continue
+    const p = { x: c.x, y: c.y }
+    if (c.t === 'M') start = p
+    else if (start && Math.abs(p.x - start.x) < 1e-6 && Math.abs(p.y - start.y) < 1e-6) continue
+    out.push(p)
+  }
+  return out
+}
+
+/** Corners bucketed into square cells so a lookup reads only the cells near it. */
+export interface VertexIndex { cell: number; cells: Map<string, Pt[]> }
+
+export function buildVertexIndex(points: Pt[], cell: number): VertexIndex {
+  const cells = new Map<string, Pt[]>()
+  for (const p of points) {
+    const k = `${Math.floor(p.x / cell)},${Math.floor(p.y / cell)}`
+    const b = cells.get(k)
+    if (b) b.push(p); else cells.set(k, [p])
+  }
+  return { cell, cells }
+}
+
+/** The correction that puts the moving corner nearest to any target corner exactly
+ *  on it (both axes), with the corner it lands on — or null when none is within
+ *  `tolMM`. `moving` stands where the drag started; (dx, dy) is the drag so far. */
+export function snapVertexDelta(
+  moving: Pt[], dx: number, dy: number, index: VertexIndex, tolMM: number,
+): { dx: number; dy: number; point: Pt } | null {
+  const r = Math.max(1, Math.ceil(tolMM / index.cell))
+  let best: { dx: number; dy: number; point: Pt } | null = null
+  let bestD = tolMM
+  for (const m of moving) {
+    const x = m.x + dx, y = m.y + dy
+    const cx = Math.floor(x / index.cell), cy = Math.floor(y / index.cell)
+    for (let i = cx - r; i <= cx + r; i++) {
+      for (let j = cy - r; j <= cy + r; j++) {
+        const b = index.cells.get(`${i},${j}`)
+        if (!b) continue
+        for (const t of b) {
+          const dd = Math.hypot(t.x - x, t.y - y)
+          if (dd < bestD) { bestD = dd; best = { dx: t.x - m.x, dy: t.y - m.y, point: t } }
+        }
+      }
+    }
+  }
+  return best
+}
+
+// Parsed once per `d`: targets are rebuilt at every drag start (and after every
+// placement, for the shape tool's hover), and on a nest that is thousands of parses
+// of outlines that have not changed. Two generations, like getBBox's cache.
+const VERT_GEN_MAX = 4000
+let vertCur = new Map<string, Pt[]>()
+let vertOld = new Map<string, Pt[]>()
+function cachedVertices(d: string): Pt[] {
+  let v = vertCur.get(d)
+  if (v) return v
+  v = vertOld.get(d) ?? pathVertices(d)
+  if (vertCur.size >= VERT_GEN_MAX) { vertOld = vertCur; vertCur = new Map() }
+  vertCur.set(d, v)
+  return v
+}
+
+/** Every path's corners, capped per path (see MAX_VERTS_PER_PATH). */
+export function collectVertices(paths: { d: string }[]): Pt[] {
+  const pts: Pt[] = []
+  for (const p of paths) {
+    const v = cachedVertices(p.d)
+    if (v.length > MAX_VERTS_PER_PATH) continue
+    pts.push(...v)
+  }
+  return pts
+}
+
 
 export interface Box { minX: number; minY: number; maxX: number; maxY: number }
 
@@ -44,7 +156,9 @@ export function collectSnapTargets(
     const m = opts.mirror?.(box)
     if (m) add(m)
   }
-  return { xs, ys, boxes }
+  // 5 mm cells: a lookup reads the nine round its point at any ordinary zoom.
+  const vertices = buildVertexIndex(collectVertices(paths), 5)
+  return { xs, ys, boxes, vertices }
 }
 
 /** One gap the equal-spacing snap matched: from `from` to `to` along `axis`, drawn across

@@ -9,10 +9,11 @@ import { useUIStore } from '../store/uiStore'
 import { useWorkpieceStore } from '../store/workpieceStore'
 import type { SnapGuides } from './layers/SnapGuideLayer'
 import { originWorldXY } from './layers/WorkpieceLayer'
-import { collectSnapTargets, type Box, type SnapTargets } from './objectSnap'
+import { collectSnapTargets, collectVertices, type Box, type SnapTargets } from './objectSnap'
 import { onCanvas } from './pathHit'
 import { getMultiBBox, type BBox } from './selectionUtils'
 import type { HandleType, LiveTransform } from './types'
+import type { ShapeParams } from '../shapes/shapeGenerators'
 import { useRefState } from './useRefState'
 import { sheetLayoutNow } from './useSheets'
 import { snapPoint, type Viewport } from './viewport'
@@ -76,9 +77,14 @@ export function beginMoveSession(ids: string[]): { bbox: BBox | null; snapTarget
   const allPaths = usePathsStore.getState().paths
   const { widthMM, heightMM } = useWorkpieceStore.getState()
   const moving = new Set(ids)
+  const movingPaths = allPaths.filter((p) => moving.has(p.id))
   return {
-    bbox: getMultiBBox(allPaths.filter((p) => moving.has(p.id)).map((p) => p.d)),
-    snapTargets: collectSnapTargets(allPaths.filter((p) => onCanvas(p) && !moving.has(p.id)), { widthMM, heightMM }, snapOptions()),
+    bbox: getMultiBBox(movingPaths.map((p) => p.d)),
+    snapTargets: {
+      ...collectSnapTargets(allPaths.filter((p) => onCanvas(p) && !moving.has(p.id)), { widthMM, heightMM }, snapOptions()),
+      // The dragged shapes' own corners, for the corner-onto-corner snap (resolveMoveSnap).
+      moving: collectVertices(movingPaths),
+    },
     plan: planConstraints(allPaths, useConstraintsStore.getState().constraints, { widthMM, heightMM }, ids).plan,
   }
 }
@@ -123,7 +129,9 @@ export function useGesture(viewportRef: MutableRefObject<Viewport>) {
   // press REMOVES it. Only the region tool's box REPLACES.
   const [dragBox, dragBoxRef, setDragBox] = useRefState<{ sx: number; sy: number; ex: number; ey: number; op: 'replace' | 'add' | 'remove' } | null>(null)
   const [snapGuides, setSnapGuides] = useState<SnapGuides | null>(null)
-  const [liveShapeD, setLiveShapeD] = useState<string | null>(null)
+  // The in-progress shape: its outline, and the params it came from so the drag
+  // can show its dimensions (ShapeDimLayer).
+  const [liveShape, setLiveShape] = useState<{ d: string; params: ShapeParams } | null>(null)
   const [altDown, altDownRef, setAltDown] = useRefState(false)
   // Shift held: state for the pen preview, ref for the move axis lock and the gestures that
   // read a key held before the press.
@@ -158,7 +166,7 @@ export function useGesture(viewportRef: MutableRefObject<Viewport>) {
     setSnapGuides(null)
     setPickDrag(null)
     setDragBox(null)
-    setLiveShapeD(null)
+    setLiveShape(null)
     setMode({ type: 'idle' })
   }, [setMode, setLiveTransform, setLiveBBox, setLiveRotationAngle, setDragBox])
 
@@ -180,7 +188,7 @@ export function useGesture(viewportRef: MutableRefObject<Viewport>) {
     pickDrag, setPickDrag,
     dragBox, dragBoxRef, setDragBox,
     snapGuides, setSnapGuides,
-    liveShapeD, setLiveShapeD,
+    liveShape, setLiveShape,
     setLiveBBox, setLiveRotationAngle,
   }
 }

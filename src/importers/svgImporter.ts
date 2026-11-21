@@ -36,6 +36,11 @@ export interface ImportedPath {
   // pieces carry the SAME shapeParams and share a groupId, so editing any one of
   // them regenerates the whole set.
   shapePart?: string
+  // The Duplicate (Cmd+D stamp) click that made this copy: every copy one click made
+  // carries the same id, so the object strip shows ONE chip per click however many
+  // things were selected (buildChips). Only a chip grouping — selection, dragging and
+  // the copies' own groups are untouched. A copy of a copy gets the new click's id.
+  copyBatch?: string
   // Where this part sits RELATIVE to where its shapeParams nominally put it —
   // the consolidated recipe (see consolidateSteps) for every repositioning
   // gesture applied to this part alone. A multi-part shape regenerates all of

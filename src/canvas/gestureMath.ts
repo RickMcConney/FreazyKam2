@@ -2,7 +2,7 @@
 // handle drag turns into a scale. Pure — the hooks in useTransformGestures read the stores
 // and the pointer, call these, and push the answers into the live previews — so the rules
 // that decide where a part ends up can be pinned in a node test (gestureMath.test.ts).
-import { equalSpacingSnap, snapAxisDelta, type Box, type SnapTargets } from './objectSnap'
+import { equalSpacingSnap, MAX_MOVING_VERTS, snapAxisDelta, snapVertexDelta, type Box, type SnapTargets } from './objectSnap'
 import type { SnapGuides } from './layers/SnapGuideLayer'
 import type { HandleType } from './types'
 
@@ -21,6 +21,12 @@ type Pt = { x: number; y: number }
  *  3. GRID — only on an axis neither of the above took, and applied to the box's min
  *     corner (`gridSnap`, which is the identity with snap off).
  * `snapOn` false turns 1 and 2 off; the grid is the caller's to switch.
+ *
+ * Ahead of all three, A CORNER ONTO A CORNER (`snapVertexDelta`, when the targets carry
+ * `vertices` and `moving`): a moving corner within `tolMM` of another shape's corner
+ * lands on it exactly, on both axes, and nothing else applies. It is the most specific
+ * thing a drag can be aiming at — two hexagons edge to edge share two corners, and no
+ * box line passes through where the second one sits.
  */
 export function resolveMoveSnap(
   ib: Box & { cx: number; cy: number },
@@ -28,6 +34,10 @@ export function resolveMoveSnap(
   targets: SnapTargets, tolMM: number, snapOn: boolean,
   gridSnap: (p: Pt) => Pt,
 ): { dx: number; dy: number; guides: SnapGuides | null } {
+  if (snapOn && targets.vertices && targets.moving && targets.moving.length <= MAX_MOVING_VERTS) {
+    const v = snapVertexDelta(targets.moving, dx, dy, targets.vertices, tolMM)
+    if (v) return { dx: v.dx, dy: v.dy, guides: { point: v.point } }
+  }
   let finalDx = dx, finalDy = dy
   let ox = snapOn ? snapAxisDelta([ib.minX + finalDx, ib.maxX + finalDx, ib.cx + finalDx], targets.xs, tolMM) : null
   let oy = snapOn ? snapAxisDelta([ib.minY + finalDy, ib.maxY + finalDy, ib.cy + finalDy], targets.ys, tolMM) : null
@@ -115,4 +125,18 @@ export function scaledBox(ib: Box, anchor: Pt, sx: number, sy: number): { minX: 
   const x1 = anchor.x + (ib.minX - anchor.x) * sx, x2 = anchor.x + (ib.maxX - anchor.x) * sx
   const y1 = anchor.y + (ib.minY - anchor.y) * sy, y2 = anchor.y + (ib.maxY - anchor.y) * sy
   return { minX: Math.min(x1, x2), minY: Math.min(y1, y2), width: Math.abs(x2 - x1), height: Math.abs(y2 - y1) }
+}
+
+/** A press of the shape tool released this quickly… */
+export const SLIP_MAX_MS = 250
+/** …and within this many screen px of where it went down was a CLICK that slipped,
+ *  not a drag: it places a default-sized shape rather than a sliver. Both, not
+ *  either — a quick flick across the canvas is a drag someone meant, and a slow
+ *  4 px nudge still sizes something small on purpose. */
+export const SLIP_MAX_PX = 16
+
+/** Whether a shape-tool press that moved past the drag threshold was really a
+ *  click: released inside SLIP_MAX_MS and inside SLIP_MAX_PX of its press. */
+export function isSlippedClick(heldMs: number, distPx: number): boolean {
+  return heldMs < SLIP_MAX_MS && distPx < SLIP_MAX_PX
 }

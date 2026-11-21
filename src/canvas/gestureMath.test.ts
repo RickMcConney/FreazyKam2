@@ -2,7 +2,7 @@
 // drives these through the real mouse but never puts a part where two snaps compete or where
 // the grid differs from the cursor, so the precedence rules live here.
 import { describe, it, expect } from 'vitest'
-import { resolveMoveSnap, resolveResizePoint, resizeScale, scaledBox } from './gestureMath'
+import { isSlippedClick, resolveMoveSnap, resolveResizePoint, resizeScale, scaledBox, SLIP_MAX_MS, SLIP_MAX_PX } from './gestureMath'
 import type { SnapTargets } from './objectSnap'
 
 /** A 1 mm grid. */
@@ -123,5 +123,21 @@ describe('scaledBox — the preview box of a scaled selection', () => {
   it('scales about the anchor, and a mirrored box is still reported min-corner first with a positive size', () => {
     expect(scaledBox({ minX: 0, minY: 0, maxX: 10, maxY: 10 }, { x: 0, y: 0 }, -1, 2))
       .toEqual({ minX: -10, minY: 0, width: 10, height: 20 })
+  })
+})
+
+describe('isSlippedClick — a shape-tool click that slipped places a default shape, not a sliver', () => {
+  it('a quick release a few px from the press is a click', () => {
+    expect(isSlippedClick(120, 6)).toBe(true)
+  })
+  it('a quick flick that travels far is a drag', () => {
+    expect(isSlippedClick(120, SLIP_MAX_PX + 1)).toBe(false)
+  })
+  it('a slow small drag is a drag', () => {
+    expect(isSlippedClick(SLIP_MAX_MS + 50, 6)).toBe(false)
+  })
+  it('the limits themselves are a drag', () => {
+    expect(isSlippedClick(SLIP_MAX_MS, 6)).toBe(false)
+    expect(isSlippedClick(120, SLIP_MAX_PX)).toBe(false)
   })
 })

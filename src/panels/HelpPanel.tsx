@@ -24,7 +24,7 @@ const SHORTCUTS: Section[] = [
       { keys: ['Ctrl+C'], desc: 'Copy selected paths (paste into any project)' },
       { keys: ['Ctrl+V'], desc: 'Paste paths' },
       { keys: ['Ctrl+X'], desc: 'Cut selected paths' },
-      { keys: ['Ctrl+D'], desc: 'Duplicate selected' },
+      { keys: ['Ctrl+D'], desc: 'Duplicate selected: copies follow the mouse, click to place each one, Esc (or Ctrl+D again) to finish' },
       { keys: ['Ctrl+G'], desc: 'Group selected paths' },
       { keys: ['Ctrl+Shift+G'], desc: 'Ungroup' },
       { keys: ['Delete', 'Backspace'], desc: 'Delete selected' },
@@ -77,7 +77,7 @@ const FEATURES = [
   },
   {
     title: 'Shape tools',
-    desc: 'Pick a shape from the Draw tab. Click the canvas to place it at the default size, or drag to size it interactively. Tick From centre and a drag grows outward from where it started instead of running corner to corner — drag repeatedly from one point for concentric shapes. A gear, escapement, pendulum or train track ignores the drag and places at the size its own parameters give it — those are set by module and tooth count, by the beat, or by the piece it has to connect to, not by how far you drag. Edit parameters in the Properties panel.',
+    desc: 'Pick a shape from the Draw tab. Click the canvas to place it at the default size, or drag to size it interactively. The tool stays on: keep clicking to stamp out copies — select an existing shape first and its size becomes the default — and press Esc, click the tool again, or pick another tool to finish. Tick From centre and a drag grows outward from where it started instead of running corner to corner — drag repeatedly from one point for concentric shapes. A gear, escapement, pendulum or train track ignores the drag and places at the size its own parameters give it — those are set by module and tooth count, by the beat, or by the piece it has to connect to, not by how far you drag. Edit parameters in the Properties panel.',
   },
   {
     title: 'Pen tool',

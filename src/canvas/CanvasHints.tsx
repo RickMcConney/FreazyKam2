@@ -84,11 +84,16 @@ export function CanvasHints({ connecting, hoveredEditNode, hoverSegIdx, penClosi
           Measure — click two points · Shift for 15° steps · Esc to clear, Esc again to leave
         </div>
       )}
-      {activeTool !== 'select' && activeTool !== 'drill' && activeTool !== 'pen' && activeTool !== 'constrain' && activeTool !== 'region' && activeTool !== 'measure' && (
+      {activeTool === 'stamp' && (
+        <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-blue-600/90 text-white text-body px-3 py-1 rounded-full pointer-events-none">
+          Duplicate — click to place copies · Esc to finish
+        </div>
+      )}
+      {activeTool !== 'select' && activeTool !== 'drill' && activeTool !== 'pen' && activeTool !== 'constrain' && activeTool !== 'region' && activeTool !== 'measure' && activeTool !== 'stamp' && (
         <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-blue-600/90 text-white text-body px-3 py-1 rounded-full pointer-events-none">
           Drawing {shapeDisplayName(activeTool as ShapeType)} — {SCALE_LOCKED_SHAPES.has(activeTool as ShapeType)
-            ? 'click to place at its designed size, Esc to cancel'
-            : `click to place, drag to size${shapeFromCenterPref ? ' from the centre' : ''}, Esc to cancel`}
+            ? 'click to place at its designed size, as many as you like · Esc to finish'
+            : `click to place, drag to size${shapeFromCenterPref ? ' from the centre' : ''} · Esc to finish`}
         </div>
       )}
       {cornerPickPathId && !nodeEditPathId && (

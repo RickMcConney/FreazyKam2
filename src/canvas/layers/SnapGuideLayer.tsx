@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import { Group, Line, Text } from 'react-konva'
+import { Circle, Group, Line, Text } from 'react-konva'
 import type { Viewport } from '../viewport'
 import type { GapMark } from '../objectSnap'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
@@ -11,7 +11,8 @@ import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
 // `gaps`: the equal-spacing snap's matched gaps (objectSnap equalSpacingSnap), each drawn
 // as a solid measured span with end ticks and its length, so it reads as "these are equal".
 
-export interface SnapGuides { x?: number; y?: number; gaps?: GapMark[] }
+// `point`: the corner a vertex snap landed on (objectSnap snapVertexDelta), drawn as a ring.
+export interface SnapGuides { x?: number; y?: number; gaps?: GapMark[]; point?: { x: number; y: number } }
 
 interface Props {
   viewport: Viewport
@@ -29,6 +30,9 @@ export const SnapGuideLayer = memo(function SnapGuideLayer({ viewport, guides, w
   const sy = (y: number) => viewport.y - y * viewport.scale
   return (
     <Group listening={false}>
+      {guides.point && (
+        <Circle x={sx(guides.point.x)} y={sy(guides.point.y)} radius={6} stroke={GUIDE_COLOR} strokeWidth={1.5} />
+      )}
       {guides.x !== undefined && (
         <Line
           points={[sx(guides.x), 0, sx(guides.x), height]}

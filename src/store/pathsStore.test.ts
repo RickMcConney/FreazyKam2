@@ -817,3 +817,46 @@ describe('strips follow the parts they hold', () => {
     expect(useWorkpieceStore.getState().bridges).toBe(before)
   })
 })
+
+describe('duplicatePaths — the stamp tool\'s click (Cmd+D)', () => {
+  it('copies the named paths by any offset, x and y apart, and selects the copies', async () => {
+    await load({ paths: [path('a'), path('b', { d: rectD(50, 0, 10, 10) })], selected: ['b'] })
+    S().duplicatePaths(['a'], { dx: 30, dy: -12 })
+    await step()
+    const copy = S().paths.find((p) => p.name === 'a copy')!
+    const b = getBBox(copy.d)!
+    expect([b.minX, b.minY]).toEqual([30, -12])
+    expect(S().selectedIds).toEqual([copy.id])
+  })
+
+  it('stamping the same originals twice makes two copies, each one undo step', async () => {
+    await load({ paths: [path('a')] })
+    const before = events()
+    S().duplicatePaths(['a'], { dx: 20, dy: 0 }); await step()
+    S().duplicatePaths(['a'], { dx: 40, dy: 0 }); await step()
+    expect(S().paths.filter((p) => p.name === 'a copy')).toHaveLength(2)
+    expect(events()).toBe(before + 2)
+    await undo()
+    expect(S().paths.filter((p) => p.name === 'a copy')).toHaveLength(1)
+  })
+
+  it('every copy one click makes shares one copyBatch, and the next click gets a new one', async () => {
+    await load({ paths: [path('a'), path('b')] })
+    S().duplicatePaths(['a', 'b'], { dx: 20, dy: 0 }); await step()
+    S().duplicatePaths(['a', 'b'], { dx: 40, dy: 0 }); await step()
+    const batches = S().paths.filter((p) => p.name.endsWith('copy')).map((p) => p.copyBatch)
+    expect(batches[0]).toBeDefined()
+    expect(batches[1]).toBe(batches[0])
+    expect(batches[2]).toBe(batches[3])
+    expect(batches[2]).not.toBe(batches[0])
+    expect(S().paths.find((p) => p.id === 'a')!.copyBatch).toBeUndefined()
+  })
+
+  it('an id no longer in the document is skipped, and none left makes nothing', async () => {
+    await load({ paths: [path('a')] })
+    const before = events()
+    S().duplicatePaths(['gone'], { dx: 5, dy: 5 }); await step()
+    expect(S().paths).toHaveLength(1)
+    expect(events()).toBe(before)
+  })
+})

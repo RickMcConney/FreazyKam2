@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { ICON } from '../../theme'
 import { Square, Circle, Ellipse, Hexagon, Star as StarIcon, PenTool, Type, Squircle, Heart, Shield, Orbit, Grid3x3, Cog, Cloud, Dices, ChevronDown, Clock, Weight, TrainTrack, Webhook, Package } from 'lucide-react'
 import { SignIcon, SlotIcon, BoardIcon, EscapementIcon, FingerJointIcon, DovetailIcon, BowtieIcon } from './shapeIcons'
 import { useUIStore } from '../../store/uiStore'
+import { useSelectedPaths } from '../../store/pathsStore'
 import { useWorkpieceStore, fmtLen } from '../../store/workpieceStore'
-import { spirographLoops, spirographRadii, spirographCentrePen, SPIRO_RATIO_RANGE, SCALE_LOCKED_SHAPES, type ShapeType, type ShapeToolConfig } from '../../shapes/shapeGenerators'
+import { spirographLoops, spirographRadii, spirographCentrePen, SPIRO_RATIO_RANGE, SCALE_LOCKED_SHAPES, shapeDisplayName, defaultsFromParams, type ShapeType, type ShapeToolConfig } from '../../shapes/shapeGenerators'
 import { mazeGrid } from '../../shapes/mazeGenerator'
 import { gearDims, gearHubOf, gearLabel, gearMesh, gearRimW, gearRotationSense, gearSpokeW, pinionDims, pinionLabel, TOOTH_LABEL_SIZE } from '../../shapes/gearGenerator'
 import { hubGrownWhy } from '../../shapes/spokedWheel'
@@ -745,6 +746,27 @@ export default function ShapePanel({ fill = false }: { fill?: boolean }) {
   const { activeTool, setActiveTool, shapeToolConfig, setShapeToolConfig, setShapesPanelOpen, setClockPanelOpen, penCurveType, setPenCurveType, lastShapeType, setLastShapeType, shapeFromCenter, setShapeFromCenter } = useUIStore(useShallow((s) => ({ activeTool: s.activeTool, setActiveTool: s.setActiveTool, shapeToolConfig: s.shapeToolConfig, setShapeToolConfig: s.setShapeToolConfig, setShapesPanelOpen: s.setShapesPanelOpen, setClockPanelOpen: s.setClockPanelOpen, penCurveType: s.penCurveType, setPenCurveType: s.setPenCurveType, lastShapeType: s.lastShapeType, setLastShapeType: s.setLastShapeType, shapeFromCenter: s.shapeFromCenter, setShapeFromCenter: s.setShapeFromCenter })))
   const { units } = useWorkpieceStore(useShallow((s) => ({ units: s.units })))
   const isShapeTool = SHAPES.some((s) => s.type === activeTool)
+  // ONE SET OF SHAPE FIELDS ON SCREEN AT A TIME. While a shape of the active tool's
+  // type is selected (the one just drawn, typically — the tool stays on for more),
+  // the Properties panel below shows its fields, and those ARE the defaults in
+  // effect: selecting, drawing or editing a shape writes it back as the default for
+  // its type (startShapeDefaultsSync). Showing the defaults block as well put two sets of the
+  // same fields with different numbers on screen and left it unclear which a click
+  // would change. A selection of some OTHER type does not hide it — a gear's
+  // fields beside "Next rectangle" ask nothing of each other.
+  const selectedPaths = useSelectedPaths()
+  // Selecting a shape MAKES it the default (startShapeDefaultsSync), so the two
+  // normally agree; the comparison is for the one shape that does not sync — a
+  // clock wheel selected with the gear tool on must not hide the gear defaults.
+  const selectedShape = useMemo(() => {
+    const first = selectedPaths[0]
+    if (!first?.shapeParams) return null
+    if (selectedPaths.length === 1) return first.shapeParams
+    return first.groupId && selectedPaths.every((p) => p.groupId === first.groupId && p.shapePart !== undefined)
+      ? first.shapeParams : null
+  }, [selectedPaths])
+  const showDefaults = !selectedShape || selectedShape.type !== activeTool
+    || JSON.stringify(defaultsFromParams(shapeToolConfig, selectedShape)[selectedShape.type]) !== JSON.stringify(shapeToolConfig[selectedShape.type])
   const lastShape = SHAPE_META[lastShapeType] ?? SHAPE_META.rectangle
 
   const [fontReady, setFontReady] = useState(() => isFontLoaded(shapeToolConfig.text.fontFamily))
@@ -888,18 +910,18 @@ export default function ShapePanel({ fill = false }: { fill?: boolean }) {
         </div>
       </div>
 
-      {isShapeTool && (
+      {isShapeTool && showDefaults && (
         <div className="space-y-1.5 pt-0.5">
-          <p className="text-label text-gray-600 dark:text-neutral-400 font-medium capitalize">{activeTool} defaults</p>
+          <p className="text-label text-gray-600 dark:text-neutral-400 font-medium">Next {shapeDisplayName(activeTool as ShapeType).toLowerCase()}</p>
           <ShapeConfig type={activeTool as ShapeType} config={shapeToolConfig} onChange={updateConfig} units={units} />
           {!SCALE_LOCKED_SHAPES.has(activeTool as ShapeType) &&
             <FromCentreCheck checked={shapeFromCenter} onChange={setShapeFromCenter} />}
         </div>
       )}
 
-      {activeTool === 'text' && (
+      {activeTool === 'text' && showDefaults && (
         <div className="space-y-1.5 pt-0.5">
-          <p className="text-label text-gray-600 dark:text-neutral-400 font-medium">Text defaults</p>
+          <p className="text-label text-gray-600 dark:text-neutral-400 font-medium">Next text</p>
           {!fontReady && <p className="text-label text-yellow-500">Loading font…</p>}
           <ShapeConfig type="text" config={shapeToolConfig} onChange={updateConfig} units={units} />
           <FromCentreCheck checked={shapeFromCenter} onChange={setShapeFromCenter} />

@@ -79,6 +79,8 @@ export interface CopyPathsOptions {
    *  vector (Paste moving a copy that would land off screen into view). 0 leaves the
    *  geometry untouched. */
   offsetMM: number | { dx: number; dy: number }
+  /** Stamped on every copy (ImportedPath.copyBatch); absent clears any the originals had. */
+  copyBatch?: string
   /** Id prefix for the new paths: `path-dup`, `path-paste`. */
   pathIdPrefix: string
   /** Name for a copy; unchanged when omitted. */
@@ -156,6 +158,8 @@ export function copyPaths(
       // tie it to the original it was copied from.
       sourceGroups: p.sourceGroups?.map((g) => reissue(g, 'srcg')!),
       sourceElement: reissue(p.sourceElement, 'srcel'),
+      // One click's copies are one chip; a copy never joins the click that made its original.
+      copyBatch: opts.copyBatch,
       definition: undefined,
     }
 

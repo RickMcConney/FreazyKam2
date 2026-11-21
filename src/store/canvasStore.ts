@@ -8,6 +8,14 @@ interface CanvasStore {
   liveRotationAngle: number | null
   liveBBox: LiveBBox | null
   fitRequest: number
+  // Where the active shape tool would place a click — the snapped cursor while idle
+  // (ShapeHoverPreview). A store field, not CanvasStage state, so only the preview
+  // re-renders as the mouse moves.
+  shapeHoverAt: { x: number; y: number } | null
+  // The stamp tool's copy, as an OFFSET from the originals (StampPreview).
+  stampOffset: { x: number; y: number } | null
+  setStampOffset: (o: { x: number; y: number } | null) => void
+  setShapeHoverAt: (at: { x: number; y: number } | null) => void
   setCursorMM: (pos: { x: number; y: number } | null) => void
   setZoomPct: (pct: number) => void
   setLiveRotationAngle: (angle: number | null) => void
@@ -21,6 +29,10 @@ export const useCanvasStore = create<CanvasStore>()((set) => ({
   liveRotationAngle: null,
   liveBBox: null,
   fitRequest: 0,
+  shapeHoverAt: null,
+  stampOffset: null,
+  setStampOffset: (o) => set((s) => (s.stampOffset === o || (o && s.stampOffset && o.x === s.stampOffset.x && o.y === s.stampOffset.y) ? s : { stampOffset: o })),
+  setShapeHoverAt: (at) => set((s) => (s.shapeHoverAt === at || (at && s.shapeHoverAt && at.x === s.shapeHoverAt.x && at.y === s.shapeHoverAt.y) ? s : { shapeHoverAt: at })),
   setCursorMM: (pos) => set({ cursorMM: pos }),
   setZoomPct: (pct) => set({ zoomPct: pct }),
   setLiveRotationAngle: (angle) => set({ liveRotationAngle: angle }),

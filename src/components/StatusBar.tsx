@@ -22,6 +22,7 @@ function modeLabel(activeTool: string, nodeEditPathId: string | null): string {
   if (activeTool === 'constrain') return 'Constrain'
   if (activeTool === 'region') return 'Region'
   if (activeTool === 'measure') return 'Measure'
+  if (activeTool === 'stamp') return 'Duplicate'
   return shapeDisplayName(activeTool as ShapeType)
 }
 

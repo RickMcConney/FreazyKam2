@@ -28,6 +28,12 @@ import { OriginLayer } from './layers/OriginLayer'
 import { PenLayer } from './layers/PenLayer'
 import { SelectionLayer, SelectionHandleLayer } from './layers/SelectionLayer'
 import { ShapePreviewLayer } from './layers/ShapePreviewLayer'
+import { ShapeDimLayer } from './layers/ShapeDimLayer'
+import { TransformDimLayer } from './layers/TransformDimLayer'
+import { NON_SHAPE_TOOLS, ShapeHoverPreview } from './layers/ShapeHoverPreview'
+import { StampPreview } from './layers/StampPreview'
+import { useStampTool } from './useStampTool'
+import { SCALE_LOCKED_SHAPES } from '../shapes/shapeGenerators'
 import { SheetLabelLayer } from './layers/SheetLabelLayer'
 import { SimulationLayer } from './layers/SimulationLayer'
 import { SnapGuideLayer } from './layers/SnapGuideLayer'
@@ -76,7 +82,7 @@ export default function CanvasStage() {
   const {
     modeRef, didDragRef, spaceHeldRef, altDown, shiftDown, setMode, beginGesture, endGesture,
     liveTransform, constraintPlanRef, followTransforms, pickDrag,
-    dragBox, dragBoxRef, setDragBox, snapGuides, setSnapGuides, liveShapeD, setLiveShapeD,
+    dragBox, dragBoxRef, setDragBox, snapGuides, setSnapGuides, liveShape, setLiveShape,
   } = gesture
   const getFlat = useFlatCache()
 
@@ -113,6 +119,9 @@ export default function CanvasStage() {
   const moveLocked = useUIStore((s) => s.moveLocked)
 
   const activeTool = useUIStore((s) => s.activeTool)
+  // A tool that places things where the cursor is — a shape, or the stamp's copies.
+  // Its handles would swallow the click (see the SelectionHandleLayer below).
+  const shapeToolOn = !NON_SHAPE_TOOLS.has(activeTool) || activeTool === 'stamp'
 
   const { linkAngles, hoverLinkNode, handleLinkNodeDown, onMoveClockLink, finishClockLinkDrag } = useClockLinkage(gesture)
 
@@ -129,7 +138,8 @@ export default function CanvasStage() {
     livePen, penClosing, penNodes, effectiveCurveType, penSnapCursor, setPenSnapCursor,
     startPenDraw, onMovePenHover, onMovePenDraw, finishPenDraw, finishPenOnEscape,
   } = usePenTool(gesture, view, getFlat)
-  const { startDrawShape, onMoveDrawShape, finishDrawShape } = useShapeDraw(gesture, viewportRef)
+  const { startDrawShape, onMoveDrawShape, finishDrawShape, onMoveShapeHover } = useShapeDraw(gesture, viewportRef)
+  const { onMoveStampHover, onStampPress } = useStampTool(gesture, viewportRef)
   const { regionPreviewD, setRegionPreviewD, onMoveRegionHover, pickRegionAt } = useRegionPick(getFlat, activeTool)
   const {
     pickCandidates, pickHot, pickHeld, allCandidatesRef,
@@ -161,7 +171,7 @@ export default function CanvasStage() {
     clearMeasure,
     escapeConstrain,
     cancelTool: () => {
-      setLiveShapeD(null)
+      setLiveShape(null)
       dropPicks()
       setMode({ type: 'idle' })
     },
@@ -224,6 +234,13 @@ export default function CanvasStage() {
     if (activeTool === 'drill') {
       didDragRef.current = false
       setMode({ type: 'idle' })
+      return
+    }
+
+    // The stamp (Cmd+D) owns the click: a copy where the preview stands.
+    if (activeTool === 'stamp') {
+      const stagePointer = stageRef.current?.getPointerPosition()
+      if (stagePointer) onStampPress(stagePointer)
       return
     }
 
@@ -379,6 +396,7 @@ export default function CanvasStage() {
     // Modes that handle the move and then fall through to the shared checks.
     if (m.type === 'dragbox')   onMoveDragbox(pointer)
     if (m.type === 'drawshape') onMoveDrawShape(m, cncMouse, pointer, vp)
+    if (m.type === 'idle') { onMoveShapeHover(cncMouse); onMoveStampHover(cncMouse) }
 
     if (m.type !== 'pendraw') onMovePenHover(cncMouse, pointer, vp)
 
@@ -394,7 +412,7 @@ export default function CanvasStage() {
     if (m.type === 'nodedit-drag' && editDragInitRef.current) onMoveNodeEditDrag(m, cncMouse, e)
   }, [setCursorMM, onMovePan, onMoveTranslate, onMoveResize, onMoveRotate, onMoveDragbox,
       onMoveDrawShape, onMovePenHover, onMoveConnectPreview, onMovePenDraw, onMoveNodeEditDrag,
-      onMoveConstrainHover, onMoveRegionHover, onMoveMeasureHover])
+      onMoveConstrainHover, onMoveRegionHover, onMoveMeasureHover, onMoveShapeHover, onMoveStampHover])
 
   const handleMouseMove = moveBody
 
@@ -559,6 +577,8 @@ useNudge(gesture)
         onMouseUp={handleMouseUp}
         onMouseLeave={() => {
           setCursorMM(null)
+          useCanvasStore.getState().setShapeHoverAt(null)
+          useCanvasStore.getState().setStampOffset(null)
           setPenSnapCursor(null)
           if (modeRef.current.type === 'idle') setSnapGuides(null)
         }}
@@ -599,7 +619,7 @@ useNudge(gesture)
           <ToolpathLayer viewport={viewport} />
           <BridgeLayer viewport={viewport} />
           <TabLayer viewport={viewport} />
-          <ShapePreviewLayer viewport={viewport} d={liveShapeD} />
+          <ShapePreviewLayer viewport={viewport} d={liveShape?.d ?? null} />
           <TracePreviewLayer viewport={viewport} />
           {activeTool === 'region' && <ShapePreviewLayer viewport={viewport} d={regionPreviewD} />}
           <EscapementAnimLayer viewport={viewport} />
@@ -665,6 +685,8 @@ useNudge(gesture)
               repaint the whole drawing. */}
           <HoverHighlightLayer viewport={viewport} />
           <HoldPreviewLayer viewport={viewport} />
+          <ShapeHoverPreview viewport={viewport} />
+          <StampPreview viewport={viewport} />
         </Layer>
 
         {/* Layer 3: Screen-space overlay — origin indicator, selection outline, rulers. */}
@@ -692,8 +714,15 @@ useNudge(gesture)
               viewport={viewport}
               bbox={selectionBBox}
               liveTransform={liveTransform}
-              noRotate={tabsFormActive || moveLocked}
+              noRotate={tabsFormActive || moveLocked || shapeToolOn}
             />
+          )}
+          {/* A scale-locked shape previews at its designed size — the drag sizes nothing, so there is nothing to dimension. */}
+          {liveShape && !SCALE_LOCKED_SHAPES.has(liveShape.params.type) && (
+            <ShapeDimLayer viewport={viewport} shape={liveShape} />
+          )}
+          {!nodeEditPathId && selectionBBox && liveTransform && liveTransform.kind !== 'translate' && (
+            <TransformDimLayer viewport={viewport} bbox={selectionBBox} liveTransform={liveTransform} selectedPaths={selection.selectedPaths} />
           )}
           {activeTool === 'measure' && (
             <MeasureLayer viewport={viewport} a={measureA} b={measureB} hot={measureHot} />
@@ -708,8 +737,11 @@ useNudge(gesture)
         <Layer>
           <TilingLayer viewport={viewport} />
           {/* Not while dragging is locked: the lock is against changing a part by mistake,
-              and a resize or rotate handle grabbed by accident does that as surely as a drag. */}
-          {!nodeEditPathId && !cornerPickPathId && !tabsFormActive && !moveLocked && activeTool !== 'constrain' && selectionBBox && (
+              and a resize or rotate handle grabbed by accident does that as surely as a drag.
+              Not while a SHAPE tool is on either: the selected shape is then the template
+              being stamped out, and a handle under the click swallowed the press, so a copy
+              could not be placed on or beside it. The outline stays, to show which it is. */}
+          {!nodeEditPathId && !cornerPickPathId && !tabsFormActive && !moveLocked && activeTool !== 'constrain' && !shapeToolOn && selectionBBox && (
             <SelectionHandleLayer
               viewport={viewport}
               bbox={selectionBBox}

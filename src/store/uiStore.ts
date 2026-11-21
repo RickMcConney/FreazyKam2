@@ -24,7 +24,9 @@ export type WorkspaceTab = '2d' | '3d' | 'tools' | 'postprocessor' | 'machine'
 // 'region' is region picking, on while the Pocket form is open (PocketForm sets it):
 // selection works as in 'select', and a click inside an area the drawn lines enclose
 // also makes a closed path of that area — see cam/regionPick.ts.
-type ActiveTool = 'select' | 'drill' | 'pen' | 'constrain' | 'region' | 'measure' | ShapeType
+// `stamp`: Cmd+D's duplicate-at-the-cursor mode — copies of `stampIds` follow the mouse
+// and every click places one (canvas/useStampTool).
+type ActiveTool = 'select' | 'drill' | 'pen' | 'constrain' | 'region' | 'measure' | 'stamp' | ShapeType
 
 export type PenNode = {
   x: number
@@ -43,6 +45,10 @@ interface UIState {
    *  selection box instead. Persisted: someone who turns it on wants it to stay on. */
   moveLocked: boolean
   activeTool: ActiveTool
+  /** What the stamp tool copies: the selection when Cmd+D turned it on. Session only. */
+  stampIds: string[]
+  /** Cmd+D: start stamping copies of `ids`, or stop if already stamping. */
+  toggleStamp: (ids: string[]) => void
   /** How the Constrain tool states a new constraint. Remembered across uses,
    *  like `shapeToolConfig` — the mode is a working preference, not a per-
    *  constraint decision, and an individual one can still be switched later. */
@@ -289,6 +295,10 @@ export const useUIStore = create<UIState>()(
   snapEnabled: true,
   moveLocked: false,
   activeTool: 'select',
+  stampIds: [],
+  toggleStamp: (ids) => set((s) => s.activeTool === 'stamp'
+    ? { activeTool: 'select', nodeEditPathId: null }
+    : ids.length > 0 ? { activeTool: 'stamp', stampIds: ids, nodeEditPathId: null } : {}),
   constrainMode: 'xy',
   focusConstraintId: null,
   constrainSubjectIds: [],

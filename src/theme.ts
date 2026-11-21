@@ -35,6 +35,9 @@ const CANVAS_LIGHT = {
   path: {
     selected: '#000000',   // black, the light-theme mirror of dark mode's white
   },
+  // The shape tool's previews (hover and drag-out). Blue-400 at 60% vanished on the
+  // light canvas, so each theme gets its own: a dark blue on light, a pale one on dark.
+  shapePreview: { stroke: '#1d4ed8', fill: 'rgba(37, 99, 235, 0.10)' },
 }
 
 const CANVAS_DARK = {
@@ -58,6 +61,7 @@ const CANVAS_DARK = {
   path: {
     selected: '#ffffff',
   },
+  shapePreview: { stroke: '#93c5fd', fill: 'rgba(96, 165, 250, 0.16)' },
 }
 
 export function canvasTheme(dark: boolean) {

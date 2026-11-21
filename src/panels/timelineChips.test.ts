@@ -312,3 +312,39 @@ describe('the strip uses a name the user typed', () => {
     expect(chips.map((c) => c.label)).toEqual(['Legs', 'Group \u00d72'])
   })
 })
+
+describe('the strip gives each Duplicate click one chip', () => {
+  it('a click that copied three shapes is ONE chip carrying all three', () => {
+    const chips = buildChips([
+      path({ id: 'a' }), path({ id: 'b' }), path({ id: 'c' }),
+      path({ id: 'a2', copyBatch: 'k1' }), path({ id: 'b2', copyBatch: 'k1' }), path({ id: 'c2', copyBatch: 'k1' }),
+    ], [])
+    expect(chips.map((c) => c.key)).toEqual(['a', 'b', 'c', 'copy:k1'])
+    expect(chips[3].label).toBe('Copy ×3')
+    expect(chips[3].pathIds).toEqual(['a2', 'b2', 'c2'])
+  })
+
+  it('two clicks are two chips', () => {
+    const chips = buildChips([
+      path({ id: 'a1', copyBatch: 'k1' }), path({ id: 'b1', copyBatch: 'k1' }),
+      path({ id: 'a2', copyBatch: 'k2' }), path({ id: 'b2', copyBatch: 'k2' }),
+    ], [])
+    expect(chips.map((c) => c.key)).toEqual(['copy:k1', 'copy:k2'])
+  })
+
+  it('a click that copied ONE thing keeps that thing\'s own chip — a gear\'s parts are one thing', () => {
+    const chips = buildChips([
+      path({ id: 't', groupId: 'g', shapePart: 'teeth', copyBatch: 'k1' }),
+      path({ id: 'b', groupId: 'g', shapePart: 'bore', copyBatch: 'k1' }),
+    ], [])
+    expect(chips.map((c) => c.key)).toEqual(['g'])
+  })
+
+  it('hidden operands copied along with a boolean do not count as things copied', () => {
+    const chips = buildChips([
+      path({ id: 'op1', hidden: true, copyBatch: 'k1' }), path({ id: 'op2', hidden: true, copyBatch: 'k1' }),
+      path({ id: 'res', copyBatch: 'k1' }),
+    ], [])
+    expect(chips.some((c) => c.key === 'copy:k1')).toBe(false)
+  })
+})
