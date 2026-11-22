@@ -92,8 +92,8 @@ export default function EscapementInfoPanel() {
       style={panel.style}
     >
       <div
-        className="flex items-center gap-2 px-3 py-2 border-b border-gray-300 dark:border-neutral-700 cursor-move select-none"
-        onMouseDown={panel.onHeaderMouseDown}
+        className="flex items-center gap-2 px-3 py-2 border-b border-gray-300 dark:border-neutral-700 cursor-move select-none touch-none"
+        onPointerDown={panel.onHeaderPointerDown}
       >
         <GripHorizontal size={ICON.sm} className="text-gray-600 dark:text-neutral-400" />
         <span className="flex-1 text-sm font-semibold text-gray-700 dark:text-neutral-200">Escapement</span>

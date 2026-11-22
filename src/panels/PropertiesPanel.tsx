@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { Dices, PencilSparkles } from 'lucide-react'
+import { Dices, Eye, EyeOff, PencilSparkles, Trash2 } from 'lucide-react'
 import { ICON } from '../theme'
 import { usePathsStore, bakePathsStep, bakePathsSteps, useSelectedPaths, outerGroupOf, transformObjects } from '../store/pathsStore'
 import { useUIStore } from '../store/uiStore'
@@ -1289,6 +1289,32 @@ export default function PropertiesPanel() {
           <span className="inline-block rotate-90">↔</span> Mirror Y
         </button>
       </div>
+
+      {/* Hide and Delete for what is selected — the same as the eye and the bin on its row
+          in the Paths list, which a tablet cannot hover to reveal and the Objects strip's
+          chips are too small to carry. Delete is the Delete key's (`deleteSelected`). */}
+      {(() => {
+        const ids = selectedPaths.map((p) => p.id)
+        const allVisible = selectedPaths.every((p) => p.visible)
+        return (
+          <div className="mt-1.5 flex gap-1.5">
+            <button
+              onClick={() => usePathsStore.getState().setPathsVisible(ids, !allVisible)}
+              title={allVisible ? 'Hide on the canvas (the path is kept)' : 'Show on the canvas again'}
+              className="flex-1 flex items-center justify-center gap-1.5 text-label py-1 rounded border transition-colors border-gray-400 dark:border-neutral-600 text-gray-500 dark:text-neutral-400 hover:text-gray-700 dark:hover:text-neutral-300"
+            >
+              {allVisible ? <><EyeOff size={ICON.sm} /> Hide</> : <><Eye size={ICON.sm} /> Show</>}
+            </button>
+            <button
+              onClick={() => usePathsStore.getState().deleteSelected()}
+              title={ids.length > 1 ? `Delete the ${ids.length} selected paths` : 'Delete this path'}
+              className="flex-1 flex items-center justify-center gap-1.5 text-label py-1 rounded border transition-colors border-gray-400 dark:border-neutral-600 text-gray-500 dark:text-neutral-400 hover:text-red-600 hover:border-red-500 dark:hover:text-red-400"
+            >
+              <Trash2 size={ICON.sm} /> Delete
+            </button>
+          </div>
+        )
+      })()}
 
       {/* Group / Ungroup — tie the selection together so it clicks, drags and
           deletes as one thing, or dissolve the groups it touches. Click a member of

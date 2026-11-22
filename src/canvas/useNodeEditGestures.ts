@@ -160,7 +160,8 @@ export function useNodeEditGestures(
     const cnc = screenToCNC(pointer.x, pointer.y, vp)
     const { paths } = usePathsStore.getState()
     const candidates = paths.filter((p) => onCanvas(p) && p.id !== neid)
-    const hit = closestVisiblePath(cnc.x, cnc.y, candidates, 8 / vp.scale, (p) => getFlat(p, 0.05))
+    const touch = (e.evt as PointerEvent).pointerType === 'touch'
+    const hit = closestVisiblePath(cnc.x, cnc.y, candidates, (touch ? 16 : 8) / vp.scale, (p) => getFlat(p, 0.05))
     if (hit) handlePathDblClick(hit.id)
   }, [handlePathDblClick, getFlat])
 

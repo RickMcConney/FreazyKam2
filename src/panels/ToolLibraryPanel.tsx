@@ -1,7 +1,7 @@
 import { Fragment, useMemo, useState } from 'react'
 import { NumericInput } from '../components/NumericInput'
 import { NUMERIC_HINT } from '../components/parseNumeric'
-import { ChevronDown, ChevronUp, CopyPlus, Folder, FolderInput, FolderOpen, FolderPlus, Import, ListRestart, Plus, Share, Trash2, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, CopyPlus, Folder, FolderInput, FolderOpen, FolderPlus, Import, ListRestart, Plus, Share, Trash2 } from 'lucide-react'
 import { RestoreToolsButton } from '../components/RestoreButtons'
 import { applyDeleteFolder, exportToolFolder, pickToolFile, planDeleteFolder, type FolderDeletePlan, type ToolFileImport } from '../io/settingsFile'
 import ToolImportDialog from '../components/ToolImportDialog'
@@ -396,7 +396,7 @@ export default function ToolLibraryPanel() {
                     className={`mr-1 p-0.5 rounded hover:bg-red-600 hover:text-white transition-opacity ${
                       open ? 'opacity-80' : 'opacity-0 group-hover/tab:opacity-100'
                     }`}>
-                    <X size={ICON.sm} />
+                    <Trash2 size={ICON.sm} />
                   </button>
                 )}
               </div>

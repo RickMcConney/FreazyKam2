@@ -122,10 +122,10 @@ export const TilingLayer = memo(function TilingLayer({ viewport }: { viewport: V
             <Line points={pts} stroke={lineColor} strokeWidth={dragging ? 2 : 1.5} dash={[8, 5]} listening={false} />
             <Rect {...strip} fill="rgba(0,0,0,0)" draggable
               dragBoundFunc={(pos) => (t.axis === 'y' ? { x: strip.x, y: pos.y } : { x: pos.x, y: strip.y })}
-              onMouseEnter={(e) => setCursor(e, t.axis === 'y' ? 'ns-resize' : 'ew-resize')}
-              onMouseLeave={(e) => { if (!drag) setCursor(e, '') }}
-              onMouseDown={(e) => { e.cancelBubble = true }}
-              onMouseUp={(e) => { e.cancelBubble = true }}
+              onPointerEnter={(e) => setCursor(e, t.axis === 'y' ? 'ns-resize' : 'ew-resize')}
+              onPointerLeave={(e) => { if (!drag) setCursor(e, '') }}
+              onPointerDown={(e) => { e.cancelBubble = true }}
+              onPointerUp={(e) => { e.cancelBubble = true }}
               onDragStart={(e) => { e.cancelBubble = true; startDrag(); lastU.current = u; setDrag({ i, u, clean: spanAt(spansRef.current, u) < 0 }) }}
               onDragMove={(e) => {
                 e.cancelBubble = true

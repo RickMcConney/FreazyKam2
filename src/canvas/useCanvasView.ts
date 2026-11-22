@@ -147,17 +147,22 @@ export function useCanvasView(selectionBBoxRef: MutableRefObject<BBox | null>) {
   // The wheel passes the cursor. The buttons pass nothing and zoom about the SELECTED
   // part, so a click grows the thing you are working on instead of whatever happens to be
   // mid-screen; with nothing selected they fall back to the centre of the drawing area.
-  const zoomBy = useCallback((factor: number, anchor?: { x: number; y: number }) => {
-    // Cap zoom-out so the table/workpiece can't shrink to a speck; see minZoomScale.
+  // Cap zoom-out so the table/workpiece can't shrink to a speck; see minZoomScale. The
+  // wheel, the buttons and a pinch (useTouchInput) all clamp through here.
+  const clampScale = useCallback((s: number) => {
     const wp = useWorkpieceStore.getState()
     const box = sheetBoxRef.current
     const minScale = minZoomScale(size.width, size.height,
       wp.tableLimitWidthMM, wp.tableLimitHeightMM, box.maxX - box.minX, box.maxY - box.minY)
+    return Math.min(Math.max(s, minScale), MAX_ZOOM)
+  }, [size])
+
+  const zoomBy = useCallback((factor: number, anchor?: { x: number; y: number }) => {
     const midX = RULER_W + (size.width - RULER_W) / 2
     const midY = RULER_H + (size.height - RULER_H) / 2
     const sel = anchor ? null : selectionBBoxRef.current
     setViewport((vp) => {
-      const newScale = Math.min(Math.max(vp.scale * factor, minScale), MAX_ZOOM)
+      const newScale = clampScale(vp.scale * factor)
       const ratio = newScale / vp.scale
       if (sel) {
         // Hold the part's centre at the screen position it already occupies, exactly as
@@ -180,7 +185,7 @@ export function useCanvasView(selectionBBoxRef: MutableRefObject<BBox | null>) {
         y: ay + (vp.y - ay) * ratio,
       }
     })
-  }, [setViewport, size])
+  }, [setViewport, size, clampScale])
 
   // ACTUAL SIZE: zoom so a millimetre on the stock is a millimetre on the glass, about the
   // selection or the middle of the view as the other zoom buttons are. A display nobody has
@@ -199,7 +204,7 @@ export function useCanvasView(selectionBBoxRef: MutableRefObject<BBox | null>) {
 
   return {
     containerRef, stageRef, size, sizeRef, viewport, viewportRef, setViewport,
-    zoomBy, zoomToActualSize, realPx, fitToWorkpiece, handleWheel,
+    zoomBy, clampScale, zoomToActualSize, realPx, fitToWorkpiece, handleWheel,
   }
 }
 

@@ -101,7 +101,7 @@ export default function Sidebar() {
   const startWidth = useRef(0)
 
   useEffect(() => {
-    const onMove = (e: MouseEvent) => {
+    const onMove = (e: PointerEvent) => {
       if (!dragging.current) return
       const delta = e.clientX - startX.current
       setWidth(Math.max(180, Math.min(600, startWidth.current + delta)))
@@ -113,15 +113,17 @@ export default function Sidebar() {
         document.body.style.userSelect = ''
       }
     }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
     return () => {
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
     }
   }, [])
 
-  const onHandleMouseDown = (e: React.MouseEvent) => {
+  const onHandlePointerDown = (e: React.PointerEvent) => {
     dragging.current = true
     startX.current = e.clientX
     startWidth.current = width
@@ -247,9 +249,9 @@ export default function Sidebar() {
       {/* Resize handle — its own column beside the content so it sits clear of the
           scrollbar; widened a little to make it easy to grab. */}
       <div
-        onMouseDown={onHandleMouseDown}
+        onPointerDown={onHandlePointerDown}
         title="Drag to resize sidebar"
-        className="w-1.5 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-blue-500/40 transition-colors"
+        className="w-1.5 flex-shrink-0 touch-none cursor-col-resize bg-transparent hover:bg-blue-500/40 transition-colors"
       />
     </aside>
   )

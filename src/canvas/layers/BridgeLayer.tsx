@@ -94,18 +94,18 @@ export const BridgeLayer = memo(function BridgeLayer({ viewport }: { viewport: V
       if (done) return
       done = true
       endDragRef.current = null
-      stage.off('mousemove.bridgedrag')
-      stage.off('mouseup.bridgedrag')
-      window.removeEventListener('mouseup', onUp)
+      stage.off('pointermove.bridgedrag')
+      stage.off('pointerup.bridgedrag')
+      window.removeEventListener('pointerup', onUp)
       document.body.style.cursor = ''
       setDrag(null)
       if (line !== start) moveStrip(i, line)
     }
     endDragRef.current = onUp
-    stage.on('mousemove.bridgedrag', onMove)
-    stage.on('mouseup.bridgedrag', onUp)
+    stage.on('pointermove.bridgedrag', onMove)
+    stage.on('pointerup.bridgedrag', onUp)
     // Released outside the canvas: still the end of the drag.
-    window.addEventListener('mouseup', onUp, { once: true })
+    window.addEventListener('pointerup', onUp, { once: true })
   }
 
   return (
@@ -124,9 +124,9 @@ export const BridgeLayer = memo(function BridgeLayer({ viewport }: { viewport: V
             {interactive && (
               <Line points={[l.x1, l.y1, l.x2, l.y2]} stroke="#000" opacity={0} lineCap="round"
                 strokeWidth={Math.max(bridges.widthMM, GRAB_PX / viewport.scale)}
-                onMouseDown={onDown(i)}
-                onMouseEnter={() => { setHover(i); if (!drag) document.body.style.cursor = 'grab' }}
-                onMouseLeave={() => { setHover(null); if (!drag) document.body.style.cursor = '' }} />
+                onPointerDown={onDown(i)}
+                onPointerEnter={() => { setHover(i); if (!drag) document.body.style.cursor = 'grab' }}
+                onPointerLeave={() => { setHover(null); if (!drag) document.body.style.cursor = '' }} />
             )}
           </Group>
         )

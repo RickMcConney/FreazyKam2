@@ -226,7 +226,7 @@ export function ClockLinkageLayer({ viewport, liveAngles, onNodeMouseDown, activ
             key={`n${i}`} x={a.x} y={a.y} radius={px(LINK_NODE_PX)}
             fill={on ? '#38bdf8' : '#0f172a'}
             stroke={on ? '#ffffff' : boneCol} strokeWidth={2 / scale}
-            onMouseDown={(e) => { e.cancelBubble = true; onNodeMouseDown(i, e) }}
+            onPointerDown={(e) => { e.cancelBubble = true; onNodeMouseDown(i, e) }}
           />
         )
       })}
@@ -240,7 +240,7 @@ export function ClockLinkageLayer({ viewport, liveAngles, onNodeMouseDown, activ
           x={plate.motion.x} y={plate.motion.y} radius={px(LINK_NODE_PX)}
           fill={activeNode === MOTION_LINK ? '#38bdf8' : '#0f172a'}
           stroke={activeNode === MOTION_LINK ? '#ffffff' : MOTION_COLORS.minute} strokeWidth={2 / scale}
-          onMouseDown={(e) => { e.cancelBubble = true; onNodeMouseDown(MOTION_LINK, e) }}
+          onPointerDown={(e) => { e.cancelBubble = true; onNodeMouseDown(MOTION_LINK, e) }}
         />
       )}
     </Group>

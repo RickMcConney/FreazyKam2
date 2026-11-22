@@ -257,17 +257,17 @@ export const TabLayer = memo(function TabLayer({ viewport }: Props) {
             x={v.x}
             y={v.y}
             rotation={rotDeg}
-            onMouseEnter={() => {
+            onPointerEnter={() => {
               setHoveredTabId(v.id)
               document.body.style.cursor = 'grab'
             }}
-            onMouseLeave={() => {
+            onPointerLeave={() => {
               setHoveredTabId(null)
               if (!isDragging) document.body.style.cursor = ''
             }}
-            onMouseDown={(e) => {
+            onPointerDown={(e) => {
               e.cancelBubble = true
-              // Shift-click takes the tab away — the same gesture as a strip's. Alt still
+              // Shift-click (a long press on a tablet) takes the tab away — the same gesture as a strip's. Alt still
               // works, but some Linux window managers keep Alt+click for moving windows, so
               // it never reaches the page there.
               if (e.evt.shiftKey || e.evt.altKey) {
@@ -299,9 +299,9 @@ export const TabLayer = memo(function TabLayer({ viewport }: Props) {
                 if (done) return
                 done = true
                 endDragRef.current = null
-                stage.off('mousemove.tabdrag')
-                stage.off('mouseup.tabdrag')
-                window.removeEventListener('mouseup', handleUp)
+                stage.off('pointermove.tabdrag')
+                stage.off('pointerup.tabdrag')
+                window.removeEventListener('pointerup', handleUp)
                 setDraggingTabId(null)
                 setHoveredTabId(null)
                 document.body.style.cursor = ''
@@ -309,9 +309,9 @@ export const TabLayer = memo(function TabLayer({ viewport }: Props) {
               }
 
               endDragRef.current = handleUp
-              stage.on('mousemove.tabdrag', handleMove)
-              stage.on('mouseup.tabdrag', handleUp)
-              window.addEventListener('mouseup', handleUp, { once: true })
+              stage.on('pointermove.tabdrag', handleMove)
+              stage.on('pointerup.tabdrag', handleUp)
+              window.addEventListener('pointerup', handleUp, { once: true })
             }}
           >
             {/* The grab area: at least TAB_GRAB_PX round the tab on screen whatever the

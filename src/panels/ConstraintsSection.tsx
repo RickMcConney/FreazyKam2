@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { RotateCw, RulerDimensionLine, X } from 'lucide-react'
+import { RotateCw, RulerDimensionLine, Trash2 } from 'lucide-react'
 import { usePathsStore, useSelectedPathsInOrder, type ImportedPath } from '../store/pathsStore'
 import { useConstraintsStore } from '../store/constraintsStore'
 import {
@@ -225,7 +225,7 @@ function ConstraintRow({ c, paths, units, stock, badIds, focus }: {
         className={['flex-shrink-0 w-4 h-4 flex items-center justify-center rounded hover:text-white hover:bg-red-500',
           bad ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-neutral-400'].join(' ')}
       >
-        <X size={11} />
+        <Trash2 size={11} />
       </button>
     </div>
   )

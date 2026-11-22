@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   Circle, RefreshCw, Target, CircleDot, Layers, Star, Box,
   Image as ImageIcon,
-  FileCode, Wrench, Loader2, AlertCircle, Eye, EyeOff, ArrowRightLeft, Combine, GripVertical, X, CircleSlash, Route,
+  FileCode, Wrench, Loader2, AlertCircle, Eye, EyeOff, ArrowRightLeft, Combine, GripVertical, Trash2, CircleSlash, Route,
   ChevronDown, ChevronRight, Folder, FolderOpen, Pencil,
 } from 'lucide-react'
 import { ICON } from '../theme'
@@ -166,6 +166,22 @@ function RowButton({ title, onClick, className, children }: {
   )
 }
 
+// The selection as a Set, once per selectedIds array, shared by every row's selector.
+const selectedSets = new WeakMap<string[], Set<string>>()
+function selectedSet(ids: string[]): Set<string> {
+  let set = selectedSets.get(ids)
+  if (!set) { set = new Set(ids); selectedSets.set(ids, set) }
+  return set
+}
+/** An operation counts as SELECTED when every path it cuts is — which is exactly what
+ *  clicking its row does. Its buttons then stay up: a tablet has no hover to show them. */
+function opSelected(op: AnyOperation, selectedIds: string[]): boolean {
+  const ids = pathIdsOf(op)
+  if (ids.length === 0) return false
+  const sel = selectedSet(selectedIds)
+  return ids.every((id) => sel.has(id))
+}
+
 function OpRow({ op, sheet, dragging, noCut, timeS, share, onGrab, onHover }: {
   op: AnyOperation
   /** Its sheet's key — a drag only drops among rows of the sheet it started on. */
@@ -188,6 +204,7 @@ function OpRow({ op, sheet, dragging, noCut, timeS, share, onGrab, onHover }: {
   const hidden = !op.visible
   const ring = op.status === 'error' ? 'ring-1 ring-red-500/70' : op.status === 'needs-update' ? 'ring-1 ring-amber-500/70' : ''
   const timed = timeS !== undefined && timeS > 0
+  const selected = usePathsStore((s) => opSelected(op, s.selectedIds))
   // RENAMING, in place. The name is what the G-code calls this section (its `=== name ===`
   // comment, and the "Op 3 of 7: name" a controller displays while it runs), so a name the
   // operator recognises is worth having. One recorded step (updateOperation), nothing
@@ -204,7 +221,7 @@ function OpRow({ op, sheet, dragging, noCut, timeS, share, onGrab, onHover }: {
       onMouseEnter={() => onHover([op.id])} onMouseLeave={() => onHover([])}
       className={[
         'group relative flex items-center gap-1.5 pl-1 pr-1 h-7 rounded cursor-grab active:cursor-grabbing',
-        'bg-white/70 dark:bg-neutral-900/60 hover:bg-white dark:hover:bg-neutral-700 border',
+        selected ? 'bg-blue-100 dark:bg-blue-900/40 border' : 'bg-white/70 dark:bg-neutral-900/60 hover:bg-white dark:hover:bg-neutral-700 border',
         hidden ? 'border-dashed border-gray-300 dark:border-neutral-600' : 'border-transparent',
         dragging ? 'opacity-30' : '', ring,
       ].join(' ')}
@@ -239,12 +256,12 @@ function OpRow({ op, sheet, dragging, noCut, timeS, share, onGrab, onHover }: {
         {noCut && <CircleSlash size={11} className="text-gray-500 dark:text-neutral-400 flex-shrink-0" />}
         {hidden && <EyeOff size={11} className="text-gray-500 dark:text-neutral-400 flex-shrink-0" />}
         {timed && (
-          <span className="flex-shrink-0 text-[11px] tabular-nums text-right text-gray-600 dark:text-neutral-400 group-hover:hidden">
+          <span className={`flex-shrink-0 text-[11px] tabular-nums text-right text-gray-600 dark:text-neutral-400 ${selected ? 'hidden' : 'group-hover:hidden'}`}>
             {fmtDurationShort(timeS!)}<span className="inline-block w-9 text-gray-500 dark:text-neutral-500">{pct(share)}</span>
           </span>
         )}
       </span>
-      <span className={renaming ? 'hidden' : 'hidden group-hover:flex items-center gap-1.5'}>
+      <span className={renaming ? 'hidden' : selected ? 'flex items-center gap-1.5' : 'hidden group-hover:flex items-center gap-1.5'}>
         <RowButton title="Rename — the name the G-code and the machine's display show for this toolpath"
           onClick={() => { setDraft(op.name); setRenaming(true) }} className="hover:text-blue-600 dark:hover:text-blue-300">
           <Pencil size={15} />
@@ -255,7 +272,7 @@ function OpRow({ op, sheet, dragging, noCut, timeS, share, onGrab, onHover }: {
         </RowButton>
         <RowButton title={`Delete "${op.name}"`} onClick={() => useToolpathStore.getState().deleteOperation(op.id)}
           className="hover:text-red-600 dark:hover:text-red-300">
-          <X size={15} />
+          <Trash2 size={15} />
         </RowButton>
       </span>
     </div>
@@ -285,6 +302,14 @@ export default function ToolpathsPanel() {
   // Gesture state in a ref (the window listeners read it mid-drag), mirrored into state
   // only for what has to re-render: the ghosted source rows and the drop indicator.
   const dragRef = useRef<{ ids: string[]; sheet: string; startY: number; moved: boolean; to: number } | null>(null)
+  // What the last press was made with. The rows run on mouse events, which a tap also fires
+  // (the browser's compatibility events) but which do not say they came from a finger.
+  const pointerKindRef = useRef('mouse')
+  useEffect(() => {
+    const note = (e: PointerEvent) => { pointerKindRef.current = e.pointerType }
+    window.addEventListener('pointerdown', note, true)
+    return () => window.removeEventListener('pointerdown', note, true)
+  }, [])
   const [draggingIds, setDraggingIds] = useState<string[]>([])
   const [dropY, setDropY] = useState<number | null>(null)
   // Two-click confirm for deleting a whole run — one row's × is cheap to undo, several
@@ -427,6 +452,10 @@ export default function ToolpathsPanel() {
       // No travel: a plain click. Select the paths the operation is built from — so the
       // canvas shows WHICH geometry this row cuts — and open its edit form.
       //
+      // A FINGER's first tap only selects: the form replaces this list, and on a tablet the
+      // row's buttons (which hover shows a mouse) appear only once the row is selected — so
+      // opening at once would leave them unreachable. A second tap opens the form.
+      //
       // The whole BATCH's paths, not this one operation's. This list is the program, so
       // it draws a row per operation, but the form the click opens edits every operation
       // the same Generate click made (`batchOf`) — and ProfileForm and DrillForm read
@@ -435,9 +464,11 @@ export default function ToolpathsPanel() {
       const ops = useToolpathStore.getState().operations
       const op = ops.find((o) => o.id === d.ids[0])
       if (op) {
+        const wasSelected = opSelected(op, usePathsStore.getState().selectedIds)
         const live = new Set(usePathsStore.getState().paths.map((p) => p.id))
         const ids = [...new Set(batchOf(op, ops).flatMap(pathIdsOf))].filter((id) => live.has(id))
         if (ids.length > 0) usePathsStore.getState().setSelectedIds(ids)
+        if (pointerKindRef.current === 'touch' && !wasSelected && ids.length > 0) return
       }
       const ui = useUIStore.getState()
       ui.closeDrawPanels()
@@ -510,7 +541,7 @@ export default function ToolpathsPanel() {
                 useToolpathStore.getState().deleteOperations(runIds)
               }}
               className={confirmRun === confirmKey ? '!flex text-white bg-red-500' : 'hidden group-hover/run:flex hover:text-red-600 dark:hover:text-red-300'}>
-              <X size={15} />
+              <Trash2 size={15} />
             </RowButton>
             {runTimeS > 0 && (
               <span className="flex-shrink-0 text-[11px] tabular-nums text-right font-medium text-gray-700 dark:text-neutral-300 group-hover/run:hidden"

@@ -59,6 +59,7 @@ import { usePenTool } from './usePenTool'
 import { useRegionPick } from './useRegionPick'
 import { useSelectionInfo } from './useSelectionInfo'
 import { useShapeDraw } from './useShapeDraw'
+import { useTouchInput } from './useTouchInput'
 import { useTransformGestures } from './useTransformGestures'
 import { screenToCNC } from './viewport'
 
@@ -76,7 +77,7 @@ export default function CanvasStage() {
   const view = useCanvasView(selection.selectionBBoxRef)
   const {
     containerRef, stageRef, size, viewport, viewportRef, setViewport,
-    zoomBy, zoomToActualSize, realPx, fitToWorkpiece, handleWheel,
+    zoomBy, clampScale, zoomToActualSize, realPx, fitToWorkpiece, handleWheel,
   } = view
   const gesture = useGesture(viewportRef)
   const {
@@ -186,7 +187,14 @@ export default function CanvasStage() {
 
   const panStartRef = useRef({ mouseX: 0, mouseY: 0, vpX: 0, vpY: 0 })
 
-  const handleStageMouseDown = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
+  // Presses are POINTER events (mouse, pen and touch alike — Konva's mouse events never
+  // fire for a finger). A finger has no hover, and several tools place what their hover
+  // preview showed (a shape, the stamp, a measure snap), so a press that is not a mouse's
+  // first hovers where it lands, as a mouse would have on the way there.
+  const moveBodyRef = useRef<(e: Konva.KonvaEventObject<PointerEvent>) => void>(() => {})
+  const handleStageMouseDown = useCallback((e: Konva.KonvaEventObject<PointerEvent>) => {
+    const touch = e.evt.pointerType === 'touch'
+    if (e.evt.pointerType !== 'mouse' && modeRef.current.type === 'idle') moveBodyRef.current(e)
     if (connectSourceRef.current !== null) {
       if (crossPathWeldTargetRef.current !== null) {
         // Snapped to a cross-path node — let mouseup complete the connection
@@ -256,10 +264,10 @@ export default function CanvasStage() {
     const vp = viewportRef.current
     const cnc = screenToCNC(stagePointer.x, stagePointer.y, vp)
 
-    // Find the closest visible path within 8 screen pixels
+    // Find the closest visible path within 8 screen pixels (16 for a finger)
     const { paths } = usePathsStore.getState()
     const candidates = paths.filter((p) => onCanvas(p) && p.id !== neid)
-    const hit = closestVisiblePath(cnc.x, cnc.y, candidates, 8 / vp.scale, (p) => getFlat(p, 0.05))
+    const hit = closestVisiblePath(cnc.x, cnc.y, candidates, (touch ? 16 : 8) / vp.scale, (p) => getFlat(p, 0.05))
       ?? (activeTool === 'select' ? imageUnder(cnc.x, cnc.y, candidates, (p) => getFlat(p, 0.05)) : null)
 
     if (hit) {
@@ -415,6 +423,7 @@ export default function CanvasStage() {
       onMoveConstrainHover, onMoveRegionHover, onMoveMeasureHover, onMoveShapeHover, onMoveStampHover])
 
   const handleMouseMove = moveBody
+  moveBodyRef.current = moveBody
 
   const handleMouseUp = useCallback((_e: Konva.KonvaEventObject<MouseEvent>) => {
     const m = modeRef.current
@@ -521,19 +530,39 @@ useNudge(gesture)
   // at all and ends the gesture the same way.
   const handleMouseUpRef = useRef(handleMouseUp)
   handleMouseUpRef.current = handleMouseUp
+  // A CANCELLED press (the OS took the touch, or a second finger made it a pinch) is not a
+  // release: the transform previews are thrown away rather than baked. The modes that build
+  // something as they go (a pen point, a point drag, a linkage drag) end as a release does,
+  // keeping what they have.
+  const abortGesture = useCallback(() => {
+    const t = modeRef.current.type
+    if (t === 'idle') return
+    if (t === 'pendraw' || t === 'nodedit-drag' || t === 'clocklink-drag') {
+      handleMouseUpRef.current({ evt: new PointerEvent('pointerup') } as unknown as Konva.KonvaEventObject<PointerEvent>)
+      return
+    }
+    endGesture()
+  }, [endGesture])
   useEffect(() => {
     const finish = (evt: MouseEvent) => {
       if (modeRef.current.type === 'idle') return
       handleMouseUpRef.current({ evt } as unknown as Konva.KonvaEventObject<MouseEvent>)
     }
     const onBlur = () => finish(new MouseEvent('mouseup'))
-    window.addEventListener('mouseup', finish)
+    window.addEventListener('pointerup', finish)
+    window.addEventListener('pointercancel', abortGesture)
     window.addEventListener('blur', onBlur)
     return () => {
-      window.removeEventListener('mouseup', finish)
+      window.removeEventListener('pointerup', finish)
+      window.removeEventListener('pointercancel', abortGesture)
       window.removeEventListener('blur', onBlur)
     }
-  }, [])
+  }, [abortGesture])
+
+  const { shiftRing } = useTouchInput({
+    containerRef, viewportRef, setViewport, clampScale, abortGesture,
+    hoverTracks: () => { const t = useUIStore.getState().activeTool; return !NON_SHAPE_TOOLS.has(t) || t === 'stamp' },
+  })
 
   const getCursor = () => {
     if (nodeEditPathId) return 'default'
@@ -563,7 +592,11 @@ useNudge(gesture)
       ref={containerRef}
       data-testid="canvas-stage"
       className="w-full h-full relative overflow-hidden select-none"
-      style={{ cursor: getCursor() }}
+      // touch-action none: a finger on the drawing is ours (useTouchInput), never a page
+      // scroll or a browser zoom. The callout is iOS's long-press menu.
+      style={{ cursor: getCursor(), touchAction: 'none', WebkitTouchCallout: 'none' }}
+      // Pointer handlers can't stop the middle button's autoscroll; the mousedown can.
+      onMouseDown={(e) => { if (e.button === 1) e.preventDefault() }}
       onDragOver={(e) => e.preventDefault()}
       onDrop={handleCanvasDrop}
     >
@@ -572,17 +605,17 @@ useNudge(gesture)
         width={size.width}
         height={size.height}
         onWheel={handleWheel}
-        onMouseDown={handleStageMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={() => {
+        onPointerDown={handleStageMouseDown}
+        onPointerMove={handleMouseMove}
+        onPointerUp={handleMouseUp}
+        onPointerLeave={() => {
           setCursorMM(null)
           useCanvasStore.getState().setShapeHoverAt(null)
           useCanvasStore.getState().setStampOffset(null)
           setPenSnapCursor(null)
           if (modeRef.current.type === 'idle') setSnapGuides(null)
         }}
-        onDblClick={handleStageDblClick}
+        onPointerDblClick={handleStageDblClick}
       >
         {/* Layer 1: All CNC-space content (Y-flipped). Groups render in z-order within this single canvas. */}
         <Layer x={viewport.x} y={viewport.y} scaleX={viewport.scale} scaleY={-viewport.scale}>
@@ -765,6 +798,14 @@ useNudge(gesture)
             dragBoxEncloses(dragBox) ? '' : 'border-dashed'}`}
           style={dragBoxStyle}
         />
+      )}
+
+      {/* A long press engaged Shift: a ring round the finger until it lifts. */}
+      {shiftRing && (
+        <div className="absolute pointer-events-none rounded-full border-2 border-amber-400 bg-amber-400/15"
+          style={{ left: shiftRing.x - 32, top: shiftRing.y - 32, width: 64, height: 64 }}>
+          <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-[11px] font-semibold text-amber-500">Shift</span>
+        </div>
       )}
 
       <PenLengthOverlay viewport={viewport} draggingHandle={livePen !== null} snappedCursor={penSnapCursor} />

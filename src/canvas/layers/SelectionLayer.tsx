@@ -98,9 +98,9 @@ export function SelectionHandleLayer({ viewport, bbox, liveTransform, onResizeHa
           radius={HANDLE_R}
           fill={hoveredId === id ? '#60a5fa' : rest}
           stroke="#60a5fa" strokeWidth={1.5}
-          onMouseEnter={() => setHoveredId(id)}
-          onMouseLeave={() => setHoveredId(null)}
-          onMouseDown={(e) => { e.cancelBubble = true; onResizeHandleDown(id, e) }}
+          onPointerEnter={() => setHoveredId(id)}
+          onPointerLeave={() => setHoveredId(null)}
+          onPointerDown={(e) => { e.cancelBubble = true; onResizeHandleDown(id, e) }}
         />
       ))}
       <Circle
@@ -108,9 +108,9 @@ export function SelectionHandleLayer({ viewport, bbox, liveTransform, onResizeHa
         radius={HANDLE_R}
         fill={hoveredId === 'rot' ? '#a78bfa' : rest}
         stroke="#a78bfa" strokeWidth={1.5}
-        onMouseEnter={() => setHoveredId('rot')}
-        onMouseLeave={() => setHoveredId(null)}
-        onMouseDown={(e) => { e.cancelBubble = true; onRotateHandleDown(e) }}
+        onPointerEnter={() => setHoveredId('rot')}
+        onPointerLeave={() => setHoveredId(null)}
+        onPointerDown={(e) => { e.cancelBubble = true; onRotateHandleDown(e) }}
       />
     </Group>
   )

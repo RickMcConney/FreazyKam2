@@ -23,8 +23,11 @@ import { pathCell, sheetName, useActiveSheet } from '../canvas/useSheets'
 import { renamePath, renameGroup } from '../tools/renamePaths'
 import { sourceTree, type SourceItem } from './sourceTree'
 
-const iconBtn = 'opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-gray-300 dark:hover:bg-neutral-600 text-gray-500 dark:text-neutral-400 hover:text-gray-800 dark:hover:text-neutral-200 transition-opacity'
-const deleteBtn = 'opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-900/40 text-gray-500 dark:text-neutral-400 hover:text-red-400 transition-opacity'
+// A row's buttons show on hover — and STAY while the row is selected, since a tablet has no
+// hover: there a tap selects the row, and its buttons are then there to be tapped.
+const reveal = (shown: boolean) => (shown ? 'opacity-100' : 'opacity-0 group-hover:opacity-100')
+const iconBtn = (shown: boolean) => `${reveal(shown)} p-0.5 rounded hover:bg-gray-300 dark:hover:bg-neutral-600 text-gray-500 dark:text-neutral-400 hover:text-gray-800 dark:hover:text-neutral-200 transition-opacity`
+const deleteBtn = (shown: boolean) => `${reveal(shown)} p-0.5 rounded hover:bg-red-900/40 text-gray-500 dark:text-neutral-400 hover:text-red-400 transition-opacity`
 // The list is ALPHABETICAL at every level, folders before rows — natural order, so
 // "Part 2" comes before "Part 10". Document order still lives in the Objects strip.
 const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare
@@ -63,9 +66,9 @@ function NameField({ name, editing, onDone, className }: {
   )
 }
 
-function RenameButton({ onClick }: { onClick: () => void }) {
+function RenameButton({ onClick, shown }: { onClick: () => void; shown: boolean }) {
   return (
-    <button title="Rename" onClick={(e) => { e.stopPropagation(); onClick() }} className={iconBtn}>
+    <button title="Rename" onClick={(e) => { e.stopPropagation(); onClick() }} className={iconBtn(shown)}>
       <Pencil size={ICON.sm} />
     </button>
   )
@@ -104,20 +107,20 @@ function PathRow({ p }: { p: ImportedPath }) {
           : <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: p.color }} />}
       <NameField name={p.name} editing={renaming} className="text-body text-gray-800 dark:text-neutral-200"
         onDone={(name) => { setRenaming(false); if (name !== null) renamePath(p.id, name) }} />
-      {!renaming && <RenameButton onClick={() => setRenaming(true)} />}
+      {!renaming && <RenameButton shown={selected} onClick={() => setRenaming(true)} />}
       {p.hidden ? (
         <button title="Restore (un-hide from boolean op)"
           onClick={(e) => { e.stopPropagation(); showPath(p.id) }}
-          className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-gray-300 dark:hover:bg-neutral-600 text-amber-600 dark:text-amber-400 transition-opacity">
+          className={`${reveal(selected)} p-0.5 rounded hover:bg-gray-300 dark:hover:bg-neutral-600 text-amber-600 dark:text-amber-400 transition-opacity`}>
           <Eye size={ICON.sm} />
         </button>
       ) : (
         <button title={p.visible ? 'Hide path' : 'Show path'}
-          onClick={(e) => { e.stopPropagation(); toggleVisibility(p.id) }} className={iconBtn}>
+          onClick={(e) => { e.stopPropagation(); toggleVisibility(p.id) }} className={iconBtn(selected)}>
           {p.visible ? <Eye size={ICON.sm} /> : <EyeOff size={ICON.sm} />}
         </button>
       )}
-      <button title="Delete path" onClick={(e) => { e.stopPropagation(); deletePath(p.id) }} className={deleteBtn}>
+      <button title="Delete path" onClick={(e) => { e.stopPropagation(); deletePath(p.id) }} className={deleteBtn(selected)}>
         <Trash2 size={ICON.sm} />
       </button>
     </li>
@@ -169,10 +172,10 @@ function SourceItems({ items, open, onToggle }: {
               <span className="flex-1 text-body truncate text-gray-700 dark:text-neutral-300" title={it.name}>{it.name}</span>
               <span className="text-xs text-gray-600 dark:text-neutral-400 flex-shrink-0 mr-1">{it.paths.length}</span>
               <button title={allVisible ? 'Hide group' : 'Show group'}
-                onClick={(e) => { e.stopPropagation(); setPathsVisible(ids, !allVisible) }} className={iconBtn}>
+                onClick={(e) => { e.stopPropagation(); setPathsVisible(ids, !allVisible) }} className={iconBtn(anySelected)}>
                 {allVisible ? <Eye size={ICON.sm} /> : <EyeOff size={ICON.sm} />}
               </button>
-              <button title="Delete group" onClick={(e) => { e.stopPropagation(); applyPathEdit({ deleteIds: ids }) }} className={deleteBtn}>
+              <button title="Delete group" onClick={(e) => { e.stopPropagation(); applyPathEdit({ deleteIds: ids }) }} className={deleteBtn(anySelected)}>
                 <Trash2 size={ICON.sm} />
               </button>
             </div>
@@ -219,12 +222,12 @@ function GroupFolder({ groupId, name, members, openSource, toggleSource }: {
         <NameField name={name} editing={renaming} className="text-body text-gray-700 dark:text-neutral-300 font-medium"
           onDone={(n) => { setRenaming(false); if (n !== null) renameGroup(groupId, n) }} />
         <span className="text-xs text-gray-600 dark:text-neutral-400 flex-shrink-0 mr-1">{members.length}</span>
-        {!renaming && <RenameButton onClick={() => setRenaming(true)} />}
+        {!renaming && <RenameButton shown={anySelected} onClick={() => setRenaming(true)} />}
         <button title={allVisible ? 'Hide group' : 'Show group'}
-          onClick={(e) => { e.stopPropagation(); setPathsVisible(ids, !allVisible) }} className={iconBtn}>
+          onClick={(e) => { e.stopPropagation(); setPathsVisible(ids, !allVisible) }} className={iconBtn(anySelected)}>
           {allVisible ? <Eye size={ICON.sm} /> : <EyeOff size={ICON.sm} />}
         </button>
-        <button title="Delete group" onClick={(e) => { e.stopPropagation(); applyPathEdit({ deleteIds: ids }) }} className={deleteBtn}>
+        <button title="Delete group" onClick={(e) => { e.stopPropagation(); applyPathEdit({ deleteIds: ids }) }} className={deleteBtn(anySelected)}>
           <Trash2 size={ICON.sm} />
         </button>
       </div>
@@ -340,7 +343,7 @@ export default function PathsPanel() {
                   <span className={`flex-1 min-w-0 truncate text-[12px] ${active ? 'font-bold' : 'font-semibold'}`}>{name}</span>
                   <span className="text-xs text-gray-600 dark:text-neutral-400 flex-shrink-0 mr-1">{n}</span>
                   <button title={allVisible ? `Hide all ${n} on ${name}` : `Show all ${n} on ${name}`}
-                    onClick={(e) => { e.stopPropagation(); setPathsVisible(ids, !allVisible) }} className={iconBtn}>
+                    onClick={(e) => { e.stopPropagation(); setPathsVisible(ids, !allVisible) }} className={iconBtn(false)}>
                     {allVisible ? <Eye size={ICON.sm} /> : <EyeOff size={ICON.sm} />}
                   </button>
                 </div>

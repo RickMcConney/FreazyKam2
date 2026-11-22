@@ -100,50 +100,41 @@ export function NodeEditLayer({
     y: (viewport.y - pointer.y) / viewport.scale,
   })
 
-  const handleSegmentMouseMove = (e: Konva.KonvaEventObject<MouseEvent>) => {
+  // Where a point would go in under the pointer — the hover preview and the press both ask,
+  // so a finger (which never hovers) inserts exactly where a mouse's preview would have shown.
+  const insertAt = (e: Konva.KonvaEventObject<MouseEvent>): HoverInsert | null => {
     const pointer = e.target.getStage()?.getPointerPosition()
-    if (!pointer) { updateHoverInsert(null); return }
+    if (!pointer) return null
     const { x: cncX, y: cncY } = toCNC(pointer)
 
     const nearest = nearestSegmentOnPath(nodes, closed, cncX, cncY)
-    if (!nearest) { updateHoverInsert(null); return }
+    if (!nearest) return null
 
     const pt = nearestPointOnSegment(nodes, nearest.segIdx, cncX, cncY)
     const threshSq = (INSERT_THRESHOLD_PX / s) ** 2
-    if (pt.distSq > threshSq) { updateHoverInsert(null); return }
+    if (pt.distSq > threshSq) return null
 
     const mid = segmentMidpoint(nodes, nearest.segIdx)
     const midScreenDistSq = ((mid.x - pt.x) * s) ** 2 + ((mid.y - pt.y) * s) ** 2
     const snapCenter = midScreenDistSq < CENTER_SNAP_THRESHOLD_PX ** 2
 
-    updateHoverInsert({
+    return {
       x: snapCenter ? mid.x : pt.x,
       y: snapCenter ? mid.y : pt.y,
       segIdx: nearest.segIdx,
       snapCenter,
-    })
+    }
   }
+
+  const handleSegmentMouseMove = (e: Konva.KonvaEventObject<MouseEvent>) => updateHoverInsert(insertAt(e))
 
   const handleSegmentMouseLeave = () => updateHoverInsert(null)
 
   const handleSegmentMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
     if (isStagePress(e, spaceHeldRef)) return
     e.cancelBubble = true
-
-    if (hoverInsert?.snapCenter) {
-      onSegmentMouseDown(hoverInsert.segIdx, hoverInsert.x, hoverInsert.y)
-      return
-    }
-
-    const pointer = e.target.getStage()?.getPointerPosition()
-    if (!pointer) return
-    const { x: cncX, y: cncY } = toCNC(pointer)
-
-    const nearest = nearestSegmentOnPath(nodes, closed, cncX, cncY)
-    if (!nearest) return
-    const threshSq = (INSERT_THRESHOLD_PX / s) ** 2
-    if (nearest.distSq > threshSq) return
-    onSegmentMouseDown(nearest.segIdx, cncX, cncY)
+    const at = insertAt(e)
+    if (at) onSegmentMouseDown(at.segIdx, at.x, at.y)
   }
 
   return (
@@ -162,9 +153,9 @@ export function NodeEditLayer({
           fillEnabled={false}
           hitStrokeWidth={12 / s}
           listening
-          onMouseMove={handleSegmentMouseMove}
-          onMouseLeave={handleSegmentMouseLeave}
-          onMouseDown={handleSegmentMouseDown}
+          onPointerMove={handleSegmentMouseMove}
+          onPointerLeave={handleSegmentMouseLeave}
+          onPointerDown={handleSegmentMouseDown}
         />
       )}
 
@@ -223,9 +214,9 @@ export function NodeEditLayer({
             stroke={stroke}
             strokeWidth={1.5 / s}
             listening
-            onMouseEnter={() => onHoveredNodeChange(i)}
-            onMouseLeave={() => onHoveredNodeChange(null)}
-            onMouseDown={(e) => {
+            onPointerEnter={() => onHoveredNodeChange(i)}
+            onPointerLeave={() => onHoveredNodeChange(null)}
+            onPointerDown={(e) => {
               if (isStagePress(e, spaceHeldRef)) return
               e.cancelBubble = true
               onNodeMouseDown(i, 'anchor', e)
@@ -378,9 +369,9 @@ function NodeHandles({
             stroke={hoveredIn ? active : HANDLE_COLOR}
             strokeWidth={1.5 / s}
             listening
-            onMouseEnter={() => setHoveredIn(true)}
-            onMouseLeave={() => setHoveredIn(false)}
-            onMouseDown={(e) => {
+            onPointerEnter={() => setHoveredIn(true)}
+            onPointerLeave={() => setHoveredIn(false)}
+            onPointerDown={(e) => {
               if (isStagePress(e, spaceHeldRef)) return
               e.cancelBubble = true
               onMouseDown(nodeIdx, 'handle-in', e)
@@ -404,9 +395,9 @@ function NodeHandles({
             stroke={hoveredOut ? active : HANDLE_COLOR}
             strokeWidth={1.5 / s}
             listening
-            onMouseEnter={() => setHoveredOut(true)}
-            onMouseLeave={() => setHoveredOut(false)}
-            onMouseDown={(e) => {
+            onPointerEnter={() => setHoveredOut(true)}
+            onPointerLeave={() => setHoveredOut(false)}
+            onPointerDown={(e) => {
               if (isStagePress(e, spaceHeldRef)) return
               e.cancelBubble = true
               onMouseDown(nodeIdx, 'handle-out', e)

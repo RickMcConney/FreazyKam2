@@ -49,9 +49,9 @@ export function CornerPickLayer({ viewport }: { viewport: Viewport }) {
             stroke={isHovered ? HOVER_COLOR : isSelected ? SELECTED_COLOR : isTreated ? TREATED_COLOR : STROKE_COLOR}
             strokeWidth={1.5 / s}
             listening
-            onMouseEnter={() => setHoveredIdx(idx)}
-            onMouseLeave={() => setHoveredIdx(null)}
-            onMouseDown={(e) => {
+            onPointerEnter={() => setHoveredIdx(idx)}
+            onPointerLeave={() => setHoveredIdx(null)}
+            onPointerDown={(e) => {
               e.cancelBubble = true
               toggleCorner(idx)
             }}
