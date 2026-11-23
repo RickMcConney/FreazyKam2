@@ -18,7 +18,7 @@ import { constraintChains, constraintName, bodyKeyOf, type Constraint } from '..
 import { useWorkpieceStore, fmtLen } from '../store/workpieceStore'
 import { shapeDisplayName } from '../shapes/shapeGenerators'
 import { useUIStore } from '../store/uiStore'
-import { OP_TYPE_COLORS } from '../colors'
+import { OP_TYPE_COLORS, PATH_COLOR } from '../colors'
 import { InlayIcon } from './MachinePanel'
 import { regenerateAffectedMany } from '../cam/regenerate'
 import { isTilePinPath } from '../canvas/selectionUtils'
@@ -325,7 +325,7 @@ export function buildChips(
           key: `copy:${batch}`, ...pathVisual(p), label: `Copy ×${things.size}`,
           family: 'path', pathIds: members.map((m) => m.id),
         })
-        for (const m of members) out.push(...attachedChips(m, tabChips))
+        for (const m of members) out.push(...attachedChips(m, tabChips, paths))
         continue
       }
     }
@@ -344,7 +344,7 @@ export function buildChips(
         key: `ugroup:${ugroup}`, label: p.groupLabels?.[ugroup] ?? `Group \u00d7${members.length}`, Icon: Group,
         family: 'path', pathIds: members.map((m) => m.id),
       })
-      for (const m of members) out.push(...attachedChips(m, tabChips))
+      for (const m of members) out.push(...attachedChips(m, tabChips, paths))
       continue
     }
     if (p.groupId) {
@@ -353,7 +353,7 @@ export function buildChips(
       const members = paths.filter((q) => q.groupId === p.groupId)
       const editable = members.find((m) => m.definition && m.definition.kind !== 'duplicate')
       out.push({ key: p.groupId, ...pathVisual(p), family: 'path', pathIds: members.map((m) => m.id), editPathId: editable?.id })
-      for (const m of members) out.push(...attachedChips(m, tabChips))
+      for (const m of members) out.push(...attachedChips(m, tabChips, paths))
     } else if (defGroupId(p) || foldedInto.has(p.id)) {
       // ONE CHIP PER GENERATOR CLICK, for the same reason a batch of operations
       // gets one: a pattern of six copies, or an offset of four selected paths,
@@ -381,13 +381,13 @@ export function buildChips(
       })
       // Tab and corner chips for what is ON this chip only — an original that kept
       // a chip of its own keeps them there.
-      for (const m of members) if (foldedInto.get(m.id) === defId || defGroupId(m) === defId) out.push(...attachedChips(m, tabChips))
+      for (const m of members) if (foldedInto.get(m.id) === defId || defGroupId(m) === defId) out.push(...attachedChips(m, tabChips, paths))
     } else {
       out.push({
         key: p.id, ...pathVisual(p), ...(p.nameIsCustom ? { label: p.name } : {}), family: 'path', pathIds: [p.id],
         editPathId: undefined,
       })
-      out.push(...attachedChips(p, tabChips))
+      out.push(...attachedChips(p, tabChips, paths))
     }
   }
 
@@ -519,7 +519,7 @@ function tabChipIndex(tabs: Tab[]): TabChipIndex {
 // sits straight after the path it belongs to, so the strip reads as the thing
 // and then what has been done to it. A batch of tabs sits after the FIRST of its
 // paths in the strip, as a batch of operations is drawn at its first member.
-function attachedChips(p: ImportedPath, tabs: TabChipIndex): ObjectChip[] {
+function attachedChips(p: ImportedPath, tabs: TabChipIndex, paths: readonly ImportedPath[]): ObjectChip[] {
   const out: ObjectChip[] = []
   const n = tabs.count.get(p.id) ?? 0
   const batch = tabs.batchOf.get(p.id)
@@ -536,10 +536,16 @@ function attachedChips(p: ImportedPath, tabs: TabChipIndex): ObjectChip[] {
     key: `tabs:${p.id}`, label: n === 1 ? 'Tab' : `Tabs ×${n}`, Icon: TabsIcon,
     color: OP_TYPE_COLORS.tabs, family: 'attached', pathIds: [p.id], form: 'tabs',
   })
+  // A LINKED COPY'S CORNERS ARE ITS ORIGINAL'S: Duplicate copied the recipe and the copy
+  // follows every change to it, so they are edited on the original and the chip is the
+  // original's. A chip per copy said there were that many treatments to change. Unlinked,
+  // the copy's corners are its own again and so is the chip.
   const t = p.corners?.treatments.length ?? 0
-  if (t > 0) out.push({
+  if (t > 0 && !linkedOriginalOf(paths, p)) out.push({
+    // PATH_COLOR, as the Corners button wears (colors.ts): a treatment leaves an ordinary
+    // path. The 'attached' family's purple matched nothing on the canvas.
     key: `corners:${p.id}`, label: t === 1 ? 'Corner' : `Corners ×${t}`, Icon: VectorSquare,
-    family: 'attached', pathIds: [p.id], form: 'nodeedit',
+    color: PATH_COLOR, family: 'attached', pathIds: [p.id], form: 'nodeedit',
   })
   return out
 }

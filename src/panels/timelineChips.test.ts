@@ -4,6 +4,7 @@ import type { ImportedPath } from '../store/pathsStore'
 import type { AnyOperation } from '../store/toolpathStore'
 import { Circle, Group, Link2 } from 'lucide-react'
 import { generateShapeD } from '../shapes/shapeGenerators'
+import { PATH_COLOR } from '../colors'
 
 const path = (p: Partial<ImportedPath> & { id: string }): ImportedPath => ({
   name: p.id, d: 'M0,0 L1,0 L1,1 Z', visible: true, color: '#888', ...p,
@@ -246,6 +247,27 @@ describe('the object strip', () => {
     expect(chips.map((c) => c.key)).toEqual(['a', 'corners:a'])
     expect(chips[1].label).toBe('Corner')
     expect(chips[1].form).toBe('nodeedit')
+  })
+
+  // The Corners button is PATH_COLOR — a treatment leaves an ordinary path — and its
+  // chip wore the attached family's purple, which matched nothing on the canvas.
+  it('tints a Corners chip with the path colour its button wears', () => {
+    const chips = buildChips([path({
+      id: 'a', corners: { baseD: 'M0,0 L9,0 L9,9 Z', treatments: [[0, { type: 'chamfer', radiusMM: 2 }]] },
+    })], [])
+    expect(chips[1].color).toBe(PATH_COLOR)
+  })
+
+  // Duplicate copies the corner recipe, and a linked copy follows the original's — so
+  // the treatment is the ORIGINAL's to edit, and one chip per copy misread as many.
+  it('gives a linked copy no Corners chip of its own, and an unlinked one its own back', () => {
+    const corners = { baseD: 'M0,0 L9,0 L9,9 Z', treatments: [[0, { type: 'chamfer' as const, radiusMM: 2 }]] as [number, { type: 'chamfer'; radiusMM: number }][] }
+    const moved = { baseD: 'M20,0 L29,0 L29,9 Z', treatments: corners.treatments }
+    const orig = path({ id: 'o', d: 'M0,0 L9,0 L9,9 Z', corners })
+    const linked = path({ id: 'c1', d: 'M20,0 L29,0 L29,9 Z', corners: moved, copyOf: { sourceId: 'o' } })
+    const loose = path({ id: 'c2', d: 'M40,0 L49,0 L49,9 Z', corners: moved, copyOf: { sourceId: 'o', unlinked: true } })
+    const keys = buildChips([orig, linked, loose], []).map((c) => c.key)
+    expect(keys.filter((k) => k.startsWith('corners:'))).toEqual(['corners:o', 'corners:c2'])
   })
 
   // An emptied recipe is not a treatment — the chip has to go with it, or
