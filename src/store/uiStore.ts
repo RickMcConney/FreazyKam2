@@ -68,6 +68,10 @@ interface UIState {
    * Emptied when the tool is left.
    */
   constrainSubjectIds: string[]
+  /** The constraint row under the pointer (or holding the keyboard), drawn
+   *  highlighted on the canvas — with a whole chain listed, the rows carry no
+   *  names and this is how one is told from its neighbours. */
+  hoverConstraintId: string | null
   shapeToolConfig: ShapeToolConfig
   lastShapeType: ShapeType
   pendingDrillPoints: { x: number; y: number }[]
@@ -259,6 +263,7 @@ interface UIState {
   setConstrainMode: (mode: 'polar' | 'xy') => void
   setFocusConstraint: (id: string | null) => void
   setConstrainSubject: (ids: string[]) => void
+  setHoverConstraint: (id: string | null) => void
   setShapeToolConfig: (config: ShapeToolConfig) => void
   // Drag out a shape from its CENTRE rather than corner-to-corner, and the
   // DEFAULT for the `fromCenter` each shape drawn from here is stamped with. A
@@ -305,6 +310,7 @@ export const useUIStore = create<UIState>()(
   constrainMode: 'xy',
   focusConstraintId: null,
   constrainSubjectIds: [],
+  hoverConstraintId: null,
   shapeToolConfig: DEFAULT_SHAPE_CONFIG,
   lastShapeType: 'rectangle',
   pendingDrillPoints: [],
@@ -385,7 +391,7 @@ export const useUIStore = create<UIState>()(
     activeTool: 'select', nodeEditPathId: null,
     meshAnimPathId: null, clockAnimPathId: null, clockLinkPathId: null,
     cornerPickPathId: null, cornerPickBaseD: null, selectedCorners: [], treatedCorners: [],
-    focusConstraintId: null, constrainSubjectIds: [],
+    focusConstraintId: null, constrainSubjectIds: [], hoverConstraintId: null,
     pendingDrillPoints: [], penNodes: [],
     // Requests queued for a form to pick up — they name ops/paths of the old document.
     requestEditOpId: null, requestEditPathId: null, requestMachineForm: null,
@@ -423,6 +429,7 @@ export const useUIStore = create<UIState>()(
   setConstrainMode: (mode) => set({ constrainMode: mode }),
   setFocusConstraint: (id) => set({ focusConstraintId: id }),
   setConstrainSubject: (ids) => set({ constrainSubjectIds: ids }),
+  setHoverConstraint: (id) => set({ hoverConstraintId: id }),
   setShapeToolConfig: (config) => set({ shapeToolConfig: config }),
   setMeshAnim: (id) => set({ meshAnimPathId: id, clockAnimPathId: null, clockLinkPathId: null }),
   setClockAnim: (id) => set({ clockAnimPathId: id, meshAnimPathId: null, clockLinkPathId: null }),

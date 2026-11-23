@@ -1,13 +1,14 @@
 import { useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useCanvasStore } from '../store/canvasStore'
-import { constraintFrame, type AnchorCandidate } from '../store/constraints'
+import { constraintFrame, stockFoot, type AnchorCandidate } from '../store/constraints'
 import { usePathsStore } from '../store/pathsStore'
 import { useUIStore } from '../store/uiStore'
 import { fmtLen, useWorkpieceStore } from '../store/workpieceStore'
 import { ConstraintLayer } from './layers/ConstraintLayer'
 import { originWorldXY } from './layers/WorkpieceLayer'
 import type { PathNode } from './nodeUtils'
+import type { LiveTransform } from './types'
 import { snapPoint, type Viewport } from './viewport'
 
 // The things drawn over the stage that subscribe for themselves, so that what changes on
@@ -84,9 +85,11 @@ export function NodeEditDimensionOverlay({
 // tool was in use, for the sake of this one line. The selector hands back null unless a
 // first point is held with no candidate under the pointer, so even this stays still until
 // the line actually has to track the cursor.
-export function ConstraintLayerLive({ viewport, hideCommitted, held, hot, drag }: {
+export function ConstraintLayerLive({ viewport, hideCommitted, held, hot, drag, partsDrag }: {
   viewport: Viewport
   hideCommitted: boolean
+  /** A drag of parts outside the Constrain tool — see `ConstraintLayer`'s `drag`. */
+  partsDrag?: { live: LiveTransform | null; follow: LiveTransform[] | null }
   held: AnchorCandidate | null
   hot: AnchorCandidate | null
   drag: { dx: number; dy: number } | null
@@ -106,19 +109,26 @@ export function ConstraintLayerLive({ viewport, hideCommitted, held, hot, drag }
   // empty canvas the way it always did.
   const pending = useMemo(() => {
     if (activeTool !== 'constrain' || !held) return null
-    const q = hot
+    const q0 = hot
       ? { x: hot.x + (drag?.dx ?? 0), y: hot.y + (drag?.dy ?? 0) }
       : cursorMM
-    if (!q) return null
+    if (!q0) return null
+    // A STOCK EDGE has no point of its own — it takes its free coordinate from
+    // the other end, so the dimension is drawn square to the edge, which is
+    // the one number a constraint against it holds.
+    const p = stockFoot(held, q0)
+    const q = hot ? stockFoot(hot, p) : q0
     // Stated in the first part's frame, which is what the constraint will hold.
-    const frame = constraintFrame(paths, held.ref)
+    // A stock edge is always the held end once made (see `pickedConstraint`), so
+    // its frame — the world's — is the one the numbers will be stated in.
+    const frame = constraintFrame(paths, hot?.ref.kind === 'stock' ? hot.ref : held.ref)
     return {
-      p: { x: held.x, y: held.y }, q, mode: constrainMode,
+      p, q, mode: held.ref.kind === 'stock' || hot?.ref.kind === 'stock' ? 'xy' : constrainMode,
       frameDeg: frame.deg, frameFlip: frame.flip,
     }
   }, [activeTool, held, hot, drag, cursorMM, constrainMode, paths])
 
-  return <ConstraintLayer viewport={viewport} hideCommitted={hideCommitted} pending={pending} />
+  return <ConstraintLayer viewport={viewport} hideCommitted={hideCommitted} pending={pending} drag={partsDrag} />
 }
 
 export function PenLengthOverlay({ viewport, draggingHandle, snappedCursor }: { viewport: Viewport; draggingHandle: boolean; snappedCursor?: { x: number; y: number } | null }) {

@@ -192,13 +192,36 @@ One line per constraint, in the Constraints section:
 | **✕** | Delete the constraint. The parts stay where they are. |
 
 **X / Y** or **Dist / ∠** is set by the toggle beside the Constrain button and applies to
-the next constraint you make. X and Y is how a hole in the corner of a plate is
+the next constraint you make. The toggle and the constraint rows appear only while the
+Constrain tool is on; the rest of the time the section shows the Constrain button and a
+one-line count of what holds the selected part (red if one of them is not being kept). X and Y is how a hole in the corner of a plate is
 dimensioned; a distance and an angle is how a linkage, a bolt circle or a gear train is.
+
+### A pattern moves as one
+
+The holes of a pattern (its original and every copy) move together under a constraint,
+without being grouped — so the pattern stays editable. A **circular** pattern also offers
+its centre as a point to constrain: a crosshair at the middle of the bolt circle. Hold that
+to the centre of a plate and the bolt circle follows the plate; reopen the pattern and
+change the count or radius, and it comes back to the centre. Dragging one hole of a held
+pattern drags the whole pattern.
+
+Change the size or shape of a pattern's original (its diameter in Properties, or a resize)
+and every copy is rebuilt to match, in the same step — one undo puts them all back.
+Moving the original on its own leaves the copies where they are. A pattern made from
+another pattern follows it too. Pattern a part together with the bolt circle held to it, and
+the constraint between them still works: change its numbers and the bolt circle moves on the
+original part, and every copy of the pair follows. When a pattern is selected (from its chip), its original is
+drawn in **green** on the canvas, so you can tell which one it is. If you have deleted one
+of the copies, the pattern is not rebuilt automatically; reopen it and apply.
 
 ### Holding a part off the stock
 
-Select a single part and the section offers **Left**, **Right**, **Bottom** and **Top**:
-hold it where it now stands relative to that edge of the stock. The stock is **ground** —
+With the Constrain tool on, the edges of the stock are points like any other: bring the
+pointer to an edge and it lights up. Click a point on a part, then the edge (or the edge,
+then the part), and the part is held where it stands. Press on the edge instead and drag,
+and the part moves in or out from it with the distance reading live, the same as dragging
+one part off another. The stock is **ground** —
 nothing moves it, and a part pinned to an edge wins even over a drag, which is what makes
 "20 mm in from the left, whatever else happens" mean what it says. An angle against an
 edge means nothing (the point on the edge slides with the part), so a stock constraint
@@ -212,7 +235,19 @@ holds the first part and moves the second, and the arrowhead on the dimension li
 says which is which.
 
 The panel tells you the reach before you start: *"Dragging this moves 3 other parts with
-it"*, and *"Held to the stock — it will not move."*
+it"*, *"Held in X — a drag moves it in Y only"*, or *"Held by its constraints — dragging it
+will not move it."* It works this out over the whole chain: a hole tied to a plate that is
+pinned to the stock is pinned too.
+
+While you drag (or arrow-nudge) a part that is in a chain, the chain's dimensions are drawn
+on the canvas for as long as the drag lasts, so a part that moves along with it is visibly
+tied to what you are dragging.
+
+Selecting any part of a chain shows **the whole chain** — every constraint in it, and the
+stock constraints that hold it down — in the panel and on the canvas. Hover a row and its
+dimension lights up amber on the canvas. While the tool is on, the first point you click
+on a part switches the list to that part's chain, so you can follow a tree from part to
+part without pressing Finished.
 
 ### Turned parts
 
@@ -420,6 +455,18 @@ hexagons tiles edge to edge without any measuring.
 
 *Placing a copy. The dashed copy follows the mouse; the dotted line shows it has snapped
 into line with the original's bottom edge. Click to place it, Esc to finish.*
+
+**Copies stay linked to the original.** Change the original's shape in any way — its
+diameter, a resize, a gear's teeth, rounded corners, a boolean re-run, a point edit — and
+every copy changes to match, each staying where you put it, at whatever angle you turned it
+and mirrored if you mirrored it. Moving or rotating the original moves no copy. Select a
+copy and the original it follows is outlined in **green**; select an original and the copies
+a change will reach are outlined **dashed**. Properties says the same: a copy shows
+**Linked to …** (click the name to select the original) with an **Unlink** button, and an
+original shows **N linked copies** with **Select**. In the Objects strip a linked copy's chip
+shows a **link** icon instead of its shape's; it gets its own icon back when it is unlinked. Changing the
+copy's own shape also unlinks it, so it keeps your edit. Copies made with Copy/Paste are never
+linked.
 
 <!-- FULL APP · 1600 px wide. -->
 

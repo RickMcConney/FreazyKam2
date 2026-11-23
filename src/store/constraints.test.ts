@@ -5,6 +5,7 @@ import {
   bodiesMovingWith, groundedAxes,
   anchorCandidates, allAnchorCandidates, nearestCandidate, constraintChains,
   constraintEnds, solveInnerConstraints,
+  stockEdgeCandidate, stockFoot, pickedConstraint, chainsTouching, dragReach, shiftedEnds,
   type Constraint,
 } from './constraints'
 import type { ImportedPath } from '../importers/svgImporter'
@@ -253,7 +254,8 @@ describe('bodies', () => {
   })
 
   it('takes a user group as one body, outermost group first', () => {
-    expect(bodyKeyOf(box('a', 0, 0, 10, 10, { userGroups: ['outer', 'inner'] }))).toBe('outer')
+    const p = box('a', 0, 0, 10, 10, { userGroups: ['outer', 'inner'] })
+    expect(bodyKeyOf(p, [p])).toBe('outer')
   })
 
   // ─── Grouping the two parts a constraint holds ─────────────────────────────
@@ -524,6 +526,123 @@ describe('what a drag is about to move', () => {
   })
 })
 
+describe('what a drag of one part actually does, chain and all', () => {
+  const PINNED: Constraint = {
+    id: 's', mode: 'xy', offsetXMM: 0,
+    from: { kind: 'stock', edge: 'left' }, to: { kind: 'path', id: 'a', anchor: 'minX' },
+  }
+  const PINNED_XY: Constraint = {
+    id: 't', mode: 'xy', offsetYMM: 0,
+    from: { kind: 'stock', edge: 'bottom' }, to: { kind: 'path', id: 'a', anchor: 'minY' },
+  }
+
+  it('carries the rest of a free chain, whichever part is grabbed', () => {
+    const r = dragReach(CHAIN_PATHS, CHAIN, STOCK, 'c')
+    expect([...r.moving].sort()).toEqual(['a', 'b'])
+    expect(r.lockedAxes.size).toBe(0)
+  })
+
+  it('holds a part at the far end of a chain whose root is pinned to the stock in both axes', () => {
+    // c has no stock constraint of its own — the old reading called it free and
+    // said dragging it would carry a and b along.
+    const r = dragReach(CHAIN_PATHS, [...CHAIN, PINNED, PINNED_XY], STOCK, 'c')
+    expect([...r.lockedAxes].sort()).toEqual(['x', 'y'])
+    expect(r.moving.size).toBe(0)
+  })
+
+  it('frees the pinned part in the axis the stock does not hold, carrying the chain', () => {
+    const r = dragReach(CHAIN_PATHS, [...CHAIN, PINNED], STOCK, 'a')
+    expect([...r.lockedAxes]).toEqual(['x'])
+    expect([...r.moving].sort()).toEqual(['b', 'c'])
+  })
+
+  it('lets the far end of a chain pinned in ONE axis move in the other, carrying the chain', () => {
+    // It used to be held in both: ground was walked first and placed c from
+    // where a stood, Y and all, though nothing holds the chain in Y.
+    const r = dragReach(CHAIN_PATHS, [...CHAIN, PINNED], STOCK, 'c')
+    expect([...r.lockedAxes]).toEqual(['x'])
+    expect([...r.moving].sort()).toEqual(['a', 'b'])
+  })
+
+  it('keeps the far end held in both when the chain is pinned in both, by two different parts', () => {
+    const paths = [...CHAIN_PATHS]
+    const cs: Constraint[] = [...CHAIN, PINNED, {
+      id: 'u', mode: 'xy', offsetYMM: 0,
+      from: { kind: 'stock', edge: 'bottom' }, to: { kind: 'path', id: 'b', anchor: 'minY' },
+    }]
+    const r = dragReach(paths, cs, STOCK, 'c')
+    expect([...r.lockedAxes].sort()).toEqual(['x', 'y'])
+    expect(r.moving.size).toBe(0)
+  })
+
+  it('is nothing at all for a part no constraint names', () => {
+    const r = dragReach([...CHAIN_PATHS, box('z', 0, 100)], CHAIN, STOCK, 'z')
+    expect(r.moving.size).toBe(0)
+    expect(r.lockedAxes.size).toBe(0)
+  })
+})
+
+describe('a chain the stock holds in one axis, dragged by its far end', () => {
+  // a pinned 0 from the left edge in X only; a—b—c a rigid row 50 apart.
+  const PIN_X: Constraint = {
+    id: 's', mode: 'xy', offsetXMM: 0,
+    from: { kind: 'stock', edge: 'left' }, to: { kind: 'path', id: 'a', anchor: 'minX' },
+  }
+
+  it('lands the drag in the free axis, and the rest of the chain follows it there', () => {
+    // c has been dragged 30 up and 7 right and baked; a and b have not moved.
+    const paths = [box('a', 0, 0), box('b', 50, 0), box('c', 107, 30)]
+    const { sol, by } = movesOf(paths, [...CHAIN, PIN_X], ['c'])
+    expect(sol.error).toBeNull()
+    // Y: the drag wins, and a and b come up with it.
+    expect(by.get('a')!.dy).toBeCloseTo(30, 6)
+    expect(by.get('b')!.dy).toBeCloseTo(30, 6)
+    expect(by.get('c')?.dy ?? 0).toBeCloseTo(0, 6)
+    // X: the stock wins, so c goes back to 100 and a stays on the edge.
+    expect(by.get('a')?.dx ?? 0).toBeCloseTo(0, 6)
+    expect(by.get('c')!.dx).toBeCloseTo(-7, 6)
+  })
+
+  it('previews the same thing the drag lands', () => {
+    const { plan } = planConstraints(CHAIN_PATHS, [...CHAIN, PIN_X], STOCK, ['c'])
+    const by = new Map(runPlan(plan!, { dx: 7, dy: 30 }).map((m) => [m.bodyKey, m]))
+    expect(by.get('a')).toMatchObject({ dx: 0, dy: 30 })
+    expect(by.get('b')!.dy).toBeCloseTo(30, 6)
+    expect(by.get('c')!.dx).toBeCloseTo(0, 6)
+    expect(by.get('c')!.dy).toBeCloseTo(30, 6)
+  })
+
+  it('leaves a satisfied chain alone when nothing is dragged', () => {
+    expect(movesOf(CHAIN_PATHS, [...CHAIN, PIN_X]).sol.moves).toEqual([])
+    expect(movesOf(CHAIN_PATHS, [...CHAIN, PIN_X], ['b']).sol.moves).toEqual([])
+  })
+})
+
+describe('the chain drawn riding a drag', () => {
+  it('moves each end with the part it is on, by that part’s own offset', () => {
+    const c = con('k', 'a', 'b', { distanceMM: 50 })
+    const off = (id: string) => (id === 'a' ? { dx: 3, dy: 4 } : { dx: -1, dy: 10 })
+    expect(shiftedEnds(c, { p: { x: 0, y: 0 }, q: { x: 50, y: 0 } }, off))
+      .toEqual({ p: { x: 3, y: 4 }, q: { x: 49, y: 10 } })
+  })
+
+  it('keeps a stock end on its edge, level with the moved part', () => {
+    const c: Constraint = {
+      id: 's', mode: 'xy', offsetXMM: 20,
+      from: { kind: 'stock', edge: 'left' }, to: { kind: 'path', id: 'a', anchor: 'minX' },
+    }
+    const ends = { p: { x: 0, y: 30 }, q: { x: 20, y: 30 } }
+    expect(shiftedEnds(c, ends, () => ({ dx: 5, dy: 12 }))).toEqual({ p: { x: 0, y: 42 }, q: { x: 25, y: 42 } })
+    const top: Constraint = { ...c, from: { kind: 'stock', edge: 'top' } }
+    expect(shiftedEnds(top, { p: { x: 20, y: 200 }, q: { x: 20, y: 150 } }, () => ({ dx: 5, dy: 12 })))
+      .toEqual({ p: { x: 25, y: 200 }, q: { x: 25, y: 162 } })
+    // Either end: an older file can hold the stock as `to`.
+    const flipped: Constraint = { ...c, from: c.to, to: c.from }
+    expect(shiftedEnds(flipped, { p: ends.q, q: ends.p }, () => ({ dx: 5, dy: 12 })))
+      .toEqual({ p: { x: 25, y: 42 }, q: { x: 0, y: 42 } })
+  })
+})
+
 describe('the live drag preview and the solve that lands agree', () => {
   // THE ONE THAT KEEPS THE PREVIEW HONEST. A drag previews `runPlan` against the
   // OLD geometry with the drag as an offset; mouse-up bakes the drag into `d`
@@ -752,6 +871,68 @@ describe('picking a constraint point on canvas', () => {
     const got = anchorCandidates([plate()], 'plate')
     expect(nearestCandidate(got, 2, 2, 5)!.ref).toMatchObject({ anchor: 'minXminY' })
     expect(nearestCandidate(got, 60, 60, 5)).toBeNull()
+  })
+})
+
+describe('picking a stock edge on canvas', () => {
+  it('offers the edge the cursor is nearest, standing at the foot of the perpendicular', () => {
+    const c = stockEdgeCandidate(STOCK, 3, 120, 5)
+    expect(c).toMatchObject({ ref: { kind: 'stock', edge: 'left' }, x: 0, y: 120, kind: 'stock' })
+    expect(c!.span).toEqual([0, 0, 0, 200])
+    expect(stockEdgeCandidate(STOCK, 150, 203, 5)!.ref).toEqual({ kind: 'stock', edge: 'top' })
+  })
+
+  it('offers no edge to a cursor out of reach, inside the stock or past its corner', () => {
+    expect(stockEdgeCandidate(STOCK, 150, 100, 5)).toBeNull()
+    // In line with the left edge but 20 below the stock: not on the edge.
+    expect(stockEdgeCandidate(STOCK, 0, -20, 5)).toBeNull()
+  })
+
+  it('takes the nearer of two edges at a corner', () => {
+    expect(stockEdgeCandidate(STOCK, 296, 2, 5)!.ref).toEqual({ kind: 'stock', edge: 'bottom' })
+    expect(stockEdgeCandidate(STOCK, 298, 4, 5)!.ref).toEqual({ kind: 'stock', edge: 'right' })
+  })
+
+  it('draws an edge’s end square to it, level with the part', () => {
+    const left = stockEdgeCandidate(STOCK, 1, 10, 5)!
+    expect(stockFoot(left, { x: 40, y: 77 })).toEqual({ x: 0, y: 77 })
+    const bottom = stockEdgeCandidate(STOCK, 100, 1, 5)!
+    expect(stockFoot(bottom, { x: 40, y: 77 })).toEqual({ x: 40, y: 0 })
+  })
+
+  it('makes the stock the held end whichever was clicked first, holding the signed gap across the edge only', () => {
+    const paths = [box('a', 25, 150)]
+    const part = { kind: 'path' as const, id: 'a', anchor: 'minX' as const }
+    const edge = { kind: 'stock' as const, edge: 'left' as const }
+    for (const [first, second] of [[part, edge], [edge, part]] as const) {
+      const c = pickedConstraint(paths, first, second, STOCK, 'polar', 'k')!
+      expect(c).toEqual({ id: 'k', mode: 'xy', from: edge, to: part, offsetXMM: 25 })
+    }
+    const top = pickedConstraint(paths, { kind: 'path', id: 'a', anchor: 'maxY' }, { kind: 'stock', edge: 'top' }, STOCK, 'xy', 'k')!
+    // The part's top at 160, the stock's at 200: the part sits 40 BELOW it.
+    expect(top).toEqual({ id: 'k', mode: 'xy', from: { kind: 'stock', edge: 'top' }, to: { kind: 'path', id: 'a', anchor: 'maxY' }, offsetYMM: -40 })
+  })
+
+  it('makes a stock constraint that moves nothing when made, and holds the part off the edge after', () => {
+    const paths = [box('a', 25, 150)]
+    const c = pickedConstraint(paths, { kind: 'path', id: 'a', anchor: 'minX' }, { kind: 'stock', edge: 'left' }, STOCK, 'xy', 'k')!
+    expect(solveConstraints(paths, [c], STOCK).moves).toHaveLength(0)
+    const { by } = movesOf([box('a', 60, 10)], [c])
+    expect(by.get('a')).toMatchObject({ dx: -35, dy: 0 })
+  })
+
+  it('makes nothing from two stock edges', () => {
+    expect(pickedConstraint([], { kind: 'stock', edge: 'left' }, { kind: 'stock', edge: 'top' }, STOCK, 'xy', 'k')).toBeNull()
+  })
+
+  it('still holds a part-to-part pick in the chosen mode, angle and all', () => {
+    const paths = [box('a', 0, 0), box('b', 30, 40)]
+    expect(pickedConstraint(paths, centre('a'), centre('b'), STOCK, 'polar', 'k')).toMatchObject({
+      from: centre('a'), to: centre('b'), distanceMM: 50, alignDeg: 0,
+    })
+    expect(pickedConstraint(paths, centre('a'), centre('b'), STOCK, 'xy', 'k')).toMatchObject({
+      mode: 'xy', offsetXMM: 30, offsetYMM: 40, alignDeg: 0,
+    })
   })
 })
 
@@ -1040,9 +1221,11 @@ describe('what the panel lists and the canvas draws', () => {
     id: `k${i}`, mode: 'xy', from: centre('plate'), to: centre(h), offsetXMM: 0, offsetYMM: 0,
   }))
 
-  it('shows one corner’s one constraint when that corner is the selection', () => {
+  it('shows the whole chain when one corner hole of it is the selection', () => {
+    // It used to be the hole's one constraint, and reading the tree meant
+    // Finished, select the plate, Constrain again.
     const shown = constraintsInFocus(PLATE_AND_HOLES, FOUR, { selectedIds: ['h2'] })
-    expect(shown.map((c) => c.id)).toEqual(['k1'])
+    expect(shown.map((c) => c.id)).toEqual(['k0', 'k1', 'k2', 'k3'])
   })
 
   it('shows all four when the plate they hang off is the selection', () => {
@@ -1050,11 +1233,27 @@ describe('what the panel lists and the canvas draws', () => {
     expect(shown).toHaveLength(4)
   })
 
-  it('falls back to what was selected when the tool was entered', () => {
+  it('falls back to the chain of what was selected when the tool was entered', () => {
     // The tool clears the selection, so this is the only record of the part the
     // user was working on.
     const shown = constraintsInFocus(PLATE_AND_HOLES, FOUR, { selectedIds: [], subjectIds: ['h4'] })
-    expect(shown.map((c) => c.id)).toEqual(['k3'])
+    expect(shown).toHaveLength(4)
+    const apart = [...PLATE_AND_HOLES, box('lone', 200, 0), box('mate', 250, 0)]
+    const two = [...FOUR, con('m', 'lone', 'mate', { distanceMM: 50 })]
+    expect(constraintsInFocus(apart, two, { selectedIds: [], subjectIds: ['mate'] }).map((c) => c.id)).toEqual(['m'])
+  })
+
+  it('takes in the stock constraint that grounds a chain, and leaves other chains out', () => {
+    const paths = [...CHAIN_PATHS, box('z', 0, 100), box('w', 50, 100)]
+    const cs: Constraint[] = [
+      ...CHAIN,
+      { id: 's', mode: 'xy', offsetXMM: 0, from: { kind: 'stock', edge: 'left' }, to: { kind: 'path', id: 'a', anchor: 'minX' } },
+      con('zw', 'z', 'w', { distanceMM: 50 }),
+      // Held off the SAME edge as a, and still not a's chain: the stock is not a part.
+      { id: 't', mode: 'xy', offsetXMM: 0, from: { kind: 'stock', edge: 'left' }, to: { kind: 'path', id: 'z', anchor: 'minX' } },
+    ]
+    expect(chainsTouching(paths, cs, ['c']).map((c) => c.id)).toEqual(['ab', 'bc', 's'])
+    expect(chainsTouching(paths, cs, ['c', 'w']).map((c) => c.id)).toEqual(['ab', 'bc', 's', 'zw', 't'])
   })
 
   it('prefers the constraint just made over the subject, and shows its whole chain', () => {

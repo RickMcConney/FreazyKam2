@@ -161,6 +161,11 @@ export function copyPaths(
       // One click's copies are one chip; a copy never joins the click that made its original.
       copyBatch: opts.copyBatch,
       definition: undefined,
+      // A DUPLICATE follows its original (tools/duplicateFollow) — every path the click
+      // copies, a boolean's hidden operands included, so the link does not depend on
+      // what the copy is made of. A paste is independent: it may not even be in the
+      // document its original is.
+      copyOf: opts.lostRecipe === 'copied-from' ? { sourceId: p.id } : undefined,
     }
 
     // WHETHER THE COPY KEEPS ITS RECIPE is one question: did everything it is made of come

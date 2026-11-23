@@ -333,10 +333,9 @@ export default function CanvasStage() {
         setDragBox({ sx: stagePointer.x, sy: stagePointer.y, ex: stagePointer.x, ey: stagePointer.y, op })
         return
       }
-      const moveIds = usePathsStore.getState().selectedIds
-      const session = beginMoveSession(moveIds)
+      const session = beginMoveSession(usePathsStore.getState().selectedIds)
       constraintPlanRef.current = session.plan
-      beginGesture({ type: 'move', pathIds: moveIds, startCNC: cnc, initBbox: session.bbox ?? EMPTY_BBOX, snapTargets: session.snapTargets, narrowTo, toggleOutOnClick, addOnClick })
+      beginGesture({ type: 'move', pathIds: session.ids, startCNC: cnc, initBbox: session.bbox ?? EMPTY_BBOX, snapTargets: session.snapTargets, narrowTo, toggleOutOnClick, addOnClick })
     } else {
       if (neid) { exitNodeEdit(); return }
       // Region picking (on while the Pocket form is open) decides on mouseup: a
@@ -741,7 +740,8 @@ useNudge(gesture)
               rigidly, so it costs two additions a frame and it is the only thing
               telling the user what the offset they are dragging out actually
               is. */}
-          <ConstraintLayerLive viewport={viewport} hideCommitted={!!liveTransform} held={pickHeld} hot={pickHot} drag={pickDrag} />
+          <ConstraintLayerLive viewport={viewport} hideCommitted={!!liveTransform} held={pickHeld} hot={pickHot} drag={pickDrag}
+            partsDrag={liveTransform ? { live: liveTransform, follow: followTransforms } : undefined} />
           {!nodeEditPathId && !cornerPickPathId && activeTool !== 'constrain' && selectionBBox && (
             <SelectionLayer
               viewport={viewport}
@@ -808,8 +808,7 @@ useNudge(gesture)
         </div>
       )}
 
-      <PenLengthOverlay viewport={viewport} draggingHandle={livePen !== null} snappedCursor={penSnapCursor} />
-      <NodeEditDimensionOverlay viewport={viewport} nodes={editNodes} closed={editClosed} dragNodeIdx={dragNodeIdx} hoverSegIdx={hoverSegIdx} />
+      <PenLengthOverlay viewport={viewport} draggingHandle={livePen !== null} snappedCursor={penSnapCursor} />      <NodeEditDimensionOverlay viewport={viewport} nodes={editNodes} closed={editClosed} dragNodeIdx={dragNodeIdx} hoverSegIdx={hoverSegIdx} />
 
       <CanvasHints
         connecting={connectSource !== null}

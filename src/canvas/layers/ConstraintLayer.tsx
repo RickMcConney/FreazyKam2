@@ -4,7 +4,8 @@ import { Group, Line, Text, Rect, Circle } from 'react-konva'
 import type { Viewport } from '../viewport'
 import { usePathsStore } from '../../store/pathsStore'
 import { useConstraintsStore } from '../../store/constraintsStore'
-import { constraintEnds, constraintsInFocus, type Constraint } from '../../store/constraints'
+import { chainsTouching, constraintEnds, constraintsInFocus, shiftedEnds, type Constraint } from '../../store/constraints'
+import type { LiveTransform } from '../types'
 import { useWorkpieceStore, fmtLen as formatLen } from '../../store/workpieceStore'
 import { useUIStore } from '../../store/uiStore'
 
@@ -56,6 +57,8 @@ import { useUIStore } from '../../store/uiStore'
 // what the constraint lands holding.
 
 const CONSTRAINT_COLOR = '#a855f7'
+/** The one whose row is under the pointer in the panel — the pick layer's hot amber. */
+const HOVER_COLOR = '#f59e0b'
 /** The one being made — the same green as the held marker under the cursor. */
 const PENDING_COLOR = '#22c55e'
 /** The datum dot on the held end. */
@@ -86,6 +89,10 @@ interface Props {
   pending?: PendingDim | null
   /** Committed dimensions are stale mid-drag — see the call site. */
   hideCommitted?: boolean
+  /** A drag of parts in progress (any tool but Constrain): the dragged parts'
+   *  whole chain is drawn riding it, so a part the chain carries along is seen
+   *  to be carried, and why, rather than moving by itself. */
+  drag?: { live: LiveTransform | null; follow: LiveTransform[] | null }
 }
 
 /**
@@ -305,13 +312,14 @@ function pendingSpec(pending: PendingDim): DimSpec {
     }
 }
 
-export const ConstraintLayer = memo(function ConstraintLayer({ viewport, pending, hideCommitted }: Props) {
+export const ConstraintLayer = memo(function ConstraintLayer({ viewport, pending, hideCommitted, drag }: Props) {
   const paths = usePathsStore((s) => s.paths)
   const selectedIds = usePathsStore((s) => s.selectedIds)
   const constraints = useConstraintsStore((s) => s.constraints)
   const constraining = useUIStore((s) => s.activeTool === 'constrain')
   const subjectIds = useUIStore((s) => s.constrainSubjectIds)
   const focusConstraintId = useUIStore((s) => s.focusConstraintId)
+  const hoverConstraintId = useUIStore((s) => s.hoverConstraintId)
   const { units, widthMM, heightMM } = useWorkpieceStore(useShallow((s) => ({ units: s.units, widthMM: s.widthMM, heightMM: s.heightMM })))
 
   const dims = useMemo(() => {
@@ -325,7 +333,36 @@ export const ConstraintLayer = memo(function ConstraintLayer({ viewport, pending
   }, [paths, constraints, constraining, widthMM, heightMM, hideCommitted,
       selectedIds, subjectIds, focusConstraintId])
 
-  if (dims.length === 0 && !pending) return null
+  // ── WHILE PARTS ARE DRAGGED ──────────────────────────────────────────────
+  // A drag carries the whole chain along (there is no root), and a part moving
+  // across the canvas that the user never touched is the surprise this is for.
+  // The chain is resolved once per drag — keyed by WHICH paths are moving, not
+  // by the transform, which is a new object every frame — and each frame only
+  // shifts its ends by the preview's own offsets.
+  const live = !constraining && drag?.live?.kind === 'translate' ? drag.live : null
+  const dragKey = live ? [...live.pathIds].sort().join('|') : ''
+  const dragBase = useMemo(() => {
+    if (!dragKey || constraints.length === 0) return []
+    const stock = { widthMM, heightMM }
+    return chainsTouching(paths, constraints, dragKey.split('|')).flatMap((c) => {
+      const ends = constraintEnds(paths, c, stock)
+      return ends ? [{ c, ...ends }] : []
+    })
+  }, [dragKey, paths, constraints, widthMM, heightMM])
+  const follow = drag?.follow ?? null
+  const dragDims = useMemo(() => {
+    if (!live || dragBase.length === 0) return []
+    // The same precedence DesignLayer draws the parts with: a constraint's
+    // correction first, else the drag itself.
+    const offsetOf = (id: string) => {
+      for (const t of follow ?? []) if (t.kind === 'translate' && t.pathIds.has(id)) return t
+      return live.pathIds.has(id) ? live : { dx: 0, dy: 0 }
+    }
+    return dragBase.map((d) => ({ ...d, ...shiftedEnds(d.c, d, offsetOf) }))
+  }, [live, follow, dragBase])
+  const shownDims = live ? dragDims : dims
+
+  if (shownDims.length === 0 && !pending) return null
 
   const toScreenX = (x: number) => viewport.x + x * viewport.scale
   const toScreenY = (y: number) => viewport.y - y * viewport.scale
@@ -333,10 +370,11 @@ export const ConstraintLayer = memo(function ConstraintLayer({ viewport, pending
 
   return (
     <Group listening={false}>
-      {dims.map(({ c, p, q, frameDeg }) => (
+      {/* The hovered one last, so it is drawn over its neighbours. */}
+      {[...shownDims.filter((d) => d.c.id !== hoverConstraintId), ...shownDims.filter((d) => d.c.id === hoverConstraintId)].map(({ c, p, q, frameDeg }) => (
         <Group key={c.id}>
           <Dimension
-            c={c} color={CONSTRAINT_COLOR} fmtLen={fmtLen}
+            c={c} color={c.id === hoverConstraintId ? HOVER_COLOR : CONSTRAINT_COLOR} fmtLen={fmtLen}
             frameDeg={frameDeg} scale={viewport.scale}
             px={toScreenX(p.x)} py={toScreenY(p.y)}
             qx={toScreenX(q.x)} qy={toScreenY(q.y)}

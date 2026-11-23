@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { buildChips } from './TimelinePanel'
 import type { ImportedPath } from '../store/pathsStore'
 import type { AnyOperation } from '../store/toolpathStore'
+import { Circle, Group, Link2 } from 'lucide-react'
+import { generateShapeD } from '../shapes/shapeGenerators'
 
 const path = (p: Partial<ImportedPath> & { id: string }): ImportedPath => ({
   name: p.id, d: 'M0,0 L1,0 L1,1 Z', visible: true, color: '#888', ...p,
@@ -80,7 +82,8 @@ describe('the object strip', () => {
     expect(chips[1].label).toBe('Offset')
   })
 
-  // A copy reads as what it is a copy OF, the way a copied boolean still reads Boolean.
+  // A copy reads as what it is a copy OF, the way a copied boolean still reads Boolean —
+  // in its LABEL. Its icon is the link while it follows the original (below).
   it('labels a duplicated shape as that shape, not as a copy', () => {
     const shapeParams = { type: 'circle', cx: 0, cy: 0, r: 5 } as unknown as ImportedPath['shapeParams']
     const chips = buildChips([
@@ -88,7 +91,7 @@ describe('the object strip', () => {
       path({ id: 'dup', name: 'Circle copy', shapeParams, definition: { id: 'd2', kind: 'duplicate', sourceId: 'src', offsetMM: 5 } }),
     ], [])
     expect(chips[1].label).toBe(chips[0].label)
-    expect(chips[1].Icon).toBe(chips[0].Icon)
+    expect(chips[1].Icon).toBe(Link2)
   })
 
   // One Apply of a pattern is ONE set of parameters to go back and change, so
@@ -104,10 +107,34 @@ describe('the object strip', () => {
       path({ id: 'c1', definition: { id: 'dd', kind: 'duplicate', sourceId: 'src', offsetMM: 5 } }),
       path({ id: 'c2', definition: { id: 'dd', kind: 'duplicate', sourceId: 'src', offsetMM: 5 } }),
     ], [])
-    expect(chips.map((c) => c.key)).toEqual(['src', 'def:dp', 'c1', 'c2'])
-    expect(chips[1].label).toBe('Pattern ×2')
-    expect(chips[1].pathIds).toEqual(['p1', 'p2'])
-    expect(chips[1].editPathId).toBe('p1')
+    // The ORIGINAL is one of the pattern — it used to be a chip of its own, and
+    // the pattern's said ×2 for three things and selected only the copies.
+    expect(chips.map((c) => c.key)).toEqual(['def:dp', 'c1', 'c2'])
+    expect(chips[0].label).toBe('Pattern ×3')
+    expect(chips[0].pathIds).toEqual(['src', 'p1', 'p2'])
+    // A copy reopens the Pattern form; the original has no definition to reopen.
+    expect(chips[0].editPathId).toBe('p1')
+  })
+
+  it('keeps an original that is a thing of its own on its own chip, and still on the pattern’s', () => {
+    const params = { type: 'circular' as const, count: 3, radiusMM: 10, startAngleDeg: 0, endAngleDeg: 360, rotateItems: false }
+    const pat = (n: string) => path({ id: n, definition: { id: 'dp', kind: 'pattern' as const, sourceIds: ['src'], params } })
+    const chips = buildChips([path({ id: 'src', userGroups: ['g'] }), path({ id: 'other', userGroups: ['g'] }), pat('p1'), pat('p2')], [])
+    expect(chips.map((c) => c.key)).toEqual(['ugroup:g', 'def:dp'])
+    expect(chips[1].label).toBe('Pattern ×3')
+    expect(chips[1].pathIds).toEqual(['src', 'p1', 'p2'])
+  })
+
+  it('gives the original’s tabs one chip, not one on each chip it is on', () => {
+    const params = { type: 'circular' as const, count: 3, radiusMM: 10, startAngleDeg: 0, endAngleDeg: 360, rotateItems: false }
+    const pat = (n: string) => path({ id: n, definition: { id: 'dp', kind: 'pattern' as const, sourceIds: ['src'], params } })
+    const tabs = [{ id: 't1', pathId: 'src', t: 0.5, lengthMM: 5, heightMM: 2 }]
+    // Grouped, so the original is on two chips — the group's and the pattern's.
+    const chips = buildChips([path({ id: 'src', userGroups: ['g'] }), pat('p1'), pat('p2')], [], tabs)
+    expect(chips.filter((c) => c.key.startsWith('tabs')).length).toBe(1)
+    // …and a loose original's tabs come with the pattern it folded into.
+    const loose = buildChips([path({ id: 'src' }), pat('p1'), pat('p2')], [], tabs)
+    expect(loose.filter((c) => c.key.startsWith('tabs')).length).toBe(1)
   })
 
   // Thirty copies of a gear are thirty multi-part shapes, each with its own
@@ -380,5 +407,37 @@ describe('the strip gives each Duplicate click one chip', () => {
     const chips = buildChips([path({ id: 'op1', hidden: true }), path({ id: 'op2', hidden: true }), path({ id: 'res' })], [])
     expect(chips.map((c) => c.key)).toEqual(['op1', 'op2', 'res'])
     expect(chips.every((c) => c.deleteIds === undefined)).toBe(true)
+  })
+})
+
+describe('a linked copy’s chip', () => {
+  const circ = (id: string, cx: number, radius: number, extra: Partial<ImportedPath> = {}) => {
+    const shapeParams = { type: 'circle' as const, cx, cy: 0, radius }
+    return path({ id, d: generateShapeD(shapeParams), shapeParams, ...extra })
+  }
+  const chipOf = (chips: ReturnType<typeof buildChips>, id: string) => chips.find((c) => c.pathIds.includes(id))!
+
+  it('wears the link icon while it follows its original, and keeps its own name', () => {
+    const chips = buildChips([circ('o', 0, 3), circ('c', 40, 3, { copyOf: { sourceId: 'o' } })], [])
+    expect(chipOf(chips, 'o').Icon).toBe(Circle)
+    expect(chipOf(chips, 'c').Icon).toBe(Link2)
+    expect(chipOf(chips, 'c').label).toBe('Circle')
+    expect(chipOf(chips, 'c').title).toContain('linked to o')
+  })
+
+  it('gets its shape’s icon back once unlinked, or once it no longer matches', () => {
+    const unl = buildChips([circ('o', 0, 3), circ('c', 40, 3, { copyOf: { sourceId: 'o', unlinked: true } })], [])
+    expect(chipOf(unl, 'c').Icon).toBe(Circle)
+    const differs = buildChips([circ('o', 0, 3), circ('c', 40, 5, { copyOf: { sourceId: 'o' } })], [])
+    expect(chipOf(differs, 'c').Icon).toBe(Circle)
+  })
+
+  it('is not a copy when only part of the chip is', () => {
+    const chips = buildChips([
+      circ('o', 0, 3),
+      circ('c', 40, 3, { copyOf: { sourceId: 'o' }, userGroups: ['g'] }),
+      circ('loose', 80, 3, { userGroups: ['g'] }),
+    ], [])
+    expect(chipOf(chips, 'c').Icon).toBe(Group)
   })
 })

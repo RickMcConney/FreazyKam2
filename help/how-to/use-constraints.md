@@ -18,8 +18,20 @@ Nothing moves when you create it. It holds the current distance until you type a
 
 ## Hold a part off the stock edge
 
-1. Select one part.
-2. In **Constraints**, click **Left**, **Right**, **Bottom** or **Top**.
+With the Constrain tool (**C**), click a point on the part, then move to an edge of the
+stock. The edge lights up when you're close. Click it to hold the part where it is, or
+press on the edge and drag to pull the part in or out, with the distance shown as you go.
+You can also do it the other way round: click the edge first, then click or drag a point on
+the part.
+
+## Keep a bolt circle centred on a part
+
+1. Make the holes with **Pattern** (circular), as usual. No need to group them.
+2. Press **C**. Click the centre of the part, then the crosshair at the middle of the
+   hole pattern.
+
+The whole pattern now moves with the part. You can still reopen the pattern and change
+the count or radius — it stays centred.
 
 ## Edit or remove
 

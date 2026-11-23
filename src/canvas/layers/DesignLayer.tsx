@@ -3,6 +3,9 @@ import type Konva from 'konva'
 import { Group, Path, Shape, Image as KonvaImage, Text as KonvaText } from 'react-konva'
 import type { Viewport } from '../viewport'
 import { usePathsStore } from '../../store/pathsStore'
+import { patternOriginalsInSelection } from '../../store/patternBodies'
+import { linkHighlights } from '../../tools/duplicateFollow'
+import { ORIGINAL_COLOR } from '../../colors'
 import { useUIStore } from '../../store/uiStore'
 import { canvasTheme } from '../../theme'
 import type { LiveTransform } from '../types'
@@ -309,20 +312,40 @@ function itemOf(p: ImportedPath): BatchItem | null {
 
 const PLAIN_PX = 1.5
 const SELECTED_PX = 2
+// An ORIGINAL is drawn in ORIGINAL_COLOR (colors.ts) — a selected pattern's
+// (`patternOriginalsInSelection`), or the shape a selected linked copy follows
+// (`linkHighlights`): the one whose edit reaches the rest, which otherwise looks
+// exactly like them.
 
-function strokeSets(ps: ImportedPath[], selected: Set<string>, selectedColor: string): StrokeBatch[] {
+/** A linked copy a change to the selection would reshape (`linkHighlights`): the
+ *  selection colour, dashed — "this moves with what you have picked". */
+const FOLLOWER_DASH_PX = [6, 4]
+
+/** What the selection is tied to, as two sets for `strokeSets` — see `linkHighlights`. */
+interface Ties { originals: Set<string>; followers: Set<string> }
+
+function strokeSets(ps: ImportedPath[], selected: Set<string>, selectedColor: string, ties: Ties): StrokeBatch[] {
   const entries: { key: string; item: BatchItem }[] = []
-  // Unselected first, so the selected strokes land on top.
-  for (const pass of [false, true]) {
+  // Plain first, then the tied, then the selected, so the selection lands on top.
+  // An original is green whether or not it is itself selected — it is the shape the
+  // selected copies follow, or the pattern's original among its copies.
+  const rank = (p: ImportedPath) => (selected.has(p.id) ? 2 : ties.originals.has(p.id) || ties.followers.has(p.id) ? 1 : 0)
+  for (const pass of [0, 1, 2]) {
     for (const p of ps) {
-      if (selected.has(p.id) !== pass) continue
+      if (rank(p) !== pass) continue
       const item = itemOf(p)
-      if (item) entries.push({ key: pass ? `s|${selectedColor}` : `u|${p.color}`, item })
+      if (!item) continue
+      const key = ties.originals.has(p.id) ? `o|${ORIGINAL_COLOR}`
+        : selected.has(p.id) ? `s|${selectedColor}`
+        : ties.followers.has(p.id) ? `f|${selectedColor}`
+        : `u|${p.color}`
+      entries.push({ key, item })
     }
   }
   return [...groupInto(entries)].map(([key, items]) => ({
     color: key.slice(2),
-    widthPx: key[0] === 's' ? SELECTED_PX : PLAIN_PX,
+    widthPx: key[0] === 'u' || key[0] === 'f' ? PLAIN_PX : SELECTED_PX,
+    ...(key[0] === 'f' ? { dashPx: FOLLOWER_DASH_PX } : {}),
     batch: makeBatch(items),
   }))
 }
@@ -386,6 +409,13 @@ export const DesignLayer = memo(function DesignLayer({ viewport, liveTransform, 
     }
   }
 
+  const ties = useMemo((): Ties => {
+    const linked = linkHighlights(paths, selectedIds)
+    return {
+      originals: new Set([...patternOriginalsInSelection(paths, selectedIds), ...linked.originals]),
+      followers: new Set(linked.copies),
+    }
+  }, [paths, selectedIds])
   const batches = useMemo(() => {
     const selected = new Set(selectedIds)
     const owner = new Map<string, number>()
@@ -394,7 +424,7 @@ export const DesignLayer = memo(function DesignLayer({ viewport, liveTransform, 
       owner.set(e.slice(i + 1), +e.slice(0, i))
     }
     const plain = shown.filter((p) => !p.imageSrc && !p.stlSrc)
-    const still = strokeSets(plain.filter((p) => !owner.has(p.id)), selected, C.path.selected)
+    const still = strokeSets(plain.filter((p) => !owner.has(p.id)), selected, C.path.selected, ties)
     const moving = new Map<number, StrokeBatch[]>()
     const byOwner = new Map<number, ImportedPath[]>()
     for (const p of plain) {
@@ -404,10 +434,10 @@ export const DesignLayer = memo(function DesignLayer({ viewport, liveTransform, 
       if (list) list.push(p)
       else byOwner.set(k, [p])
     }
-    for (const [k, ps] of byOwner) moving.set(k, strokeSets(ps, selected, C.path.selected))
+    for (const [k, ps] of byOwner) moving.set(k, strokeSets(ps, selected, C.path.selected, ties))
     return { still, moving }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- movingKey stands for `transforms`' membership
-  }, [shown, selectedIds, movingKey, C.path.selected])
+  }, [shown, selectedIds, movingKey, C.path.selected, ties])
 
   return (
     <Group name="design" listening={false}>

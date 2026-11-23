@@ -34,7 +34,20 @@ export const MATERIAL_COLORS: Record<Material, { light: string; dark: string; th
   other:     { light: '#e0e0e0', dark: '#404040', three: 0xc8c8c8 },
 }
 
+// THE ORIGINAL — the shape a selection's copies follow (a pattern's original, or what a
+// linked duplicate follows; canvas/layers/DesignLayer). Green, the colour the canvas
+// already gives "this one is held" (a constraint's held point, a treated corner). Not
+// amber: amber is the tabs, a hovered toolpath's glow and every tool's hot point, so an
+// amber outline read as a toolpath or a warning.
+export const ORIGINAL_COLOR = '#22c55e'  // green-500
+
 // Toolpath operation colors — fixed per type, stable across sessions.
+//
+// ONE RULE FOR EVERY ICON AND CHIP: its colour is the colour of what it leaves on the
+// canvas. A toolpath is drawn in its type's colour; tabs, the double-sided flip axis and
+// pins, and the tiling seams in theirs. The PATH TOOLS (Boolean, Offset, Pattern, Nest,
+// Trace, Corners, Along Path, Duplicate) leave ordinary paths, so their buttons wear
+// PATH_COLOR and their chips no tint — which is why they have no entry here.
 export const OP_TYPE_COLORS: Record<string, string> = {
   profile:  '#f97316',  // orange-500
   pocket:   '#06b6d4',  // cyan-500
@@ -46,11 +59,6 @@ export const OP_TYPE_COLORS: Record<string, string> = {
   profile3d:  '#34d399', // emerald-400
   trochoidal: '#fb923c', // orange-400
   fluting:  '#f43f5e',  // rose-500 — a centreline carve, a neighbour of v-carve's pink
-  boolean:  '#38bdf8',  // sky-400
-  offset:   '#4ade80',  // green-400
-  pattern:  '#c084fc',  // purple-400
-  trace:    '#2dd4bf',  // teal-400
-  nest:     '#a78bfa',  // violet-400 — an arranging tool, so a neighbour of pattern's hue
   tabs:     '#f59e0b',  // amber-400
   doublesided: '#d97706', // amber-600 — the flip axis and pins draw in it on the canvas
   tiling:   '#0ea5e9',  // sky-500 — the seams draw in it on the canvas

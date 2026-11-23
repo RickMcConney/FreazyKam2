@@ -27,6 +27,9 @@ export function useNudge({ modeRef, setLiveTransform, setFollowTransforms, setSn
     // window would draw a guide under an edge still visibly short of the line.
     const ALIGNED_MM = 0.005
     type Pending = {
+      /** What was selected (a change of selection ends the run)… */
+      picked: string[]
+      /** …and what moves: that, widened to a constrained pattern's other copies. */
       ids: string[]; dx: number; dy: number; timer: number
       bbox: BBox | null
       plan: ConstraintPlan | null
@@ -70,11 +73,11 @@ export function useNudge({ modeRef, setLiveTransform, setFollowTransforms, setSn
       if (selectedIds.length === 0) return
       e.preventDefault()
 
-      if (pending && (pending.ids.length !== selectedIds.length || pending.ids.some((id, i) => id !== selectedIds[i]))) flush()
+      if (pending && (pending.picked.length !== selectedIds.length || pending.picked.some((id, i) => id !== selectedIds[i]))) flush()
       if (!pending) {
         // The same session a drag begins: the same targets to align to, the same followers.
-        const { bbox, plan, snapTargets } = beginMoveSession(selectedIds)
-        pending = { ids: selectedIds, dx: 0, dy: 0, timer: 0, bbox, plan, targets: snapTargets }
+        const { ids, bbox, plan, snapTargets } = beginMoveSession(selectedIds)
+        pending = { picked: selectedIds, ids, dx: 0, dy: 0, timer: 0, bbox, plan, targets: snapTargets }
       }
       const base = useWorkpieceStore.getState().units === 'in' ? 2.54 : 1
       const stepMM = base * (e.shiftKey ? 10 : e.altKey ? 0.1 : 1)

@@ -46,6 +46,13 @@ function Marker({ c, s, color, big }: {
   const r = (big ? 6 : 4) / s
   const w = 1.5 / s
   switch (c.kind) {
+    // A stock edge is drawn as the WHOLE EDGE, thick: the point on it slides with
+    // whatever it is held against, so a marker at one spot would claim a
+    // position the constraint does not hold.
+    case 'stock': {
+      const [x1, y1, x2, y2] = c.span ?? [c.x, c.y, c.x, c.y]
+      return <Line points={[x1, y1, x2, y2]} stroke={color} strokeWidth={(big ? 4 : 3) / s} opacity={0.8} listening={false} />
+    }
     case 'corner':
       return <Rect x={c.x - r} y={c.y - r} width={r * 2} height={r * 2} stroke={color} strokeWidth={w} listening={false} />
     case 'edge':
@@ -70,13 +77,23 @@ export const ConstraintPickLayer = memo(function ConstraintPickLayer({
   return (
     <Group listening={false}>
       <Group x={drag?.dx ?? 0} y={drag?.dy ?? 0} listening={false}>
-        {candidates.map((c, i) => (
+        {candidates.map((c, i) => c.kind !== 'stock' && (
           <Marker
             key={i} c={c} s={s} big={hot === c}
             color={hot === c ? HOT_COLOR : PICK_COLOR}
           />
         ))}
+        {/* The point being dragged when it is not among the hovered part's —
+            a part pulled off a stock edge was picked first, and the markers on
+            screen are the edge's. */}
+        {hot && hot.kind !== 'stock' && !candidates.includes(hot) && (
+          <Marker c={hot} s={s} big color={HOT_COLOR} />
+        )}
       </Group>
+      {/* The stock does not ride the drag. */}
+      {candidates.map((c, i) => c.kind === 'stock' && (
+        <Marker key={'s' + i} c={c} s={s} big={hot === c} color={hot === c ? HOT_COLOR : PICK_COLOR} />
+      ))}
       {held && <Marker c={held} s={s} color={HELD_COLOR} big />}
       {/* The dimension being drawn is NOT here. It carries the numbers the
           constraint is about to hold, and this layer is inside the Y-flipped CNC

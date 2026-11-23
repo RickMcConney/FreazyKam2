@@ -3,6 +3,7 @@ import {
   getMultiBBox, getMultiBBoxAt, extractCircles, placedAngleDeg, placementMat, rotatePointAbout,
 } from '../canvas/selectionUtils'
 import { outerGroupOf } from './pathGroups'
+import { patternBodyKeys, patternCentreOf, weldingPatternIds } from './patternBodies'
 
 // ─── Constraints ──────────────────────────────────────────────────────────────
 //
@@ -86,6 +87,11 @@ export type GeomRef =
    *  circle. `extractCircles` already refuses a PLACED shape's parameters and
    *  reads the outline instead, so a rotated bore reports where it actually is. */
   | { kind: 'circle'; id: string }
+  /** THE CENTRE OF A CIRCULAR PATTERN — the point a bolt circle is dimensioned
+   *  from, which no outline has. Named by the pattern's (first) SOURCE path,
+   *  which a re-run of the pattern never replaces, and not by the definition id,
+   *  which a copy-paste reissues. See `patternCentreOf`. */
+  | { kind: 'pattern'; id: string }
   /** An edge of the stock. GROUND: nothing moves it, and it outranks even a
    *  drag — a part held 20 mm in from the left edge is 20 mm in from it however
    *  it is dragged. An angle means nothing against an edge (the point on the
@@ -235,16 +241,20 @@ const ANGLE_EPS = 1e-7
  * it, which is right: the drag chose where it sits RELATIVE to the shape, and a
  * constraint moves the shape.
  */
-export function bodyKeyOf(p: ImportedPath): string {
-  return outerGroupOf(p) ?? p.groupId ?? p.id
+export function bodyKeyOf(p: ImportedPath, paths: readonly ImportedPath[]): string {
+  // A PATTERN is one body too — source and copies, no group needed, so the
+  // pattern stays editable (see `patternBodies`). Below a user group, which is
+  // still the outermost thing the user said moves together; above a generator's
+  // group, since a pattern of gears is several gears that move as one.
+  return outerGroupOf(p) ?? patternBodyKeys(paths).get(p.id) ?? p.groupId ?? p.id
 }
 
 /** Every path of the body the given path id belongs to. */
 export function bodyPathsOf(paths: ImportedPath[], pathId: string): ImportedPath[] {
   const self = paths.find((p) => p.id === pathId)
   if (!self) return []
-  const key = bodyKeyOf(self)
-  return paths.filter((p) => bodyKeyOf(p) === key)
+  const key = bodyKeyOf(self, paths)
+  return paths.filter((p) => bodyKeyOf(p, paths) === key)
 }
 
 /**
@@ -273,7 +283,7 @@ function refPathsOf(paths: ImportedPath[], pathId: string, narrow: boolean): Imp
 function refBodyKey(paths: ImportedPath[], ref: GeomRef): string | null {
   if (ref.kind === 'stock') return null
   const self = paths.find((p) => p.id === ref.id)
-  return self ? bodyKeyOf(self) : null
+  return self ? bodyKeyOf(self, paths) : null
 }
 
 // ─── Frames ───────────────────────────────────────────────────────────────────
@@ -424,6 +434,15 @@ function pointOf(
       case 'top': return { x: other?.x ?? stock.widthMM / 2, y: stock.heightMM }
     }
   }
+  if (ref.kind === 'pattern') {
+    const c = patternCentreOf(paths, ref.id)
+    // No longer a circular pattern (re-run as a grid, or the copies deleted):
+    // the middle of the body, rather than dropping the constraint and moving a
+    // part without saying why — the same fallback a circle takes.
+    if (c) return { x: c.x + offset.dx, y: c.y + offset.dy }
+    const bb = getMultiBBox(bodyPathsOf(paths, ref.id).map((p) => p.d))
+    return bb ? { x: bb.cx + offset.dx, y: bb.cy + offset.dy } : null
+  }
   if (ref.kind === 'circle') {
     const self = paths.find((p) => p.id === ref.id)
     if (!self) return null
@@ -542,6 +561,67 @@ export function constraintEnds(
   // the angle of the group around them.
   const narrow = sameBody(refBodyKey(paths, c.from), refBodyKey(paths, c.to))
   return ends ? { ...ends, frameDeg: constraintFrame(paths, c.from, narrow).deg } : null
+}
+
+/**
+ * The paths a move of `ids` actually has to move: `ids`, plus the rest of any
+ * CONSTRAINED PATTERN one of them belongs to.
+ *
+ * A pattern is one body to the solve, but a click still selects one copy — so a
+ * drag of one bolt hole previewed the whole circle moving (the plan moves bodies)
+ * and then baked only the hole, leaving a bent circle for the solve to read a
+ * centre off. A pattern nothing holds is left alone: it is not a body to anything
+ * yet, and moving one copy of it on its own is an ordinary edit.
+ */
+export function widenToPatternBodies(
+  paths: readonly ImportedPath[],
+  constraints: readonly Constraint[],
+  ids: readonly string[],
+): string[] {
+  if (constraints.length === 0) return [...ids]
+  const byId = new Map(paths.map((p) => [p.id, p]))
+  const keyOf = (id: string) => { const p = byId.get(id); return p ? bodyKeyOf(p, paths) : null }
+  const held = new Set<string>()
+  for (const c of constraints) for (const r of [c.from, c.to]) {
+    if (r.kind === 'stock') continue
+    const k = keyOf(r.id)
+    if (k?.startsWith('pattern:')) held.add(k)
+  }
+  if (held.size === 0) return [...ids]
+  const widen = new Set<string>()
+  for (const id of ids) { const k = keyOf(id); if (k && held.has(k)) widen.add(k) }
+  if (widen.size === 0) return [...ids]
+  const out = [...ids]
+  const have = new Set(ids)
+  for (const p of paths) if (!have.has(p.id) && widen.has(bodyKeyOf(p, paths))) out.push(p.id)
+  return out
+}
+
+/**
+ * A constraint's drawn ends with each part displaced by how far a drag has it
+ * moved — for drawing the chain WHILE it is dragged, without re-flattening any
+ * geometry per frame. `offsetOf` is per PATH (what the live preview knows).
+ *
+ * A stock end has no position of its own: it stays on its edge and takes its
+ * free coordinate from the moved other end, as `pointOf` does.
+ */
+export function shiftedEnds(
+  c: Constraint,
+  ends: { p: { x: number; y: number }; q: { x: number; y: number } },
+  offsetOf: (pathId: string) => { dx: number; dy: number },
+): { p: { x: number; y: number }; q: { x: number; y: number } } {
+  const move = (r: GeomRef, pt: { x: number; y: number }) => {
+    if (r.kind === 'stock') return pt
+    const o = offsetOf(r.id)
+    return { x: pt.x + o.dx, y: pt.y + o.dy }
+  }
+  let p = move(c.from, ends.p), q = move(c.to, ends.q)
+  const onEdge = (r: GeomRef, pt: { x: number; y: number }, other: { x: number; y: number }) =>
+    r.kind !== 'stock' ? pt
+      : r.edge === 'left' || r.edge === 'right' ? { x: pt.x, y: other.y } : { x: other.x, y: pt.y }
+  p = onEdge(c.from, p, q)
+  q = onEdge(c.to, q, p)
+  return { p, q }
 }
 
 /**
@@ -756,6 +836,21 @@ export interface ConstraintPlan {
   anchors: string[]
   pathsByBody: Map<string, string[]>
   stock: Stock
+  /**
+   * A CHAIN THE STOCK HOLDS IN ONE AXIS ONLY, being dragged. The stock is
+   * walked to completion first (ground wins), and that walk used to place every
+   * body it reached in BOTH axes from where the grounded part stood — so a part
+   * at the far end of a chain pinned to the left edge could not be dragged UP,
+   * though nothing holds the chain in Y: it followed the cursor and snapped back.
+   *
+   * So the chain is first solved as though the stock were not there (`plan`, the
+   * same constraints minus the stock ones, anchored at the same drag), and each
+   * grounded body takes that answer in the axis the stock leaves free (`seed`)
+   * before the stock corrects the axis it does hold. The whole chain then follows
+   * the drag in Y and stays put in X, which is what a rigid tree pinned on one
+   * side does. A chain held in BOTH axes gets no seed — ground decides all of it.
+   */
+  free?: { plan: ConstraintPlan; seed: Map<string, 'x' | 'y'> }
 }
 
 /** Where a stock edge sits, taking its free coordinate from the other end. */
@@ -867,7 +962,7 @@ export function planConstraints(
     if (end.kind === 'stock') return { ...WORLD, known: true }
     let f = frameOfBody.get(end.body)
     if (!f) {
-      f = bodyFrame(paths.filter((p) => bodyKeyOf(p) === end.body))
+      f = bodyFrame(paths.filter((p) => bodyKeyOf(p, paths) === end.body))
       frameOfBody.set(end.body, f)
     }
     return f
@@ -923,7 +1018,7 @@ export function planConstraints(
   for (const id of anchorIds) {
     const p = byId.get(id)
     if (!p) continue
-    const key = bodyKeyOf(p)
+    const key = bodyKeyOf(p, paths)
     if (!adj.has(key)) continue
     // Recorded even when tier 1 has already placed it: a drag still moves it,
     // and its stock steps then correct that — which is what previews a part
@@ -950,13 +1045,44 @@ export function planConstraints(
 
   const pathsByBody = new Map<string, string[]>()
   for (const p of paths) {
-    const k = bodyKeyOf(p)
+    const k = bodyKeyOf(p, paths)
     if (!adj.has(k)) continue
     const list = pathsByBody.get(k)
     if (list) list.push(p.id); else pathsByBody.set(k, [p.id])
   }
 
-  return { plan: { steps, anchors, pathsByBody, stock }, error: null, badIds: [] }
+  // ── Chains the stock holds in one axis only, that this edit is dragging ────
+  let free: ConstraintPlan['free']
+  if (anchors.length > 0 && groundedBy.size > 0) {
+    const seed = new Map<string, 'x' | 'y'>()
+    const seen = new Set<string>()
+    for (const start of adj.keys()) {
+      if (seen.has(start)) continue
+      const comp: string[] = []
+      const q = [start]
+      seen.add(start)
+      while (q.length > 0) {
+        const at = q.shift()!
+        comp.push(at)
+        for (const { other } of adj.get(at) ?? []) {
+          if (!seen.has(other)) { seen.add(other); q.push(other) }
+        }
+      }
+      if (!comp.some((b) => anchors.includes(b))) continue
+      const axes = new Set<'x' | 'y'>()
+      for (const b of comp) for (const c of groundedBy.get(b) ?? []) for (const ax of axesOf(c)) axes.add(ax)
+      if (axes.size !== 1) continue
+      const freeAxis = axes.has('x') ? 'y' : 'x'
+      for (const b of comp) if (groundedBy.has(b) && !anchors.includes(b)) seed.set(b, freeAxis)
+    }
+    if (seed.size > 0) {
+      const unground = active.filter((c) => c.from.kind !== 'stock' && c.to.kind !== 'stock')
+      const sub = planConstraints(paths, unground, stock, anchorIds).plan
+      if (sub) free = { plan: sub, seed }
+    }
+  }
+
+  return { plan: { steps, anchors, pathsByBody, stock, ...(free ? { free } : {}) }, error: null, badIds: [] }
 }
 
 /**
@@ -978,6 +1104,15 @@ export function runPlan(
   const ZERO: BodyMove = { dx: 0, dy: 0, rot: 0, pivot: ORIGIN }
   const offsets = new Map<string, BodyMove>()
   for (const b of plan.anchors) offsets.set(b, { ...ZERO, dx: anchorOffset.dx, dy: anchorOffset.dy })
+  // Where the stock leaves a dragged chain free, its grounded parts start from
+  // where the chain would put them with no stock at all — see `ConstraintPlan.free`.
+  if (plan.free) {
+    const freeMoves = new Map(runPlan(plan.free.plan, anchorOffset).map((m) => [m.bodyKey, m]))
+    for (const [b, axis] of plan.free.seed) {
+      const m = freeMoves.get(b)
+      if (m) offsets.set(b, { ...ZERO, dx: axis === 'x' ? m.dx : 0, dy: axis === 'y' ? m.dy : 0 })
+    }
+  }
 
   const at = (e: PlanEnd, other: { x: number; y: number } | null) => {
     if (e.kind === 'stock') return stockPoint(e.edge, plan.stock, other)
@@ -1147,8 +1282,17 @@ export function solveInnerConstraints(
   const moves: ConstraintMove[] = []
   let error: string | null = null
   const badIds: string[] = []
+  // A pattern made from several bodies at once WELDS them, and is looked through
+  // here as a user group is: its copies drop their definition for this solve, so
+  // they stop joining their sources and each source is its own body again. The
+  // copies themselves are not moved — the pattern is re-run from where this leaves
+  // its sources (pathsStore's `derive`).
+  const welding = weldingPatternIds(paths)
   for (const [body, cs] of inner) {
-    const sub = paths.filter((p) => bodyKeyOf(p) === body).map((p) => ({ ...p, userGroups: undefined }))
+    const sub = paths.filter((p) => bodyKeyOf(p, paths) === body).map((p) => ({
+      ...p, userGroups: undefined,
+      ...(p.definition?.kind === 'pattern' && welding.has(p.definition.id) ? { definition: undefined } : {}),
+    }))
     const sol = solveConstraints(sub, cs, stock, anchorIds)
     if (sol.error) {
       error ??= sol.error
@@ -1162,7 +1306,7 @@ export function solveInnerConstraints(
 
 /** What to call a body in an error message. */
 function nameOfBody(paths: ImportedPath[], key: string): string {
-  const members = paths.filter((p) => bodyKeyOf(p) === key)
+  const members = paths.filter((p) => bodyKeyOf(p, paths) === key)
   if (members.length === 0) return 'A part'
   return members[0].groupName ?? members[0].name
 }
@@ -1250,13 +1394,13 @@ export function constraintsForSelection(
   const bodies = new Set<string>()
   for (const id of selectedIds) {
     const p = byId.get(id)
-    if (p) bodies.add(bodyKeyOf(p))
+    if (p) bodies.add(bodyKeyOf(p, paths))
   }
   if (bodies.size === 0) return []
   const endIn = (r: GeomRef): boolean => {
     if (r.kind === 'stock') return false
     const p = byId.get(r.id)
-    return !!p && bodies.has(bodyKeyOf(p))
+    return !!p && bodies.has(bodyKeyOf(p, paths))
   }
   // A stock end is ground, so "both ends selected" only ever asks about the
   // part end — a part held off an edge belongs to that part alone.
@@ -1296,16 +1440,81 @@ export function constraintsInFocus(
   constraints: Constraint[],
   view: { selectedIds: string[]; subjectIds?: string[]; focusConstraintId?: string | null },
 ): Constraint[] {
-  if (view.selectedIds.length > 0) {
-    return constraintsForSelection(paths, constraints, view.selectedIds)
-  }
+  if (view.selectedIds.length > 0) return chainsTouching(paths, constraints, view.selectedIds)
   if (view.focusConstraintId) {
     const chain = constraintChains(paths, constraints)
       .find((ch) => ch.constraints.some((c) => c.id === view.focusConstraintId))
     if (chain) return chain.constraints
   }
-  const subject = view.subjectIds ?? []
-  return subject.length > 0 ? constraintsForSelection(paths, constraints, subject) : []
+  return chainsTouching(paths, constraints, view.subjectIds ?? [])
+}
+
+/**
+ * EVERY CHAIN ANY OF THESE PATHS IS IN, WHOLE, in creation order.
+ *
+ * The unit shown is the CHAIN, not the constraints with an end on the part.
+ * Showing only what touched the part meant a tree could only be read one link
+ * at a time — select a hole, see the hole's one constraint, finish, select the
+ * plate, see the plate's, finish again — and nothing on screen said there was
+ * more. Any part of a chain now shows all of it, the stock constraints that
+ * ground it included.
+ */
+export function chainsTouching(
+  paths: ImportedPath[],
+  constraints: Constraint[],
+  ids: string[],
+): Constraint[] {
+  if (ids.length === 0) return []
+  const byId = new Map(paths.map((p) => [p.id, p]))
+  const bodies = new Set<string>()
+  for (const id of ids) {
+    const p = byId.get(id)
+    if (p) bodies.add(bodyKeyOf(p, paths))
+  }
+  if (bodies.size === 0) return []
+  const keep = new Set<string>()
+  for (const ch of constraintChains(paths, constraints)) {
+    if (ch.bodies.some((b) => bodies.has(b))) for (const c of ch.constraints) keep.add(c.id)
+  }
+  return constraints.filter((c) => keep.has(c.id))
+}
+
+/**
+ * WHAT DRAGGING THIS BODY ACTUALLY DOES — asked of the solve itself.
+ *
+ * Reading it off the graph (who is connected, who has a stock constraint of
+ * their own) was wrong whenever the chain mattered: a hole tied to a plate that
+ * is pinned to the stock is just as immovable as the plate, and parts upstream
+ * of a pinned part do not move when it is dragged. So this probes the same plan
+ * a drag previews with: a 1 mm nudge in X, then in Y, and reports which other
+ * bodies moved and in which axes this one stayed put.
+ */
+export function dragReach(
+  paths: ImportedPath[],
+  constraints: Constraint[],
+  stock: Stock,
+  bodyKey: string,
+): { moving: Set<string>; lockedAxes: Set<'x' | 'y'> } {
+  const moving = new Set<string>()
+  const lockedAxes = new Set<'x' | 'y'>()
+  const self = paths.find((p) => bodyKeyOf(p, paths) === bodyKey)
+  if (!self) return { moving, lockedAxes }
+  const { plan } = planConstraints(paths, constraints, stock, [self.id])
+  if (!plan || !plan.anchors.includes(bodyKey)) return { moving, lockedAxes }
+  const PROBE = 1
+  for (const axis of ['x', 'y'] as const) {
+    const off = axis === 'x' ? { dx: PROBE, dy: 0 } : { dx: 0, dy: PROBE }
+    const moves = runPlan(plan, off)
+    let selfMoved = 0
+    // `runPlan` emits no move for a body that stays put, so every other body
+    // it names is one the drag carries.
+    for (const m of moves) {
+      if (m.bodyKey === bodyKey) selfMoved = axis === 'x' ? m.dx : m.dy
+      else moving.add(m.bodyKey)
+    }
+    if (Math.abs(selfMoved) < PROBE / 2) lockedAxes.add(axis)
+  }
+  return { moving, lockedAxes }
 }
 
 /** Constraints on the selection that `constraintsForSelection` is not showing. */
@@ -1318,12 +1527,12 @@ export function constraintsHiddenBySelection(
   const bodies = new Set<string>()
   for (const id of selectedIds) {
     const p = byId.get(id)
-    if (p) bodies.add(bodyKeyOf(p))
+    if (p) bodies.add(bodyKeyOf(p, paths))
   }
   const endIn = (r: GeomRef) => {
     if (r.kind === 'stock') return false
     const p = byId.get(r.id)
-    return !!p && bodies.has(bodyKeyOf(p))
+    return !!p && bodies.has(bodyKeyOf(p, paths))
   }
   const touching = constraints.filter((c) => endIn(c.from) || endIn(c.to)).length
   return touching - constraintsForSelection(paths, constraints, selectedIds).length
@@ -1337,9 +1546,91 @@ export interface AnchorCandidate {
   ref: GeomRef
   x: number
   y: number
-  kind: 'center' | 'edge' | 'corner' | 'circle'
-  /** Which body it belongs to, so the tool can show one part's points at a time. */
+  kind: 'center' | 'edge' | 'corner' | 'circle' | 'stock'
+  /** Which body it belongs to, so the tool can show one part's points at a time.
+   *  `STOCK_BODY` for a stock edge, which belongs to no part. */
   body: string
+  /** A stock edge's whole length, x1 y1 x2 y2 — the marker is the edge itself,
+   *  since the point on it slides with whatever it is held against. */
+  span?: [number, number, number, number]
+}
+
+/** The body key a stock-edge candidate carries. Never a real body key: those are
+ *  path ids and group ids, neither of which starts with a colon. */
+export const STOCK_BODY = '::stock'
+
+/**
+ * The stock edge nearest `(x, y)`, within `tolMM`, as a pick candidate — or null.
+ *
+ * THE STOCK HAS NO POINTS, ONLY EDGES. A stock end takes its free coordinate
+ * from the other end of the constraint (`pointOf`), so the candidate stands
+ * where the cursor meets the edge — the foot of the perpendicular — and that is
+ * only where the marker is drawn, never what is stored. Off the end of an edge
+ * (past a corner by more than the tolerance) is not near it: a part beside the
+ * stock is not "on" the line the edge would make if it went on.
+ */
+export function stockEdgeCandidate(stock: Stock, x: number, y: number, tolMM: number): AnchorCandidate | null {
+  const { widthMM: w, heightMM: h } = stock
+  if (!(w > 0 && h > 0)) return null
+  const cx = Math.min(w, Math.max(0, x)), cy = Math.min(h, Math.max(0, y))
+  const edges = [
+    { edge: 'left' as const, px: 0, py: cy, span: [0, 0, 0, h] as [number, number, number, number] },
+    { edge: 'right' as const, px: w, py: cy, span: [w, 0, w, h] as [number, number, number, number] },
+    { edge: 'bottom' as const, px: cx, py: 0, span: [0, 0, w, 0] as [number, number, number, number] },
+    { edge: 'top' as const, px: cx, py: h, span: [0, h, w, h] as [number, number, number, number] },
+  ]
+  let best: AnchorCandidate | null = null
+  let bestD = tolMM
+  for (const e of edges) {
+    const d = Math.hypot(x - e.px, y - e.py)
+    if (d <= bestD) {
+      bestD = d
+      best = { ref: { kind: 'stock', edge: e.edge }, x: e.px, y: e.py, kind: 'stock', body: STOCK_BODY, span: e.span }
+    }
+  }
+  return best
+}
+
+/** Where a stock-edge candidate meets the perpendicular from `other` — the point
+ *  a constraint to it actually measures from. Any other candidate is returned as is. */
+export function stockFoot(c: AnchorCandidate, other: { x: number; y: number }): { x: number; y: number } {
+  if (c.ref.kind !== 'stock') return { x: c.x, y: c.y }
+  return c.ref.edge === 'left' || c.ref.edge === 'right' ? { x: c.x, y: other.y } : { x: other.x, y: c.y }
+}
+
+/**
+ * The constraint the Constrain tool makes from two picked points, as they stand.
+ *
+ * A STOCK EDGE IS ALWAYS `from`, whichever was clicked first: the stock is
+ * ground, the solve drops a constraint whose `to` is not a body, and the held
+ * end is what the dot on the dimension marks. Against an edge it is X/Y with
+ * ONE offset — the one across the edge, signed, so the part cannot flip to the
+ * other side of it the way an unsigned distance could — and no angle, which
+ * means nothing against an edge. Both ends stock is nothing: null.
+ */
+export function pickedConstraint(
+  paths: ImportedPath[],
+  first: GeomRef,
+  second: GeomRef,
+  stock: Stock,
+  mode: 'xy' | 'polar',
+  id: string,
+): Constraint | null {
+  if (first.kind === 'stock' && second.kind === 'stock') return null
+  const [from, to] = second.kind === 'stock' ? [second, first] : [first, second]
+  const now = measureBetween(paths, from, to, stock)
+  if (!now) return null
+  if (from.kind === 'stock') {
+    return from.edge === 'left' || from.edge === 'right'
+      ? { id, mode: 'xy', from, to, offsetXMM: now.offsetXMM }
+      : { id, mode: 'xy', from, to, offsetYMM: now.offsetYMM }
+  }
+  // Alignment comes with a part-to-part one: holding the angle the parts
+  // ALREADY stand at moves nothing, and a follower that does not turn with the
+  // part holding it is the surprising case.
+  return mode === 'xy'
+    ? { id, mode: 'xy', from, to, offsetXMM: now.offsetXMM, offsetYMM: now.offsetYMM, alignDeg: now.alignDeg }
+    : { id, from, to, distanceMM: now.distanceMM, angleDeg: now.angleDeg, alignDeg: now.alignDeg }
 }
 
 const BBOX_ANCHOR_KIND: Record<Anchor, 'center' | 'edge' | 'corner'> = {
@@ -1368,7 +1659,7 @@ export function anchorCandidates(paths: ImportedPath[], pathId: string): AnchorC
   if (!self) return []
   const bb = getMultiBBox(bodyPathsOf(paths, pathId).map((p) => p.d))
   if (!bb) return []
-  const body = bodyKeyOf(self)
+  const body = bodyKeyOf(self, paths)
   const out: AnchorCandidate[] = []
   for (const a of Object.keys(BBOX_ANCHOR_KIND) as Anchor[]) {
     const pt = pointOf(paths, { kind: 'path', id: pathId, anchor: a }, { widthMM: 0, heightMM: 0 }, { dx: 0, dy: 0 }, null)
@@ -1419,12 +1710,31 @@ export function allAnchorCandidates(paths: ImportedPath[]): AnchorCandidate[] {
   const out: AnchorCandidate[] = []
   const seenBody = new Set<string>()
   for (const p of paths) {
-    const key = bodyKeyOf(p)
+    const key = bodyKeyOf(p, paths)
     if (!seenBody.has(key)) {
       seenBody.add(key)
       out.push(...anchorCandidates(paths, p.id).filter((c) => c.kind !== 'circle'))
     }
     addCircleOf(out, p, key)
+  }
+  // The centre of each circular pattern, last so it wins the nearest-point search
+  // — and it REPLACES a body-centre marker standing on the same point (an even
+  // bolt circle's box is centred on it): both resolve to the same place today,
+  // but only this one stays the pattern's centre when an odd count or an arc
+  // moves the box's middle off it.
+  const sources = new Set<string>()
+  for (const p of paths) {
+    const def = p.definition
+    if (def?.kind === 'pattern' && def.params.type === 'circular' && def.sourceIds.length > 0) sources.add(def.sourceIds[0])
+  }
+  for (const id of sources) {
+    const self = paths.find((p) => p.id === id)
+    const c = self ? patternCentreOf(paths, id) : null
+    if (!self || !c) continue
+    const body = bodyKeyOf(self, paths)
+    const at = out.findIndex((o) => o.body === body && Math.hypot(o.x - c.x, o.y - c.y) < SAME_POINT_MM)
+    if (at >= 0) out.splice(at, 1)
+    out.push({ ref: { kind: 'pattern', id }, x: c.x, y: c.y, kind: 'circle', body })
   }
   return out
 }
@@ -1522,5 +1832,6 @@ export function refLabel(paths: ImportedPath[], ref: GeomRef): string {
   const self = paths.find((p) => p.id === ref.id)
   const name = self ? (self.groupName ?? self.name) : 'missing'
   if (ref.kind === 'circle') return `${name} circle`
+  if (ref.kind === 'pattern') return `${name} pattern centre`
   return ref.anchor === 'center' ? name : `${name} ${ANCHOR_NAMES[ref.anchor]}`
 }

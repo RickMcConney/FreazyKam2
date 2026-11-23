@@ -1,7 +1,8 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { Dices, Eye, EyeOff, PencilSparkles, Trash2 } from 'lucide-react'
+import { Copy, Dices, Eye, EyeOff, Link2, MousePointer2, PencilSparkles, Trash2, Unlink } from 'lucide-react'
+import { linkedOriginalOf, linkHighlights, unlinked } from '../tools/duplicateFollow'
 import { ICON } from '../theme'
-import { usePathsStore, bakePathsStep, bakePathsSteps, useSelectedPaths, outerGroupOf, transformObjects } from '../store/pathsStore'
+import { usePathsStore, bakePathsStep, bakePathsSteps, useSelectedPaths, outerGroupOf, transformObjects, type ImportedPath } from '../store/pathsStore'
 import { useUIStore } from '../store/uiStore'
 import { splitCompoundPath } from '../canvas/nodeUtils'
 import { regenerateAffectedMany } from '../cam/regenerate'
@@ -946,6 +947,67 @@ const ShapeParamsEditor = memo(function ShapeParamsEditor({ id, params, units, f
 })
 
 
+/**
+ * WHAT THE SELECTION IS TIED TO, in words — the canvas draws the same thing
+ * (`linkHighlights`: the original green, the copies dashed). Two lines, one per
+ * direction:
+ *  - a linked COPY says which shape it follows, and the name selects that shape —
+ *    the one to edit to change them all — with Unlink to keep this one as it is;
+ *  - an ORIGINAL says how many copies a change to it will reshape (through copies of
+ *    copies too), with Select to pick them out.
+ * Reshaping a copy unlinks it as well (tools/duplicateFollow).
+ */
+function DuplicateLink({ selected }: { selected: ImportedPath[] }) {
+  const paths = usePathsStore((s) => s.paths)
+  const linked = selected.flatMap((p) => {
+    const orig = linkedOriginalOf(paths, p)
+    return orig ? [{ p, orig }] : []
+  })
+  const copies = useMemo(() => linkHighlights(paths, selected.map((p) => p.id)).copies, [paths, selected])
+  if (linked.length === 0 && copies.length === 0) return null
+  const select = (ids: string[]) => usePathsStore.getState().setSelectedIds(ids)
+  const unlink = () => usePathsStore.getState().applyPathEdit({
+    updates: linked.map(({ p }) => ({ id: p.id, d: p.d, copyOf: unlinked(p).copyOf })),
+    label: 'Unlink',
+  })
+  const origs = [...new Map(linked.map(({ orig }) => [orig.id, orig])).values()]
+  const name = origs.length === 1 ? (origs[0].groupName ?? origs[0].name) : `${origs.length} originals`
+  const btn = 'flex-shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded border border-blue-500/50 hover:bg-blue-500/10'
+  return (
+    <div className="mb-2 space-y-1 text-label text-blue-600 dark:text-blue-400">
+      {linked.length > 0 && (
+        <div className="flex items-center gap-1.5">
+          <Link2 size={13} className="flex-shrink-0" />
+          <span className="flex-1 min-w-0 truncate">
+            Linked to{' '}
+            <button
+              className="underline decoration-dotted underline-offset-2 hover:text-green-600 dark:hover:text-green-400"
+              title="Select the original — change it and every linked copy changes to match"
+              onClick={() => select(origs.map((o) => o.id))}
+            >
+              {name}
+            </button>
+          </span>
+          <button className={btn} title="Stop following the original — this copy keeps its shape as it is now" onClick={unlink}>
+            <Unlink size={12} /> Unlink
+          </button>
+        </div>
+      )}
+      {copies.length > 0 && (
+        <div className="flex items-center gap-1.5">
+          <Copy size={13} className="flex-shrink-0" />
+          <span className="flex-1 min-w-0 truncate" title="Changing this shape changes these copies too (drawn dashed on the canvas)">
+            {copies.length === 1 ? '1 linked copy' : `${copies.length} linked copies`}
+          </span>
+          <button className={btn} title="Select the linked copies" onClick={() => select(copies)}>
+            <MousePointer2 size={12} /> Select
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function PropertiesPanel() {
   const liveRotationAngle = useCanvasStore((s) => s.liveRotationAngle)
   const liveBBox = useCanvasStore((s) => s.liveBBox)
@@ -1175,6 +1237,8 @@ export default function PropertiesPanel() {
       <p className="text-label font-semibold text-gray-600 dark:text-neutral-400 uppercase tracking-wider mb-1.5">
         {selectedPaths.length === 1 ? selectedPaths[0].name : `${selectedPaths.length} paths`}
       </p>
+
+      <DuplicateLink selected={selectedPaths} />
 
       {/* ONE PANEL, TWO SECTIONS: what the thing IS, then where it SITS.
           There used to be four presentations of this — the shape's own fields,

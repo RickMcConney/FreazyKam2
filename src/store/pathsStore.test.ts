@@ -16,8 +16,14 @@ import { useConstraintsStore } from './constraintsStore'
 import type { Constraint } from './constraints'
 import { useTimelineStore } from '../timeline/timelineStore'
 import { shapeParamsFromConfig, DEFAULT_SHAPE_CONFIG, generateShapeD, generateShapeParts, type ShapeParams } from '../shapes/shapeGenerators'
-import { getBBox } from '../canvas/selectionUtils'
+import { getBBox, translateD } from '../canvas/selectionUtils'
 import { useWorkpieceStore } from './workpieceStore'
+import { computePatternInstances, patternCopies, type PatternParams } from '../tools/patternOp'
+import { patternCentreOf } from './patternBodies'
+import { useConstraintsStore as constraintsStore } from './constraintsStore'
+import { linkedOriginalOf } from '../tools/duplicateFollow'
+import { applyCorners, cornerSession, createBoolean } from '../tools/pathToolActions'
+import { getMultiBBox } from '../canvas/selectionUtils'
 
 vi.mock('../cam/regenerate', () => ({
   regenerateAffectedMany: vi.fn(), regenerateAffected: vi.fn(), regenerateMany: vi.fn(),
@@ -859,5 +865,256 @@ describe('duplicatePaths — the stamp tool\'s click (Cmd+D)', () => {
     S().duplicatePaths(['gone'], { dx: 5, dy: 5 }); await step()
     expect(S().paths).toHaveLength(1)
     expect(events()).toBe(before)
+  })
+})
+
+describe('re-running a bolt circle that is held to its plate', () => {
+  // The Pattern form's edit: the copies are rewritten around the source, which
+  // stays put — so a bigger radius moves the circle's CENTRE, off the plate's.
+  const hole = (cx: number, cy: number): ImportedPath => {
+    const shapeParams = { type: 'circle' as const, cx, cy, radius: 3 }
+    return path('h0', { d: generateShapeD(shapeParams), shapeParams })
+  }
+  const ring = (r: number): PatternParams =>
+    ({ type: 'circular', count: 6, radiusMM: r, startAngleDeg: 0, endAngleDeg: 360, rotateItems: false })
+  const copiesOf = (src: ImportedPath, r: number) => {
+    const params = ring(r)
+    const definition = { id: 'def1', kind: 'pattern' as const, sourceIds: [src.id], params }
+    return patternCopies([src], computePatternInstances(params, getMultiBBox([src.d])).slice(1))
+      .map((c, i) => ({ ...c, id: `c${i + 1}`, definition }) as ImportedPath)
+  }
+  const plate = path('plate', { d: rectD(0, 0, 100, 80) })
+  const src = hole(80, 40)            // a 30 mm bolt circle centred on the plate (50, 40)
+  const held: Constraint = {
+    id: 'k', mode: 'xy', offsetXMM: 0, offsetYMM: 0,
+    from: { kind: 'path', id: 'plate', anchor: 'center' }, to: { kind: 'pattern', id: 'h0' },
+  }
+  const rerun = (holdOthers: boolean) => S().rewriteGeneratedRaw({
+    updates: copiesOf(src, 40).map((p) => ({ id: p.id, d: p.d, name: p.name, definition: p.definition, fields: p })),
+    holdOthers,
+  })
+
+  beforeEach(async () => {
+    vi.useFakeTimers()
+    useWorkpieceStore.setState({ widthMM: 300, heightMM: 200 })
+    await load({ paths: [plate, src, ...copiesOf(src, 30)], constraints: [held] })
+  })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('brings the circle back onto the plate and leaves the plate where it was', async () => {
+    rerun(true)
+    await step()
+    const c = patternCentreOf(S().paths, 'h0')!
+    expect(c.x).toBeCloseTo(50, 3)
+    expect(c.y).toBeCloseTo(40, 3)
+    expect(S().paths.find((p) => p.id === 'plate')!.d).toBe(plate.d)
+  })
+
+  it('would shift the plate to the circle instead if the pattern were the anchor', async () => {
+    // The default, right for a gear whose mates should follow its new size, and
+    // the reason the Pattern form asks for `holdOthers`.
+    rerun(false)
+    await step()
+    expect(S().paths.find((p) => p.id === 'plate')!.d).not.toBe(plate.d)
+  })
+})
+
+describe('resizing the original of a pattern in Properties', () => {
+  const src = (() => {
+    const shapeParams = { type: 'circle' as const, cx: 80, cy: 40, radius: 3 }
+    return path('h0', { d: generateShapeD(shapeParams), shapeParams })
+  })()
+  const params: PatternParams = { type: 'circular', count: 4, radiusMM: 30, startAngleDeg: 0, endAngleDeg: 360, rotateItems: false }
+  const copies = patternCopies([src], computePatternInstances(params, getMultiBBox([src.d])).slice(1))
+    .map((c, i) => ({ ...c, id: `c${i + 1}`, definition: { id: 'def1', kind: 'pattern' as const, sourceIds: ['h0'], params } }) as ImportedPath)
+  const width = (id: string) => getBBox(S().paths.find((p) => p.id === id)!.d)!.width
+
+  beforeEach(async () => {
+    vi.useFakeTimers()
+    await load({ paths: [src, ...copies] })
+  })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('resizes every copy in the same edit, and one undo puts them all back', async () => {
+    S().updateShapeParams('h0', { type: 'circle', cx: 80, cy: 40, radius: 5 })
+    await step()
+    for (const id of ['h0', 'c1', 'c2', 'c3']) expect(width(id)).toBeCloseTo(10, 4)
+    await undo()
+    for (const id of ['h0', 'c1', 'c2', 'c3']) expect(width(id)).toBeCloseTo(6, 4)
+  })
+
+  it('rebuilds the copies’ toolpaths with the original’s', async () => {
+    vi.mocked(regenerateAffectedMany).mockClear()
+    S().updateShapeParams('h0', { type: 'circle', cx: 80, cy: 40, radius: 5 })
+    await step()
+    const asked = vi.mocked(regenerateAffectedMany).mock.calls.flatMap((c) => c[0] as string[])
+    expect(asked).toEqual(expect.arrayContaining(['c1', 'c2', 'c3']))
+  })
+})
+
+describe('typing a new number into a constraint inside a patterned assembly', () => {
+  // A plate (big circle), a bolt circle held to its centre, and a grid made of the
+  // two together. The constraint is the assembly's own layout: changing it has to
+  // move the bolt circle AND every copy of it in the grid.
+  const circ = (id: string, cx: number, cy: number, radius: number) => {
+    const shapeParams = { type: 'circle' as const, cx, cy, radius }
+    return path(id, { d: generateShapeD(shapeParams), shapeParams })
+  }
+  const make = (sources: ImportedPath[], params: PatternParams, defId: string) =>
+    patternCopies(sources, computePatternInstances(params, getMultiBBox(sources.map((s) => s.d))).slice(1))
+      .map((c, i) => ({ ...c, id: `${defId}-c${i + 1}`, definition: { id: defId, kind: 'pattern' as const, sourceIds: sources.map((s) => s.id), params } }) as ImportedPath)
+  const plate = circ('C', 50, 40, 45)
+  const h0 = circ('h0', 80, 40, 3)
+  const ring = make([h0], { type: 'circular', count: 4, radiusMM: 30, startAngleDeg: 0, endAngleDeg: 360, rotateItems: false }, 'def1')
+  const assembly = [plate, h0, ...ring]
+  const grid = make(assembly, { type: 'linear', rows: 1, cols: 2, xGapMM: 10, yGapMM: 0 }, 'def2')
+  const held: Constraint = {
+    id: 'k', mode: 'xy', offsetXMM: 0, offsetYMM: 0,
+    from: { kind: 'path', id: 'C', anchor: 'center' }, to: { kind: 'pattern', id: 'h0' },
+  }
+  const centreX = (id: string) => getBBox(S().paths.find((p) => p.id === id)!.d)!.cx
+
+  beforeEach(async () => {
+    vi.useFakeTimers()
+    useWorkpieceStore.setState({ widthMM: 400, heightMM: 200 })
+    await load({ paths: [...assembly, ...grid], constraints: [held] })
+  })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('moves the bolt circle off the plate’s centre, and the grid’s copy of it with it', async () => {
+    const plateBefore = S().paths.find((p) => p.id === 'C')!.d
+    // The grid's copy of h0 is the second item of its one instance (C, h0, ring…).
+    const copyOfH0 = grid[1].id
+    const was = centreX(copyOfH0)
+    constraintsStore.getState().updateConstraint('k', { offsetXMM: 5 })
+    await step()
+    expect(S().paths.find((p) => p.id === 'C')!.d).toBe(plateBefore)
+    expect(centreX('h0')).toBeCloseTo(85, 3)
+    expect(centreX(copyOfH0)).toBeCloseTo(was + 5, 3)
+  })
+})
+
+describe('a duplicate made with Duplicate follows its original', () => {
+  const orig = (() => {
+    const shapeParams = { type: 'circle' as const, cx: 20, cy: 20, radius: 3 }
+    return path('o', { d: generateShapeD(shapeParams), shapeParams })
+  })()
+  const copyId = () => S().paths.find((p) => p.id !== 'o')!.id
+  const radiusOf = (id: string) => (S().paths.find((p) => p.id === id)!.shapeParams as { radius: number }).radius
+  const centreOf = (id: string) => { const b = getBBox(S().paths.find((p) => p.id === id)!.d)!; return [b.cx, b.cy] }
+
+  beforeEach(async () => {
+    vi.useFakeTimers()
+    await load({ paths: [orig], selected: ['o'] })
+    S().duplicatePaths(['o'], { dx: 40, dy: 0 })
+    await step()
+  })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('takes the original’s new diameter in the same step, and one undo puts both back', async () => {
+    const c = copyId()
+    S().updateShapeParams('o', { type: 'circle', cx: 20, cy: 20, radius: 6 })
+    await step()
+    expect(radiusOf(c)).toBe(6)
+    const [cx, cy] = centreOf(c)
+    expect(cx).toBeCloseTo(60, 4)
+    expect(cy).toBeCloseTo(20, 4)
+    await undo()
+    expect(radiusOf('o')).toBe(3)
+    expect(radiusOf(c)).toBe(3)
+  })
+
+  it('stays linked after it is moved, and stops following once its own diameter is changed', async () => {
+    const c = copyId()
+    bakePathsStep([c], { kind: 'translate', dx: 10, dy: 15 }, 'move')
+    await step()
+    expect(linkedOriginalOf(S().paths, S().paths.find((p) => p.id === c)!)?.id).toBe('o')
+    S().updateShapeParams(c, { type: 'circle', cx: 70, cy: 35, radius: 9 })
+    await step()
+    expect(S().paths.find((p) => p.id === c)!.copyOf).toMatchObject({ sourceId: 'o', unlinked: true })
+    S().updateShapeParams('o', { type: 'circle', cx: 20, cy: 20, radius: 4 })
+    await step()
+    expect(radiusOf(c)).toBe(9)
+  })
+
+  it('stops following when unlinked by hand, keeping its shape', async () => {
+    const c = copyId()
+    const p = S().paths.find((q) => q.id === c)!
+    S().applyPathEdit({ updates: [{ id: c, d: p.d, copyOf: { sourceId: 'o', unlinked: true } }] })
+    await step()
+    S().updateShapeParams('o', { type: 'circle', cx: 20, cy: 20, radius: 5 })
+    await step()
+    expect(radiusOf(c)).toBe(3)
+  })
+})
+
+describe('a duplicate of a rectangle given corners in the Corners form', () => {
+  const rect = (() => {
+    const shapeParams = { type: 'rectangle' as const, x: 0, y: 0, w: 20, h: 10 }
+    return path('o', { d: generateShapeD(shapeParams), shapeParams })
+  })()
+  const copy = () => S().paths.find((p) => p.id !== 'o')!
+  const orig = () => S().paths.find((p) => p.id === 'o')!
+  const round = (r: number) => applyCorners(orig(), cornerSession(orig()), [], 'outerRound', r)
+  const boxOf = (d: string) => getBBox(d)!
+
+  beforeEach(async () => {
+    vi.useFakeTimers()
+    await load({ paths: [rect], selected: ['o'] })
+    S().duplicatePaths(['o'], { dx: 40, dy: 0 })
+    await step()
+  })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('gets the corners too, cut where the copy stands, and follows a new radius', async () => {
+    round(2)
+    await step()
+    expect(copy().corners?.treatments).toEqual(orig().corners?.treatments)
+    expect(boxOf(copy().d).minX).toBeCloseTo(40, 4)
+    // The copy's outline is the original's, moved 40 across.
+    const nums = (d: string) => (d.match(/-?\d+\.?\d*/g) ?? []).map((n) => Math.round(+n * 1e4) / 1e4)
+    expect(nums(copy().d)).toEqual(nums(translateD(orig().d, 40, 0)))
+    round(4)
+    await step()
+    expect(copy().corners?.treatments[0][1].radiusMM).toBe(4)
+    expect(linkedOriginalOf(S().paths, copy())?.id).toBe('o')
+    await undo()
+    expect(copy().corners?.treatments[0][1].radiusMM).toBe(2)
+  })
+})
+
+describe('a duplicate of a boolean follows a resize of the original', () => {
+  // A union of two rectangles, made with the real Boolean action — a flattened result
+  // with HIDDEN operands — duplicated with the real Duplicate, which pulls the hidden
+  // operands along so the copy is a boolean of its own. Then the original result is
+  // resized with the handles. Nothing here is special-cased for booleans: the copy is
+  // the original moved, so it becomes the original's new state moved.
+  const a = path('a', { d: rectD(0, 0, 20, 10) })
+  const b = path('b', { d: rectD(10, 0, 10, 20) })
+  const result = () => S().paths.find((p) => p.definition?.kind === 'boolean' && !p.copyOf)!
+  const copy = () => S().paths.find((p) => p.definition?.kind === 'boolean' && p.copyOf)!
+
+  beforeEach(async () => {
+    vi.useFakeTimers()
+    await load({ paths: [a, b] })
+    createBoolean([a, b], 'union')
+    await step()
+    S().duplicatePaths([result().id], { dx: 50, dy: 0 })
+    await step()
+  })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('is linked, and doubles in size with the original, staying where it was put', async () => {
+    expect(linkedOriginalOf(S().paths, copy())?.id).toBe(result().id)
+    const box0 = getBBox(copy().d)!
+    bakePathsStep([result().id], { kind: 'scale', sx: 2, sy: 2, ax: 0, ay: 0 }, 'scale')
+    await step()
+    const box1 = getBBox(copy().d)!
+    expect(box1.width).toBeCloseTo(box0.width * 2, 3)
+    expect(box1.height).toBeCloseTo(box0.height * 2, 3)
+    expect(box1.minX).toBeCloseTo(box0.minX, 3)
+    expect(box1.minY).toBeCloseTo(box0.minY, 3)
+    await undo()
+    expect(getBBox(copy().d)!.width).toBeCloseTo(box0.width, 3)
   })
 })

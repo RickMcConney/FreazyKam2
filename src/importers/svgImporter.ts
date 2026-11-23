@@ -139,6 +139,9 @@ export interface ImportedPath {
   // percentage — and `d` cannot recover it, so it has to be recorded.
   scalePct?: number
   definition?: PathDefinition
+  // The path this one was DUPLICATED from (Duplicate, the stamp tool), which it follows
+  // in shape until `unlinked` — see tools/duplicateFollow. Paste does not set it.
+  copyOf?: { sourceId: string; unlinked?: boolean }
   // Corner treatments as a RECIPE over the untreated outline, not as baked
   // geometry: `d` is `applyCornerTreatments(baseD, treatments)`, so re-editing a
   // radius re-cuts the ORIGINAL corner instead of rounding an already-rounded
@@ -165,7 +168,9 @@ export type PathDefinition = { id: string } & (
   // (tools/shapeOffset); absent on offsets made before it, which are outlines.
   | { kind: 'offset'; sourceId: string; distanceMM: number; cornerStyle: OffsetCornerStyle; keepShape?: boolean; keepGenerated?: boolean }
   | { kind: 'pattern'; sourceIds: string[]; params: PatternParams }
-  | { kind: 'duplicate'; sourceId: string; offsetMM: number }
+  // `unlinked`: the copy no longer follows its original's shape (tools/duplicateFollow) —
+  // set by the Unlink button, or when the user reshapes the copy itself.
+  | { kind: 'duplicate'; sourceId: string; offsetMM: number; unlinked?: boolean }
   | { kind: 'boolean'; op: BooleanOpType; sourceIds: string[] }
   // Fill-the-stock: copies of the part `sourceIds` nested onto the stock. The
   // settings are the Nest form's, so the chip reopens it to re-run the fill.

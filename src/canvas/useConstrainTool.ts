@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { allAnchorCandidates, bodyKeyOf, bodyPathsOf, measureBetween, nearestCandidate, type AnchorCandidate } from '../store/constraints'
+import { allAnchorCandidates, bodyKeyOf, bodyPathsOf, nearestCandidate, pickedConstraint, stockEdgeCandidate, type AnchorCandidate } from '../store/constraints'
 import { useConstraintsStore } from '../store/constraintsStore'
 import { usePathsStore } from '../store/pathsStore'
 import { useUIStore } from '../store/uiStore'
@@ -96,11 +96,19 @@ export function useConstrainTool(g: Gesture, { stageRef, viewportRef }: CanvasVi
       const { paths: live } = usePathsStore.getState()
       const hit = closestVisiblePath(cnc.x, cnc.y, live.filter((p) => onCanvas(p)), 12 / vp.scale, (p) => getFlat(p, 0.05))
       const self = hit ? live.find((p) => p.id === hit.id) : undefined
-      bodyKey = self ? bodyKeyOf(self) : null
+      bodyKey = self ? bodyKeyOf(self, live) : null
     }
     const list = bodyKey ? all.filter((c) => c.body === bodyKey) : []
-    setPickCandidates(list)
-    setPickHot(nearestCandidate(list, cnc.x, cnc.y, PICK_HOT_PX / vp.scale))
+    const hot = nearestCandidate(list, cnc.x, cnc.y, PICK_HOT_PX / vp.scale)
+    // THE STOCK EDGES ARE POINTS TOO — the part's own points win where both are
+    // in reach, since a part sitting on the edge of the sheet has its corners on
+    // it and those are the more specific pick. The edge is offered only within
+    // the tight radius: a whole edge lit up from 70 px away would flash on every
+    // time the cursor crossed the border of the stock.
+    const { widthMM, heightMM } = useWorkpieceStore.getState()
+    const edge = hot ? null : stockEdgeCandidate({ widthMM, heightMM }, cnc.x, cnc.y, PICK_HOT_PX / vp.scale)
+    setPickCandidates(edge ? [...list, edge] : list)
+    setPickHot(hot ?? edge)
   }, [getFlat, setPickHot])
 
   /**
@@ -116,19 +124,12 @@ export function useConstrainTool(g: Gesture, { stageRef, viewportRef }: CanvasVi
     const ui = useUIStore.getState()
     const paths = usePathsStore.getState().paths
     const { widthMM, heightMM } = useWorkpieceStore.getState()
-    const now = measureBetween(paths, held.ref, hot.ref, { widthMM, heightMM })
-    if (!now) { setPickHeld(null); return }
+    // Which end holds, what an edge holds, and the alignment that comes with a
+    // part-to-part one are all decided in `pickedConstraint`.
     const id = uid('con')
-    // ALIGNMENT COMES WITH IT. A follower that does not turn with the part
-    // holding it is the surprising case — the chain is meant to behave like the
-    // group the user thinks it is — and holding the angle the parts ALREADY
-    // stand at moves nothing, so this is free until something is rotated. Not
-    // against the stock, which does not turn.
-    const align = held.ref.kind === 'stock' || hot.ref.kind === 'stock'
-      ? {} : { alignDeg: now.alignDeg }
-    useConstraintsStore.getState().addConstraint(ui.constrainMode === 'xy'
-      ? { id, mode: 'xy', from: held.ref, to: hot.ref, offsetXMM: now.offsetXMM, offsetYMM: now.offsetYMM, ...align }
-      : { id, from: held.ref, to: hot.ref, distanceMM: now.distanceMM, angleDeg: now.angleDeg, ...align })
+    const c = pickedConstraint(paths, held.ref, hot.ref, { widthMM, heightMM }, ui.constrainMode, id)
+    if (!c) { setPickHeld(null); return }
+    useConstraintsStore.getState().addConstraint(c)
     setPickHeld(null)
     // Hand the keyboard to the new constraint's first number — two clicks and
     // then type, without reaching for the sidebar. Deliberately WITHOUT
@@ -141,8 +142,9 @@ export function useConstrainTool(g: Gesture, { stageRef, viewportRef }: CanvasVi
   /** Which body a picked point belongs to, or null for a stock edge. */
   const bodyOfRef = useCallback((r: AnchorCandidate['ref']): string | null => {
     if (r.kind === 'stock') return null
-    const p = usePathsStore.getState().paths.find((q) => q.id === r.id)
-    return p ? bodyKeyOf(p) : null
+    const all = usePathsStore.getState().paths
+    const p = all.find((q) => q.id === r.id)
+    return p ? bodyKeyOf(p, all) : null
   }, [])
 
   /** Take a point. The second one creates the constraint. */
@@ -156,14 +158,20 @@ export function useConstrainTool(g: Gesture, { stageRef, viewportRef }: CanvasVi
       // when the user moves on, or the panel would show a stale one while the
       // next dimension is being drawn.
       useUIStore.getState().setFocusConstraint(null)
+      // THE FIRST POINT SAYS WHAT IS BEING WORKED ON, so the panel and the
+      // canvas switch to that part's chain — following a tree from part to part
+      // no longer means Finished, select, Constrain, every time. A stock edge
+      // has no chain of its own and leaves the view as it was.
+      if (hot.ref.kind !== 'stock') useUIStore.getState().setConstrainSubject([hot.ref.id])
       setPickHeld(hot)
       return
     }
     // Two points on the SAME body is a measurement, not a constraint — a part
     // cannot hold itself at a distance from itself, and the solver ignores it.
     // Treat the second click as re-picking the first instead of making a dud.
+    // Two stock edges is the same: nothing to hold.
     const heldBody = bodyOfRef(held.ref)
-    if (heldBody !== null && heldBody === bodyOfRef(hot.ref)) { setPickHeld(hot); return }
+    if (heldBody === bodyOfRef(hot.ref)) { setPickHeld(hot); return }
     commitConstraint(held, hot)
   }, [pickHotRef, pickHeldRef, setPickHeld, commitConstraint, bodyOfRef])
 
@@ -175,8 +183,21 @@ export function useConstrainTool(g: Gesture, { stageRef, viewportRef }: CanvasVi
   // two-click gesture changes.
   const onConstrainPress = useCallback(() => {
     didDragRef.current = false
-    const heldPick = pickHeldRef.current
-    const hotPick = pickHotRef.current
+    let heldPick = pickHeldRef.current
+    let hotPick = pickHotRef.current
+    // A PART HELD FIRST, THEN A PRESS ON A STOCK EDGE: the edge cannot move, so
+    // the drag moves the PART instead — pulled in or out from the edge with the
+    // dimension live, the same gesture as dragging a part off another part. The
+    // picks are swapped to say so: the edge is the held end (it is `from` in
+    // the constraint anyway) and the part is the one riding the drag, which is
+    // what the markers and the live dimension read.
+    if (heldPick && hotPick && hotPick.ref.kind === 'stock' && heldPick.ref.kind !== 'stock') {
+      const part = heldPick
+      heldPick = hotPick
+      hotPick = part
+      setPickHeld(heldPick)
+      setPickHot(hotPick)
+    }
     const hotRef = hotPick?.ref
     const heldBody = heldPick ? bodyOfRef(heldPick.ref) : null
     const hotBody = hotPick ? bodyOfRef(hotPick.ref) : null
@@ -205,7 +226,7 @@ export function useConstrainTool(g: Gesture, { stageRef, viewportRef }: CanvasVi
     onConstrainClick()
     setMode({ type: 'idle' })
   }, [didDragRef, pickHeldRef, pickHotRef, bodyOfRef, stageRef, viewportRef, constraintPlanRef,
-      setPickDrag, beginGesture, onConstrainClick, setMode])
+      setPickDrag, beginGesture, onConstrainClick, setMode, setPickHeld, setPickHot])
 
   /** The drag of a second point has landed: the constraint holds wherever it stopped. */
   const landDraggedPoint = useCallback((pick: { held: AnchorCandidate; hot: AnchorCandidate }) => {

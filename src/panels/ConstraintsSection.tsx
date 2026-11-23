@@ -4,14 +4,12 @@ import { RotateCw, RulerDimensionLine, Trash2 } from 'lucide-react'
 import { usePathsStore, useSelectedPathsInOrder, type ImportedPath } from '../store/pathsStore'
 import { useConstraintsStore } from '../store/constraintsStore'
 import {
-  bodiesMovingWith, bodyKeyOf, constraintsInFocus, constraintsHiddenBySelection,
-  groundedAxes, measureBetween, refLabel, solveConstraints,
-  type Anchor, type Constraint, type GeomRef,
+  bodyKeyOf, constraintsInFocus, dragReach, measureBetween, refLabel, solveConstraints,
+  type Constraint,
 } from '../store/constraints'
 import { useWorkpieceStore, fromMM, toMM } from '../store/workpieceStore'
 import { useUIStore } from '../store/uiStore'
 import { NumericInput } from '../components/NumericInput'
-import { uid } from '../uid'
 
 // The Constraints section of the properties panel: hold this part a stated
 // distance and direction from that one, and keep it there as either is edited.
@@ -42,22 +40,12 @@ import { uid } from '../uid'
 const fieldCls = 'flex-1 bg-gray-50 dark:bg-neutral-900 border border-gray-400 dark:border-neutral-600 rounded px-1.5 py-0.5 text-body text-gray-800 dark:text-neutral-200 font-mono w-0 focus:outline-none focus:border-blue-500'
 const btnCls = 'flex-1 text-label py-1 rounded border transition-colors border-gray-400 dark:border-neutral-600 text-gray-500 dark:text-neutral-400 hover:text-gray-700 dark:hover:text-neutral-300'
 
-const STOCK_EDGES: { edge: 'left' | 'right' | 'bottom' | 'top'; label: string; anchor: Anchor }[] = [
-  // The NEAR edge of the part, not its centre: "20 mm in from the left" is a
-  // clearance, and it is the edge of the part that has to clear. Reads the same
-  // number the eye does.
-  { edge: 'left', label: 'Left', anchor: 'minX' },
-  { edge: 'right', label: 'Right', anchor: 'maxX' },
-  { edge: 'bottom', label: 'Bottom', anchor: 'minY' },
-  { edge: 'top', label: 'Top', anchor: 'maxY' },
-]
-
 /** The distinct bodies the selection covers, in the order they were clicked. */
-function selectedBodies(selected: ImportedPath[]): { key: string; path: ImportedPath }[] {
+function selectedBodies(selected: ImportedPath[], paths: ImportedPath[]): { key: string; path: ImportedPath }[] {
   const seen = new Set<string>()
   const out: { key: string; path: ImportedPath }[] = []
   for (const p of selected) {
-    const key = bodyKeyOf(p)
+    const key = bodyKeyOf(p, paths)
     if (seen.has(key)) continue
     seen.add(key)
     out.push({ key, path: p })
@@ -147,6 +135,13 @@ function ConstraintRow({ c, paths, units, stock, badIds, focus }: {
 }) {
   const updateConstraint = useConstraintsStore((s) => s.updateConstraint)
   const deleteConstraints = useConstraintsStore((s) => s.deleteConstraints)
+  const setHover = useUIStore((s) => s.setHoverConstraint)
+  const hovered = useUIStore((s) => s.hoverConstraintId === c.id)
+  // A row that goes away while hovered (deleted, or the tool left) must not
+  // leave its dimension lit.
+  useEffect(() => () => {
+    if (useUIStore.getState().hoverConstraintId === c.id) useUIStore.getState().setHoverConstraint(null)
+  }, [c.id])
   const bad = badIds.has(c.id)
   const now = measureBetween(paths, c.from, c.to, stock)
   // An angle against a stock edge means nothing — the point on the edge slides
@@ -159,8 +154,14 @@ function ConstraintRow({ c, paths, units, stock, badIds, focus }: {
   return (
     <div
       title={`${ends}\nTyping a number holds the first and moves the second. Either can be dragged.`}
+      onMouseEnter={() => setHover(c.id)}
+      onMouseLeave={() => setHover(null)}
+      onFocus={() => setHover(c.id)}
+      onBlur={() => setHover(null)}
       className={['rounded border px-1 py-0.5 flex items-center gap-1',
-        bad ? 'border-red-500/60 bg-red-500/10' : 'border-gray-300 dark:border-neutral-700'].join(' ')}
+        bad ? 'border-red-500/60 bg-red-500/10'
+          : hovered ? 'border-amber-500 bg-amber-500/10'
+          : 'border-gray-300 dark:border-neutral-700'].join(' ')}
     >
       {xy ? (<>
         <HeldField
@@ -235,7 +236,6 @@ export default function ConstraintsSection() {
   const paths = usePathsStore((s) => s.paths)
   const selected = useSelectedPathsInOrder()
   const constraints = useConstraintsStore((s) => s.constraints)
-  const addConstraint = useConstraintsStore((s) => s.addConstraint)
   const { units, widthMM, heightMM } = useWorkpieceStore(useShallow((s) => ({ units: s.units, widthMM: s.widthMM, heightMM: s.heightMM })))
   const activeTool = useUIStore((s) => s.activeTool)
   const constrainMode = useUIStore((s) => s.constrainMode)
@@ -246,10 +246,8 @@ export default function ConstraintsSection() {
   const constraining = activeTool === 'constrain'
 
 
-  const bodies = useMemo(() => selectedBodies(selected), [selected])
-  // THIS PAIR when two parts are picked, EVERYTHING HOLDING IT when one is —
-  // see constraintsForSelection for why "everything touching the selection" made
-  // a chain unreadable.
+  const bodies = useMemo(() => selectedBodies(selected, paths), [selected, paths])
+  // THE WHOLE CHAIN of anything selected — see `chainsTouching`.
   // The selection's, else the one the tool just made, else what was selected
   // when the tool was entered — see `constraintsInFocus`, which the CANVAS draws
   // from as well so the two can never show different sets.
@@ -258,26 +256,23 @@ export default function ConstraintsSection() {
       selectedIds: selected.map((p) => p.id), subjectIds, focusConstraintId,
     }),
     [paths, constraints, selected, focusConstraintId, subjectIds])
-  const hidden = useMemo(
-    () => constraintsHiddenBySelection(paths, constraints, selected.map((p) => p.id)),
-    [paths, constraints, selected])
 
   // WHAT A DRAG IS ABOUT TO MOVE. There is no root — the solve anchors at
   // whatever the user grabbed and carries the rest of the chain along — so the
-  // useful thing to say is how far that reaches, not which part is privileged.
-  // The one real refusal left is the stock: ground is ground.
+  // useful thing to say is how far that reaches. Asked of the SOLVE
+  // (`dragReach`), not read off the graph: a hole on a plate that is pinned to
+  // the stock is pinned too, and the graph alone said it would carry the plate.
   const dragNote = useMemo(() => {
     if (bodies.length !== 1) return null
-    const withIt = bodiesMovingWith(paths, constraints, bodies[0].key)
-    const ground = groundedAxes(paths, constraints, bodies[0].key)
+    const { moving, lockedAxes } = dragReach(paths, constraints, { widthMM, heightMM }, bodies[0].key)
     const bits: string[] = []
-    if (withIt.size > 0) {
-      bits.push(`Dragging this moves ${withIt.size} other part${withIt.size > 1 ? 's' : ''} with it.`)
+    if (lockedAxes.size === 2) bits.push('Held by its constraints — dragging it will not move it.')
+    else if (lockedAxes.size === 1) bits.push(`Held in ${[...lockedAxes][0].toUpperCase()} — a drag moves it in ${lockedAxes.has('x') ? 'Y' : 'X'} only.`)
+    if (lockedAxes.size < 2 && moving.size > 0) {
+      bits.push(`Dragging this moves ${moving.size} other part${moving.size > 1 ? 's' : ''} with it.`)
     }
-    if (ground.size === 2) bits.push('Held to the stock — it will not move.')
-    else if (ground.size === 1) bits.push(`Held to the stock in ${[...ground][0].toUpperCase()}.`)
     return bits.length > 0 ? bits.join(' ') : null
-  }, [bodies, paths, constraints])
+  }, [bodies, paths, constraints, widthMM, heightMM])
 
   // Which constraints the solver refused, so a row that is not being applied
   // says so instead of showing numbers nothing is holding. The same solve the
@@ -289,17 +284,17 @@ export default function ConstraintsSection() {
     return new Set(solveConstraints(paths, constraints, { widthMM, heightMM }).badIds)
   }, [paths, constraints, widthMM, heightMM])
 
-  // Stock constraints only: distance along one axis, no angle (the point on an
-  // edge slides with the part, so a direction against it means nothing).
-  function create(from: GeomRef, to: GeomRef) {
-    const now = measureBetween(paths, from, to, { widthMM, heightMM })
-    if (!now) return
-    addConstraint({ id: uid('con'), from, to, distanceMM: now.distanceMM })
-  }
-
   // Not `bodies.length === 0` any more: the section is the tool's home while it
   // is on, and it has to be there with nothing selected.
   if (bodies.length === 0 && !constraining && mine.length === 0) return null
+
+  // THE ROWS AND THE MODE TOGGLE SHOW ONLY WHILE THE TOOL IS ON. The canvas
+  // draws the dimensions only then (see `constraintsInFocus`), and a list of
+  // numbers with nothing on screen to say what they measure is clutter under the
+  // Properties panel the rest of the time. Off the tool the section is the way
+  // in, plus one line so a held part does not look free — red when one of its
+  // constraints is being refused, since that is the one thing that cannot wait.
+  const mineBad = mine.filter((c) => badIds.has(c.id)).length
 
   return (
     <div className="mt-2">
@@ -314,7 +309,7 @@ export default function ConstraintsSection() {
           point on another, type. This button and the C key are the way into it,
           and the mode it will use is the one thing worth setting first. */}
       <div className="flex gap-1.5 mb-1">
-        <div className="flex flex-1 rounded border border-gray-400 dark:border-neutral-600 overflow-hidden">
+        {constraining && <div className="flex flex-1 rounded border border-gray-400 dark:border-neutral-600 overflow-hidden">
           {(['xy', 'polar'] as const).map((m) => (
             <button
               key={m}
@@ -331,7 +326,7 @@ export default function ConstraintsSection() {
               {m === 'xy' ? 'X / Y' : 'Dist / ∠'}
             </button>
           ))}
-        </div>
+        </div>}
         {/* RIGHTMOST IN BOTH STATES, because in one of them it is the way OUT:
             while the tool is on this button ends the session, and the action
             that finishes a job belongs at the end of the row (the same place
@@ -360,34 +355,20 @@ export default function ConstraintsSection() {
         </p>
       )}
 
-      {/* THE STOCK STAYS A BUTTON. It is not a part, so the tool has no marker to
-          click on it — holding a part off an edge of the sheet is a different
-          gesture and reads better as one. */}
-      {bodies.length === 1 && !constraining && (
-        <>
-          <p className="text-label text-gray-500 dark:text-neutral-400 mb-1">Hold from the stock edge</p>
-          <div className="flex gap-1.5">
-            {STOCK_EDGES.map((e) => (
-              <button
-                key={e.edge}
-                className={btnCls}
-                title={`Hold this part where it is relative to the ${e.label.toLowerCase()} edge of the stock`}
-                onClick={() => create(
-                  { kind: 'stock', edge: e.edge },
-                  { kind: 'path', id: bodies[0].path.id, anchor: e.anchor })}
-              >
-                {e.label}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-
       {dragNote && (
         <p className="mt-1.5 text-label text-gray-500 dark:text-neutral-400">{dragNote}</p>
       )}
 
-      {mine.length > 0 && (
+      {!constraining && mine.length > 0 && (
+        <p className={'mt-1.5 text-label ' + (mineBad > 0
+          ? 'text-red-600 dark:text-red-400'
+          : 'text-gray-500 dark:text-neutral-400')}>
+          {mine.length === 1 ? '1 constraint' : `A chain of ${mine.length} constraints`}
+          {mineBad > 0 ? ` (${mineBad} not being kept)` : ''} — Constrain to see or edit.
+        </p>
+      )}
+
+      {constraining && mine.length > 0 && (
         <div className="mt-1.5 space-y-1">
           {mine.map((c) => (
             <ConstraintRow
@@ -399,12 +380,6 @@ export default function ConstraintsSection() {
         </div>
       )}
 
-      {hidden > 0 && (
-        <p className="mt-1 text-label text-gray-500 dark:text-neutral-400">
-          {hidden === 1 ? '1 more constraint' : `${hidden} more constraints`} on these
-          parts — select one part on its own to see them.
-        </p>
-      )}
     </div>
   )
 }

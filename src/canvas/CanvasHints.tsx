@@ -73,8 +73,8 @@ export function CanvasHints({ connecting, hoveredEditNode, hoverSegIdx, penClosi
       {activeTool === 'constrain' && (
         <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-purple-600/90 text-white text-body px-3 py-1 rounded-full pointer-events-none">
           {pickHeld
-            ? 'Now a point on another part — or press on it and drag the part into place · Esc to cancel'
-            : 'Constrain — click a corner, edge or centre on one part, then a point on another and drag to set the dimensions of the constraint · Esc to exit'}
+            ? 'Now a point on another part or a stock edge — or press on it and drag the part into place · Esc to cancel'
+            : 'Constrain — click a corner, edge or centre on one part, then a point on another part or a stock edge, and drag to set the dimension · Esc to exit'}
         </div>
       )}
       {activeTool === 'region' && (

@@ -9,7 +9,7 @@ import type { PatternEditCtx } from './machine/PatternForm'
 import type { NestEditCtx } from './machine/NestForm'
 import type { TraceEditCtx } from './machine/TraceForm'
 import type { AlongEditCtx } from './machine/AlongPathForm'
-import { OP_TYPE_COLORS } from '../colors'
+import { OP_TYPE_COLORS, PATH_COLOR } from '../colors'
 import { ICON } from '../theme'
 import { TabsIcon, AlongPathIcon, FlutingIcon } from './pathToolIcons'
 import { Circle, CircleDot, Target, Layers, Star, SquaresUnite, SquareSquare, LayoutGrid, Blocks, VectorSquare, FlipHorizontal2, Columns3, Box, RefreshCw, PencilSparkles, Image as ImageIcon, CopyPlus } from 'lucide-react'
@@ -72,7 +72,10 @@ function AddOperationMenu({ onSelect }: { onSelect: (t: OpType) => void }) {
           ['duplicate', 'Duplicate', 'Copies of the selection follow the mouse — click to place each one (Ctrl/⌘+D)', <CopyPlus size={ICON.md} />],
         ] as [OpType, string, string, React.ReactNode][]).map(([type, name, desc, icon]) => (
           <button key={type} {...helpAttr(type)} onClick={() => onSelect(type)} title={desc} className={opBtnCls}>
-            <span style={{ color: OP_TYPE_COLORS[type as string] ?? '#94a3b8' }}>{icon}</span>
+            {/* WHAT IT LEAVES ON THE CANVAS: every path tool makes or changes ordinary
+                paths, so it wears the path colour — except Tabs, which draws its tabs in
+                its own. The toolpath row above follows the same rule. */}
+            <span style={{ color: type === 'tabs' ? OP_TYPE_COLORS.tabs : PATH_COLOR }}>{icon}</span>
             <span className="text-label text-gray-500 dark:text-neutral-400">{name}</span>
           </button>
         ))}

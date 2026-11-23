@@ -125,8 +125,11 @@ export function PatternForm({ onClose, editCtx }: { onClose: () => void; editCtx
           .map((p) => ({ id: p.id, d: p.d, name: p.name, definition, fields: p })),
         add: newPaths.slice(oldPaths.length),
         deleteIds,
+        // A bolt circle constrained to its plate comes back to the plate.
+        holdOthers: true,
       })
-      usePathsStore.getState().setSelectedIds(newPaths.map((p) => p.id))
+      // The original is one of the pattern, as its chip says — selected with the copies.
+      usePathsStore.getState().setSelectedIds([...sourcePaths.map((p) => p.id), ...newPaths.map((p) => p.id)])
       regenerateAffectedMany(newPaths.map((p) => p.id))
       useUIStore.getState().showStatus('Pattern updated', 'info')
       save('pattern', form)

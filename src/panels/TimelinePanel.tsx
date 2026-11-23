@@ -5,8 +5,9 @@ import {
   Star, Heart, Shield, Orbit, Grid3x3, Cog, Snail, Type, PenTool, Import, SquaresUnite,
   SquareSquare, PencilSparkles, LayoutGrid, Target, CircleDot, Layers, Box, RefreshCw, FileCode,
   X, Image as ImageIcon, Weight, Clock, VectorSquare, Group, TrainTrack,
-  RulerDimensionLine, Webhook, Blocks, Package, Columns3, FlipHorizontal2,
+  RulerDimensionLine, Webhook, Blocks, Package, Columns3, FlipHorizontal2, Link2,
 } from 'lucide-react'
+import { linkedOriginalOf } from '../tools/duplicateFollow'
 import { TabsIcon, AlongPathIcon, FlutingIcon } from './pathToolIcons'
 import { SignIcon, SlotIcon, BoardIcon, EscapementIcon, FingerJointIcon, DovetailIcon, BowtieIcon } from './draw/shapeIcons'
 import { usePathsStore, clearCorners, outerGroupOf, type ImportedPath } from '../store/pathsStore'
@@ -77,7 +78,23 @@ const FAMILY_STYLE: Record<ObjectChip['family'], string> = {
   // and share a colour, so they read as attached rather than as things of their
   // own. They are still chips, because each carries parameters worth reopening.
   attached: 'bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/40',
-  op: 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/40',
+  // Never seen in practice: every operation chip carries its type's colour, which wins
+  // (see `chipTint`). Neutral rather than amber — amber is the tabs.
+  op: 'bg-gray-500/15 text-gray-700 dark:text-neutral-300 border-gray-500/40',
+}
+
+/**
+ * A CHIP IS TINTED WITH THE COLOUR ITS THING HAS ON THE CANVAS — the same rule as the
+ * icons (colors.ts). A chip with a colour (a toolpath, tabs, a double-sided or tiled job)
+ * takes its background and border from it; the TEXT stays neutral, because a yellow inlay
+ * or a pale tab colour as text on a tinted ground does not read. A chip without one keeps
+ * its family's style: a path chip is blue like the paths. Every toolpath chip used to be
+ * amber with only its little icon in the toolpath's colour, so a pocket and a profile
+ * looked alike and both looked like tabs.
+ */
+function chipTint(color: string | undefined): React.CSSProperties | undefined {
+  if (!color || !/^#[0-9a-f]{6}$/i.test(color)) return undefined
+  return { backgroundColor: `${color}26`, borderColor: `${color}73` }   // 15% and 45% alpha
 }
 
 interface ObjectChip {
@@ -105,6 +122,8 @@ interface ObjectChip {
   /** What its × deletes when that is more than `pathIds`: a copied boolean's hidden
    *  operands, which have no chip of their own and must not be left behind. */
   deleteIds?: string[]
+  /** The tooltip, when it should say more than the label. */
+  title?: string
 }
 
 // How a path is drawn and named in the strip, matching how the same thing is
@@ -112,12 +131,14 @@ interface ObjectChip {
 function pathVisual(p: ImportedPath): { label: string; Icon: ChipIcon; color?: string } {
   const def = p.definition
   if (def) {
-    if (def.kind === 'boolean') return { label: 'Boolean', Icon: SquaresUnite, color: OP_TYPE_COLORS.boolean }
-    if (def.kind === 'offset') return { label: 'Offset', Icon: SquareSquare, color: OP_TYPE_COLORS.offset }
-    if (def.kind === 'pattern') return { label: 'Pattern', Icon: LayoutGrid, color: OP_TYPE_COLORS.pattern }
-    if (def.kind === 'trace') return { label: 'Trace', Icon: PencilSparkles, color: OP_TYPE_COLORS.trace }
+    // NO TINT: what a generator leaves is an ordinary path, and a chip's colour is the
+    // colour its thing has on the canvas — the icon says what made it.
+    if (def.kind === 'boolean') return { label: 'Boolean', Icon: SquaresUnite }
+    if (def.kind === 'offset') return { label: 'Offset', Icon: SquareSquare }
+    if (def.kind === 'pattern') return { label: 'Pattern', Icon: LayoutGrid }
+    if (def.kind === 'trace') return { label: 'Trace', Icon: PencilSparkles }
     if (def.kind === 'along') return { label: 'Text on Path', Icon: AlongPathIcon }
-    if (def.kind === 'fill') return { label: 'Nest', Icon: Blocks, color: OP_TYPE_COLORS.nest }
+    if (def.kind === 'fill') return { label: 'Nest', Icon: Blocks }
     // A DUPLICATE reads as what it is a copy OF — a copied circle is a Circle, as a copied
     // boolean is a Boolean — so it falls through to the shape's own icon and name. The
     // definition is history (where it was copied from), not a kind of object.
@@ -198,7 +219,7 @@ export function buildChips(
   for (const [nest, ids] of nests) {
     out.push({
       key: `nest:${nest}`, label: `Nest \u00d7${ids.length}`, Icon: Blocks,
-      color: OP_TYPE_COLORS.nest, family: 'attached', pathIds: ids, form: 'nest', nestId: nest,
+      family: 'attached', pathIds: ids, form: 'nest', nestId: nest,
     })
   }
 
@@ -206,6 +227,29 @@ export function buildChips(
   const seenClock = new Set<string>()
   const seenDef = new Set<string>()
   const seenUserGroup = new Set<string>()
+
+  // A PATTERN'S ORIGINAL IS PART OF THE PATTERN. An 8-hole bolt circle is the
+  // original and 7 copies, and the chip said "x7" and selected only the copies —
+  // the hole the user drew stood apart as a chip of its own, as though it were
+  // not one of the eight. So a pattern's chip carries its sources, counts them,
+  // and stands where the original does. Only a LOOSE original folds in: one that
+  // is already a thing of its own — inside a user group, a part of a multi-part
+  // shape, the result of another generator, one of a multi-copy duplicate — keeps
+  // its chip, and is still on the pattern's (selected and counted with it).
+  const live = new Map(paths.map((p) => [p.id, p]))
+  const patternSources = new Map<string, string[]>()
+  const foldedInto = new Map<string, string>()
+  for (const p of paths) {
+    const def = p.definition
+    if (def?.kind !== 'pattern' || patternSources.has(def.id)) continue
+    const srcs = def.sourceIds.filter((id) => live.has(id) && !jobPathIds.has(id))
+    patternSources.set(def.id, srcs)
+    for (const id of srcs) {
+      const s = live.get(id)!
+      const loose = !outerGroupOf(s) && !s.groupId && !s.copyBatch && !s.definition
+      if (loose && !foldedInto.has(id)) foldedInto.set(id, def.id)
+    }
+  }
 
   for (const p of paths) {
     if (jobPathIds.has(p.id)) continue
@@ -310,7 +354,7 @@ export function buildChips(
       const editable = members.find((m) => m.definition && m.definition.kind !== 'duplicate')
       out.push({ key: p.groupId, ...pathVisual(p), family: 'path', pathIds: members.map((m) => m.id), editPathId: editable?.id })
       for (const m of members) out.push(...attachedChips(m, tabChips))
-    } else if (defGroupId(p)) {
+    } else if (defGroupId(p) || foldedInto.has(p.id)) {
       // ONE CHIP PER GENERATOR CLICK, for the same reason a batch of operations
       // gets one: a pattern of six copies, or an offset of four selected paths,
       // is ONE set of parameters to go back and change — and the form edits the
@@ -318,18 +362,26 @@ export function buildChips(
       // there were six patterns to edit. A DUPLICATE is deliberately not grouped
       // (`defGroupId` excludes it): a copy is its own object from the moment it
       // is made, with no form behind it.
-      const defId = defGroupId(p)!
+      const defId = defGroupId(p) ?? foldedInto.get(p.id)!
       if (seenDef.has(defId)) continue
       seenDef.add(defId)
-      const members = paths.filter((q) => defGroupId(q) === defId)
-      const vis = pathVisual(p)
+      const made = paths.filter((q) => defGroupId(q) === defId)
+      // A pattern's chip leads with its originals — see `foldedInto` above.
+      const sources = patternSources.get(defId) ?? []
+      const members = [...sources.map((id) => live.get(id)!), ...made]
+      // What the chip LOOKS like is the generator's (a copy carries the definition;
+      // an original folded in is just a circle), and a copy is what reopens the form.
+      const lead = made[0] ?? p
+      const vis = pathVisual(lead)
       out.push({
         key: `def:${defId}`, ...vis,
         // One path the user named goes by that name; a set keeps its kind and count.
-        label: members.length === 1 ? (p.nameIsCustom ? p.name : vis.label) : `${vis.label} \u00d7${members.length}`,
-        family: 'path', pathIds: members.map((m) => m.id), editPathId: p.id,
+        label: members.length === 1 ? (lead.nameIsCustom ? lead.name : vis.label) : `${vis.label} \u00d7${members.length}`,
+        family: 'path', pathIds: members.map((m) => m.id), editPathId: lead.id,
       })
-      for (const m of members) out.push(...attachedChips(m, tabChips))
+      // Tab and corner chips for what is ON this chip only — an original that kept
+      // a chip of its own keeps them there.
+      for (const m of members) if (foldedInto.get(m.id) === defId || defGroupId(m) === defId) out.push(...attachedChips(m, tabChips))
     } else {
       out.push({
         key: p.id, ...pathVisual(p), ...(p.nameIsCustom ? { label: p.name } : {}), family: 'path', pathIds: [p.id],
@@ -375,7 +427,7 @@ export function buildChips(
       key: `chain:${chain.key}`,
       label: live.length === 1 ? constraintLabel(live[0], units) : `Constraints ×${live.length}`,
       Icon: RulerDimensionLine, family: 'attached',
-      pathIds: paths.filter((p) => chain.bodies.includes(bodyKeyOf(p))).map((p) => p.id),
+      pathIds: paths.filter((p) => chain.bodies.includes(bodyKeyOf(p, paths))).map((p) => p.id),
       constraintIds: live.map((c) => c.id),
     })
   }
@@ -409,6 +461,23 @@ export function buildChips(
       color: OP_TYPE_COLORS[op.type], family: 'op', pathIds: [],
       opIds: members.map((o) => o.id),
     })
+  }
+
+  // A LINKED COPY WEARS THE LINK ICON in place of its shape's (tools/duplicateFollow): it
+  // changes when something ELSE is edited, and the strip is where that has to be visible
+  // without selecting anything. The label stays what it is a copy of, and the shape's
+  // icon comes back the moment it is unlinked or no longer matches its original. A chip
+  // takes it only when EVERY shape on it is a linked copy — a group with one loose part
+  // in it is not "a copy".
+  for (const chip of out) {
+    if (chip.family !== 'path' || chip.form || chip.nestId || chip.pathIds.length === 0) continue
+    const members = chip.pathIds.flatMap((id) => { const p = live.get(id); return p && !p.hidden ? [p] : [] })
+    if (members.length === 0) continue
+    const origs = members.map((m) => linkedOriginalOf(paths, m))
+    if (origs.some((o) => !o)) continue
+    const names = [...new Set(origs.map((o) => o!.groupName ?? o!.name))]
+    chip.Icon = Link2
+    chip.title = `${chip.label} — linked to ${names.length === 1 ? names[0] : `${names.length} originals`}: changes when that is reshaped`
   }
   return out
 }
@@ -503,14 +572,15 @@ function Chip({ chip, selected, compact, onDelete }: {
   return (
     <div
       data-key={chip.key}
-      title={chip.label}
+      title={chip.title ?? chip.label}
       onMouseEnter={() => hover(true)}
       onMouseLeave={() => hover(false)}
       className={[
         'group relative flex items-center gap-1 px-1.5 h-6 rounded border text-[13px] whitespace-nowrap flex-shrink-0',
-        FAMILY_STYLE[chip.family],
+        chipTint(color) ? 'text-gray-700 dark:text-neutral-200' : FAMILY_STYLE[chip.family],
         selected ? 'ring-2 ring-blue-500' : '',
       ].join(' ')}
+      style={chipTint(color)}
     >
       <Icon size={12} style={color ? { color } : undefined} />
       {!compact && <span className="max-w-[110px] truncate">{chip.label}</span>}

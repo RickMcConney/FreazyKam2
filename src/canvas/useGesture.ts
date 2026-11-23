@@ -2,7 +2,7 @@ import { useCallback, useRef, useState, type MutableRefObject } from 'react'
 import { otherSideBox } from '../cam/doubleSided'
 import { cellOffset } from '../cam/sheets'
 import { useCanvasStore } from '../store/canvasStore'
-import { planConstraints, type AnchorCandidate, type ConstraintPlan } from '../store/constraints'
+import { planConstraints, widenToPatternBodies, type AnchorCandidate, type ConstraintPlan } from '../store/constraints'
 import { useConstraintsStore } from '../store/constraintsStore'
 import { usePathsStore } from '../store/pathsStore'
 import { useUIStore } from '../store/uiStore'
@@ -73,19 +73,23 @@ export function snapOptions() {
  *  - `plan`: the constraint solve for this set, resolved now so each frame of
  *    the preview is arithmetic (see `constraintPlanRef`).
  */
-export function beginMoveSession(ids: string[]): { bbox: BBox | null; snapTargets: SnapTargets; plan: ConstraintPlan | null } {
+export function beginMoveSession(picked: string[]): { ids: string[]; bbox: BBox | null; snapTargets: SnapTargets; plan: ConstraintPlan | null } {
   const allPaths = usePathsStore.getState().paths
   const { widthMM, heightMM } = useWorkpieceStore.getState()
+  const constraints = useConstraintsStore.getState().constraints
+  // One copy of a constrained pattern moves the whole pattern — see widenToPatternBodies.
+  const ids = widenToPatternBodies(allPaths, constraints, picked)
   const moving = new Set(ids)
   const movingPaths = allPaths.filter((p) => moving.has(p.id))
   return {
+    ids,
     bbox: getMultiBBox(movingPaths.map((p) => p.d)),
     snapTargets: {
       ...collectSnapTargets(allPaths.filter((p) => onCanvas(p) && !moving.has(p.id)), { widthMM, heightMM }, snapOptions()),
       // The dragged shapes' own corners, for the corner-onto-corner snap (resolveMoveSnap).
       moving: collectVertices(movingPaths),
     },
-    plan: planConstraints(allPaths, useConstraintsStore.getState().constraints, { widthMM, heightMM }, ids).plan,
+    plan: planConstraints(allPaths, constraints, { widthMM, heightMM }, ids).plan,
   }
 }
 

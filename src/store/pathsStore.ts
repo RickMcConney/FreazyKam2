@@ -13,11 +13,13 @@ import { inGroup, outerGroupOf } from './pathGroups'
 import { useConstraintsStore, constraintsTouching } from './constraintsStore'
 import type { Constraint } from './constraints'
 import { copyPaths, withHiddenSources } from './copyPaths'
-import { solveConstraints, solveInnerConstraints, type ConstraintSolution } from './constraints'
+import { bodyKeyOf, solveConstraints, solveInnerConstraints, type ConstraintSolution } from './constraints'
 import { useWorkpieceStore } from './workpieceStore'
 import { useUIStore } from './uiStore'
 import { uid } from '../uid'
 import { refitBridges } from '../tools/bridgeRefit'
+import { followPatternSources } from '../tools/patternFollow'
+import { followDuplicates } from '../tools/duplicateFollow'
 
 export type { ImportedPath }
 // User-group helpers live in their own module (pure, no store), and are
@@ -57,6 +59,10 @@ export type PathUpdate = {
   nameIsCustom?: boolean
   // The nest this part was arranged by (ImportedPath.nest); null takes it off.
   nest?: NestStamp | null
+  // Provenance, replaced whole.
+  definition?: PathDefinition
+  // A duplicate's link to its original (tools/duplicateFollow) — the Unlink button.
+  copyOf?: { sourceId: string; unlinked?: boolean }
 }
 
 export type PathsAddMeta = { source?: PathsAddSource; label?: string }
@@ -110,7 +116,7 @@ interface PathsState {
   // and keeps only the id, so ops on that copy survive. Everything but the id is
   // replaced, undefineds included, which is the point: a copy whose source lost
   // its parameters must lose them too.
-  rewriteGeneratedRaw: (edit: { updates?: { id: string; d: string; name?: string; shapeParams?: ShapeParams | null; definition?: PathDefinition; clockSpec?: ClockSpec; fields?: Omit<ImportedPath, 'id'> }[]; add?: ImportedPath[]; deleteIds?: string[] }) => void
+  rewriteGeneratedRaw: (edit: { updates?: { id: string; d: string; name?: string; shapeParams?: ShapeParams | null; definition?: PathDefinition; clockSpec?: ClockSpec; fields?: Omit<ImportedPath, 'id'> }[]; add?: ImportedPath[]; deleteIds?: string[]; holdOthers?: boolean }) => void
   updateShapeParams: (id: string, params: ShapeParams) => void
   duplicateSelected: (offsetMM?: number) => void
   /** Copies of `ids` moved by `offset`, selected — the stamp tool's click. Same copy as Duplicate. */
@@ -390,6 +396,8 @@ function applyUpdateToPath(p: ImportedPath, upd: PathUpdate): ImportedPath {
   if (upd.groupName !== undefined) newPath.groupName = upd.groupName
   if (upd.nameIsCustom !== undefined) newPath.nameIsCustom = upd.nameIsCustom
   if (upd.nest !== undefined) newPath.nest = upd.nest ?? undefined
+  if (upd.definition !== undefined) newPath.definition = upd.definition
+  if (upd.copyOf !== undefined) newPath.copyOf = upd.copyOf
   if (upd.groupLabels !== undefined) newPath.groupLabels = upd.groupLabels
   if (upd.hidden !== undefined) {
     newPath.hidden = upd.hidden
@@ -544,9 +552,56 @@ function applyMoves(
  * second press of undo to get back. So this writes the paths and leaves the
  * history to the caller, which records afterwards so its snapshot holds both.
  */
+/**
+ * THE PRE-PASS EVERY GEOMETRY EDIT RUNS, over the paths as they will be: the
+ * patterns a reshaped source feeds are re-run (`followPatternSources`), then the
+ * constraints are solved over the result — in that order, so the solve sees the
+ * pattern as it now stands. `edited` is what the edit itself wrote; `anchors` is
+ * what the solve holds still, which is usually the same and is not for a pattern
+ * re-run (see `holdOthers`).
+ */
+/** A path put through transform steps exactly as a gesture puts it — `applyMoves`'s road. */
+export function transformPathBy(p: ImportedPath, steps: TransformStep[]): ImportedPath {
+  const r = applyTransformSteps(p, steps)
+  return applyUpdateToPath(p, { id: p.id, d: r.d, shapeParams: r.shapeParams, transforms: steps })
+}
+
+function derive(
+  before: ImportedPath[],
+  paths: ImportedPath[],
+  deleteIds: string[],
+  edited: string[],
+  anchors: string[] = edited,
+): { paths: ImportedPath[]; movedIds: string[] } {
+  // Copies first: a duplicate of a reshaped original takes the new shape (and a copy
+  // the user reshaped is unlinked), and a pattern built on either then follows it.
+  const dups = followDuplicates(before, paths, edited, transformPathBy)
+  const followed0 = followPatternSources(before, dups.paths, [...edited, ...dups.refreshedIds])
+  const followed = { ...followed0, refreshedIds: [...dups.refreshedIds, ...dups.unlinkedIds, ...followed0.refreshedIds] }
+  if (followed.skipped.length > 0) {
+    useUIStore.getState().showStatus(
+      'A pattern was not updated to match its original: one of its copies has been deleted. Reopen the pattern and apply it to rebuild it.',
+      'warn')
+  }
+  const solved = enforceConstraints(followed.paths, deleteIds, anchors)
+  // …and again from what the SOLVE moved: a pattern made of several bodies (a
+  // plate and the bolt circle held to it) has its sources moved by its own inner
+  // constraints, and its copies are copies of that assembly. A pattern whose copies
+  // the solve moved with it (they are one body) is left alone, as an edit that
+  // writes the copies always is.
+  const after = solved.movedIds.length > 0
+    ? followPatternSources(followed.paths, solved.paths, solved.movedIds, { anyChange: true })
+    : { paths: solved.paths, refreshedIds: [] as string[] }
+  return {
+    paths: after.paths,
+    movedIds: [...new Set([...followed.refreshedIds, ...solved.movedIds, ...after.refreshedIds])],
+  }
+}
+
 export function applyConstraintSolve(anchorIds: string[] = []): void {
   const before = usePathsStore.getState().paths
-  const solved = enforceConstraints(before, [], anchorIds)
+  // Nothing was edited; the solve's own moves can still re-run a pattern.
+  const solved = derive(before, before, [], [], anchorIds)
   if (solved.movedIds.length === 0) return
   const touched = refitBridgesTo(before, solved.paths)
   usePathsStore.setState({ paths: solved.paths })
@@ -723,7 +778,7 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
     paths: s.paths.map((p) => p.id === id ? { ...p, d: upd.d, ...(upd.name !== undefined ? { name: upd.name } : {}) } : p),
   })),
 
-  rewriteGeneratedRaw: ({ updates = [], add = [], deleteIds = [] }) => {
+  rewriteGeneratedRaw: ({ updates = [], add = [], deleteIds = [], holdOthers = false }) => {
     const s = get()
     const reshaped = dropDependentsOf(deleteIds)
     const gone = new Set(deleteIds)
@@ -745,9 +800,22 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
     // grows — so the constraints hanging off it are re-solved here as well. This
     // path records nothing (the chip it amends already stands for the edit), and
     // neither does the solve.
-    const solved = enforceConstraints(
-      add.length > 0 ? [...paths, ...add] : paths, deleteIds,
-      [...updates.map((u) => u.id), ...add.map((a) => a.id)])
+    //
+    // `holdOthers` turns the anchors round: everything EXCEPT the rewritten
+    // object holds still and the rewritten one is what the solve moves. A pattern
+    // re-run needs it — a new radius moves the pattern's centre off the point it
+    // is constrained to, and anchoring the pattern (the default, right for a gear
+    // whose mates should follow its new size) would shift the PLATE to the bolt
+    // circle instead of bringing the bolt circle back to the plate.
+    const next = add.length > 0 ? [...paths, ...add] : paths
+    const edited = [...updates.map((u) => u.id), ...add.map((a) => a.id)]
+    let anchors = edited
+    if (holdOthers) {
+      const byId = new Map(next.map((p) => [p.id, p]))
+      const mine = new Set(edited.flatMap((id) => { const p = byId.get(id); return p ? [bodyKeyOf(p, next)] : [] }))
+      anchors = next.filter((p) => !mine.has(bodyKeyOf(p, next))).map((p) => p.id)
+    }
+    const solved = derive(s.paths, next, deleteIds, edited, anchors)
     // Strips follow the parts they hold (tools/bridgeRefit), in the same write.
     const touched = refitBridgesTo(s.paths, solved.paths)
     set({
@@ -796,8 +864,9 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
     // constrained part follow in ONE timeline entry and come back in ONE undo.
     // It is a pure pre-pass over the paths as they will BE, so there is no
     // re-entrancy: nothing here calls back into applyPathEdit.
-    const solved = enforceConstraints(
-      paths, deleteIds, [...updates.map((u) => u.id), ...add.map((a) => a.id)])
+    // The patterns a reshaped source feeds follow it, in the same pass.
+    const solved = derive(
+      s.paths, paths, deleteIds, [...updates.map((u) => u.id), ...add.map((a) => a.id)])
     paths = solved.paths
     // STRIPS FOLLOW THE PARTS THEY HOLD — re-fitted here, before the step is recorded.
     const touched = refitBridgesTo(s.paths, paths)
@@ -965,8 +1034,8 @@ export const usePathsStore = create<PathsState>()((set, get) => ({
     // carries it out to where it actually sits — so a rotated spirograph stays
     // rotated when its loop count is stepped.
     const d = applyPlacementD(generateShapeD(params), self?.placement)
-    const solved = enforceConstraints(
-      s0.paths.map((p) => p.id === id ? { ...p, d, shapeParams: params } : p), [], [id])
+    const solved = derive(
+      s0.paths, s0.paths.map((p) => p.id === id ? { ...p, d, shapeParams: params } : p), [], [id])
     const touched = refitBridgesTo(s0.paths, solved.paths)
     set({ paths: solved.paths })
     regenerateEdited([...new Set([...solved.movedIds, ...touched])])
